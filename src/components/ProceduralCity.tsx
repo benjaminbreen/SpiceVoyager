@@ -4,7 +4,7 @@ import { useGameStore } from '../store/gameStore';
 
 interface Part {
   geo: 'box' | 'cylinder' | 'cone' | 'sphere';
-  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw';
+  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw' | 'road_dirt' | 'road_stone';
   pos: [number, number, number];
   scale: [number, number, number];
   rot: [number, number, number];
@@ -35,7 +35,11 @@ export function ProceduralCity() {
           });
         };
 
-        if (b.type === 'dock') {
+        if (b.type === 'road') {
+          const roadMat = c === 'European' ? 'road_stone' : 'road_dirt';
+          addPart('box', roadMat, 0, 0, 0, w, h, d);
+        }
+        else if (b.type === 'dock') {
           addPart('box', 'wood', 0, 0, 0, w, 0.2, d); // deck
           addPart('cylinder', 'wood', w/2-0.2, -1, d/2-0.2, 0.2, 3, 0.2);
           addPart('cylinder', 'wood', -w/2+0.2, -1, d/2-0.2, 0.2, 3, 0.2);
@@ -158,7 +162,9 @@ export function ProceduralCity() {
     wood: new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.8 }),
     terracotta: new THREE.MeshStandardMaterial({ color: '#cd5c5c', roughness: 0.7 }),
     stone: new THREE.MeshStandardMaterial({ color: '#888888', roughness: 0.9 }),
-    straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0 })
+    straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0 }),
+    road_dirt: new THREE.MeshStandardMaterial({ color: '#8b7355', roughness: 1.0 }),
+    road_stone: new THREE.MeshStandardMaterial({ color: '#7a7a72', roughness: 0.85 })
   }), []);
 
   return (

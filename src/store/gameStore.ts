@@ -3,13 +3,16 @@ import {
   commerceBuyTemplate, commerceSellTemplate, shipDamageTemplate,
   shipRepairTemplate, portDiscoverTemplate, tavernTemplate,
 } from '../utils/journalTemplates';
+import { generateStartingCrew } from '../utils/crewGenerator';
+import { sfxCrabCollect, sfxDiscovery } from '../audio/SoundEffects';
+import { NPCShipIdentity } from '../utils/npcShipGenerator';
 
 export type Commodity = 'Spices' | 'Silk' | 'Tea' | 'Wood' | 'Cannonballs';
 
 export type Culture = 'Indian Ocean' | 'European' | 'Caribbean';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
 
-export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market';
+export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market' | 'road';
 
 export interface Building {
   id: string;
@@ -43,7 +46,12 @@ export interface ShipStats {
 
 export type CrewRole = 'Captain' | 'Navigator' | 'Gunner' | 'Sailor' | 'Factor' | 'Surgeon';
 export type HealthFlag = 'healthy' | 'sick' | 'injured' | 'scurvy' | 'fevered';
-export type Nationality = 'English' | 'Portuguese' | 'Dutch' | 'Mughal' | 'Swahili' | 'Malay' | 'Chinese' | 'Ottoman' | 'Persian' | 'Gujarati';
+export type Nationality =
+  | 'English' | 'Portuguese' | 'Dutch' | 'Spanish' | 'French' | 'Danish'
+  | 'Mughal' | 'Gujarati' | 'Persian' | 'Ottoman' | 'Omani'
+  | 'Swahili'
+  | 'Malay' | 'Acehnese' | 'Javanese' | 'Moluccan'
+  | 'Siamese' | 'Japanese' | 'Chinese';
 export type CaptainTrait =
   | 'Silver Tongue'   // better prices at port
   | 'Iron Will'       // slower morale decay
@@ -82,6 +90,8 @@ export interface Notification {
   id: string;
   message: string;
   type: 'info' | 'success' | 'warning' | 'error';
+  size?: 'normal' | 'grand';
+  subtitle?: string;
   timestamp: number;
 }
 
@@ -103,6 +113,20 @@ export interface JournalEntry {
   notes: JournalNote[];
 }
 
+export interface RenderDebugSettings {
+  showDevPanel: boolean;
+  minimap: boolean;
+  shadows: boolean;
+  postprocessing: boolean;
+  bloom: boolean;
+  vignette: boolean;
+  advancedWater: boolean;
+  shipWake: boolean;
+  bowFoam: boolean;
+  algae: boolean;
+  wildlifeMotion: boolean;
+}
+
 interface GameState {
   playerPos: [number, number, number];
   playerRot: number;
@@ -119,6 +143,8 @@ interface GameState {
   notifications: Notification[];
   activePort: Port | null;
   cameraZoom: number;
+  viewMode: 'default' | 'cinematic' | 'topdown' | 'firstperson';
+  cycleViewMode: () => void;
   
   // New state for walking
   playerMode: 'ship' | 'walking';
@@ -127,29 +153,50 @@ interface GameState {
   interactionPrompt: string | null;
   discoveredPorts: string[];
   npcPositions: [number, number, number][];
+  npcShips: NPCShipIdentity[];
 
   // Journal
   journalEntries: JournalEntry[];
   dayCount: number;
 
+  // Wind
+  windDirection: number; // radians, 0 = north, PI/2 = east
+  windSpeed: number;     // 0-1 normalized
+
+  // Provisions (food/supplies for crew)
+  provisions: number;
+
   // World
   worldSeed: number;
+  worldSize: number;
+  devSoloPort: string | null;
+  renderDebug: RenderDebugSettings;
   paused: boolean;
-  
+
   setPlayerPos: (pos: [number, number, number]) => void;
   setPlayerRot: (rot: number) => void;
   setPlayerVelocity: (vel: number) => void;
+  setPlayerTransform: (transform: {
+    pos: [number, number, number];
+    rot: number;
+    vel: number;
+  }) => void;
   setPlayerMode: (mode: 'ship' | 'walking') => void;
   setWalkingPos: (pos: [number, number, number]) => void;
   setWalkingRot: (rot: number) => void;
+  setWalkingTransform: (transform: {
+    pos: [number, number, number];
+    rot: number;
+  }) => void;
   setInteractionPrompt: (prompt: string | null) => void;
   discoverPort: (id: string) => void;
   setNpcPositions: (positions: [number, number, number][]) => void;
+  setNpcShips: (ships: NPCShipIdentity[]) => void;
   damageShip: (amount: number) => void;
   repairShip: (amount: number, cost: number) => void;
   setCrewRole: (crewId: string, role: CrewRole) => void;
   
-  addNotification: (message: string, type?: Notification['type']) => void;
+  addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; subtitle?: string }) => void;
   removeNotification: (id: string) => void;
   addJournalEntry: (category: JournalCategory, message: string, portName?: string) => void;
   addJournalNote: (entryId: string, text: string) => void;
@@ -158,12 +205,33 @@ interface GameState {
   sellCommodity: (commodity: Commodity, amount: number) => void;
   advanceTime: (delta: number) => void;
   setCameraZoom: (zoom: number) => void;
+  setViewMode: (mode: 'default' | 'cinematic' | 'topdown' | 'firstperson') => void;
   setWorldSeed: (seed: number) => void;
+  setWorldSize: (size: number) => void;
+  setDevSoloPort: (portId: string | null) => void;
+  updateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
+  resetRenderDebug: () => void;
+  collectCrab: () => void;
+  fastTravel: (portId: string) => void;
   setPaused: (paused: boolean) => void;
   initWorld: (ports: Port[]) => void;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
+  showDevPanel: false,
+  minimap: true,
+  shadows: false,
+  postprocessing: true,
+  bloom: true,
+  vignette: true,
+  advancedWater: true,
+  shipWake: true,
+  bowFoam: true,
+  algae: true,
+  wildlifeMotion: true,
+};
 
 export const useGameStore = create<GameState>((set, get) => ({
   playerPos: [0, 0, 0],
@@ -187,14 +255,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     cargoCapacity: 100,
     cannons: 4,
   },
-  crew: [
-    { id: generateId(), name: 'Captain Blackwood', role: 'Captain', skill: 80, morale: 100, age: 42, nationality: 'English', birthplace: 'Bristol', health: 'healthy' },
-    { id: generateId(), name: 'Rodrigo da Silva', role: 'Navigator', skill: 65, morale: 85, age: 34, nationality: 'Portuguese', birthplace: 'Lisbon', health: 'healthy' },
-    { id: generateId(), name: 'Kwame Asante', role: 'Gunner', skill: 55, morale: 90, age: 28, nationality: 'Swahili', birthplace: 'Kilwa', health: 'healthy' },
-    { id: generateId(), name: 'Smitty', role: 'Sailor', skill: 40, morale: 80, age: 22, nationality: 'English', birthplace: 'London', health: 'healthy' },
-    { id: generateId(), name: 'Rajan Nair', role: 'Sailor', skill: 45, morale: 75, age: 30, nationality: 'Gujarati', birthplace: 'Surat', health: 'healthy' },
-    { id: generateId(), name: 'Willem de Groot', role: 'Factor', skill: 70, morale: 82, age: 38, nationality: 'Dutch', birthplace: 'Amsterdam', health: 'healthy' },
-  ],
+  crew: generateStartingCrew('English', 6),
   ship: {
     name: 'The Dorada',
     type: 'Carrack',
@@ -213,25 +274,48 @@ export const useGameStore = create<GameState>((set, get) => ({
   notifications: [],
   activePort: null,
   cameraZoom: 50,
+  viewMode: 'default',
+  cycleViewMode: () => set((state) => {
+    const modes: Array<'default' | 'cinematic' | 'topdown' | 'firstperson'> = ['default', 'cinematic', 'topdown', 'firstperson'];
+    const idx = modes.indexOf(state.viewMode);
+    return { viewMode: modes[(idx + 1) % modes.length] };
+  }),
   playerMode: 'ship',
   walkingPos: [0, 5, 0],
   walkingRot: 0,
   interactionPrompt: null,
   discoveredPorts: [],
   npcPositions: [],
+  npcShips: [],
   journalEntries: [],
   dayCount: 1,
+  windDirection: Math.PI * 0.75, // start SW
+  windSpeed: 0.5,
+  provisions: 30, // starting food supply
   worldSeed: Math.floor(Math.random() * 100000),
+  worldSize: 300,
+  devSoloPort: null,
+  renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
 
   setPlayerPos: (pos) => set({ playerPos: pos }),
   setPlayerRot: (rot) => set({ playerRot: rot }),
   setPlayerVelocity: (vel) => set({ playerVelocity: vel }),
+  setPlayerTransform: ({ pos, rot, vel }) => set({
+    playerPos: pos,
+    playerRot: rot,
+    playerVelocity: vel,
+  }),
   setPlayerMode: (mode) => set({ playerMode: mode }),
   setWalkingPos: (pos) => set({ walkingPos: pos }),
   setWalkingRot: (rot) => set({ walkingRot: rot }),
+  setWalkingTransform: ({ pos, rot }) => set({
+    walkingPos: pos,
+    walkingRot: rot,
+  }),
   setInteractionPrompt: (prompt) => set({ interactionPrompt: prompt }),
   setNpcPositions: (positions) => set({ npcPositions: positions }),
+  setNpcShips: (ships) => set({ npcShips: ships }),
   
   damageShip: (amount) => {
     const state = get();
@@ -265,12 +349,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (port) {
         get().addNotification(`Discovered ${port.name}!`, 'success');
         get().addJournalEntry('navigation', portDiscoverTemplate(port.name), port.name);
+        sfxDiscovery();
       }
     }
   },
   
-  addNotification: (message, type = 'info') => set((state) => ({
-    notifications: [...state.notifications, { id: generateId(), message, type, timestamp: Date.now() }].slice(-5)
+  addNotification: (message, type = 'info', opts) => set((state) => ({
+    notifications: [...state.notifications, {
+      id: generateId(), message, type, timestamp: Date.now(),
+      size: opts?.size, subtitle: opts?.subtitle,
+    }].slice(-5)
   })),
   
   removeNotification: (id) => set((state) => ({
@@ -362,15 +450,73 @@ export const useGameStore = create<GameState>((set, get) => ({
   advanceTime: (delta) => set((state) => {
     const newTime = state.timeOfDay + delta;
     const wrapped = newTime >= 24;
+
+    // Wind drifts slowly over time using sine waves at different frequencies
+    // for a natural, non-random feel that still varies
+    const t = state.dayCount + newTime / 24;
+    const dirDrift = Math.sin(t * 0.7) * 0.3 + Math.sin(t * 1.9) * 0.15 + Math.sin(t * 4.3) * 0.05;
+    const newWindDir = (state.windDirection + dirDrift * delta * 0.02) % (Math.PI * 2);
+
+    // Speed oscillates between 0.15 and 0.95
+    const speedBase = 0.55 + Math.sin(t * 0.5) * 0.25 + Math.sin(t * 1.7) * 0.1 + Math.sin(t * 3.1) * 0.05;
+    const newWindSpeed = Math.max(0.1, Math.min(1, speedBase));
+
     return {
       timeOfDay: newTime % 24,
       dayCount: wrapped ? state.dayCount + 1 : state.dayCount,
+      windDirection: newWindDir < 0 ? newWindDir + Math.PI * 2 : newWindDir,
+      windSpeed: newWindSpeed,
     };
   }),
   
   setCameraZoom: (zoom) => set({ cameraZoom: Math.max(10, Math.min(150, zoom)) }),
+  setViewMode: (mode) => set({ viewMode: mode }),
   
   setWorldSeed: (seed) => set({ worldSeed: seed }),
+  setWorldSize: (size) => set({ worldSize: size }),
+  setDevSoloPort: (portId) => set({ devSoloPort: portId }),
+  updateRenderDebug: (patch) => set((state) => ({
+    renderDebug: { ...state.renderDebug, ...patch }
+  })),
+  resetRenderDebug: () => set({ renderDebug: DEFAULT_RENDER_DEBUG }),
+  collectCrab: () => {
+    const state = get();
+    set({ provisions: state.provisions + 1 });
+    get().addNotification('Caught a crab! (+1 provisions)', 'success');
+    sfxCrabCollect();
+  },
+  fastTravel: (portId) => {
+    const state = get();
+    const port = state.ports.find(p => p.id === portId);
+    if (!port) return;
+    // Calculate travel days from distance
+    const dx = port.position[0] - state.playerPos[0];
+    const dz = port.position[2] - state.playerPos[2];
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const travelDays = Math.max(1, Math.round(dist / 80));
+    // Offset spawn position slightly so the player arrives near the port, not on top
+    const angle = Math.atan2(dx, dz);
+    const spawnDist = 25;
+    const arrivalPos: [number, number, number] = [
+      port.position[0] - Math.sin(angle) * spawnDist,
+      0,
+      port.position[2] - Math.cos(angle) * spawnDist,
+    ];
+    set({
+      playerPos: arrivalPos,
+      playerRot: angle,
+      playerVelocity: 0,
+      playerMode: 'ship',
+      dayCount: state.dayCount + travelDays,
+      timeOfDay: 8, // arrive in the morning
+    });
+    get().addNotification(`Arrived at ${port.name} after ${travelDays} days at sea.`, 'success');
+    get().addJournalEntry(
+      'navigation',
+      `After ${travelDays} days sailing, we have arrived at ${port.name}. The crew is relieved to see land again.`,
+      port.name,
+    );
+  },
   setPaused: (paused) => set({ paused }),
   initWorld: (ports) => set({ ports })
 }));

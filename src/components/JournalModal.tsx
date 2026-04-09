@@ -18,10 +18,9 @@ const FILTERS: (JournalCategory | 'all')[] = ['all', 'navigation', 'commerce', '
 
 function formatGameTime(t: number): string {
   const hours = Math.floor(t) % 24;
-  const minutes = Math.floor((t % 1) * 60);
   const period = hours >= 12 ? 'PM' : 'AM';
   const displayHour = hours % 12 || 12;
-  return `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
+  return `${displayHour} ${period}`;
 }
 
 export function JournalModal({ open, onClose, initialEntry }: {
@@ -92,7 +91,7 @@ export function JournalModal({ open, onClose, initialEntry }: {
         <div className="w-[380px] bg-[#0c1019]/95 backdrop-blur-xl flex flex-col border-r border-white/[0.06]">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
-            <span className="text-xs font-bold tracking-[0.15em] uppercase text-slate-400">
+            <span className="text-xs font-bold tracking-[0.15em] uppercase text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>
               Ship's Log
             </span>
             <button

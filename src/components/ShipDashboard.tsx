@@ -6,6 +6,7 @@ import {
   Wrench, Heart, Star, ChevronDown, Crosshair, Sailboat, Flag,
   Navigation, Swords, Briefcase, Activity
 } from 'lucide-react';
+import { FactionFlag } from './FactionFlag';
 
 type DashboardTab = 'overview' | 'crew' | 'cargo' | 'ship';
 
@@ -357,9 +358,10 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
         <span className={`font-mono text-[10px] font-bold w-7 ${ROLE_ACCENT[member.role]}`}>
           {ROLE_ABBR[member.role]}
         </span>
-        {/* Name */}
-        <span className={`flex-1 text-sm truncate ml-1 ${isCaptain ? 'text-amber-200 font-bold' : 'text-slate-200'}`}>
-          {member.name}
+        {/* Flag + Name */}
+        <span className={`flex-1 flex items-center gap-1.5 text-sm truncate ml-1 ${isCaptain ? 'text-amber-200 font-bold' : 'text-slate-200'}`}>
+          <FactionFlag nationality={member.nationality} size={14} />
+          <span className="truncate">{member.name}</span>
         </span>
         {/* Origin */}
         <span className="text-[11px] text-slate-500 w-20 truncate">{member.birthplace}</span>
@@ -399,9 +401,10 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className={`font-mono text-[9px] font-bold ${ROLE_ACCENT[member.role]}`}>{ROLE_ABBR[member.role]}</span>
+            <FactionFlag nationality={member.nationality} size={12} />
             <span className={`text-sm truncate ${isCaptain ? 'text-amber-200 font-bold' : 'text-slate-200'}`}>{member.name}</span>
           </div>
-          <div className="text-[10px] text-slate-500">{member.nationality} · {member.birthplace} · {member.age}y</div>
+          <div className="text-[10px] text-slate-500">{member.birthplace} · {member.age}y</div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <span className="font-mono text-xs text-slate-300">{member.skill}</span>
@@ -613,7 +616,7 @@ export function ShipDashboard({ open, onClose }: { open: boolean; onClose: () =>
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-2 md:p-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-2 md:p-8 pointer-events-auto"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div

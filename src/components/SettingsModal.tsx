@@ -1,24 +1,36 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, RenderDebugSettings } from '../store/gameStore';
+import { sfxTab, sfxClose, sfxClick, setSfxVolume, getSfxVolume } from '../audio/SoundEffects';
+import { audioManager } from '../audio/AudioManager';
+import { ambientEngine } from '../audio/AmbientEngine';
 import {
   X, Globe, Monitor, Volume2, Gamepad2, Info,
-  Copy, Shuffle, Rocket, Check,
+  Copy, Shuffle, Rocket, Check, Code2, Map, Music, Waves, MousePointerClick,
 } from 'lucide-react';
+import { CORE_PORTS, WORLD_SIZE_VALUES, WorldSize } from '../utils/portArchetypes';
 
-type SettingsTab = 'world' | 'display' | 'audio' | 'gameplay' | 'about';
+type SettingsTab = 'world' | 'display' | 'audio' | 'gameplay' | 'dev' | 'about';
 
 const TABS: { id: SettingsTab; label: string; icon: typeof Globe }[] = [
   { id: 'world',    label: 'World',    icon: Globe },
   { id: 'display',  label: 'Display',  icon: Monitor },
   { id: 'audio',    label: 'Audio',    icon: Volume2 },
   { id: 'gameplay', label: 'Gameplay', icon: Gamepad2 },
+  { id: 'dev',      label: 'Dev',      icon: Code2 },
   { id: 'about',    label: 'About',    icon: Info },
 ];
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const worldSeed = useGameStore(s => s.worldSeed);
   const setWorldSeed = useGameStore(s => s.setWorldSeed);
+  const worldSize = useGameStore(s => s.worldSize);
+  const setWorldSize = useGameStore(s => s.setWorldSize);
+  const devSoloPort = useGameStore(s => s.devSoloPort);
+  const setDevSoloPort = useGameStore(s => s.setDevSoloPort);
+  const renderDebug = useGameStore(s => s.renderDebug);
+  const updateRenderDebug = useGameStore(s => s.updateRenderDebug);
+  const resetRenderDebug = useGameStore(s => s.resetRenderDebug);
   const [tab, setTab] = useState<SettingsTab>('world');
   const [newSeed, setNewSeed] = useState('');
   const [copied, setCopied] = useState(false);
@@ -76,7 +88,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               return (
                 <button
                   key={t.id}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => { sfxTab(); setTab(t.id); }}
                   className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150
                     ${active
                       ? 'bg-white/[0.07] text-slate-200'
@@ -100,11 +112,11 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
-            <h2 className="text-sm font-bold tracking-wide text-slate-300">
+            <h2 className="text-sm font-bold tracking-wide text-slate-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
               {TABS.find(t => t.id === tab)?.label}
             </h2>
             <button
-              onClick={onClose}
+              onClick={() => { sfxClose(); onClose(); }}
               className="w-7 h-7 rounded-full flex items-center justify-center text-slate-500
                 hover:text-slate-300 hover:bg-white/[0.06] transition-all"
             >
@@ -134,8 +146,30 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   />
                 )}
                 {tab === 'display' && <PlaceholderTab title="Display" description="Graphics quality, UI scale, and minimap settings will appear here." />}
-                {tab === 'audio' && <PlaceholderTab title="Audio" description="Master volume, music, and sound effects controls will appear here." />}
+                {tab === 'audio' && <AudioTab />}
                 {tab === 'gameplay' && <PlaceholderTab title="Gameplay" description="Time speed, auto-pause, and difficulty settings will appear here." />}
+                {tab === 'dev' && (
+                  <DevTab
+                    worldSeed={worldSeed}
+                    worldSize={worldSize}
+                    devSoloPort={devSoloPort}
+                    renderDebug={renderDebug}
+                    onSetWorldSize={(size) => {
+                      setWorldSize(size);
+                      onClose();
+                    }}
+                    onLoadPort={(portId) => {
+                      setDevSoloPort(portId);
+                      onClose();
+                    }}
+                    onClearSolo={() => {
+                      setDevSoloPort(null);
+                      onClose();
+                    }}
+                    onUpdateRenderDebug={updateRenderDebug}
+                    onResetRenderDebug={resetRenderDebug}
+                  />
+                )}
                 {tab === 'about' && <AboutTab />}
               </motion.div>
             </AnimatePresence>
@@ -218,14 +252,171 @@ function WorldTab({ worldSeed, newSeed, setNewSeed, copied, onCopy, onRandom, on
   );
 }
 
+const CLIMATE_COLORS: Record<string, string> = {
+  tropical: 'text-emerald-400',
+  arid: 'text-amber-400',
+  temperate: 'text-blue-400',
+  monsoon: 'text-cyan-400',
+};
+
+const GEO_ICONS: Record<string, string> = {
+  inlet: '🏞️',
+  bay: '🌊',
+  strait: '⛵',
+  island: '🏝️',
+  peninsula: '🗻',
+  estuary: '🏞️',
+  crater_harbor: '🌋',
+  continental_coast: '🏖️',
+  archipelago: '🗺️',
+};
+
+function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize, onLoadPort, onClearSolo, onUpdateRenderDebug, onResetRenderDebug }: {
+  worldSeed: number;
+  worldSize: number;
+  devSoloPort: string | null;
+  renderDebug: RenderDebugSettings;
+  onSetWorldSize: (size: number) => void;
+  onLoadPort: (portId: string) => void;
+  onClearSolo: () => void;
+  onUpdateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
+  onResetRenderDebug: () => void;
+}) {
+  const worldSizeEntries = Object.entries(WORLD_SIZE_VALUES) as [WorldSize, number][];
+
+  return (
+    <div className="space-y-6">
+      <SettingsSection title="Render Testing" description="Enable a live dev panel for turning expensive features on and off while sailing.">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-300">Live Render Panel</div>
+              <div className="text-[11px] text-slate-500">Shows an in-game overlay with graphics toggles.</div>
+            </div>
+            <button
+              onClick={() => onUpdateRenderDebug({ showDevPanel: !renderDebug.showDevPanel })}
+              className={`rounded-lg px-3 py-2 text-xs font-medium transition-all border ${
+                renderDebug.showDevPanel
+                  ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
+                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]'
+              }`}
+            >
+              {renderDebug.showDevPanel ? 'Panel On' : 'Panel Off'}
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => onUpdateRenderDebug({
+                shadows: false,
+                postprocessing: false,
+                bloom: false,
+                vignette: false,
+                advancedWater: false,
+                shipWake: false,
+                bowFoam: false,
+                algae: false,
+                wildlifeMotion: false,
+              })}
+              className="flex-1 rounded-lg border border-amber-600/20 bg-amber-600/10 px-3 py-2 text-xs font-medium text-amber-300 transition-all hover:bg-amber-600/15"
+            >
+              Minimal Render Test
+            </button>
+            <button
+              onClick={onResetRenderDebug}
+              className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs font-medium text-slate-300 transition-all hover:bg-white/[0.06]"
+            >
+              Restore Defaults
+            </button>
+          </div>
+        </div>
+      </SettingsSection>
+
+      {/* World Size */}
+      <SettingsSection title="World Size" description="Controls the size of the generated world. Current map will regenerate.">
+        <div className="flex gap-2">
+          {worldSizeEntries.map(([label, value]) => (
+            <button
+              key={label}
+              onClick={() => onSetWorldSize(value)}
+              className={`flex-1 py-2 px-2 rounded-lg text-xs font-medium transition-all border
+                ${worldSize === value
+                  ? 'bg-amber-600/20 border-amber-600/40 text-amber-300'
+                  : 'bg-white/[0.03] border-white/[0.06] text-slate-500 hover:text-slate-300 hover:bg-white/[0.06]'
+                }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </SettingsSection>
+
+      {/* Solo port mode indicator */}
+      {devSoloPort && (
+        <div className="bg-amber-600/10 border border-amber-600/20 rounded-lg p-3 flex items-center justify-between">
+          <div>
+            <span className="text-amber-300 text-xs font-bold uppercase tracking-wider">Solo Mode</span>
+            <span className="text-slate-400 text-xs ml-2">
+              Viewing: {CORE_PORTS.find(p => p.id === devSoloPort)?.name ?? devSoloPort}
+            </span>
+          </div>
+          <button
+            onClick={onClearSolo}
+            className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg
+              bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] transition-all"
+          >
+            Back to Full World
+          </button>
+        </div>
+      )}
+
+      {/* Port Catalog */}
+      <SettingsSection title="Port Archetypes" description="Load a single port to preview its geographic archetype. Click any port to generate its map.">
+        <div className="grid grid-cols-2 gap-2 max-h-[280px] overflow-y-auto pr-1">
+          {CORE_PORTS.map(port => (
+            <button
+              key={port.id}
+              onClick={() => onLoadPort(port.id)}
+              className={`text-left p-2.5 rounded-lg border transition-all group
+                ${devSoloPort === port.id
+                  ? 'bg-amber-600/15 border-amber-600/30'
+                  : 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]'
+                }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm">{GEO_ICONS[port.geography] ?? '📍'}</span>
+                <span className="text-[12px] font-semibold text-slate-300 group-hover:text-white transition-colors">
+                  {port.name}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className={`${CLIMATE_COLORS[port.climate] ?? 'text-slate-400'} font-medium`}>
+                  {port.climate}
+                </span>
+                <span className="text-slate-600">·</span>
+                <span className="text-slate-500">{port.geography.replace('_', ' ')}</span>
+              </div>
+              <p className="text-[9px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
+                {port.description}
+              </p>
+            </button>
+          ))}
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+
 function AboutTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-2xl font-serif text-amber-400 mb-2">Merchant of the Indian Ocean</h3>
+        <h3 className="text-2xl text-amber-400 mb-2" style={{ fontFamily: '"Fraunces", serif', fontWeight: 600 }}>
+          Spice Voyager: <span className="text-amber-300/80">1612</span>
+        </h3>
         <p className="text-slate-400 text-sm leading-relaxed">
           A sailing and trading game set in the Indian Ocean, 1612 AD.
-          Navigate treacherous waters, trade exotic goods between ports,
+          Chart your course between distant ports, trade exotic spices and silk,
           and build your fortune in the age of exploration.
         </p>
       </div>
@@ -238,13 +429,98 @@ function AboutTab() {
   );
 }
 
+function VolumeSlider({ icon, label, description, value, onChange, onAfterChange }: {
+  icon: React.ReactNode;
+  label: string;
+  description: string;
+  value: number;
+  onChange: (v: number) => void;
+  onAfterChange?: () => void;
+}) {
+  const pct = Math.round(value * 100);
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-8 h-8 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-[12px] font-semibold text-slate-300">{label}</div>
+          <div className="text-[10px] text-slate-500">{description}</div>
+        </div>
+        <span className="ml-auto text-[11px] font-mono text-slate-400 tabular-nums w-8 text-right">{pct}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={pct}
+          onChange={(e) => onChange(Number(e.target.value) / 100)}
+          onMouseUp={onAfterChange}
+          onTouchEnd={onAfterChange}
+          className="flex-1 h-1.5 appearance-none rounded-full bg-white/[0.08] cursor-pointer
+            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5
+            [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400
+            [&::-webkit-slider-thumb]:shadow-[0_0_6px_rgba(217,169,56,0.4)]
+            [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-amber-500/60
+            [&::-webkit-slider-thumb]:transition-all [&::-webkit-slider-thumb]:hover:scale-110
+            [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5
+            [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-amber-400
+            [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-amber-500/60"
+          style={{
+            background: `linear-gradient(to right, rgba(217,169,56,0.4) ${pct}%, rgba(255,255,255,0.08) ${pct}%)`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AudioTab() {
+  const [musicVol, setMusicVol] = useState(() => audioManager.getMusicVolume());
+  const [ambientVol, setAmbientVol] = useState(() => ambientEngine.getVolume());
+  const [uiVol, setUiVol] = useState(() => getSfxVolume());
+
+  return (
+    <div className="space-y-8">
+      <SettingsSection title="Volume" description="Adjust individual volume levels. Changes apply immediately.">
+        <div className="space-y-3">
+          <VolumeSlider
+            icon={<Music size={14} className="text-amber-400/80" />}
+            label="Music"
+            description="Background music and ambient tracks"
+            value={musicVol}
+            onChange={(v) => { setMusicVol(v); audioManager.setMusicVolume(v); }}
+          />
+          <VolumeSlider
+            icon={<Waves size={14} className="text-cyan-400/80" />}
+            label="Ambient"
+            description="Ocean waves, wind, and port atmosphere"
+            value={ambientVol}
+            onChange={(v) => { setAmbientVol(v); ambientEngine.setVolume(v); }}
+          />
+          <VolumeSlider
+            icon={<MousePointerClick size={14} className="text-slate-400" />}
+            label="UI Sounds"
+            description="Button clicks, menu sounds, and notifications"
+            value={uiVol}
+            onChange={(v) => { setUiVol(v); setSfxVolume(v); }}
+            onAfterChange={() => sfxClick()}
+          />
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+
 function PlaceholderTab({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center mb-4">
         <Gamepad2 size={20} className="text-slate-600" />
       </div>
-      <h3 className="text-slate-400 font-medium mb-1">{title}</h3>
+      <h3 className="text-slate-400 font-medium mb-1" style={{ fontFamily: '"DM Sans", sans-serif' }}>{title}</h3>
       <p className="text-slate-600 text-sm max-w-xs">
         {description}
       </p>
@@ -259,7 +535,7 @@ function SettingsSection({ title, description, children }: {
 }) {
   return (
     <div>
-      <h3 className="text-[13px] font-bold text-slate-300 mb-0.5">{title}</h3>
+      <h3 className="text-[13px] font-bold text-slate-300 mb-0.5" style={{ fontFamily: '"DM Sans", sans-serif' }}>{title}</h3>
       <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">{description}</p>
       {children}
     </div>

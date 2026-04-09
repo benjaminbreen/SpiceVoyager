@@ -19,10 +19,9 @@ const FILTERS: (JournalCategory | 'all')[] = ['all', 'navigation', 'commerce', '
 
 function formatGameTime(t: number): string {
   const hours = Math.floor(t) % 24;
-  const minutes = Math.floor((t % 1) * 60);
   const period = hours >= 12 ? 'PM' : 'AM';
   const displayHour = hours % 12 || 12;
-  return `${displayHour}:${minutes.toString().padStart(2, '0')} ${period}`;
+  return `${displayHour} ${period}`;
 }
 
 export function JournalPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -64,7 +63,7 @@ export function JournalPanel({ open, onClose }: { open: boolean; onClose: () => 
           >
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/[0.06]">
-              <span className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-400">
+              <span className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>
                 Captain's Log
               </span>
               <div className="flex items-center gap-1">

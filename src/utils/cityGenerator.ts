@@ -1,4 +1,5 @@
 import { PortScale, Culture, Building, BuildingType } from '../store/gameStore';
+import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from './terrain';
 
 function mulberry32(a: number) {
@@ -11,10 +12,10 @@ function mulberry32(a: number) {
 }
 
 const SCALE_COUNTS: Record<PortScale, Record<BuildingType, number>> = {
-  'Small': { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, house: 8, shack: 5, farmhouse: 3 },
-  'Medium': { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, house: 20, shack: 8, farmhouse: 6 },
-  'Large': { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, house: 40, shack: 12, farmhouse: 10 },
-  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, house: 70, shack: 20, farmhouse: 15 },
+  'Small': { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, house: 8, shack: 5, farmhouse: 3, road: 0 },
+  'Medium': { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, house: 20, shack: 8, farmhouse: 6, road: 0 },
+  'Large': { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, house: 40, shack: 12, farmhouse: 10, road: 0 },
+  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, house: 70, shack: 20, farmhouse: 15, road: 0 },
 };
 
 const BUILDING_SIZES: Record<BuildingType, [number, number, number]> = {
@@ -25,7 +26,8 @@ const BUILDING_SIZES: Record<BuildingType, [number, number, number]> = {
   market: [6, 4, 6],
   house: [3, 3, 3],
   shack: [2.5, 2, 2.5],
-  farmhouse: [4, 3, 4]
+  farmhouse: [4, 3, 4],
+  road: [2, 0.12, 2]
 };
 
 export function generateCity(portX: number, portZ: number, scale: PortScale, culture: Culture, seed: number): Building[] {
@@ -60,9 +62,9 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
         height: terrain.height,
         moisture: terrain.moisture,
         occupied: false,
-        isWater: terrain.height < 0,
-        isBeach: terrain.height >= 0 && terrain.height < 1.5,
-        isLand: terrain.height >= 1.5,
+        isWater: terrain.height < SEA_LEVEL,
+        isBeach: terrain.coastFactor > 0.22 || (terrain.height >= SEA_LEVEL && terrain.height < SEA_LEVEL + 2.2),
+        isLand: terrain.height >= SEA_LEVEL && terrain.coastFactor <= 0.22 && terrain.height >= SEA_LEVEL + 0.6,
         distToCenter: Math.sqrt((x - portX)**2 + (z - portZ)**2)
       });
     }
@@ -125,7 +127,7 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
   // 1. Place Docks (needs to be on the water edge)
   for (let i = 0; i < counts.dock; i++) {
     const spot = findSpot(
-      c => c.isWater && c.height > -3 && c.height < 0, 
+      c => c.isWater && c.height > -3 && c.height < SEA_LEVEL,
       BUILDING_SIZES.dock,
       (a, b) => a.distToCenter - b.distToCenter // closest to center
     );
@@ -242,7 +244,7 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
   // 8. Place Shacks (beaches)
   for (let i = 0; i < counts.shack; i++) {
     const spot = findSpot(
-      c => c.isBeach, 
+      c => c.isBeach,
       BUILDING_SIZES.shack
     );
     if (spot) {
@@ -254,5 +256,186 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
     }
   }
 
+  // 9. Generate roads connecting key buildings
+  const roads = generateRoads(grid, buildings, portX, portZ, cellSize, gridRadius, culture);
+  buildings.push(...roads);
+
   return buildings;
+}
+
+// A* pathfinding on the city grid
+function findPath(
+  grid: Array<{ x: number; z: number; height: number; isWater: boolean; isLand: boolean; isBeach: boolean }>,
+  startX: number, startZ: number,
+  endX: number, endZ: number,
+  cellSize: number
+): Array<{ x: number; z: number; height: number }> {
+  const cellMap = new Map<string, typeof grid[0]>();
+  for (const c of grid) {
+    cellMap.set(`${c.x},${c.z}`, c);
+  }
+
+  // Snap to nearest grid cell
+  const snapX = (v: number) => Math.round(v / cellSize) * cellSize;
+  const startCell = cellMap.get(`${snapX(startX)},${snapX(startZ)}`);
+  const endCell = cellMap.get(`${snapX(endX)},${snapX(endZ)}`);
+  if (!startCell || !endCell) return [];
+
+  return findPathAStar(cellMap, startCell, endCell, cellSize);
+}
+
+function findPathAStar(
+  cellMap: Map<string, { x: number; z: number; height: number; isWater: boolean }>,
+  start: { x: number; z: number; height: number },
+  end: { x: number; z: number; height: number },
+  cellSize: number
+): Array<{ x: number; z: number; height: number }> {
+  const key = (x: number, z: number) => `${x},${z}`;
+  const parents = new Map<string, string>();
+  const gScores = new Map<string, number>();
+  const open: string[] = [];
+  const closed = new Set<string>();
+
+  const sk = key(start.x, start.z);
+  const ek = key(end.x, end.z);
+  open.push(sk);
+  gScores.set(sk, 0);
+
+  const heuristic = (x: number, z: number) => Math.abs(x - end.x) + Math.abs(z - end.z);
+
+  const dirs = [
+    [0, cellSize], [0, -cellSize], [cellSize, 0], [-cellSize, 0],
+    [cellSize, cellSize], [cellSize, -cellSize], [-cellSize, cellSize], [-cellSize, -cellSize]
+  ];
+
+  let iterations = 0;
+  while (open.length > 0 && iterations < 3000) {
+    iterations++;
+
+    // Find best
+    let bestIdx = 0;
+    let bestF = Infinity;
+    for (let i = 0; i < open.length; i++) {
+      const k = open[i];
+      const cell = cellMap.get(k);
+      if (!cell) continue;
+      const g = gScores.get(k) ?? Infinity;
+      const f = g + heuristic(cell.x, cell.z);
+      if (f < bestF) { bestF = f; bestIdx = i; }
+    }
+
+    const currentKey = open.splice(bestIdx, 1)[0];
+    if (currentKey === ek) {
+      // Reconstruct
+      const path: Array<{ x: number; z: number; height: number }> = [];
+      let ck: string | undefined = currentKey;
+      while (ck) {
+        const cell = cellMap.get(ck);
+        if (cell) path.unshift({ x: cell.x, z: cell.z, height: cell.height });
+        ck = parents.get(ck);
+      }
+      return path;
+    }
+
+    closed.add(currentKey);
+    const currentCell = cellMap.get(currentKey);
+    if (!currentCell) continue;
+    const currentG = gScores.get(currentKey) ?? 0;
+
+    for (const [dx, dz] of dirs) {
+      const nx = currentCell.x + dx;
+      const nz = currentCell.z + dz;
+      const nk = key(nx, nz);
+      if (closed.has(nk)) continue;
+
+      const neighbor = cellMap.get(nk);
+      if (!neighbor || neighbor.isWater) continue;
+
+      const slope = Math.abs(neighbor.height - currentCell.height);
+      if (slope > 2.5) continue; // too steep for a road
+
+      const isDiag = dx !== 0 && dz !== 0;
+      const cost = (isDiag ? 1.414 : 1) + slope * 2;
+      const newG = currentG + cost;
+
+      if (newG < (gScores.get(nk) ?? Infinity)) {
+        gScores.set(nk, newG);
+        parents.set(nk, currentKey);
+        if (!open.includes(nk)) open.push(nk);
+      }
+    }
+  }
+
+  return []; // no path found
+}
+
+function generateRoads(
+  grid: Array<{ x: number; z: number; height: number; isWater: boolean; isLand: boolean; isBeach: boolean; occupied: boolean }>,
+  buildings: Building[],
+  portX: number, portZ: number,
+  cellSize: number,
+  _gridRadius: number,
+  culture: Culture
+): Building[] {
+  const roads: Building[] = [];
+  const roadCells = new Set<string>();
+
+  const docks = buildings.filter(b => b.type === 'dock');
+  const markets = buildings.filter(b => b.type === 'market');
+  const warehouses = buildings.filter(b => b.type === 'warehouse');
+  const forts = buildings.filter(b => b.type === 'fort');
+  const farmhouses = buildings.filter(b => b.type === 'farmhouse');
+
+  // Find the "town center" - first market, or port center
+  const center = markets[0]
+    ? { x: markets[0].position[0], z: markets[0].position[2] }
+    : { x: portX, z: portZ };
+
+  // Pairs to connect
+  const pairs: Array<[{ x: number; z: number }, { x: number; z: number }]> = [];
+
+  // Docks to center
+  for (const dock of docks) {
+    pairs.push([{ x: dock.position[0], z: dock.position[2] }, center]);
+  }
+
+  // Warehouses to center
+  for (const wh of warehouses) {
+    pairs.push([{ x: wh.position[0], z: wh.position[2] }, center]);
+  }
+
+  // Fort to center
+  for (const fort of forts) {
+    pairs.push([{ x: fort.position[0], z: fort.position[2] }, center]);
+  }
+
+  // Farmhouses to center (these create outlying roads)
+  for (const farm of farmhouses) {
+    pairs.push([center, { x: farm.position[0], z: farm.position[2] }]);
+  }
+
+  // Road dimensions: flat and wide
+  const roadWidth = culture === 'European' ? 2.2 : 1.8;
+  const roadHeight = 0.12;
+  let roadIdx = 0;
+
+  for (const [from, to] of pairs) {
+    const path = findPath(grid, from.x, from.z, to.x, to.z, cellSize);
+
+    for (const cell of path) {
+      const ck = `${cell.x},${cell.z}`;
+      if (roadCells.has(ck)) continue; // don't duplicate
+      roadCells.add(ck);
+
+      roads.push({
+        id: `road_${roadIdx++}`,
+        type: 'road',
+        position: [cell.x, cell.height + 0.05, cell.z],
+        rotation: 0,
+        scale: [roadWidth, roadHeight, roadWidth]
+      });
+    }
+  }
+
+  return roads;
 }

@@ -1,8 +1,11 @@
-import { useRef, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight } from '../utils/terrain';
+import { getCrabData, getCollectedCrabs, collectCrabAt } from './World';
+
+const CRAB_COLLECT_RADIUS_SQ = 1.5 * 1.5; // 1.5 units
 
 export function Player() {
   const group = useRef<THREE.Group>(null);
@@ -11,12 +14,15 @@ export function Player() {
   const leftArm = useRef<THREE.Mesh>(null);
   const rightArm = useRef<THREE.Mesh>(null);
   
-  const { walkingPos, walkingRot, setWalkingPos, setWalkingRot, playerMode, paused } = useGameStore();
+  const setWalkingTransform = useGameStore((state) => state.setWalkingTransform);
+  const playerMode = useGameStore((state) => state.playerMode);
+  const paused = useGameStore((state) => state.paused);
+  const viewMode = useGameStore((state) => state.viewMode);
   
   const keys = useRef({ w: false, a: false, s: false, d: false });
   const isMoving = useRef(false);
 
-  useState(() => {
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = true;
     };
@@ -29,10 +35,19 @@ export function Player() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  });
+  }, []);
+
+  useEffect(() => {
+    if (!group.current || playerMode !== 'walking') return;
+    const { walkingPos, walkingRot } = useGameStore.getState();
+    group.current.position.set(walkingPos[0], walkingPos[1], walkingPos[2]);
+    group.current.rotation.y = walkingRot;
+  }, [playerMode]);
 
   useFrame((state, delta) => {
     if (playerMode !== 'walking' || !group.current || paused) return;
+    const store = useGameStore.getState();
+    const { walkingPos, walkingRot } = store;
 
     const speed = 10 * delta;
     const turnSpeed = 3 * delta;
@@ -57,7 +72,6 @@ export function Player() {
       while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
       
       const newRot = walkingRot + rotDiff * turnSpeed * 5;
-      setWalkingRot(newRot);
       group.current.rotation.y = newRot;
 
       // Update position
@@ -67,11 +81,29 @@ export function Player() {
       
       // Prevent walking deep underwater
       if (newY > -2) {
-        setWalkingPos([newX, newY, newZ]);
+        const nextPos: [number, number, number] = [newX, newY, newZ];
+        setWalkingTransform({ pos: nextPos, rot: newRot });
+        group.current.position.set(nextPos[0], nextPos[1], nextPos[2]);
       }
+    } else {
+      group.current.position.set(walkingPos[0], walkingPos[1], walkingPos[2]);
+      group.current.rotation.y = walkingRot;
     }
 
-    group.current.position.set(walkingPos[0], walkingPos[1], walkingPos[2]);
+    // Check crab collection
+    const currentPos = store.walkingPos;
+    const crabs = getCrabData();
+    const collected = getCollectedCrabs();
+    for (let i = 0; i < crabs.length; i++) {
+      if (collected.has(i)) continue;
+      const dx = crabs[i].position[0] - currentPos[0];
+      const dz = crabs[i].position[2] - currentPos[2];
+      if (dx * dx + dz * dz < CRAB_COLLECT_RADIUS_SQ) {
+        collectCrabAt(i);
+        store.collectCrab();
+        break; // one per frame max
+      }
+    }
 
     // Animate limbs
     if (isMoving.current) {
@@ -86,12 +118,12 @@ export function Player() {
       if (leftArm.current) leftArm.current.rotation.x = 0;
       if (rightArm.current) rightArm.current.rotation.x = 0;
     }
-  });
+  }, -2);
 
   if (playerMode !== 'walking') return null;
 
   return (
-    <group ref={group}>
+    <group ref={group} visible={viewMode !== 'firstperson'}>
       {/* Head */}
       <mesh position={[0, 1.8, 0]} castShadow>
         <sphereGeometry args={[0.2, 16, 16]} />

@@ -1,6 +1,10 @@
-import { getTerrainData } from './terrain';
+import { getTerrainData, setPlacedArchetypes } from './terrain';
 import { Commodity } from '../store/gameStore';
 import { generateCity } from './cityGenerator';
+import {
+  PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
+  WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
+} from './portArchetypes';
 
 export type Culture = 'Indian Ocean' | 'European' | 'Caribbean';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
@@ -17,20 +21,41 @@ export interface MapConfig {
   seed: number;
   worldSize: number;
   portOverrides: PortOverride[];
+  /** If set, only generate this port (dev mode) */
+  soloPort?: string;
+}
+
+// Build the default override list from CORE_PORTS
+function corePortsToOverrides(): PortOverride[] {
+  return CORE_PORTS.map(p => ({
+    id: p.id,
+    name: p.name,
+    culture: p.culture,
+    scale: p.scale,
+  }));
+}
+
+/** Pick a single random port based on seed */
+export function singlePortConfig(seed: number, worldSize: number): MapConfig {
+  const portIndex = seed % CORE_PORTS.length;
+  const port = CORE_PORTS[portIndex];
+  return {
+    seed,
+    worldSize,
+    portOverrides: [{
+      id: port.id,
+      name: port.name,
+      culture: port.culture,
+      scale: port.scale,
+    }],
+    soloPort: port.id,
+  };
 }
 
 export const DEFAULT_MAP_CONFIG: MapConfig = {
   seed: 1612,
-  worldSize: 2000,
-  portOverrides: [
-    { id: 'goa', name: 'Goa', culture: 'European', scale: 'Large' },
-    { id: 'hormuz', name: 'Hormuz', culture: 'Indian Ocean', scale: 'Medium' },
-    { id: 'malacca', name: 'Malacca', culture: 'Indian Ocean', scale: 'Very Large' },
-    { id: 'aden', name: 'Aden', culture: 'Indian Ocean', scale: 'Medium' },
-    { id: 'zanzibar', name: 'Zanzibar', culture: 'Indian Ocean', scale: 'Small' },
-    { id: 'macau', name: 'Macau', culture: 'European', scale: 'Medium' },
-    { id: 'mombasa', name: 'Mombasa', culture: 'Indian Ocean', scale: 'Small' }
-  ]
+  worldSize: 300,
+  portOverrides: corePortsToOverrides(),
 };
 
 // A simple deterministic PRNG based on seed
@@ -49,138 +74,235 @@ interface ScoredLocation {
   score: number;
 }
 
-export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
-  const prng = mulberry32(config.seed);
-  
-  // 1. Find Candidate Locations
-  // We scan a grid across the world size to find coastlines
-  const candidates: ScoredLocation[] = [];
-  const step = 20; // Check every 20 units
-  const halfSize = config.worldSize / 2;
-  
-  for (let x = -halfSize; x < halfSize; x += step) {
-    for (let z = -halfSize; z < halfSize; z += step) {
-      const terrain = getTerrainData(x, z);
-      
-      // Look for coastlines (elevation slightly above water level 0)
-      if (terrain.height > 0 && terrain.height < 2) {
-        // Evaluate Harbor Suitability
-        // Check surrounding points in a radius to see if it's a bay/harbor
-        let landCount = 0;
-        let waterCount = 0;
-        const radius = 30;
-        const samples = 8;
-        
-        for (let i = 0; i < samples; i++) {
-          const angle = (i / samples) * Math.PI * 2;
-          const cx = x + Math.cos(angle) * radius;
-          const cz = z + Math.sin(angle) * radius;
-          const cTerrain = getTerrainData(cx, cz);
-          if (cTerrain.height > 0) landCount++;
-          else waterCount++;
-        }
-        
-        // A perfect harbor is surrounded by land on 3 sides (e.g. 5-6 land, 2-3 water)
-        let harborScore = 0;
-        if (landCount >= 4 && landCount <= 6) {
-          harborScore = 50; // Great harbor
-        } else if (landCount === 3 || landCount === 7) {
-          harborScore = 20; // Okay harbor
-        } else if (landCount < 3) {
-          harborScore = -50; // Peninsula / exposed
-        } else {
-          harborScore = -100; // Landlocked (shouldn't happen on coast, but just in case)
-        }
-        
-        // Fertility Score (Moisture)
-        const fertilityScore = terrain.moisture * 30;
-        
-        // Flatness Score (Avoid steep cliffs nearby)
-        let flatnessScore = 0;
-        const inlandTerrain = getTerrainData(x + 10, z + 10);
-        if (inlandTerrain.height > 10) {
-          flatnessScore = -50; // Too steep
-        } else {
-          flatnessScore = 20; // Nice and flat
-        }
-        
-        const totalScore = harborScore + fertilityScore + flatnessScore;
-        
-        if (totalScore > 0) {
-          candidates.push({ x, z, score: totalScore });
-        }
-      }
-    }
+/** Look up the PortDefinition for a given port id */
+function findPortDef(id: string): PortDefinition | undefined {
+  return CORE_PORTS.find(p => p.id === id);
+}
+
+/**
+ * Distribute port positions across the world using a relaxed grid approach.
+ * For ports with archetypes, we place them first at spread-out positions,
+ * then register their archetypes so terrain conforms to them.
+ */
+function distributePortPositions(
+  overrides: PortOverride[],
+  worldSize: number,
+  prng: () => number,
+  soloPort?: string,
+): { id: string; x: number; z: number; def?: PortDefinition }[] {
+  const halfSize = worldSize / 2;
+  const minDistance = Math.min(250, worldSize / 4);
+  const placed: { id: string; x: number; z: number; def?: PortDefinition }[] = [];
+
+  // If solo mode, place just one port near center
+  if (soloPort) {
+    const def = findPortDef(soloPort);
+    placed.push({ id: soloPort, x: 0, z: 0, def });
+    return placed;
   }
-  
-  // Sort candidates by score descending
-  candidates.sort((a, b) => b.score - a.score);
-  
-  // 2. Place Ports
-  const generatedPorts = [];
-  const minDistance = 150; // Minimum distance between ports
-  
-  for (let i = 0; i < config.portOverrides.length; i++) {
-    const override = config.portOverrides[i];
-    let placed = false;
-    
+
+  // Distribute ports in a relaxed pattern across the world
+  for (const override of overrides) {
+    const def = findPortDef(override.id);
+
     if (override.forcedPosition) {
-      // Use forced position
-      generatedPorts.push({
-        id: override.id,
-        name: override.name,
-        culture: override.culture,
-        scale: override.scale,
-        position: override.forcedPosition,
-        inventory: generateInventory(prng),
-        prices: generatePrices(prng),
-        buildings: generateCity(override.forcedPosition[0], override.forcedPosition[2], override.scale, override.culture, config.seed + i)
-      });
+      placed.push({ id: override.id, x: override.forcedPosition[0], z: override.forcedPosition[2], def });
       continue;
     }
-    
-    // Find the best candidate that is far enough from existing ports
-    for (let j = 0; j < candidates.length; j++) {
-      const candidate = candidates[j];
-      
-      let tooClose = false;
-      for (const port of generatedPorts) {
-        const dist = Math.sqrt(
-          Math.pow(port.position[0] - candidate.x, 2) + 
-          Math.pow(port.position[2] - candidate.z, 2)
-        );
-        if (dist < minDistance) {
-          tooClose = true;
-          break;
+
+    // Try random positions, pick one far enough from existing ports
+    let bestX = 0, bestZ = 0, bestMinDist = 0;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const x = (prng() - 0.5) * worldSize * 0.85;
+      const z = (prng() - 0.5) * worldSize * 0.85;
+
+      let minDist = Infinity;
+      for (const p of placed) {
+        const d = Math.sqrt((p.x - x) ** 2 + (p.z - z) ** 2);
+        if (d < minDist) minDist = d;
+      }
+
+      if (minDist > bestMinDist) {
+        bestMinDist = minDist;
+        bestX = x;
+        bestZ = z;
+      }
+
+      if (minDist > minDistance) break;
+    }
+
+    placed.push({ id: override.id, x: bestX, z: bestZ, def });
+  }
+
+  return placed;
+}
+
+export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
+  const prng = mulberry32(config.seed);
+
+  // 1. Distribute port positions
+  const positions = distributePortPositions(
+    config.portOverrides, config.worldSize, prng, config.soloPort
+  );
+
+  // 2. Register archetype shapes with terrain system
+  const archetypePlacements = positions
+    .filter(p => p.def && p.def.geography !== 'archipelago')
+    .map(p => ({ def: p.def!, cx: p.x, cz: p.z }));
+  setPlacedArchetypes(archetypePlacements);
+
+  // 3. For each port, find the best coastal spot near its distributed position.
+  //    For archetype ports, the terrain now conforms to them, so we search within
+  //    the archetype radius for a good coastline spot.
+  const generatedPorts = [];
+
+  for (const pos of positions) {
+    const override = config.portOverrides.find(o => o.id === pos.id);
+    if (!override) continue;
+
+    let portX = pos.x;
+    let portZ = pos.z;
+
+    // Search for a good coastal position near the distributed position
+    const searchRadius = pos.def && pos.def.geography !== 'archipelago'
+      ? ARCHETYPE_RADIUS * 0.6  // archetype ports: search within their shaped area
+      : 200;                     // random ports: wider search
+
+    let bestScore = -Infinity;
+    let bestX = portX, bestZ = portZ;
+    const step = 15;
+
+    for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
+      for (let dz = -searchRadius; dz <= searchRadius; dz += step) {
+        const sx = portX + dx;
+        const sz = portZ + dz;
+        const terrain = getTerrainData(sx, sz);
+
+        // Look for coastlines
+        if (terrain.height > 0 && terrain.height < 3) {
+          // Harbor suitability check
+          let landCount = 0;
+          const radius = 25;
+          const samples = 8;
+          for (let i = 0; i < samples; i++) {
+            const angle = (i / samples) * Math.PI * 2;
+            const cx = sx + Math.cos(angle) * radius;
+            const cz = sz + Math.sin(angle) * radius;
+            if (getTerrainData(cx, cz).height > 0) landCount++;
+          }
+
+          let score = 0;
+          if (landCount >= 4 && landCount <= 6) score = 50;
+          else if (landCount === 3 || landCount === 7) score = 20;
+          else if (landCount < 3) score = -30;
+          else score = -80;
+
+          score += terrain.moisture * 20;
+
+          // Prefer positions closer to the distributed center for archetype ports
+          if (pos.def && pos.def.geography !== 'archipelago') {
+            const distFromCenter = Math.sqrt(dx * dx + dz * dz);
+            score -= distFromCenter * 0.1;
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestX = sx;
+            bestZ = sz;
+          }
         }
       }
-      
-      if (!tooClose) {
-        // Place port here
-        generatedPorts.push({
-          id: override.id,
-          name: override.name,
-          culture: override.culture,
-          scale: override.scale,
-          position: [candidate.x, 0.5, candidate.z] as [number, number, number],
-          inventory: generateInventory(prng),
-          prices: generatePrices(prng),
-          buildings: generateCity(candidate.x, candidate.z, override.scale, override.culture, config.seed + i)
-        });
-        
-        // Remove candidate so it's not reused
-        candidates.splice(j, 1);
-        placed = true;
-        break;
+    }
+
+    // If we found a valid coast, use it; otherwise fall back to distributed position
+    if (bestScore > -Infinity) {
+      portX = bestX;
+      portZ = bestZ;
+    }
+
+    const portIdx = generatedPorts.length;
+    generatedPorts.push({
+      id: override.id,
+      name: override.name,
+      culture: override.culture,
+      scale: override.scale,
+      position: [portX, 0.5, portZ] as [number, number, number],
+      inventory: generateInventory(prng),
+      prices: generatePrices(prng),
+      buildings: generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx),
+    });
+  }
+
+  return generatedPorts;
+}
+
+/** Generate a map config for dev mode — a single port centered in a medium world */
+export function devModeConfig(portId: string, seed: number): MapConfig {
+  const def = findPortDef(portId);
+  if (!def) {
+    return { ...DEFAULT_MAP_CONFIG, seed };
+  }
+  return {
+    seed,
+    worldSize: 1000,
+    portOverrides: [{
+      id: def.id,
+      name: def.name,
+      culture: def.culture,
+      scale: def.scale,
+    }],
+    soloPort: portId,
+  };
+}
+
+/**
+ * Find a safe water spawn point near the first port.
+ * Searches in expanding rings for open water (height between -3 and -8,
+ * i.e. deep enough to sail but not abyssal).
+ */
+export function findSafeSpawn(ports: { position: [number, number, number] }[]): [number, number, number] {
+  // Pick a random port as the starting anchor
+  const anchor = ports.length > 0
+    ? ports[Math.floor(Math.random() * ports.length)].position
+    : [0, 0.5, 0] as [number, number, number];
+
+  // Search in expanding rings
+  for (let radius = 20; radius < 400; radius += 10) {
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+      const x = anchor[0] + Math.cos(angle) * radius;
+      const z = anchor[2] + Math.sin(angle) * radius;
+      const terrain = getTerrainData(x, z);
+
+      // Want navigable water: not too shallow, not too deep
+      if (terrain.height < -2 && terrain.height > -15) {
+        // Verify it's not a tiny pocket — check a few nearby points
+        let allWater = true;
+        for (let i = 0; i < 4; i++) {
+          const checkAngle = (i / 4) * Math.PI * 2;
+          const cx = x + Math.cos(checkAngle) * 10;
+          const cz = z + Math.sin(checkAngle) * 10;
+          if (getTerrainData(cx, cz).height > -1) {
+            allWater = false;
+            break;
+          }
+        }
+        if (allWater) {
+          return [x, 0, z];
+        }
       }
     }
-    
-    if (!placed) {
-      console.warn(`Could not find a suitable location for port: ${override.name}`);
+  }
+
+  // Fallback: just find any water
+  for (let x = -200; x <= 200; x += 20) {
+    for (let z = -200; z <= 200; z += 20) {
+      if (getTerrainData(x, z).height < -2) {
+        return [x, 0, z];
+      }
     }
   }
-  
-  return generatedPorts;
+
+  return [0, 0, 0]; // absolute fallback
 }
 
 function generateInventory(prng: () => number): Record<Commodity, number> {

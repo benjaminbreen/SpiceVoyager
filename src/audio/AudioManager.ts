@@ -1,0 +1,139 @@
+// Music manager — splash track + rotating overworld playlist.
+// Crossfades between tracks. Browsers require a user gesture before
+// audio can play, so we pre-create elements and retry .play().
+
+const OVERWORLD_TRACKS = [
+  { src: '/music/persian-dawn.mp3',        gain: 0.2  }, // mastered hot
+  { src: '/music/cobblestone-echoes.mp3',   gain: 0.35 },
+  { src: '/music/sea-of-tiny-worlds.mp3',   gain: 0.35 },
+  { src: '/music/chiptune-worldmap.mp3',    gain: 0.35 },
+  { src: '/music/ocean-ambient.mp3',        gain: 0.3  },
+  { src: '/music/shiraz-sunset.mp3',       gain: 0.35 },
+];
+
+class AudioManager {
+  private splashTrack: HTMLAudioElement | null = null;
+  private overworldTrack: HTMLAudioElement | null = null;
+  private overworldTimer: ReturnType<typeof setTimeout> | null = null;
+  private splashPlaying = false;
+  private musicVolume = 0.15;
+  private trackIndex = -1;
+  private transitioning = false;
+
+  playSplash() {
+    if (this.splashPlaying) return;
+    if (!this.splashTrack) {
+      this.splashTrack = new Audio('/music/world-map-other-sky.mp3');
+      this.splashTrack.loop = true;
+      this.splashTrack.volume = this.musicVolume;
+    }
+    this.splashTrack.play().then(() => {
+      this.splashPlaying = true;
+    }).catch(() => {});
+  }
+
+  transitionToOverworld() {
+    // Fade out splash
+    if (this.splashTrack) {
+      this.fadeOut(this.splashTrack);
+      this.splashTrack = null;
+      this.splashPlaying = false;
+    }
+
+    // Shuffle starting track
+    this.trackIndex = Math.floor(Math.random() * OVERWORLD_TRACKS.length);
+
+    // Start first overworld track after delay
+    if (this.overworldTimer) clearTimeout(this.overworldTimer);
+    this.overworldTimer = setTimeout(() => {
+      this.playCurrentTrack();
+      this.overworldTimer = null;
+    }, 10_000);
+  }
+
+  private playCurrentTrack() {
+    const entry = OVERWORLD_TRACKS[this.trackIndex];
+    const track = new Audio(entry.src);
+    track.loop = false;
+    track.volume = 0;
+    this.overworldTrack = track;
+
+    // When track ends, crossfade to next
+    track.addEventListener('ended', () => {
+      if (this.overworldTrack === track) {
+        this.advanceTrack();
+      }
+    });
+
+    track.play().catch(() => {});
+    this.fadeIn(track, this.musicVolume * entry.gain);
+  }
+
+  private advanceTrack() {
+    if (this.transitioning) return;
+    this.transitioning = true;
+
+    const old = this.overworldTrack;
+    // Fade out current
+    if (old) {
+      this.fadeOut(old, 3, () => {
+        old.pause();
+        old.src = '';
+      });
+    }
+
+    // Move to next track
+    this.trackIndex = (this.trackIndex + 1) % OVERWORLD_TRACKS.length;
+
+    // Brief gap, then fade in next
+    setTimeout(() => {
+      this.playCurrentTrack();
+      this.transitioning = false;
+    }, 2000);
+  }
+
+  // ── Fade helpers ──────────────────────────────────────────────────
+
+  private fadeIn(el: HTMLAudioElement, target: number, duration = 2.5) {
+    const step = target / (duration / 0.05);
+    const iv = setInterval(() => {
+      if (el.volume < target - step) {
+        el.volume += step;
+      } else {
+        el.volume = target;
+        clearInterval(iv);
+      }
+    }, 50);
+  }
+
+  private fadeOut(el: HTMLAudioElement, duration = 1.5, onDone?: () => void) {
+    const step = el.volume / (duration / 0.05);
+    const iv = setInterval(() => {
+      if (el.volume > step) {
+        el.volume -= step;
+      } else {
+        el.volume = 0;
+        el.pause();
+        clearInterval(iv);
+        onDone?.();
+      }
+    }, 50);
+  }
+
+  // ── Volume control ────────────────────────────────────────────────
+
+  setMusicVolume(v: number) {
+    this.musicVolume = Math.max(0, Math.min(1, v));
+    if (this.splashTrack) this.splashTrack.volume = this.musicVolume;
+    if (this.overworldTrack) {
+      const entry = OVERWORLD_TRACKS[this.trackIndex];
+      if (entry) this.overworldTrack.volume = this.musicVolume * entry.gain;
+    }
+  }
+
+  getMusicVolume() {
+    return this.musicVolume;
+  }
+}
+
+export const audioManager = new AudioManager();

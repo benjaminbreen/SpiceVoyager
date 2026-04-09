@@ -1,9 +1,23 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
+
+// Check if a pixel is on a coastline by sampling neighbors
+function isCoastline(x: number, z: number, step: number): boolean {
+  const center = getTerrainData(x, z);
+  if (center.height < -1 || center.height > 3) return false; // only near sea level
+  const offsets = [[-step, 0], [step, 0], [0, -step], [0, step]];
+  const isLand = center.height >= SEA_LEVEL;
+  for (const [dx, dz] of offsets) {
+    const neighbor = getTerrainData(x + dx, z + dz);
+    if ((neighbor.height >= SEA_LEVEL) !== isLand) return true;
+  }
+  return false;
+}
 
 export function Minimap({ onClick }: { onClick?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -27,8 +41,15 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
     const offCtx = offscreenCanvasRef.current.getContext('2d')!;
 
     let animationFrameId: number;
+    let lastFrameTime = 0;
+    const FRAME_INTERVAL = 100; // ms — ~10fps is plenty for a minimap
 
-    const render = () => {
+    const render = (now: number = 0) => {
+      if (now - lastFrameTime < FRAME_INTERVAL) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrameTime = now;
       const state = useGameStore.getState();
       const activePos = state.playerMode === 'ship' ? state.playerPos : state.walkingPos;
       const activeRot = state.playerMode === 'ship' ? state.playerRot : state.walkingRot;
@@ -56,13 +77,21 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
             const worldX = startWorldX + x * unitsPerPixel;
             const worldZ = startWorldZ + y * unitsPerPixel;
             const { color } = getTerrainData(worldX, worldZ);
-            
+
             const idx = (y * pixelsAcross + x) * 4;
-            // Convert 0-1 RGB to 0-255
-            imgData.data[idx] = color[0] * 255;
-            imgData.data[idx+1] = color[1] * 255;
-            imgData.data[idx+2] = color[2] * 255;
-            imgData.data[idx+3] = 255; // Alpha
+
+            // Coastline detection — draw dark outline at land/sea borders
+            if (isCoastline(worldX, worldZ, unitsPerPixel)) {
+              imgData.data[idx] = 40;
+              imgData.data[idx+1] = 35;
+              imgData.data[idx+2] = 25;
+              imgData.data[idx+3] = 255;
+            } else {
+              imgData.data[idx] = color[0] * 255;
+              imgData.data[idx+1] = color[1] * 255;
+              imgData.data[idx+2] = color[2] * 255;
+              imgData.data[idx+3] = 255;
+            }
           }
         }
         offCtx.putImageData(imgData, 0, 0);
@@ -91,9 +120,13 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
           const mapX = MAP_SIZE/2 + (dx / unitsPerPixel);
           const mapY = MAP_SIZE/2 + (dz / unitsPerPixel);
           
+          // Port size based on scale
+          const scaleMap: Record<string, number> = { 'Small': 3, 'Medium': 4, 'Large': 5, 'Very Large': 6 };
+          const portRadius = scaleMap[port.scale] || 4;
+
           // Draw port marker
           ctx.beginPath();
-          ctx.arc(mapX, mapY, 4, 0, Math.PI * 2);
+          ctx.arc(mapX, mapY, portRadius, 0, Math.PI * 2);
           ctx.fillStyle = '#ff4444';
           ctx.fill();
           ctx.strokeStyle = '#ffffff';
