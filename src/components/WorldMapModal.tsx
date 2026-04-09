@@ -6,22 +6,15 @@ import { X, Navigation, Anchor, Clock, AlertTriangle } from 'lucide-react';
 import * as d3 from 'd3';
 import { feature } from 'topojson-client';
 import type { Topology, Objects } from 'topojson-specification';
-
-// Real-world lat/lng for each port ID
-const PORT_COORDS: Record<string, [number, number]> = {
-  goa:      [73.88, 15.40],
-  hormuz:   [56.27, 27.06],
-  malacca:  [102.25, 2.19],
-  aden:     [45.03, 12.80],
-  zanzibar: [39.19, -6.17],
-  macau:    [113.54, 22.20],
-  mombasa:  [39.66, -4.04],
-  calicut:  [75.78, 11.25],
-  surat:    [72.83, 21.17],
-  muscat:   [58.59, 23.61],
-  mocha:    [43.25, 13.32],
-  bantam:   [106.15, -6.02],
-};
+import {
+  canDirectlySail,
+  getReachableWorldPortIds,
+  WORLD_PORT_COORDS,
+  WORLD_PORTS,
+  estimateSeaTravel,
+  getWorldPortById,
+  resolveCampaignPortId,
+} from '../utils/worldPorts';
 
 interface WorldMapModalProps {
   onClose: () => void;
@@ -33,40 +26,35 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const [selectedPort, setSelectedPort] = useState<string | null>(null);
   const [topoData, setTopoData] = useState<any>(null);
 
-  const ports = useGameStore(s => s.ports);
-  const discoveredPorts = useGameStore(s => s.discoveredPorts);
-  const playerPos = useGameStore(s => s.playerPos);
   const dayCount = useGameStore(s => s.dayCount);
   const fastTravel = useGameStore(s => s.fastTravel);
-
-  // Find which port the player is nearest to
-  const nearestPortId = useMemo(() => {
-    let nearest = '';
-    let minDist = Infinity;
-    for (const port of ports) {
-      const dx = port.position[0] - playerPos[0];
-      const dz = port.position[2] - playerPos[2];
-      const dist = dx * dx + dz * dz;
-      if (dist < minDist) {
-        minDist = dist;
-        nearest = port.id;
-      }
-    }
-    return nearest;
-  }, [ports, playerPos]);
+  const worldSeed = useGameStore(s => s.worldSeed);
+  const devSoloPort = useGameStore(s => s.devSoloPort);
+  const currentWorldPortId = useGameStore(s => s.currentWorldPortId);
+  const worldPorts = WORLD_PORTS;
+  const nearestPortId = resolveCampaignPortId({ worldSeed, devSoloPort, currentWorldPortId });
+  const reachablePortIds = useMemo(() => getReachableWorldPortIds(nearestPortId), [nearestPortId]);
+  const reachablePorts = useMemo(
+    () => worldPorts.filter((port) => reachablePortIds.includes(port.id)),
+    [worldPorts, reachablePortIds]
+  );
 
   // Calculate travel info for selected port
   const travelInfo = useMemo(() => {
-    if (!selectedPort) return null;
-    const port = ports.find(p => p.id === selectedPort);
-    if (!port) return null;
-    const dx = port.position[0] - playerPos[0];
-    const dz = port.position[2] - playerPos[2];
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    const days = Math.max(1, Math.round(dist / 80));
-    const risk = dist > 600 ? 'High' : dist > 300 ? 'Moderate' : 'Low';
-    return { days, risk, port };
-  }, [selectedPort, ports, playerPos]);
+    if (!selectedPort || selectedPort === nearestPortId || !canDirectlySail(nearestPortId, selectedPort)) return null;
+    const port = getWorldPortById(selectedPort);
+    const voyage = estimateSeaTravel(nearestPortId, selectedPort);
+    if (!port || !voyage) return null;
+    return { ...voyage, port };
+  }, [selectedPort, nearestPortId]);
+
+  useEffect(() => {
+    setSelectedPort((current) => {
+      if (current === nearestPortId) return current;
+      if (current && canDirectlySail(nearestPortId, current)) return current;
+      return nearestPortId;
+    });
+  }, [nearestPortId, reachablePortIds]);
 
   // Load TopoJSON
   useEffect(() => {
@@ -124,9 +112,15 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       .attr('stroke-width', 0.5);
 
     // Route line from player to selected port
-    if (selectedPort && PORT_COORDS[selectedPort] && PORT_COORDS[nearestPortId]) {
-      const from = projection(PORT_COORDS[nearestPortId]);
-      const to = projection(PORT_COORDS[selectedPort]);
+    if (
+      selectedPort &&
+      selectedPort !== nearestPortId &&
+      canDirectlySail(nearestPortId, selectedPort) &&
+      WORLD_PORT_COORDS[selectedPort] &&
+      WORLD_PORT_COORDS[nearestPortId]
+    ) {
+      const from = projection(WORLD_PORT_COORDS[nearestPortId]);
+      const to = projection(WORLD_PORT_COORDS[selectedPort]);
       if (from && to) {
         // Dashed route line
         svg.append('line')
@@ -139,27 +133,14 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
     }
 
     // Port markers
-    const activePorts = ports.filter(p => PORT_COORDS[p.id]);
-    activePorts.forEach(port => {
-      const coords = PORT_COORDS[port.id];
-      if (!coords) return;
-      const projected = projection(coords);
+    worldPorts.forEach(port => {
+      const projected = projection(port.coords);
       if (!projected) return;
 
-      const isDiscovered = discoveredPorts.includes(port.id);
       const isSelected = selectedPort === port.id;
       const isPlayer = port.id === nearestPortId;
-
-      if (!isDiscovered) {
-        // Undiscovered: dim dot
-        svg.append('circle')
-          .attr('cx', projected[0]).attr('cy', projected[1])
-          .attr('r', 3)
-          .attr('fill', 'rgba(255,255,255,0.1)')
-          .attr('stroke', 'rgba(255,255,255,0.05)')
-          .attr('stroke-width', 1);
-        return;
-      }
+      const isReachable = reachablePortIds.includes(port.id);
+      const isInteractive = isPlayer || isReachable;
 
       // Glow ring for selected
       if (isSelected) {
@@ -185,32 +166,38 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       // Port dot
       svg.append('circle')
         .attr('cx', projected[0]).attr('cy', projected[1])
-        .attr('r', isSelected ? 5 : 4)
-        .attr('fill', isPlayer ? '#60a5fa' : isSelected ? '#fbbf24' : '#e2c87a')
-        .attr('stroke', 'rgba(255,255,255,0.6)')
+        .attr('r', isPlayer ? 4.5 : isReachable ? (isSelected ? 5 : 4) : 3)
+        .attr('fill', isPlayer ? '#60a5fa' : isSelected ? '#fbbf24' : isReachable ? '#e2c87a' : 'rgba(148,163,184,0.4)')
+        .attr('stroke', isInteractive ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.12)')
         .attr('stroke-width', 1)
-        .attr('cursor', 'pointer')
+        .attr('cursor', isInteractive ? 'pointer' : 'default')
         .on('mouseenter', () => setHoveredPort(port.id))
         .on('mouseleave', () => setHoveredPort(null))
-        .on('click', () => setSelectedPort(port.id === selectedPort ? null : port.id));
+        .on('click', () => {
+          if (!isInteractive) return;
+          setSelectedPort(port.id === selectedPort ? null : port.id);
+        });
 
       // Label
       svg.append('text')
         .attr('x', projected[0] + 10)
         .attr('y', projected[1] + 4)
-        .attr('fill', isPlayer ? '#93bbfc' : isSelected ? '#fbbf24' : 'rgba(226,200,122,0.7)')
+        .attr('fill', isPlayer ? '#93bbfc' : isSelected ? '#fbbf24' : isReachable ? 'rgba(226,200,122,0.7)' : 'rgba(148,163,184,0.42)')
         .attr('font-size', '11px')
         .attr('font-weight', '600')
         .attr('font-family', '"Inter", system-ui, sans-serif')
-        .attr('cursor', 'pointer')
+        .attr('cursor', isInteractive ? 'pointer' : 'default')
         .text(port.name)
-        .on('click', () => setSelectedPort(port.id === selectedPort ? null : port.id));
+        .on('click', () => {
+          if (!isInteractive) return;
+          setSelectedPort(port.id === selectedPort ? null : port.id);
+        });
     });
 
-  }, [topoData, ports, discoveredPorts, selectedPort, nearestPortId, playerPos]);
+  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId]);
 
   const handleSetSail = () => {
-    if (!selectedPort) return;
+    if (!selectedPort || !canDirectlySail(nearestPortId, selectedPort)) return;
     sfxSail();
     fastTravel(selectedPort);
     onClose();
@@ -225,7 +212,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const nearestPort = ports.find(p => p.id === nearestPortId);
+  const nearestPort = getWorldPortById(nearestPortId);
 
   return (
     <motion.div
@@ -257,7 +244,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
           {/* Hover tooltip */}
           <AnimatePresence>
             {hoveredPort && hoveredPort !== selectedPort && (() => {
-              const port = ports.find(p => p.id === hoveredPort);
+              const port = getWorldPortById(hoveredPort);
               if (!port) return null;
               return (
                 <motion.div
@@ -288,7 +275,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
           <div className="px-4 pt-4 pb-3 border-b border-[#2a2d3a]/30">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-slate-500">
-                Navigation
+                Sea Lanes
               </span>
               <button
                 onClick={() => { sfxClose(); onClose(); }}
@@ -306,15 +293,16 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
               </span>
             </div>
             <div className="text-slate-600 text-[10px] mt-1">Day {dayCount}</div>
+            <div className="text-slate-600 text-[10px] mt-1">
+              Direct routes from this harbor
+            </div>
           </div>
 
           {/* Port list */}
           <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
-            {ports
-              .filter(p => discoveredPorts.includes(p.id) && PORT_COORDS[p.id])
-              .map(port => {
+            {reachablePorts.map(port => {
                 const isSelected = selectedPort === port.id;
-                const isPlayer = port.id === nearestPortId;
+                const travel = estimateSeaTravel(nearestPortId, port.id);
                 return (
                   <button
                     key={port.id}
@@ -327,29 +315,28 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                   >
                     <div className="flex items-center gap-2">
                       <div className={`w-1.5 h-1.5 rounded-full ${
-                        isPlayer ? 'bg-blue-400' : isSelected ? 'bg-amber-400' : 'bg-slate-600'
+                        isSelected ? 'bg-amber-400' : 'bg-slate-600'
                       }`} />
                       <span className={`text-xs font-medium ${
                         isSelected ? 'text-amber-200' : 'text-slate-400'
                       }`}>
                         {port.name}
                       </span>
-                      {isPlayer && (
-                        <span className="text-[9px] text-blue-400/70 ml-auto">YOU</span>
+                      {travel && (
+                        <span className="text-[9px] text-slate-500 ml-auto">{travel.days}d</span>
                       )}
                     </div>
                     <div className="text-[10px] text-slate-600 ml-3.5 mt-0.5">
-                      {port.scale} · {port.culture}
+                      {port.scale} · {port.culture} · {travel?.risk ?? 'Unknown'} risk
                     </div>
                   </button>
                 );
               })}
 
-            {/* Undiscovered hint */}
-            {ports.filter(p => !discoveredPorts.includes(p.id) && PORT_COORDS[p.id]).length > 0 && (
+            {reachablePorts.length === 0 && (
               <div className="px-4 py-2 mt-1">
                 <span className="text-[10px] text-slate-700 italic">
-                  {ports.filter(p => !discoveredPorts.includes(p.id) && PORT_COORDS[p.id]).length} undiscovered
+                  No direct sea lanes available from this harbor.
                 </span>
               </div>
             )}
@@ -404,6 +391,17 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                 >
                   <Anchor size={12} />
                   <span>You are here</span>
+                </motion.div>
+              ) : selectedPort ? (
+                <motion.div
+                  key="not-direct"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex items-center gap-2 text-slate-500 text-xs"
+                >
+                  <AlertTriangle size={12} />
+                  <span>No direct sea lane from {nearestPort?.name ?? 'this port'}</span>
                 </motion.div>
               ) : (
                 <motion.div

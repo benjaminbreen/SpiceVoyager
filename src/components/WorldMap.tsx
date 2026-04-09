@@ -4,6 +4,8 @@ import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
 import { motion } from 'framer-motion';
 import { X, Compass, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
+import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
+import type { WaterPalette, WaterPaletteId } from '../utils/waterPalettes';
 
 const WORLD_HALF = 1000;
 const TERRAIN_RESOLUTION = 1200; // pixels for the terrain texture (pre-rendered once)
@@ -12,6 +14,7 @@ const UNITS_PER_PIXEL = (WORLD_HALF * 2) / TERRAIN_RESOLUTION;
 // ── Module-level terrain cache (pre-renders in background at import time) ─────
 let _terrainCanvas: HTMLCanvasElement | null = null;
 let _terrainReady = false;
+let _terrainPaletteId: WaterPaletteId | null = null;
 const _readyCallbacks: Array<() => void> = [];
 
 function onTerrainReady(cb: () => void) {
@@ -19,7 +22,7 @@ function onTerrainReady(cb: () => void) {
   _readyCallbacks.push(cb);
 }
 
-function _preRenderTerrain() {
+function _preRenderTerrain(waterPalette: WaterPalette) {
   const imgData = new ImageData(TERRAIN_RESOLUTION, TERRAIN_RESOLUTION);
   let row = 0;
   const CHUNK_SIZE = 40; // rows per frame
@@ -44,7 +47,7 @@ function _preRenderTerrain() {
         const terrainTint = tintColor(terrain.color[0], terrain.color[1], terrain.color[2]);
         let [r, g, b] = terrain.height < SEA_LEVEL
           ? (() => {
-              const stylizedOcean = oceanColor(terrain.height);
+              const stylizedOcean = oceanColor(terrain.height, waterPalette);
               const blend = Math.min(1, terrain.shallowFactor * 0.8 + terrain.surfFactor * 0.7);
               return [
                 stylizedOcean[0] * (1 - blend) + terrainTint[0] * blend,
@@ -77,6 +80,7 @@ function _preRenderTerrain() {
       tc.getContext('2d')!.putImageData(imgData, 0, 0);
       _terrainCanvas = tc;
       _terrainReady = true;
+      _terrainPaletteId = waterPalette.id;
       for (const cb of _readyCallbacks) cb();
       _readyCallbacks.length = 0;
     }
@@ -86,15 +90,20 @@ function _preRenderTerrain() {
 }
 
 /** Call this once after the world/terrain is initialized to start background rendering */
-export function startTerrainPreRender() {
-  if (_terrainReady || _readyCallbacks.length > 0) return; // already started or done
-  _preRenderTerrain();
+export function startTerrainPreRender(waterPaletteId: WaterPaletteId) {
+  if (_terrainReady && _terrainPaletteId === waterPaletteId) return;
+  if (_terrainPaletteId !== null && _terrainPaletteId !== waterPaletteId) {
+    invalidateTerrainCache();
+  }
+  if (_readyCallbacks.length > 0) return;
+  _preRenderTerrain(getWaterPalette(waterPaletteId));
 }
 
 /** Invalidate the cache (call after fast-travel regenerates the world) */
 export function invalidateTerrainCache() {
   _terrainCanvas = null;
   _terrainReady = false;
+  _terrainPaletteId = null;
 }
 
 // Warm sepia tint for the terrain to give a vintage cartographic feel
@@ -106,11 +115,11 @@ function tintColor(r: number, g: number, b: number): [number, number, number] {
 }
 
 // Ocean gets a richer, more stylized blue
-function oceanColor(height: number): [number, number, number] {
+function oceanColor(height: number, waterPalette: WaterPalette): [number, number, number] {
   const depth = Math.min(1, Math.abs(height) / 20);
-  const r = 0.12 - depth * 0.04;
-  const g = 0.28 - depth * 0.06;
-  const b = 0.48 - depth * 0.08;
+  const r = waterPalette.map.shallow[0] * (1 - depth) + waterPalette.map.deep[0] * depth;
+  const g = waterPalette.map.shallow[1] * (1 - depth) + waterPalette.map.deep[1] * depth;
+  const b = waterPalette.map.shallow[2] * (1 - depth) + waterPalette.map.deep[2] * depth;
   return tintColor(r, g, b);
 }
 
@@ -157,6 +166,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const [hoveredPort, setHoveredPort] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(!_terrainReady);
   const containerRef = useRef<HTMLDivElement>(null);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   const playerPos = useGameStore(s => s.playerPos);
   const ports = useGameStore(s => s.ports);
@@ -166,14 +176,14 @@ export function WorldMap({ onClose }: WorldMapProps) {
 
   // Wait for the module-level pre-render (usually already done by the time modal opens)
   useEffect(() => {
-    if (_terrainReady) {
+    if (_terrainReady && _terrainPaletteId === waterPaletteId) {
       setIsRendering(false);
       return;
     }
-    // If somehow not ready yet, start it and wait
-    startTerrainPreRender();
+    setIsRendering(true);
+    startTerrainPreRender(waterPaletteId);
     onTerrainReady(() => setIsRendering(false));
-  }, []);
+  }, [waterPaletteId]);
 
   // Center on player initially
   useEffect(() => {

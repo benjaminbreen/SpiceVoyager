@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
+import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 const SCALE_RADIUS: Record<string, number> = {
   Small: 12, Medium: 18, Large: 24, 'Very Large': 30,
@@ -90,7 +91,7 @@ function PortLabels() {
     if (counterRef.current < 0.2) return;
     counterRef.current = 0;
 
-    const { playerPos } = useGameStore.getState();
+    const playerPos = getLiveShipTransform().pos;
     const next = new Map<string, { dist: number }>();
     for (const port of ports) {
       if (!discoveredPorts.includes(port.id)) continue;

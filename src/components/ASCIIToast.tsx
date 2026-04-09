@@ -4,10 +4,11 @@ import type { Notification } from '../store/gameStore';
 
 // ── Type-specific accent colors ──────────────────────────────────────────────
 const ACCENT = {
-  success: { border: '#4a7a4a', ornament: '#6aaa6a', glow: 'rgba(90,160,90,0.12)' },
-  error:   { border: '#7a4a4a', ornament: '#aa6a6a', glow: 'rgba(160,90,90,0.12)' },
-  warning: { border: '#7a6a3a', ornament: '#aa9a5a', glow: 'rgba(160,140,70,0.12)' },
-  info:    { border: '#4a5a6a', ornament: '#6a8a9a', glow: 'rgba(90,130,150,0.12)' },
+  success:   { border: '#4a7a4a', ornament: '#6aaa6a', glow: 'rgba(90,160,90,0.12)' },
+  error:     { border: '#7a4a4a', ornament: '#aa6a6a', glow: 'rgba(160,90,90,0.12)' },
+  warning:   { border: '#7a6a3a', ornament: '#aa9a5a', glow: 'rgba(160,140,70,0.12)' },
+  info:      { border: '#4a5a6a', ornament: '#6a8a9a', glow: 'rgba(90,130,150,0.12)' },
+  legendary: { border: '#7a4a8a', ornament: '#b06acc', glow: 'rgba(160,90,200,0.18)' },
 };
 
 const GOLD = '#c9a84c';
@@ -51,6 +52,7 @@ function NormalToast({
   const icon = notification.type === 'success' ? '\u2713'
     : notification.type === 'error' ? '\u2717'
     : notification.type === 'warning' ? '\u26a0'
+    : notification.type === 'legendary' ? '\u2605'
     : '\u2022';
 
   return (

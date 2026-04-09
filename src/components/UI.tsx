@@ -18,6 +18,10 @@ import { FactionFlag } from './FactionFlag';
 import { OpeningASCII } from './OpeningASCII';
 import { EventModalASCII } from './EventModalASCII';
 import { ASCIIToast } from './ASCIIToast';
+import {
+  getLiveShipTransform,
+  getLiveWalkingTransform,
+} from '../utils/livePlayerTransform';
 // import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
 
 const PORT_RADIUS_SQ = 20 * 20;
@@ -126,6 +130,143 @@ function findNearbyPort(
   return isInsideBuildingFootprint(walkingPos[0], walkingPos[2], candidate) ? candidate : null;
 }
 
+// ── Combat Mode Banner ──────────────────────────────────────────────────────
+// Animated ASCII alert that appears top-center when fight mode is active
+function CombatModeBanner() {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFrame(f => f + 1), 400);
+    return () => clearInterval(id);
+  }, []);
+
+  // Rotating alert icon frames
+  const icons = ['⚔', '☠', '⚔', '✴'];
+  const icon = icons[frame % icons.length];
+  // Pulsing border characters
+  const border = frame % 2 === 0 ? '╬' : '╫';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -20, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -20, scale: 0.9 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+    >
+      <div className="relative">
+        {/* Glow backdrop */}
+        <div className="absolute inset-0 rounded-lg bg-red-600/20 blur-xl animate-pulse" />
+        <div className="relative bg-[#1a0808]/90 backdrop-blur-md border border-red-500/60 rounded-lg px-5 py-2
+          shadow-[0_0_30px_rgba(220,38,38,0.3),inset_0_1px_0_rgba(255,100,100,0.1)]">
+          <pre className="text-center font-mono text-[11px] leading-tight select-none" style={{ textShadow: '0 0 8px rgba(239,68,68,0.6)' }}>
+            <span className="text-red-400/60">{border}{'═'.repeat(3)}{border}</span>
+            <span className="text-red-300 font-bold mx-2">{icon}</span>
+            <motion.span
+              animate={{ opacity: [1, 0.6, 1] }}
+              transition={{ duration: 1.2, repeat: Infinity }}
+              className="text-red-400 font-bold tracking-[0.3em]"
+            >FIGHT MODE</motion.span>
+            <span className="text-red-300 font-bold mx-2">{icon}</span>
+            <span className="text-red-400/60">{border}{'═'.repeat(3)}{border}</span>
+          </pre>
+          <div className="text-center text-red-500/50 text-[9px] font-mono tracking-wider mt-0.5">
+            [SPACE] fire · [F] stand down
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Anchor Banner ───────────────────────────────────────────────────────────
+// ASCII-style top-center indicator when at anchor — calmer counterpart to fight mode
+function AnchorBanner() {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFrame(f => f + 1), 800);
+    return () => clearInterval(id);
+  }, []);
+
+  const chain = frame % 2 === 0 ? '⚓' : '⚓';
+  const wave = frame % 3 === 0 ? '~' : frame % 3 === 1 ? '≈' : '~';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -15 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -15 }}
+      transition={{ type: 'spring', stiffness: 200, damping: 18 }}
+      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+    >
+      <div className="relative">
+        <div className="absolute inset-0 rounded-lg bg-cyan-600/10 blur-lg" />
+        <div className="relative bg-[#081218]/90 backdrop-blur-md border border-cyan-500/30 rounded-lg px-5 py-2
+          shadow-[0_0_20px_rgba(34,211,238,0.15),inset_0_1px_0_rgba(100,200,230,0.08)]">
+          <pre className="text-center font-mono text-[11px] leading-tight select-none" style={{ textShadow: '0 0 6px rgba(34,211,238,0.4)' }}>
+            <span className="text-cyan-500/50">{wave}{'─'.repeat(3)}╼</span>
+            <span className="text-cyan-300 mx-2">{chain}</span>
+            <motion.span
+              animate={{ opacity: [1, 0.7, 1] }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className="text-cyan-300 font-bold tracking-[0.25em]"
+            >AT ANCHOR</motion.span>
+            <span className="text-cyan-300 mx-2">{chain}</span>
+            <span className="text-cyan-500/50">╾{'─'.repeat(3)}{wave}</span>
+          </pre>
+          <div className="text-center text-cyan-500/40 text-[9px] font-mono tracking-wider mt-0.5">
+            [F] battle stations
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Collision Warning Banner ────────────────────────────────────────────────
+// Temporary orange warning that flashes when you crash into an NPC ship
+function CollisionBanner({ shipDesc }: { shipDesc: string }) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setFrame(f => f + 1), 350);
+    return () => clearInterval(id);
+  }, []);
+
+  const icons = ['⚠', '💥', '⚠', '✦'];
+  const icon = icons[frame % icons.length];
+  const border = frame % 2 === 0 ? '╬' : '╫';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -20, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -20, scale: 0.9 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+    >
+      <div className="relative">
+        <div className="absolute inset-0 rounded-lg bg-orange-600/20 blur-xl animate-pulse" />
+        <div className="relative bg-[#1a1208]/90 backdrop-blur-md border border-orange-500/60 rounded-lg px-5 py-2
+          shadow-[0_0_30px_rgba(234,138,30,0.3),inset_0_1px_0_rgba(255,180,80,0.1)]">
+          <pre className="text-center font-mono text-[11px] leading-tight select-none" style={{ textShadow: '0 0 8px rgba(234,138,30,0.6)' }}>
+            <span className="text-orange-400/60">{border}{'═'.repeat(2)}{border}</span>
+            <span className="text-orange-300 font-bold mx-2">{icon}</span>
+            <motion.span
+              animate={{ opacity: [1, 0.6, 1] }}
+              transition={{ duration: 1, repeat: Infinity }}
+              className="text-orange-400 font-bold tracking-[0.2em]"
+            >COLLISION</motion.span>
+            <span className="text-orange-300 font-bold mx-2">{icon}</span>
+            <span className="text-orange-400/60">{border}{'═'.repeat(2)}{border}</span>
+          </pre>
+          <div className="text-center text-orange-400/60 text-[9px] font-mono tracking-wider mt-0.5">
+            You crashed into {shipDesc}. Watch out!
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 export function UI() {
   const gold = useGameStore((state) => state.gold);
   const cargo = useGameStore((state) => state.cargo);
@@ -142,6 +283,9 @@ export function UI() {
   const dayCount = useGameStore((state) => state.dayCount);
   const provisions = useGameStore((state) => state.provisions);
   const ship = useGameStore((state) => state.ship);
+  const anchored = useGameStore((state) => state.anchored);
+  const combatMode = useGameStore((state) => state.combatMode);
+  const playerMode = useGameStore((state) => state.playerMode);
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
@@ -159,6 +303,24 @@ export function UI() {
   const [loadingReady, setLoadingReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
+
+  // Collision warning banner state
+  const [collisionShipDesc, setCollisionShipDesc] = useState<string | null>(null);
+  const collisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleCollisionWarning = (e: Event) => {
+      const desc = (e as CustomEvent).detail?.appearancePhrase ?? 'another vessel';
+      setCollisionShipDesc(desc);
+      if (collisionTimerRef.current) clearTimeout(collisionTimerRef.current);
+      collisionTimerRef.current = setTimeout(() => setCollisionShipDesc(null), 3500);
+    };
+    window.addEventListener('ship-collision-warning', handleCollisionWarning);
+    return () => {
+      window.removeEventListener('ship-collision-warning', handleCollisionWarning);
+      if (collisionTimerRef.current) clearTimeout(collisionTimerRef.current);
+    };
+  }, []);
 
   const captain = crew.find(c => c.role === 'Captain');
   const closeOpeningOverlay = useCallback(() => {
@@ -224,12 +386,12 @@ export function UI() {
     const checkPorts = setInterval(() => {
       const {
         playerMode,
-        playerPos,
-        walkingPos,
         ports,
         activePort: currentActivePort,
         addNotification: notify,
       } = useGameStore.getState();
+      const playerPos = getLiveShipTransform().pos;
+      const walkingPos = getLiveWalkingTransform().pos;
       const nearest = findNearbyPort(playerMode, playerPos, walkingPos, ports);
 
       if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
@@ -289,7 +451,7 @@ export function UI() {
   useEffect(() => {
     if (notifications.length === 0) return;
     const latest = notifications[notifications.length - 1];
-    const duration = latest.size === 'grand' ? 6000 : 4000;
+    const duration = latest.type === 'legendary' ? 8000 : latest.size === 'grand' ? 6000 : 4000;
     const timer = setTimeout(() => removeNotification(latest.id), duration);
     return () => clearTimeout(timer);
   }, [notifications, removeNotification]);
@@ -404,6 +566,41 @@ export function UI() {
           </div>
         </div>
       </div>
+
+      {/* Combat Mode Banner */}
+      <AnimatePresence>
+        {combatMode && playerMode === 'ship' && (
+          <CombatModeBanner />
+        )}
+      </AnimatePresence>
+
+      {/* Anchor Indicator — top-center ASCII banner */}
+      <AnimatePresence>
+        {anchored && playerMode === 'ship' && !combatMode && (
+          <AnchorBanner />
+        )}
+      </AnimatePresence>
+
+      {/* Collision Warning — top-center ASCII banner */}
+      <AnimatePresence>
+        {collisionShipDesc && !combatMode && !anchored && playerMode === 'ship' && (
+          <CollisionBanner shipDesc={collisionShipDesc} />
+        )}
+      </AnimatePresence>
+
+      {/* Anchor — bottom-center prompt (matches E to Embark style) */}
+      <AnimatePresence>
+        {anchored && playerMode === 'ship' && !combatMode && !activePort && !showLocalMap && !showWorldMap && !showDashboard && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.2)] text-cyan-400 font-bold tracking-wider"
+          >
+            Press SPACE BAR to weigh anchor
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Interaction Prompt */}
       <AnimatePresence>

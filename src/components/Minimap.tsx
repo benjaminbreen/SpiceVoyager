@@ -2,6 +2,11 @@ import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
+import {
+  getLiveShipTransform,
+  getLiveWalkingTransform,
+} from '../utils/livePlayerTransform';
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
@@ -11,10 +16,10 @@ function isCoastline(x: number, z: number, step: number): boolean {
   const center = getTerrainData(x, z);
   if (center.height < -1 || center.height > 3) return false; // only near sea level
   const offsets = [[-step, 0], [step, 0], [0, -step], [0, step]];
-  const isLand = center.height >= SEA_LEVEL;
+  const isLand = center.height >= SEA_LEVEL + 0.3;
   for (const [dx, dz] of offsets) {
     const neighbor = getTerrainData(x + dx, z + dz);
-    if ((neighbor.height >= SEA_LEVEL) !== isLand) return true;
+    if ((neighbor.height >= SEA_LEVEL + 0.3) !== isLand) return true;
   }
   return false;
 }
@@ -23,6 +28,7 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastDrawPos = useRef<{x: number, z: number} | null>(null);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -40,6 +46,8 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
     }
     const offCtx = offscreenCanvasRef.current.getContext('2d')!;
 
+    lastDrawPos.current = null;
+
     let animationFrameId: number;
     let lastFrameTime = 0;
     const FRAME_INTERVAL = 100; // ms — ~10fps is plenty for a minimap
@@ -51,8 +59,10 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
       }
       lastFrameTime = now;
       const state = useGameStore.getState();
-      const activePos = state.playerMode === 'ship' ? state.playerPos : state.walkingPos;
-      const activeRot = state.playerMode === 'ship' ? state.playerRot : state.walkingRot;
+      const shipTransform = getLiveShipTransform();
+      const walkingTransform = getLiveWalkingTransform();
+      const activePos = state.playerMode === 'ship' ? shipTransform.pos : walkingTransform.pos;
+      const activeRot = state.playerMode === 'ship' ? shipTransform.rot : walkingTransform.rot;
       const px = activePos[0];
       const pz = activePos[2];
 
@@ -174,7 +184,7 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
     render();
 
     return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+  }, [waterPaletteId]);
 
   return (
     <div

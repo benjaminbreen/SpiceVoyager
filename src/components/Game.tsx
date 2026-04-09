@@ -5,12 +5,76 @@ import { Ocean } from './Ocean';
 import { World } from './World';
 import { UI } from './UI';
 import { Player } from './Player';
+import { GameOverScreen } from './GameOverScreen';
 import { useGameStore } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
-import { sfxDisembark, sfxEmbark } from '../audio/SoundEffects';
+import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh } from '../audio/SoundEffects';
+import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo } from 'react';
-import { getTerrainHeight } from '../utils/terrain';
+import { ShiftSelectOverlay } from './ShiftSelectOverlay';
+import { getTerrainHeight, getTerrainData, BiomeType } from '../utils/terrain';
+import { SEA_LEVEL } from '../constants/world';
+import {
+  getLiveShipTransform,
+  getLiveWalkingTransform,
+} from '../utils/livePlayerTransform';
+
+// ── Landfall descriptions keyed to biome + terrain data ──────────────────────
+function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function landfallDescription(x: number, z: number): { title: string; subtitle: string } {
+  const td = getTerrainData(x, z);
+  const steep = td.coastSteepness > 0.6;
+  const high = td.height > 12;
+
+  const phrases: Record<string, { titles: string[]; subtitles: string[] }> = {
+    beach: steep
+      ? { titles: ['Scrambled ashore on a rocky coast', 'Climbed onto a craggy shoreline', 'Reached a wind-beaten rocky shore'],
+          subtitles: ['Sharp stones and tide pools underfoot.', 'Gulls wheel above the spray.', 'The rocks are slick with brine.'] }
+      : { titles: ['Made landfall on a sandy shore', 'Waded onto a stretch of white sand', 'Reached a quiet beach'],
+          subtitles: ['Warm sand, gentle surf.', 'Crabs scatter at your approach.', 'Shells crunch underfoot.'] },
+    desert: {
+      titles: ['Stepped onto sun-baked sand', 'Made landfall on a barren coast', 'Reached a parched and dusty shore'],
+      subtitles: ['The air shimmers with heat.', 'Not a drop of fresh water in sight.', 'Dry wind carries the scent of dust.'],
+    },
+    grassland: {
+      titles: ['Found footing on a grassy headland', 'Reached a green and windswept shore', 'Made landfall on rolling coastal hills'],
+      subtitles: ['Tall grass bends in the breeze.', 'The land smells of earth and rain.', 'A pleasant coast, open and airy.'],
+    },
+    forest: {
+      titles: ['Landed beneath a canopy of trees', 'Made landfall on a wooded coast', 'Reached a forested shore'],
+      subtitles: ['Birdsong from the treetops.', 'Dappled light through the leaves.', 'Timber aplenty here.'],
+    },
+    jungle: {
+      titles: ['Pushed ashore through dense foliage', 'Landed on a tangled jungle coast', 'Reached a shore thick with vegetation'],
+      subtitles: ['The air is heavy and humid.', 'Insects drone in the undergrowth.', 'Vines and roots crowd the shoreline.'],
+    },
+    swamp: {
+      titles: ['Waded ashore through brackish shallows', 'Made landfall in marshy ground', 'Reached a muddy, waterlogged coast'],
+      subtitles: ['The ground squelches underfoot.', 'Stagnant water and buzzing flies.', 'A miserable stretch of bog.'],
+    },
+    arroyo: {
+      titles: ['Climbed onto dry, reddish rock', 'Made landfall on a sun-scorched canyon rim', 'Reached an arid, rocky shore'],
+      subtitles: ['Cracked earth and sparse scrub.', 'The rock is warm to the touch.', 'A desolate but striking landscape.'],
+    },
+    snow: {
+      titles: ['Landed on a frost-covered shore', 'Made landfall on frozen ground', 'Reached a bleak and icy coast'],
+      subtitles: ['Snow crunches underfoot.', 'The cold bites immediately.', 'A bitter wind off the peaks.'],
+    },
+    volcano: {
+      titles: ['Stepped onto black volcanic rock', 'Made landfall on a smoldering shore', 'Reached a coast of dark basalt'],
+      subtitles: ['The ground radiates faint warmth.', 'Sulfur hangs in the air.', 'A forbidding, primordial landscape.'],
+    },
+  };
+
+  const biome: string = td.biome === 'ocean' || td.biome === 'river' || td.biome === 'waterfall'
+    ? (steep ? 'beach' : 'grassland') // fallback for water biomes at land edge
+    : td.biome;
+
+  const pool = phrases[biome] ?? phrases.beach;
+  return { title: pick(pool.titles), subtitle: pick(pool.subtitles) };
+}
 
 // Custom camera controller
 function CameraController() {
@@ -29,9 +93,11 @@ function CameraController() {
   }, [gl, setCameraZoom]);
 
   useFrame((_, delta) => {
-    const { playerMode, playerPos, walkingPos, cameraZoom, viewMode, playerRot, walkingRot } = useGameStore.getState();
-    const activePos = playerMode === 'ship' ? playerPos : walkingPos;
-    const activeRot = playerMode === 'ship' ? playerRot : walkingRot;
+    const { playerMode, cameraZoom, viewMode } = useGameStore.getState();
+    const shipTransform = getLiveShipTransform();
+    const walkingTransform = getLiveWalkingTransform();
+    const activePos = playerMode === 'ship' ? shipTransform.pos : walkingTransform.pos;
+    const activeRot = playerMode === 'ship' ? shipTransform.rot : walkingTransform.rot;
     targetPos.current.set(activePos[0], activePos[1], activePos[2]);
 
     if (playerMode === 'ship') {
@@ -93,13 +159,15 @@ function InteractionController() {
 
     const {
       playerMode,
-      playerPos,
-      playerRot,
-      walkingPos,
       ports,
       discoverPort,
       setInteractionPrompt,
     } = useGameStore.getState();
+    const shipTransform = getLiveShipTransform();
+    const walkingTransform = getLiveWalkingTransform();
+    const playerPos = shipTransform.pos;
+    const playerRot = shipTransform.rot;
+    const walkingPos = walkingTransform.pos;
     const activePos = playerMode === 'ship' ? playerPos : walkingPos;
     
     // Check for nearby ports to discover
@@ -111,18 +179,20 @@ function InteractionController() {
     });
 
     if (playerMode === 'ship') {
-      // Find nearest land
+      // Find nearest land — require height well above sea level so we don't
+      // detect tiny noise spikes that the rendered terrain grid doesn't show.
       let foundLand: [number, number, number] | null = null;
       let minDist = Infinity;
-      
+      const LAND_THRESHOLD = SEA_LEVEL + 0.6;
+
       // Scan in a radius around the ship
-      for (let r = 3; r <= 15; r += 3) {
-        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+      for (let r = 3; r <= 12; r += 3) {
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 6) {
           const cx = playerPos[0] + Math.cos(a) * r;
           const cz = playerPos[2] + Math.sin(a) * r;
           const height = getTerrainHeight(cx, cz);
-          
-          if (height > 0.5) { // Definitely on land
+
+          if (height > LAND_THRESHOLD) {
             const d = Math.sqrt((cx - playerPos[0])**2 + (cz - playerPos[2])**2);
             if (d < minDist) {
               minDist = d;
@@ -159,11 +229,16 @@ function InteractionController() {
       const state = useGameStore.getState();
       if (key === 'e') {
         if (state.interactionPrompt === 'Press E to Disembark' && nearestLandRef.current) {
-          state.setWalkingPos(nearestLandRef.current);
-          state.setWalkingRot(state.playerRot);
+          const landPos = nearestLandRef.current;
+          const { rot } = getLiveShipTransform();
+          state.setWalkingPos(landPos);
+          state.setWalkingRot(rot);
           state.setPlayerMode('walking');
           state.setInteractionPrompt(null);
           sfxDisembark();
+          // Landfall toast based on terrain biome
+          const desc = landfallDescription(landPos[0], landPos[2]);
+          state.addNotification(desc.title, 'info', { size: 'grand', subtitle: desc.subtitle });
         } else if (state.interactionPrompt === 'Press E to Embark') {
           state.setPlayerMode('ship');
           state.setInteractionPrompt(null);
@@ -173,6 +248,38 @@ function InteractionController() {
         if (state.interactionPrompt === 'Press T to Hail') {
           // Placeholder — will open dialogue in the future
           state.addNotification('They signal back but keep their distance.', 'info');
+        }
+      } else if (key === 'f' && state.playerMode === 'ship') {
+        // Toggle combat mode
+        const next = !state.combatMode;
+        state.setCombatMode(next);
+        if (next) {
+          // Entering fight mode unanchors
+          if (state.anchored) state.setAnchored(false);
+          sfxBattleStations();
+          audioManager.startFightMusic();
+          state.addNotification('Battle stations!', 'info');
+        } else {
+          audioManager.stopFightMusic();
+          state.addNotification('Standing down.', 'info');
+        }
+      } else if (key === ' ' && state.playerMode === 'ship') {
+        e.preventDefault();
+        if (state.combatMode) {
+          // Spacebar in combat mode = fire swivel gun (tap)
+          // TODO: hold-spacebar aiming mode with cursor targeting
+          window.dispatchEvent(new CustomEvent('fire-swivel'));
+        } else {
+          // Spacebar in normal mode = toggle anchor
+          const nextAnchored = !state.anchored;
+          state.setAnchored(nextAnchored);
+          if (nextAnchored) {
+            sfxAnchorDrop();
+            state.addNotification('Anchor dropped.', 'info');
+          } else {
+            sfxAnchorWeigh();
+            state.addNotification('Weighing anchor.', 'info');
+          }
         }
       }
     };
@@ -349,6 +456,7 @@ export function Game() {
           <InteractionController />
           <TimeController />
           <AtmosphereSync />
+          <ShiftSelectOverlay />
 
           {postprocessingEnabled && (
             <PostProcessing bloomEnabled={bloomEnabled} vignetteEnabled={vignetteEnabled} />
@@ -356,6 +464,7 @@ export function Game() {
         </Suspense>
       </Canvas>
       <UI />
+      <GameOverScreen />
     </div>
   );
 }

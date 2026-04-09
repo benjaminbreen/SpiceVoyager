@@ -9,6 +9,8 @@ import {
   Copy, Shuffle, Rocket, Check, Code2, Map, Music, Waves, MousePointerClick,
 } from 'lucide-react';
 import { CORE_PORTS, WORLD_SIZE_VALUES, WorldSize } from '../utils/portArchetypes';
+import { WATER_PALETTES, resolveWaterPaletteId } from '../utils/waterPalettes';
+import type { WaterPaletteId, WaterPaletteSetting } from '../utils/waterPalettes';
 
 type SettingsTab = 'world' | 'display' | 'audio' | 'gameplay' | 'dev' | 'about';
 
@@ -28,6 +30,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const setWorldSize = useGameStore(s => s.setWorldSize);
   const devSoloPort = useGameStore(s => s.devSoloPort);
   const setDevSoloPort = useGameStore(s => s.setDevSoloPort);
+  const waterPaletteSetting = useGameStore(s => s.waterPaletteSetting);
+  const setWaterPaletteSetting = useGameStore(s => s.setWaterPaletteSetting);
+  const resolvedWaterPaletteId = useGameStore(s => resolveWaterPaletteId(s));
   const renderDebug = useGameStore(s => s.renderDebug);
   const updateRenderDebug = useGameStore(s => s.updateRenderDebug);
   const resetRenderDebug = useGameStore(s => s.resetRenderDebug);
@@ -140,9 +145,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     newSeed={newSeed}
                     setNewSeed={setNewSeed}
                     copied={copied}
+                    waterPaletteSetting={waterPaletteSetting}
+                    resolvedWaterPaletteId={resolvedWaterPaletteId}
                     onCopy={handleCopySeed}
                     onRandom={handleRandomSeed}
                     onLaunch={handleLaunchVoyage}
+                    onSetWaterPalette={setWaterPaletteSetting}
                   />
                 )}
                 {tab === 'display' && <PlaceholderTab title="Display" description="Graphics quality, UI scale, and minimap settings will appear here." />}
@@ -180,16 +188,42 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   );
 }
 
-function WorldTab({ worldSeed, newSeed, setNewSeed, copied, onCopy, onRandom, onLaunch }: {
+function WorldTab({
+  worldSeed,
+  newSeed,
+  setNewSeed,
+  copied,
+  waterPaletteSetting,
+  resolvedWaterPaletteId,
+  onCopy,
+  onRandom,
+  onLaunch,
+  onSetWaterPalette,
+}: {
   worldSeed: number;
   newSeed: string;
   setNewSeed: (s: string) => void;
   copied: boolean;
+  waterPaletteSetting: WaterPaletteSetting;
+  resolvedWaterPaletteId: WaterPaletteId;
   onCopy: () => void;
   onRandom: () => void;
   onLaunch: () => void;
+  onSetWaterPalette: (setting: WaterPaletteSetting) => void;
 }) {
   const validSeed = newSeed.trim() !== '' && !isNaN(parseInt(newSeed, 10)) && parseInt(newSeed, 10) > 0;
+  const paletteOptions: Array<{ id: WaterPaletteSetting; label: string; description: string }> = [
+    {
+      id: 'auto',
+      label: 'Auto',
+      description: `Uses the current voyage climate. Now resolving to ${WATER_PALETTES[resolvedWaterPaletteId].label}.`,
+    },
+    ...Object.values(WATER_PALETTES).map((palette) => ({
+      id: palette.id,
+      label: palette.label,
+      description: palette.description,
+    })),
+  ];
 
   return (
     <div className="space-y-8">
@@ -247,6 +281,35 @@ function WorldTab({ worldSeed, newSeed, setNewSeed, copied, onCopy, onRandom, on
           <Rocket size={14} />
           Launch New Voyage
         </button>
+      </SettingsSection>
+
+      <SettingsSection title="Sea Palette" description="Choose how ocean water is color-graded across the world and parchment map.">
+        <div className="grid grid-cols-2 gap-2">
+          {paletteOptions.map((option) => {
+            const active = waterPaletteSetting === option.id;
+            return (
+              <button
+                key={option.id}
+                onClick={() => onSetWaterPalette(option.id)}
+                className={`rounded-lg border p-3 text-left transition-all ${
+                  active
+                    ? 'bg-cyan-500/10 border-cyan-500/30'
+                    : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Waves size={14} className={active ? 'text-cyan-300' : 'text-slate-500'} />
+                  <span className={`text-xs font-semibold ${active ? 'text-cyan-100' : 'text-slate-300'}`}>
+                    {option.label}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                  {option.description}
+                </p>
+              </button>
+            );
+          })}
+        </div>
       </SettingsSection>
     </div>
   );

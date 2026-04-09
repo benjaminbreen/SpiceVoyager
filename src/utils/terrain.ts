@@ -3,6 +3,7 @@ import {
   PortDefinition, ARCHETYPE_RADIUS, getArchetypeShape, getClimateMoisture,
 } from './portArchetypes';
 import { SEA_LEVEL } from '../constants/world';
+import { getResolvedWaterPalette } from './waterPalettes';
 
 // Seeded random number generator (Mulberry32)
 function mulberry32(a: number) {
@@ -89,14 +90,16 @@ export interface TerrainData {
   coastSteepness: number;
 }
 
-const DEEP_WATER_COLOR: TerrainColor = [0.07, 0.17, 0.28];
-const SHALLOW_WATER_COLOR: TerrainColor = [0.2, 0.46, 0.44];
-const SURF_ZONE_COLOR: TerrainColor = [0.78, 0.8, 0.68];
 const WET_SAND_COLOR: TerrainColor = [0.68, 0.59, 0.43];
 const DRY_SAND_COLOR: TerrainColor = [0.86, 0.78, 0.58];
 const ROCKY_SHORE_COLOR: TerrainColor = [0.47, 0.41, 0.35];
 
 export function getTerrainData(x: number, z: number): TerrainData {
+  const waterPalette = getResolvedWaterPalette();
+  const deepWaterColor = waterPalette.terrain.deep;
+  const shallowWaterColor = waterPalette.terrain.shallow;
+  const surfZoneColor = waterPalette.terrain.surf;
+
   // Base elevation using multiple octaves
   let elevation = 0;
   elevation += _mainNoise(x * 0.005, z * 0.005) * 30;
@@ -236,7 +239,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
   // Determine inland biome first, then blend coastal colors on top.
   let biome: BiomeType = 'ocean';
-  let color: TerrainColor = DEEP_WATER_COLOR;
+  let color: TerrainColor = deepWaterColor;
   let inlandColor: TerrainColor = [0.3, 0.5, 0.2];
 
   if (isWaterfall) {
@@ -248,8 +251,8 @@ export function getTerrainData(x: number, z: number): TerrainData {
   } else if (finalHeight < SEA_LEVEL) {
     biome = 'ocean';
     const underwaterBlend = clamp01((coastalHeight - (SEA_LEVEL - shallowDepth)) / shallowDepth);
-    color = mixColor(DEEP_WATER_COLOR, SHALLOW_WATER_COLOR, underwaterBlend);
-    color = mixColor(color, SURF_ZONE_COLOR, surfFactor * 0.25);
+    color = mixColor(deepWaterColor, shallowWaterColor, underwaterBlend);
+    color = mixColor(color, surfZoneColor, surfFactor * 0.25);
     color = mixColor(color, ROCKY_SHORE_COLOR, underwaterBlend * coastSteepness * 0.18);
   } else if (isVolcano) {
     biome = 'volcano';
@@ -287,7 +290,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
   if (finalHeight >= SEA_LEVEL && biome !== 'waterfall' && biome !== 'river') {
     const drySandColor = mixColor(DRY_SAND_COLOR, ROCKY_SHORE_COLOR, coastSteepness * 0.38);
     const wetSandColor = mixColor(WET_SAND_COLOR, ROCKY_SHORE_COLOR, coastSteepness * 0.52);
-    const washColor = mixColor(SURF_ZONE_COLOR, wetSandColor, coastSteepness * 0.35);
+    const washColor = mixColor(surfZoneColor, wetSandColor, coastSteepness * 0.35);
 
     color = inlandColor;
     color = mixColor(color, drySandColor, beachFactor);

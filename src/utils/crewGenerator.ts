@@ -1,4 +1,4 @@
-import { Nationality, CrewMember, CrewRole, HealthFlag } from '../store/gameStore';
+import { Nationality, CrewMember, CrewRole, CrewQuality, HealthFlag } from '../store/gameStore';
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -226,6 +226,29 @@ const SKILL_RANGE: Record<CrewRole, [number, number]> = {
   Sailor:    [25, 60],
 };
 
+// ── Quality tiers ──────────────────────────────────────
+// Based on a composite score of skill + morale (range ~90-200).
+// The percentile thresholds match the loot tier distribution:
+//   bottom 20% = dud, middle 70% = normal, top 10% = rare, top 1% = legendary.
+// We roll quality directly rather than computing percentiles across the crew,
+// so each crew member's quality is independent.
+
+function rollCrewQuality(skill: number, morale: number): CrewQuality {
+  // Composite score: higher = better. Skill is weighted slightly more.
+  const composite = skill * 1.2 + morale;
+  // Normalize to 0-1 range roughly (min ~78, max ~214)
+  const normalized = Math.min(1, Math.max(0, (composite - 78) / (214 - 78)));
+
+  // Use normalized score as a *tendency* but add randomness so a mediocre-stat
+  // crew member can still be legendary (lucky find) and vice versa.
+  const roll = normalized * 0.6 + Math.random() * 0.4;
+
+  if (roll >= 0.99) return 'legendary';
+  if (roll >= 0.90) return 'rare';
+  if (roll < 0.20) return 'dud';
+  return 'normal';
+}
+
 // ── Public API ─────────────────────────────────────────
 
 /** Generate a single crew member of a given nationality and role. */
@@ -237,17 +260,20 @@ export function generateCrewMember(
   const first = pick(pool.first);
   const last = pick(pool.last);
   const [minSkill, maxSkill] = SKILL_RANGE[role];
+  const skill = randInt(minSkill, maxSkill);
+  const morale = randInt(65, 100);
 
   return {
     id: generateId(),
     name: `${first} ${last}`,
     role,
-    skill: randInt(minSkill, maxSkill),
-    morale: randInt(65, 100),
+    skill,
+    morale,
     age: randInt(role === 'Captain' ? 32 : 18, role === 'Captain' ? 55 : 50),
     nationality,
     birthplace: pick(pool.birthplaces),
     health: 'healthy' as HealthFlag,
+    quality: rollCrewQuality(skill, morale),
   };
 }
 

@@ -568,7 +568,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
                           <div className="flex gap-1 shrink-0">
                             <button
-                              onClick={() => { sfxCoin(); sellCommodity(c, 1); }}
+                              onClick={() => { sfxCoin(price); sellCommodity(c, 1); }}
                               disabled={!canSell}
                               className="px-2.5 py-1 text-[10px] font-bold rounded text-slate-400
                                 hover:bg-white/[0.06] hover:text-slate-200
@@ -577,7 +577,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                               Sell
                             </button>
                             <button
-                              onClick={() => { sfxCoin(); buyCommodity(c, 1); }}
+                              onClick={() => { sfxCoin(price); buyCommodity(c, 1); }}
                               disabled={!canBuy}
                               className="px-2.5 py-1 text-[10px] font-bold rounded text-slate-300
                                 hover:bg-white/[0.08] hover:text-white
@@ -608,7 +608,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                         </div>
                       </div>
                       <button
-                        onClick={() => { sfxCoin(); repairShip(10, 15); }}
+                        onClick={() => { sfxCoin(15); repairShip(10, 15); }}
                         disabled={stats.hull >= stats.maxHull || gold < 15}
                         className="px-3 py-1.5 rounded-lg text-[10px] font-bold
                           bg-white/[0.04] border border-white/[0.06] text-slate-300
@@ -673,7 +673,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                           The barkeep eyes your purse. A round of drinks might loosen some tongues.
                         </p>
                         <button
-                          onClick={() => { sfxCoin(); handleBuyDrink(); }}
+                          onClick={() => { sfxCoin(5); handleBuyDrink(); }}
                           disabled={gold < 5}
                           className="px-4 py-2 rounded-lg text-[10px] font-bold
                             bg-white/[0.04] border border-white/[0.06] text-slate-300

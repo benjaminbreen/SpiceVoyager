@@ -19,6 +19,9 @@ class AudioManager {
   private musicVolume = 0.15;
   private trackIndex = -1;
   private transitioning = false;
+  private fightTrack: HTMLAudioElement | null = null;
+  private fightActive = false;
+  private savedOverworldVolume = 0;
 
   playSplash() {
     if (this.splashPlaying) return;
@@ -118,6 +121,86 @@ class AudioManager {
         onDone?.();
       }
     }, 50);
+  }
+
+  /** Crossfade to fight mode music. Ducks overworld track. */
+  startFightMusic() {
+    if (this.fightActive) return;
+    this.fightActive = true;
+
+    // Duck overworld
+    if (this.overworldTrack) {
+      this.savedOverworldVolume = this.overworldTrack.volume;
+      this.fadeOut(this.overworldTrack, 1.5);
+    }
+
+    // Start fight track
+    if (!this.fightTrack) {
+      this.fightTrack = new Audio('/music/fight-mode.mp3');
+      this.fightTrack.loop = true;
+    }
+    this.fightTrack.volume = 0;
+    this.fightTrack.play().catch(() => {});
+    this.fadeIn(this.fightTrack, this.musicVolume * 0.35, 1.5);
+  }
+
+  /** Crossfade back from fight mode music to overworld. */
+  stopFightMusic() {
+    if (!this.fightActive) return;
+    this.fightActive = false;
+
+    // Fade out fight track
+    if (this.fightTrack) {
+      const track = this.fightTrack;
+      this.fadeOut(track, 2, () => {
+        track.pause();
+        track.currentTime = 0;
+      });
+    }
+
+    // Restore overworld
+    if (this.overworldTrack) {
+      const entry = OVERWORLD_TRACKS[this.trackIndex];
+      const target = entry ? this.musicVolume * entry.gain : this.musicVolume * 0.3;
+      this.overworldTrack.play().catch(() => {});
+      this.fadeIn(this.overworldTrack, target, 2.5);
+    }
+  }
+
+  /** Stop all music (splash + overworld). Used on game over, scene transitions, etc. */
+  stopAll() {
+    if (this.overworldTimer) {
+      clearTimeout(this.overworldTimer);
+      this.overworldTimer = null;
+    }
+    this.transitioning = false;
+
+    if (this.splashTrack) {
+      this.fadeOut(this.splashTrack, 1, () => {
+        this.splashTrack?.pause();
+        this.splashTrack = null;
+      });
+      this.splashPlaying = false;
+    }
+
+    if (this.overworldTrack) {
+      const track = this.overworldTrack;
+      this.overworldTrack = null;
+      this.fadeOut(track, 1.5, () => {
+        track.pause();
+        track.src = '';
+      });
+    }
+
+    if (this.fightTrack) {
+      const ft = this.fightTrack;
+      this.fightTrack = null;
+      this.fightActive = false;
+      this.fadeOut(ft, 1, () => {
+        ft.pause();
+        ft.src = '';
+      });
+    }
   }
 
   // ── Volume control ────────────────────────────────────────────────

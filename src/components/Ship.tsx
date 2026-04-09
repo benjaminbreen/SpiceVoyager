@@ -5,8 +5,13 @@ import * as THREE from 'three';
 import { getTerrainHeight } from '../utils/terrain';
 import { Text } from '@react-three/drei';
 import { FACTIONS } from '../constants/factions';
+import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxRiggingCreak, sfxTreasureFind } from '../audio/SoundEffects';
+import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
+import { playLootSfx } from '../utils/lootRoll';
+import { syncLiveShipTransform } from '../utils/livePlayerTransform';
 
 const SHIP_ROOT_Y = -0.3;
+const STORE_SYNC_INTERVAL = 1 / 12;
 
 export function Ship() {
   const group = useRef<THREE.Group>(null);
@@ -51,6 +56,37 @@ export function Ship() {
   const particleCount = 30;
   const sailTrim = useRef({ main: 0, fore: 0 });
   const visualSailSet = useRef(0.4);
+  const storeSyncAccum = useRef(0);
+
+  // Anchor animation state
+  const anchorGroupRef = useRef<THREE.Group>(null);
+  const anchorChainRef = useRef<THREE.Mesh>(null);
+  const anchorState = useRef<'stowed' | 'dropping' | 'down' | 'weighing'>('stowed');
+  const anchorClock = useRef(0);
+  const prevAnchored = useRef(false);
+  const ANCHOR_DROP_DUR = 1.2;
+  const ANCHOR_WEIGH_DUR = 1.4;
+  // Splash particles for anchor
+  const anchorSplashRef = useRef<THREE.InstancedMesh>(null);
+  const anchorSplashData = useRef<{pos: THREE.Vector3, vel: THREE.Vector3, life: number}[]>([]);
+  const ANCHOR_SPLASH_COUNT = 15;
+
+  // Sailing sound triggers (cooldown-gated one-shots)
+  const sailsCaughtRef = useRef(false); // true once we pass 40% speed, resets when below 20%
+  const lastCreakTime = useRef(0);
+
+  // Fishing net state — unified auto-catch + manual cast
+  const netState = useRef<'idle' | 'casting' | 'hauling'>('idle');
+  const netClock = useRef(0);
+  const netGroupRef = useRef<THREE.Group>(null);
+  const netRopeRef = useRef<THREE.Mesh>(null);
+  const netMeshRef = useRef<THREE.Mesh>(null);
+  const netCooldown = useRef(0);
+  const pendingCatchShoalIdx = useRef<number | null>(null); // which shoal triggered auto-catch
+  const pendingManualCast = useRef(false); // true = manual C key cast
+  const NET_CAST_DUR = 0.6;
+  const NET_HAUL_DUR = 0.8;
+  const NET_COOLDOWN = 8; // seconds between any catch
 
   // Generate flag texture from faction colors
   const shipFlag = useGameStore((state) => state.ship.flag);
@@ -175,35 +211,29 @@ export function Ship() {
     [foreSailGeometry]
   );
 
-  // Sync ship position from store on mount (safe spawn set by World.tsx)
+  // Sync ship position from store on mount; later teleports are handled in-frame.
   const initialized = useRef(false);
   useEffect(() => {
-    // Subscribe to store — once playerPos moves away from origin, sync and unsub
-    const unsub = useGameStore.subscribe((state) => {
-      if (initialized.current) return;
-      const pos = state.playerPos;
-      // Wait until spawn position is set (non-origin)
-      if (pos[0] !== 0 || pos[2] !== 0) {
-        if (group.current) {
-          group.current.position.set(pos[0], SHIP_ROOT_Y, pos[2]);
-          rotation.current = state.playerRot;
-          previousHeading.current = state.playerRot;
-          initialized.current = true;
-        }
-        unsub();
-      }
-    });
-    // Also check immediately in case it's already set
-    const pos = useGameStore.getState().playerPos;
-    if ((pos[0] !== 0 || pos[2] !== 0) && group.current) {
-      group.current.position.set(pos[0], SHIP_ROOT_Y, pos[2]);
-      rotation.current = useGameStore.getState().playerRot;
-      previousHeading.current = rotation.current;
+    if (group.current) {
+      const state = useGameStore.getState();
+      group.current.position.set(state.playerPos[0], SHIP_ROOT_Y, state.playerPos[2]);
+      rotation.current = state.playerRot;
+      previousHeading.current = state.playerRot;
+      velocity.current = state.playerVelocity;
+      syncLiveShipTransform(state.playerPos, state.playerRot, state.playerVelocity);
       initialized.current = true;
-      unsub();
     }
-    return unsub;
   }, []);
+
+  useEffect(() => {
+    if (playerMode === 'ship' || !group.current) return;
+    setPlayerTransform({
+      pos: [group.current.position.x, SHIP_ROOT_Y, group.current.position.z],
+      rot: rotation.current,
+      vel: velocity.current,
+    });
+    storeSyncAccum.current = 0;
+  }, [playerMode, setPlayerTransform]);
 
   useEffect(() => {
     // Initialize particles
@@ -212,6 +242,14 @@ export function Ship() {
         pos: new THREE.Vector3(0, -1000, 0), // Hidden initially
         vel: new THREE.Vector3(),
         life: 0
+      });
+    }
+    // Initialize anchor splash particles
+    for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
+      anchorSplashData.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
       });
     }
   }, []);
@@ -224,12 +262,13 @@ export function Ship() {
     };
   }, [mainSailGeometry, foreSailGeometry, flagGeometry]);
 
-  const triggerCollision = () => {
+  const triggerCollision = (source: 'shore' | 'ship' = 'shore') => {
     const now = Date.now();
     if (now - lastDamageTime.current > 2000) { // 2 second cooldown
       lastDamageTime.current = now;
       damageShip(10);
       addNotification('Hull damaged!', 'error');
+      if (source === 'shore') sfxShoreCollision(); else sfxShipCollision();
       setShowExclamation(true);
       
       // Hide exclamation after 2 seconds
@@ -239,6 +278,7 @@ export function Ship() {
       if (group.current) {
         for (let i = 0; i < particleCount; i++) {
           const p = particleData.current[i];
+          if (!p) continue;
           p.pos.copy(group.current.position).add(new THREE.Vector3(
             (Math.random() - 0.5) * 2,
             1 + Math.random(),
@@ -256,14 +296,52 @@ export function Ship() {
   };
 
   useEffect(() => {
-    const handleCollisionEvent = () => triggerCollision();
+    const handleCollisionEvent = (e: Event) => {
+      triggerCollision('ship');
+      const detail = (e as CustomEvent).detail;
+      if (detail?.appearancePhrase) {
+        window.dispatchEvent(new CustomEvent('ship-collision-warning', {
+          detail: { appearancePhrase: detail.appearancePhrase },
+        }));
+      }
+    };
     window.addEventListener('ship-collision', handleCollisionEvent);
     return () => window.removeEventListener('ship-collision', handleCollisionEvent);
   }, []);
 
+  // Reset net state on unmount (world reload / teleport)
+  useEffect(() => () => {
+    netState.current = 'idle';
+    netCooldown.current = 0;
+    pendingCatchShoalIdx.current = null;
+    pendingManualCast.current = false;
+    if (netGroupRef.current) netGroupRef.current.visible = false;
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = true;
+      const key = e.key.toLowerCase();
+      if (key in keys.current) keys.current[key as keyof typeof keys.current] = true;
+      // Auto-weigh anchor when pressing movement keys
+      if ((key === 'w' || key === 's') && playerMode === 'ship' && !paused) {
+        const store = useGameStore.getState();
+        if (store.anchored) {
+          store.setAnchored(false);
+          sfxAnchorWeigh();
+          store.addNotification('Weighing anchor.', 'info');
+        }
+      }
+      if (key === 'c' && playerMode === 'ship' && !paused) {
+        if (netState.current === 'idle' && netCooldown.current <= 0) {
+          // Manual cast in open water
+          pendingManualCast.current = true;
+          pendingCatchShoalIdx.current = null;
+          netState.current = 'casting';
+          netClock.current = 0;
+          sfxCastNet();
+          addNotification('Casting net...', 'info');
+        }
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = false;
@@ -274,20 +352,44 @@ export function Ship() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [playerMode, paused]);
 
   useFrame((state, delta) => {
     if (!group.current) return;
-    // Don't run physics until spawn position has been synced
-    if (!initialized.current) return;
+    const store = useGameStore.getState();
+
+    // External teleports/world reloads update the store directly; snap the ship to them here.
+    const storeDx = store.playerPos[0] - group.current.position.x;
+    const storeDz = store.playerPos[2] - group.current.position.z;
+    const storeDistSq = storeDx * storeDx + storeDz * storeDz;
+    const rotDeltaToStore = Math.atan2(
+      Math.sin(store.playerRot - rotation.current),
+      Math.cos(store.playerRot - rotation.current)
+    );
+    if (!initialized.current || storeDistSq > 9 || Math.abs(rotDeltaToStore) > 0.25) {
+      group.current.position.set(store.playerPos[0], SHIP_ROOT_Y, store.playerPos[2]);
+      rotation.current = store.playerRot;
+      previousHeading.current = store.playerRot;
+      velocity.current = store.playerVelocity;
+      recoilVelX.current = 0;
+      recoilVelZ.current = 0;
+      initialized.current = true;
+    }
 
     if (playerMode === 'ship' && !paused) {
       // Acceleration and Inertia
       const maxSpeed = stats.speed;
       const accel = 5 * delta;
       const drag = 2 * delta;
-      
-      if (keys.current.w) {
+
+      // When anchored, rapidly decelerate to zero and ignore movement input
+      if (store.anchored) {
+        if (Math.abs(velocity.current) > 0.01) {
+          velocity.current *= Math.max(0, 1 - delta * 6);
+        } else {
+          velocity.current = 0;
+        }
+      } else if (keys.current.w) {
         velocity.current = Math.min(velocity.current + accel, maxSpeed);
       } else if (keys.current.s) {
         velocity.current = Math.max(velocity.current - accel, -maxSpeed / 2);
@@ -401,11 +503,40 @@ export function Ship() {
       group.current.rotation.y = rotation.current;
       group.current.position.y = SHIP_ROOT_Y;
 
-      setPlayerTransform({
-        pos: [group.current.position.x, SHIP_ROOT_Y, group.current.position.z],
-        rot: rotation.current,
-        vel: velocity.current,
-      });
+      const livePos: [number, number, number] = [
+        group.current.position.x,
+        SHIP_ROOT_Y,
+        group.current.position.z,
+      ];
+      syncLiveShipTransform(livePos, rotation.current, velocity.current);
+      storeSyncAccum.current += delta;
+      if (storeSyncAccum.current >= STORE_SYNC_INTERVAL) {
+        setPlayerTransform({
+          pos: livePos,
+          rot: rotation.current,
+          vel: velocity.current,
+        });
+        storeSyncAccum.current = 0;
+      }
+
+      // ── Sailing water sounds ──
+      const spdRatio = Math.abs(velocity.current) / Math.max(stats.speed, 1);
+      const now = state.clock.elapsedTime;
+
+      // Bow wave splash — fires when accelerating past 50%, cooldown 2s
+      if (spdRatio > 0.5 && !sailsCaughtRef.current && now - lastCreakTime.current > 2) {
+        sailsCaughtRef.current = true;
+        sfxSailsCatch();
+      } else if (spdRatio < 0.3) {
+        sailsCaughtRef.current = false;
+      }
+
+      // Turn splash — water churning on turns at speed (cooldown: 1.8s)
+      const turnRate = Math.abs((keys.current.a ? 1 : 0) - (keys.current.d ? 1 : 0));
+      if (turnRate > 0 && spdRatio > 0.25 && now - lastCreakTime.current > 1.8) {
+        lastCreakTime.current = now;
+        sfxRiggingCreak();
+      }
     }
 
     let headingDelta = rotation.current - previousHeading.current;
@@ -437,7 +568,6 @@ export function Ship() {
       visualGroup.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2) * 0.04 - speedRatio * 0.015;
     }
 
-    const store = useGameStore.getState();
     windVector.current
       .set(Math.sin(store.windDirection), Math.cos(store.windDirection))
       .multiplyScalar(store.windSpeed * 10);
@@ -573,11 +703,12 @@ export function Ship() {
       let needsUpdate = false;
       for (let i = 0; i < particleCount; i++) {
         const p = particleData.current[i];
+        if (!p) continue;
         if (p.life > 0) {
           p.life -= delta;
           p.vel.y -= 15 * delta; // Gravity
           p.pos.addScaledVector(p.vel, delta);
-          
+
           dummy.position.copy(p.pos);
           const scale = Math.max(0, p.life);
           dummy.scale.set(scale, scale, scale);
@@ -595,6 +726,295 @@ export function Ship() {
       }
       if (needsUpdate) {
         particlesRef.current.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    // ── Anchor animation ──
+    {
+      const isAnchored = store.anchored;
+      // Detect transitions
+      if (isAnchored && !prevAnchored.current) {
+        anchorState.current = 'dropping';
+        anchorClock.current = 0;
+      } else if (!isAnchored && prevAnchored.current) {
+        anchorState.current = 'weighing';
+        anchorClock.current = 0;
+      }
+      prevAnchored.current = isAnchored;
+
+      const ac = anchorClock.current;
+
+      if (anchorState.current === 'stowed') {
+        // Anchor stowed — hidden
+        if (anchorGroupRef.current) anchorGroupRef.current.visible = false;
+      } else if (anchorState.current === 'dropping') {
+        anchorClock.current += delta;
+        const progress = Math.min(ac / ANCHOR_DROP_DUR, 1);
+        if (anchorGroupRef.current) {
+          anchorGroupRef.current.visible = true;
+          // Swing out from bow starboard, then plunge down
+          const swingOut = Math.min(progress * 3, 1); // first third: swing out
+          const plunge = Math.max(0, (progress - 0.33) / 0.67); // last two-thirds: sink
+          const easeSwing = 1 - (1 - swingOut) * (1 - swingOut);
+          const easePlunge = plunge * plunge;
+
+          anchorGroupRef.current.position.set(
+            1.2 + easeSwing * 0.8,   // swing to starboard
+            1.0 - easePlunge * 3.5,  // drop from deck level into water
+            2.5                       // bow area
+          );
+          anchorGroupRef.current.rotation.z = -easeSwing * 0.4 - easePlunge * 0.8;
+          anchorGroupRef.current.rotation.x = easePlunge * 0.3;
+        }
+        // Chain lengthens as anchor drops
+        if (anchorChainRef.current) {
+          const chainLen = 0.5 + progress * 3.0;
+          anchorChainRef.current.scale.y = chainLen;
+          anchorChainRef.current.position.y = chainLen * 0.5;
+        }
+        // Spawn splash particles when anchor hits water (~40% through)
+        if (progress > 0.38 && progress < 0.45 && group.current) {
+          const shipPos = group.current.position;
+          const rot = rotation.current;
+          const splashX = shipPos.x + Math.sin(rot) * 2.5 + Math.cos(rot) * 1.8;
+          const splashZ = shipPos.z + Math.cos(rot) * 2.5 - Math.sin(rot) * 1.8;
+          for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
+            const p = anchorSplashData.current[i];
+            if (p.life <= 0) {
+              p.pos.set(
+                splashX + (Math.random() - 0.5) * 0.8,
+                0.2 + Math.random() * 0.3,
+                splashZ + (Math.random() - 0.5) * 0.8
+              );
+              p.vel.set(
+                (Math.random() - 0.5) * 4,
+                3 + Math.random() * 4,
+                (Math.random() - 0.5) * 4
+              );
+              p.life = 0.6 + Math.random() * 0.4;
+            }
+          }
+        }
+        if (progress >= 1) {
+          anchorState.current = 'down';
+        }
+      } else if (anchorState.current === 'down') {
+        // Anchor hanging below waterline, chain taut, gentle sway
+        if (anchorGroupRef.current) {
+          anchorGroupRef.current.visible = true;
+          anchorGroupRef.current.position.set(2.0, -2.5, 2.5);
+          anchorGroupRef.current.rotation.z = -1.2 + Math.sin(state.clock.elapsedTime * 1.2) * 0.04;
+          anchorGroupRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.8) * 0.03;
+        }
+        if (anchorChainRef.current) {
+          anchorChainRef.current.scale.y = 3.5;
+          anchorChainRef.current.position.y = 1.75;
+        }
+      } else if (anchorState.current === 'weighing') {
+        anchorClock.current += delta;
+        const progress = Math.min(ac / ANCHOR_WEIGH_DUR, 1);
+        if (anchorGroupRef.current) {
+          anchorGroupRef.current.visible = true;
+          const eased = 1 - (1 - progress) * (1 - progress); // ease-out
+          // Rise from underwater back up to deck
+          anchorGroupRef.current.position.set(
+            2.0 - eased * 0.8,
+            -2.5 + eased * 3.5,
+            2.5
+          );
+          anchorGroupRef.current.rotation.z = -1.2 + eased * 1.2;
+          anchorGroupRef.current.rotation.x = 0.3 - eased * 0.3;
+        }
+        // Chain shortens
+        if (anchorChainRef.current) {
+          const chainLen = 3.5 - progress * 3.0;
+          anchorChainRef.current.scale.y = Math.max(0.5, chainLen);
+          anchorChainRef.current.position.y = Math.max(0.5, chainLen) * 0.5;
+        }
+        // Dripping water particles when anchor breaks surface
+        if (progress > 0.55 && progress < 0.65 && group.current) {
+          const shipPos = group.current.position;
+          const rot = rotation.current;
+          const dripX = shipPos.x + Math.sin(rot) * 2.5 + Math.cos(rot) * 1.5;
+          const dripZ = shipPos.z + Math.cos(rot) * 2.5 - Math.sin(rot) * 1.5;
+          for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
+            const p = anchorSplashData.current[i];
+            if (p.life <= 0) {
+              p.pos.set(
+                dripX + (Math.random() - 0.5) * 0.5,
+                0.5 + Math.random() * 1.0,
+                dripZ + (Math.random() - 0.5) * 0.5
+              );
+              p.vel.set(
+                (Math.random() - 0.5) * 1.5,
+                -1 - Math.random() * 2,  // drip downward
+                (Math.random() - 0.5) * 1.5
+              );
+              p.life = 0.4 + Math.random() * 0.3;
+            }
+          }
+        }
+        if (progress >= 1) {
+          anchorState.current = 'stowed';
+          if (anchorGroupRef.current) anchorGroupRef.current.visible = false;
+        }
+      }
+    }
+
+    // ── Anchor splash particles ──
+    if (anchorSplashRef.current) {
+      const dummy = new THREE.Object3D();
+      let needsUpdate = false;
+      for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
+        const p = anchorSplashData.current[i];
+        if (!p) continue;
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 12 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const s = Math.max(0, p.life) * 0.8;
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          anchorSplashRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.updateMatrix();
+          anchorSplashRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) {
+        anchorSplashRef.current.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    // ── Fishing: auto-catch proximity check ──
+    if (netCooldown.current > 0) netCooldown.current -= delta;
+
+    if (netState.current === 'idle' && netCooldown.current <= 0 && !store.anchored && Math.abs(velocity.current) > 0.5) {
+      const shipX = group.current.position.x;
+      const shipZ = group.current.position.z;
+      const shoals = store.fishShoals;
+      const CATCH_RADIUS_SQ = 64; // 8 units
+      for (let si = 0; si < shoals.length; si++) {
+        const s = shoals[si];
+        if (s.scattered || s.count <= 0) continue;
+        const dx = s.center[0] - shipX;
+        const dz = s.center[2] - shipZ;
+        if (dx * dx + dz * dz < CATCH_RADIUS_SQ) {
+          // Auto-catch! Start the net animation
+          pendingCatchShoalIdx.current = si;
+          pendingManualCast.current = false;
+          netState.current = 'casting';
+          netClock.current = 0;
+          sfxCastNet();
+          break;
+        }
+      }
+    }
+
+    // ── Fishing net animation (shared by auto-catch and manual cast) ──
+    if (netState.current !== 'idle') {
+      netClock.current += delta;
+      const nc = netClock.current;
+
+      if (netState.current === 'casting') {
+        const progress = Math.min(nc / NET_CAST_DUR, 1);
+        const eased = 1 - (1 - progress) * (1 - progress);
+        if (netGroupRef.current) {
+          netGroupRef.current.visible = true;
+          // Start at gunwale (x~1.1), arc out ~2.5 units to starboard
+          netGroupRef.current.position.set(
+            1.1 + eased * 2.5,        // gunwale → ~3.6 out
+            1.2 - eased * 1.5,        // deck height → near waterline
+            0
+          );
+          netGroupRef.current.rotation.z = -eased * Math.PI * 0.35;
+        }
+        if (netRopeRef.current) netRopeRef.current.scale.x = 0.5 + eased * 0.5;
+        if (netMeshRef.current) netMeshRef.current.scale.set(eased, eased, eased);
+        if (progress >= 1) {
+          // Skip settling — go straight to hauling
+          netState.current = 'hauling';
+          netClock.current = 0;
+          sfxHaulNet();
+        }
+      } else if (netState.current === 'hauling') {
+        const progress = Math.min(nc / NET_HAUL_DUR, 1);
+        const eased = progress * progress;
+        if (netGroupRef.current) {
+          // Pull back from ~3.6 to gunwale
+          netGroupRef.current.position.set(
+            3.6 - eased * 2.5,        // back to ~1.1
+            -0.3 + eased * 1.5,       // waterline → deck
+            0
+          );
+          netGroupRef.current.rotation.z = -Math.PI * 0.35 + eased * Math.PI * 0.35;
+        }
+        if (netMeshRef.current) {
+          netMeshRef.current.scale.set(1 - eased * 0.5, 1 - eased * 0.5, 1 - eased * 0.5);
+        }
+        if (progress >= 1) {
+          // ── Catch resolution ──
+          netState.current = 'idle';
+          netClock.current = 0;
+          netCooldown.current = NET_COOLDOWN;
+          if (netGroupRef.current) netGroupRef.current.visible = false;
+
+          const st = useGameStore.getState();
+
+          if (pendingManualCast.current) {
+            // Manual cast — junk/treasure table
+            pendingManualCast.current = false;
+            const result = rollManualCast();
+            useGameStore.setState({
+              provisions: st.provisions + result.provisions,
+              gold: st.gold + result.gold,
+              ...(result.cargo ? {
+                cargo: { ...st.cargo, [result.cargo.type]: st.cargo[result.cargo.type] + result.cargo.amount }
+              } : {}),
+            });
+            st.addNotification(result.message, result.toastType, {
+              size: result.toastSize,
+              subtitle: result.toastSubtitle,
+            });
+            // Tiered audio: ambergris = legendary fanfare, gold/cargo = treasure clink, modest = normal ping, junk = silence
+            if (result.toastType === 'legendary') {
+              playLootSfx('legendary');
+            } else if (result.gold > 0 || result.cargo) {
+              sfxTreasureFind();
+            } else if (result.provisions > 0) {
+              playLootSfx('normal');
+            }
+          } else if (pendingCatchShoalIdx.current !== null) {
+            // Auto-catch — fish from a shoal
+            const shoalIdx = pendingCatchShoalIdx.current;
+            pendingCatchShoalIdx.current = null;
+            const shoal = st.fishShoals?.[shoalIdx];
+            if (shoal && !shoal.scattered && shoal.count > 0) {
+              const result = rollFishCatch(shoal.fishType, shoal.count);
+              useGameStore.setState({
+                provisions: st.provisions + result.provisions,
+                ...(result.cargo ? {
+                  cargo: { ...st.cargo, [result.cargo.type]: st.cargo[result.cargo.type] + result.cargo.amount }
+                } : {}),
+              });
+              st.addNotification(result.message, result.toastType, {
+                size: result.toastSize,
+                subtitle: result.toastSubtitle,
+              });
+              // Scatter the shoal
+              useGameStore.getState().scatterShoal(shoalIdx);
+              // Play sound based on catch quality
+              if (result.quality === 'legendary') playLootSfx('legendary');
+              else if (result.quality === 'fine') playLootSfx('rare');
+              else playLootSfx('normal');
+            }
+          }
+        }
       }
     }
 
@@ -712,6 +1132,70 @@ export function Ship() {
               <meshStandardMaterial color="#3e2723" />
             </mesh>
           </group>
+          {/* Fishing Net */}
+          <group ref={netGroupRef} visible={false} position={[1.1, 1.2, 0]}>
+            {/* Rope line — connects net back toward gunwale */}
+            <mesh ref={netRopeRef} position={[-0.8, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.03, 0.03, 1.6, 4]} />
+              <meshStandardMaterial color="#8B7355" roughness={1} />
+            </mesh>
+            {/* Net mesh — simple circle of crossing lines */}
+            <group ref={netMeshRef}>
+              {/* Net body — flat torus to suggest the circular net shape */}
+              <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.8, 0.03, 4, 12]} />
+                <meshStandardMaterial color="#8B7355" roughness={1} />
+              </mesh>
+              {/* Cross lines */}
+              <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.4, 0.02, 4, 12]} />
+                <meshStandardMaterial color="#8B7355" roughness={1} />
+              </mesh>
+              {/* Weights — small dark spheres at the rim */}
+              {[0, 1, 2, 3, 4, 5].map(i => {
+                const angle = (i / 6) * Math.PI * 2;
+                return (
+                  <mesh key={i} position={[Math.cos(angle) * 0.8, 0, Math.sin(angle) * 0.8]}>
+                    <sphereGeometry args={[0.06, 4, 4]} />
+                    <meshStandardMaterial color="#444" roughness={1} />
+                  </mesh>
+                );
+              })}
+            </group>
+          </group>
+          {/* 3D Anchor — stowed at bow, animates on drop/weigh */}
+          <group ref={anchorGroupRef} visible={false} position={[1.2, 1.0, 2.5]}>
+            {/* Chain — cylinder that scales dynamically */}
+            <mesh ref={anchorChainRef} position={[0, 0.25, 0]}>
+              <cylinderGeometry args={[0.04, 0.04, 1, 6]} />
+              <meshStandardMaterial color="#555" roughness={0.6} metalness={0.7} />
+            </mesh>
+            {/* Anchor body — shank (vertical bar) */}
+            <mesh position={[0, -0.3, 0]}>
+              <boxGeometry args={[0.1, 0.7, 0.1]} />
+              <meshStandardMaterial color="#333" roughness={0.5} metalness={0.8} />
+            </mesh>
+            {/* Ring at top */}
+            <mesh position={[0, 0.05, 0]} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[0.1, 0.03, 6, 8]} />
+              <meshStandardMaterial color="#444" roughness={0.5} metalness={0.8} />
+            </mesh>
+            {/* Crown — horizontal bar at bottom */}
+            <mesh position={[0, -0.65, 0]}>
+              <boxGeometry args={[0.6, 0.08, 0.08]} />
+              <meshStandardMaterial color="#333" roughness={0.5} metalness={0.8} />
+            </mesh>
+            {/* Left fluke */}
+            <mesh position={[-0.28, -0.55, 0]} rotation={[0, 0, Math.PI / 6]}>
+              <coneGeometry args={[0.12, 0.3, 4]} />
+              <meshStandardMaterial color="#333" roughness={0.5} metalness={0.8} />
+            </mesh>
+            {/* Right fluke */}
+            <mesh position={[0.28, -0.55, 0]} rotation={[0, 0, -Math.PI / 6]}>
+              <coneGeometry args={[0.12, 0.3, 4]} />
+              <meshStandardMaterial color="#333" roughness={0.5} metalness={0.8} />
+            </mesh>
+          </group>
         </group>
       </group>
 
@@ -719,6 +1203,12 @@ export function Ship() {
       <instancedMesh ref={particlesRef} args={[undefined, undefined, particleCount]}>
         <boxGeometry args={[0.3, 0.3, 0.3]} />
         <meshStandardMaterial color="#8B4513" roughness={1} />
+      </instancedMesh>
+
+      {/* Anchor Splash Particles */}
+      <instancedMesh ref={anchorSplashRef} args={[undefined, undefined, ANCHOR_SPLASH_COUNT]}>
+        <sphereGeometry args={[0.15, 6, 6]} />
+        <meshStandardMaterial color="#88ccdd" roughness={0.3} transparent opacity={0.7} />
       </instancedMesh>
     </>
   );

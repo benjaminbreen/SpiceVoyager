@@ -39,6 +39,11 @@ function corePortsToOverrides(): PortOverride[] {
 export function singlePortConfig(seed: number, worldSize: number): MapConfig {
   const portIndex = seed % CORE_PORTS.length;
   const port = CORE_PORTS[portIndex];
+  return focusedPortConfig(port.id, seed, worldSize);
+}
+
+export function focusedPortConfig(portId: string, seed: number, worldSize: number): MapConfig {
+  const port = findPortDef(portId) ?? CORE_PORTS[seed % CORE_PORTS.length];
   return {
     seed,
     worldSize,
@@ -242,17 +247,7 @@ export function devModeConfig(portId: string, seed: number): MapConfig {
   if (!def) {
     return { ...DEFAULT_MAP_CONFIG, seed };
   }
-  return {
-    seed,
-    worldSize: 1000,
-    portOverrides: [{
-      id: def.id,
-      name: def.name,
-      culture: def.culture,
-      scale: def.scale,
-    }],
-    soloPort: portId,
-  };
+  return focusedPortConfig(portId, seed, 1000);
 }
 
 /**

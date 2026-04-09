@@ -5,7 +5,17 @@ import {
 } from '../utils/journalTemplates';
 import { generateStartingCrew } from '../utils/crewGenerator';
 import { sfxCrabCollect, sfxDiscovery } from '../audio/SoundEffects';
+import { audioManager } from '../audio/AudioManager';
+import { rollLoot, playLootSfx, CRAB_LOOT } from '../utils/lootRoll';
 import { NPCShipIdentity } from '../utils/npcShipGenerator';
+import type { OceanEncounterDef } from '../utils/oceanEncounters';
+import type { FishType } from '../utils/fishTypes';
+import type { WaterPaletteSetting } from '../utils/waterPalettes';
+import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId } from '../utils/worldPorts';
+import {
+  syncLiveShipTransform,
+  syncLiveWalkingTransform,
+} from '../utils/livePlayerTransform';
 
 export type Commodity = 'Spices' | 'Silk' | 'Tea' | 'Wood' | 'Cannonballs';
 
@@ -33,6 +43,38 @@ export interface Port {
   buildings: Building[];
 }
 
+// ── Armament system ──
+// Period-appropriate weapons for c. 1612 Indian Ocean trade:
+//   Swivel guns (verso/falconet): small anti-personnel, mounted on rail, aimed by hand.
+//     Starting weapon. Range ~50m. Low damage. Can aim with hold-spacebar.
+//   Demi-culverin: medium cannon, ~9 lb shot. Common on English/Dutch armed merchantmen.
+//   Saker: lighter cannon (~5 lb), fast reload, good range. Portuguese favorite.
+//   Minion: small cannon (~4 lb). Cheap, light, good for pinnaces.
+//   Demi-cannon: heavy (~32 lb). Galleon-class only. Devastating but slow, heavy.
+//   Basilisk: rare Portuguese bronze long gun. Extreme range.
+// Future: purchasable at different ports (culverins in Surat, sakers in Goa,
+//   basilisks rare in Lisbon-connected ports, etc.)
+export type WeaponType = 'swivelGun' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
+
+export interface Weapon {
+  type: WeaponType;
+  name: string;
+  damage: number;      // base damage per hit
+  range: number;       // effective range in world units
+  reloadTime: number;  // seconds between shots
+  weight: number;      // cargo capacity cost
+  aimable: boolean;    // true = swivel-style, aim with cursor; false = broadside only
+}
+
+export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
+  swivelGun:    { type: 'swivelGun',    name: 'Swivel Gun',    damage: 5,  range: 8,  reloadTime: 2,  weight: 1,  aimable: true },
+  minion:       { type: 'minion',       name: 'Minion',        damage: 10, range: 14, reloadTime: 5,  weight: 3,  aimable: false },
+  saker:        { type: 'saker',        name: 'Saker',         damage: 12, range: 18, reloadTime: 6,  weight: 4,  aimable: false },
+  demiCulverin: { type: 'demiCulverin', name: 'Demi-Culverin', damage: 18, range: 16, reloadTime: 8,  weight: 6,  aimable: false },
+  demiCannon:   { type: 'demiCannon',   name: 'Demi-Cannon',   damage: 30, range: 12, reloadTime: 12, weight: 10, aimable: false },
+  basilisk:     { type: 'basilisk',     name: 'Basilisk',      damage: 22, range: 24, reloadTime: 10, weight: 8,  aimable: false },
+};
+
 export interface ShipStats {
   hull: number;
   maxHull: number;
@@ -41,7 +83,8 @@ export interface ShipStats {
   speed: number;
   turnSpeed: number;
   cargoCapacity: number;
-  cannons: number;
+  cannons: number;       // broadside cannon count (0 = no broadsides)
+  armament: WeaponType[]; // all mounted weapons
 }
 
 export type CrewRole = 'Captain' | 'Navigator' | 'Gunner' | 'Sailor' | 'Factor' | 'Surgeon';
@@ -60,6 +103,8 @@ export type CaptainTrait =
   | 'Battle Hardened' // reduced hull damage
   | 'Lucky Star';     // random bonus events
 
+export type CrewQuality = 'dud' | 'normal' | 'rare' | 'legendary';
+
 export interface CrewMember {
   id: string;
   name: string;
@@ -70,6 +115,7 @@ export interface CrewMember {
   nationality: Nationality;
   birthplace: string;
   health: HealthFlag;
+  quality: CrewQuality;
 }
 
 export interface ShipInfo {
@@ -89,7 +135,7 @@ export interface CaptainInfo {
 export interface Notification {
   id: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
+  type: 'info' | 'success' | 'warning' | 'error' | 'legendary';
   size?: 'normal' | 'grand';
   subtitle?: string;
   timestamp: number;
@@ -111,6 +157,16 @@ export interface JournalEntry {
   message: string;
   portName?: string;
   notes: JournalNote[];
+}
+
+export interface FishShoalEntry {
+  center: [number, number, number];
+  fishType: FishType;
+  startIdx: number;
+  count: number;        // current fish count (depletes on catch)
+  maxCount: number;     // original count (for respawn)
+  lastFished: number;   // timestamp of last catch (0 = never fished)
+  scattered: boolean;   // temporarily depleted
 }
 
 export interface RenderDebugSettings {
@@ -154,6 +210,9 @@ interface GameState {
   discoveredPorts: string[];
   npcPositions: [number, number, number][];
   npcShips: NPCShipIdentity[];
+  oceanEncounters: OceanEncounterDef[];
+  fishShoals: FishShoalEntry[];
+  fishNetCooldown: number; // seconds remaining before next auto/manual catch
 
   // Journal
   journalEntries: JournalEntry[];
@@ -166,12 +225,21 @@ interface GameState {
   // Provisions (food/supplies for crew)
   provisions: number;
 
+  // Game over
+  gameOver: boolean;
+  gameOverCause: string;
+  triggerGameOver: (cause: string) => void;
+
   // World
   worldSeed: number;
   worldSize: number;
   devSoloPort: string | null;
+  currentWorldPortId: string | null;
+  waterPaletteSetting: WaterPaletteSetting;
   renderDebug: RenderDebugSettings;
   paused: boolean;
+  anchored: boolean;
+  combatMode: boolean;
 
   setPlayerPos: (pos: [number, number, number]) => void;
   setPlayerRot: (rot: number) => void;
@@ -192,6 +260,10 @@ interface GameState {
   discoverPort: (id: string) => void;
   setNpcPositions: (positions: [number, number, number][]) => void;
   setNpcShips: (ships: NPCShipIdentity[]) => void;
+  setOceanEncounters: (encounters: OceanEncounterDef[]) => void;
+  setFishShoals: (shoals: FishShoalEntry[]) => void;
+  scatterShoal: (shoalIdx: number) => void;
+  tickFishRespawn: () => void;
   damageShip: (amount: number) => void;
   repairShip: (amount: number, cost: number) => void;
   setCrewRole: (crewId: string, role: CrewRole) => void;
@@ -209,11 +281,14 @@ interface GameState {
   setWorldSeed: (seed: number) => void;
   setWorldSize: (size: number) => void;
   setDevSoloPort: (portId: string | null) => void;
+  setWaterPaletteSetting: (setting: WaterPaletteSetting) => void;
   updateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
   resetRenderDebug: () => void;
   collectCrab: () => void;
   fastTravel: (portId: string) => void;
   setPaused: (paused: boolean) => void;
+  setAnchored: (anchored: boolean) => void;
+  setCombatMode: (combatMode: boolean) => void;
   initWorld: (ports: Port[]) => void;
 }
 
@@ -253,7 +328,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     speed: 15,
     turnSpeed: 1.5,
     cargoCapacity: 100,
-    cannons: 4,
+    cannons: 0,
+    armament: ['swivelGun'],
   },
   crew: generateStartingCrew('English', 6),
   ship: {
@@ -287,6 +363,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   discoveredPorts: [],
   npcPositions: [],
   npcShips: [],
+  oceanEncounters: [],
+  fishShoals: [],
+  fishNetCooldown: 0,
   journalEntries: [],
   dayCount: 1,
   windDirection: Math.PI * 0.75, // start SW
@@ -295,32 +374,91 @@ export const useGameStore = create<GameState>((set, get) => ({
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 300,
   devSoloPort: null,
+  currentWorldPortId: null,
+  waterPaletteSetting: 'auto',
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
+  anchored: false,
+  combatMode: false,
+  gameOver: false,
+  gameOverCause: '',
 
-  setPlayerPos: (pos) => set({ playerPos: pos }),
-  setPlayerRot: (rot) => set({ playerRot: rot }),
-  setPlayerVelocity: (vel) => set({ playerVelocity: vel }),
-  setPlayerTransform: ({ pos, rot, vel }) => set({
-    playerPos: pos,
-    playerRot: rot,
-    playerVelocity: vel,
-  }),
+  setPlayerPos: (pos) => {
+    const state = get();
+    syncLiveShipTransform(pos, state.playerRot, state.playerVelocity);
+    set({ playerPos: pos });
+  },
+  setPlayerRot: (rot) => {
+    const state = get();
+    syncLiveShipTransform(state.playerPos, rot, state.playerVelocity);
+    set({ playerRot: rot });
+  },
+  setPlayerVelocity: (vel) => {
+    const state = get();
+    syncLiveShipTransform(state.playerPos, state.playerRot, vel);
+    set({ playerVelocity: vel });
+  },
+  setPlayerTransform: ({ pos, rot, vel }) => {
+    syncLiveShipTransform(pos, rot, vel);
+    set({
+      playerPos: pos,
+      playerRot: rot,
+      playerVelocity: vel,
+    });
+  },
   setPlayerMode: (mode) => set({ playerMode: mode }),
-  setWalkingPos: (pos) => set({ walkingPos: pos }),
-  setWalkingRot: (rot) => set({ walkingRot: rot }),
-  setWalkingTransform: ({ pos, rot }) => set({
-    walkingPos: pos,
-    walkingRot: rot,
-  }),
+  setWalkingPos: (pos) => {
+    const state = get();
+    syncLiveWalkingTransform(pos, state.walkingRot);
+    set({ walkingPos: pos });
+  },
+  setWalkingRot: (rot) => {
+    const state = get();
+    syncLiveWalkingTransform(state.walkingPos, rot);
+    set({ walkingRot: rot });
+  },
+  setWalkingTransform: ({ pos, rot }) => {
+    syncLiveWalkingTransform(pos, rot);
+    set({
+      walkingPos: pos,
+      walkingRot: rot,
+    });
+  },
   setInteractionPrompt: (prompt) => set({ interactionPrompt: prompt }),
   setNpcPositions: (positions) => set({ npcPositions: positions }),
   setNpcShips: (ships) => set({ npcShips: ships }),
-  
+  setOceanEncounters: (encounters) => set({ oceanEncounters: encounters }),
+  setFishShoals: (shoals) => set({ fishShoals: shoals }),
+  scatterShoal: (shoalIdx) => set((state) => ({
+    fishShoals: state.fishShoals.map((s, i) =>
+      i === shoalIdx ? { ...s, scattered: true, lastFished: Date.now(), count: Math.max(0, s.count - Math.ceil(s.maxCount * 0.6)) } : s
+    ),
+  })),
+  tickFishRespawn: () => {
+    const state = get();
+    if (!state.fishShoals.some((shoal) => shoal.scattered && shoal.lastFished > 0)) return;
+    const now = Date.now();
+    const RESPAWN_MS = 60_000; // 60 real-time seconds
+    let changed = false;
+    const updated = state.fishShoals.map((s) => {
+      if (s.scattered && s.lastFished > 0 && now - s.lastFished > RESPAWN_MS) {
+        changed = true;
+        return { ...s, scattered: false, count: s.maxCount };
+      }
+      return s;
+    });
+    if (changed) set({ fishShoals: updated });
+  },
+
   damageShip: (amount) => {
     const state = get();
     const newHull = Math.max(0, state.stats.hull - amount);
-    set({ stats: { ...state.stats, hull: newHull } });
+    // Crew morale drops by 1 each time the hull takes damage
+    const updatedCrew = state.crew.map(c => ({
+      ...c,
+      morale: Math.max(0, c.morale - 1),
+    }));
+    set({ stats: { ...state.stats, hull: newHull }, crew: updatedCrew });
     get().addJournalEntry('ship', shipDamageTemplate(amount, newHull));
   },
 
@@ -472,44 +610,47 @@ export const useGameStore = create<GameState>((set, get) => ({
   setCameraZoom: (zoom) => set({ cameraZoom: Math.max(10, Math.min(150, zoom)) }),
   setViewMode: (mode) => set({ viewMode: mode }),
   
-  setWorldSeed: (seed) => set({ worldSeed: seed }),
+  setWorldSeed: (seed) => set({ worldSeed: seed, currentWorldPortId: null }),
   setWorldSize: (size) => set({ worldSize: size }),
   setDevSoloPort: (portId) => set({ devSoloPort: portId }),
+  setWaterPaletteSetting: (setting) => set({ waterPaletteSetting: setting }),
   updateRenderDebug: (patch) => set((state) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),
   resetRenderDebug: () => set({ renderDebug: DEFAULT_RENDER_DEBUG }),
   collectCrab: () => {
     const state = get();
-    set({ provisions: state.provisions + 1 });
-    get().addNotification('Caught a crab! (+1 provisions)', 'success');
+    const loot = rollLoot(CRAB_LOOT);
+    set({ provisions: state.provisions + loot.amount });
+    get().addNotification(loot.message, loot.type, {
+      size: loot.toastSize,
+      subtitle: loot.toastSubtitle,
+    });
     sfxCrabCollect();
+    playLootSfx(loot.tier);
   },
   fastTravel: (portId) => {
     const state = get();
-    const port = state.ports.find(p => p.id === portId);
+    const port = getWorldPortById(portId);
     if (!port) return;
-    // Calculate travel days from distance
-    const dx = port.position[0] - state.playerPos[0];
-    const dz = port.position[2] - state.playerPos[2];
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    const travelDays = Math.max(1, Math.round(dist / 80));
-    // Offset spawn position slightly so the player arrives near the port, not on top
-    const angle = Math.atan2(dx, dz);
-    const spawnDist = 25;
-    const arrivalPos: [number, number, number] = [
-      port.position[0] - Math.sin(angle) * spawnDist,
-      0,
-      port.position[2] - Math.cos(angle) * spawnDist,
-    ];
+    const currentPortId = resolveCampaignPortId(state);
+    if (portId === currentPortId) return;
+    if (!canDirectlySail(currentPortId, portId)) {
+      get().addNotification(`No direct sea lane to ${port.name} from this harbor.`, 'warning');
+      return;
+    }
+    const travel = estimateSeaTravel(currentPortId, portId);
+    const travelDays = travel?.days ?? 1;
     set({
-      playerPos: arrivalPos,
-      playerRot: angle,
+      currentWorldPortId: portId,
       playerVelocity: 0,
       playerMode: 'ship',
+      activePort: null,
+      interactionPrompt: null,
       dayCount: state.dayCount + travelDays,
       timeOfDay: 8, // arrive in the morning
     });
+    syncLiveShipTransform(state.playerPos, state.playerRot, 0);
     get().addNotification(`Arrived at ${port.name} after ${travelDays} days at sea.`, 'success');
     get().addJournalEntry(
       'navigation',
@@ -518,5 +659,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     );
   },
   setPaused: (paused) => set({ paused }),
-  initWorld: (ports) => set({ ports })
+  setAnchored: (anchored) => set({ anchored }),
+  setCombatMode: (combatMode) => set({ combatMode }),
+  triggerGameOver: (cause) => {
+    set({ gameOver: true, gameOverCause: cause, paused: true });
+    audioManager.stopAll();
+  },
+  initWorld: (ports) => set((state) => ({
+    ports,
+    discoveredPorts: Array.from(new Set([...state.discoveredPorts, ...ports.map((port) => port.id)])),
+  }))
 }));

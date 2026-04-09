@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
+import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 const APPROACH_RADIUS = 40;  // show "approaching" toast
 const HAIL_RADIUS = 12;     // show "Press T to Talk" prompt
@@ -18,6 +19,7 @@ export function NPCShip({
   const group = useRef<THREE.Group>(null);
   const torchRef = useRef<THREE.PointLight>(null);
   const torchMeshRef = useRef<THREE.MeshStandardMaterial>(null);
+  const alertRingRef = useRef<THREE.Mesh>(null);
   const targetRef = useRef(new THREE.Vector3(
     initialPosition[0] + (Math.random() - 0.5) * 50,
     0,
@@ -28,13 +30,18 @@ export function NPCShip({
   const approachNotified = useRef(false);
   const inHailRange = useRef(false);
 
+  // Alert mode: triggered by collision, ship flees from player
+  const alertUntil = useRef(0); // timestamp when alert ends
+  const ALERT_DURATION = 8000; // 8 seconds of fleeing
+
   const speed = useMemo(() => 2 + Math.random() * 3, []);
 
   useFrame((state, delta) => {
     if (!group.current) return;
 
     const currentPos = group.current.position;
-    const { playerPos, playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt } = useGameStore.getState();
+    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt } = useGameStore.getState();
+    const playerPos = getLiveShipTransform().pos;
 
     // Distance to player
     const distToPlayer = Math.sqrt(
@@ -69,25 +76,43 @@ export function NPCShip({
 
     // ── Collision ──
     if (distToPlayer < COLLISION_RADIUS) {
-      window.dispatchEvent(new CustomEvent('ship-collision'));
+      window.dispatchEvent(new CustomEvent('ship-collision', {
+        detail: { appearancePhrase: identity.appearancePhrase },
+      }));
       const bounceDir = new THREE.Vector3(
         currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
       ).normalize();
       currentPos.addScaledVector(bounceDir, 2);
+      // Enter alert mode: flee away from player
+      alertUntil.current = Date.now() + ALERT_DURATION;
       targetRef.current.set(
-        currentPos.x + bounceDir.x * 50, 0, currentPos.z + bounceDir.z * 50
+        currentPos.x + bounceDir.x * 80, 0, currentPos.z + bounceDir.z * 80
       );
     }
 
+    const isAlerted = Date.now() < alertUntil.current;
+
     // ── Movement AI ──
-    const dist = currentPos.distanceTo(targetRef.current);
-    if (dist < 5) {
+    if (isAlerted) {
+      // While alerted, keep fleeing away from the player
+      const fleeDir = new THREE.Vector3(
+        currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
+      ).normalize();
       targetRef.current.set(
-        currentPos.x + (Math.random() - 0.5) * 100,
-        0,
-        currentPos.z + (Math.random() - 0.5) * 100
+        currentPos.x + fleeDir.x * 80, 0, currentPos.z + fleeDir.z * 80
       );
+    } else {
+      const dist = currentPos.distanceTo(targetRef.current);
+      if (dist < 5) {
+        targetRef.current.set(
+          currentPos.x + (Math.random() - 0.5) * 100,
+          0,
+          currentPos.z + (Math.random() - 0.5) * 100
+        );
+      }
     }
+
+    const currentSpeed = isAlerted ? speed * 2.5 : speed; // flee faster when alerted
 
     const direction = new THREE.Vector3().subVectors(targetRef.current, currentPos).normalize();
     const targetRotation = Math.atan2(direction.x, direction.z);
@@ -97,13 +122,23 @@ export function NPCShip({
     while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
     group.current.rotation.y += rotDiff * delta * 2;
 
-    group.current.position.x += Math.sin(group.current.rotation.y) * speed * delta;
-    group.current.position.z += Math.cos(group.current.rotation.y) * speed * delta;
+    group.current.position.x += Math.sin(group.current.rotation.y) * currentSpeed * delta;
+    group.current.position.z += Math.cos(group.current.rotation.y) * currentSpeed * delta;
 
     // Bobbing
     group.current.position.y = Math.sin(state.clock.elapsedTime * 2 + initialPosition[0]) * 0.2;
     group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.5 + initialPosition[2]) * 0.05;
     group.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2 + initialPosition[0]) * 0.05;
+
+    // Alert ring visibility
+    if (alertRingRef.current) {
+      alertRingRef.current.visible = isAlerted;
+      if (isAlerted) {
+        // Pulse the ring opacity
+        const pulse = 0.5 + Math.sin(state.clock.elapsedTime * 6) * 0.3;
+        (alertRingRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
+      }
+    }
 
     // Torch at night
     const theta = ((timeOfDay - 6) / 24) * Math.PI * 2;
@@ -121,6 +156,11 @@ export function NPCShip({
 
   return (
     <group ref={group} position={initialPosition}>
+      {/* Alert ring - orange circle when fleeing */}
+      <mesh ref={alertRingRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+        <ringGeometry args={[3.5, 4, 32]} />
+        <meshBasicMaterial color="#ff8800" transparent opacity={0.6} side={THREE.DoubleSide} />
+      </mesh>
       {/* Hull */}
       <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
         <boxGeometry args={[1.8, 1, 4]} />

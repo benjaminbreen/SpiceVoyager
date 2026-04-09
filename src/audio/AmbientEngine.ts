@@ -23,15 +23,21 @@ class AmbientEngine {
   private oceanGain: GainNode | null = null;
   private shoreGain: GainNode | null = null;
   private portGain: GainNode | null = null;
-  private wakeGain: GainNode | null = null;
-  private wakeFilter: BiquadFilterNode | null = null;
+
+  // Sailing layer — three sub-components
+  private hullWashGain: GainNode | null = null;
+  private riggingWindGain: GainNode | null = null;
+  private riggingWindFilter: BiquadFilterNode | null = null;
+  private sailTensionGain: GainNode | null = null;
+  private sailTensionLfoGain: GainNode | null = null;
 
   // Source nodes (kept alive for the lifetime of the engine)
   private oceanSources: { noise: AudioBufferSourceNode; lfo: OscillatorNode } | null = null;
   private shoreSources: { noise: AudioBufferSourceNode; lfoGain: GainNode } | null = null;
   private portSources: { osc1: OscillatorNode; osc2: OscillatorNode; osc3: OscillatorNode } | null = null;
+  private riggingWindSources: { osc1: OscillatorNode; osc2: OscillatorNode } | null = null;
 
-  // Rotation tracking for wake/splash
+  // Rotation tracking for turn-based effects
   private lastRot = 0;
 
   private userHasInteracted = false;
@@ -55,7 +61,7 @@ class AmbientEngine {
     this.buildOcean();
     this.buildShore();
     this.buildPort();
-    this.buildWake();
+    this.buildSailingLayer();
     this.started = true;
   }
 
@@ -187,39 +193,120 @@ class AmbientEngine {
     this.portSources = { osc1, osc2, osc3 };
   }
 
-  // ── Wake: splashy high-frequency burst that responds to turning ────
+  // ── Sailing layer: hull wash + rigging wind + sail tension ──────────
+  // Three subtle sub-components that together create the feeling of
+  // a ship under sail, without the harsh white-noise hiss of the old wake.
 
-  private buildWake() {
+  private buildSailingLayer() {
     const ac = this.ctx!;
-    // White noise through a highpass = splashy, bright character
-    const len = ac.sampleRate * 2;
-    const buf = ac.createBuffer(1, len, ac.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
 
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
+    // ─ Hull wash: brown noise through narrow bandpass ─
+    // Sounds like water slipping along a wooden hull
+    const hullLen = ac.sampleRate * 3;
+    const hullBuf = ac.createBuffer(1, hullLen, ac.sampleRate);
+    const hullData = hullBuf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < hullLen; i++) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      hullData[i] = last * 3.5;
+    }
+    const hullSrc = ac.createBufferSource();
+    hullSrc.buffer = hullBuf;
+    hullSrc.loop = true;
 
-    // Highpass removes the low rumble, leaving the splashy top end
-    const hp = ac.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 800;
-    hp.Q.value = 0.3;
+    // Narrow bandpass — only the mid-frequency "wash" character
+    const hullBp = ac.createBiquadFilter();
+    hullBp.type = 'bandpass';
+    hullBp.frequency.value = 500;
+    hullBp.Q.value = 0.8;
 
-    // Gentle peak for water-rush character
-    const bp = ac.createBiquadFilter();
-    bp.type = 'peaking';
-    bp.frequency.value = 2500;
-    bp.gain.value = 2;
-    bp.Q.value = 1.2;
-    this.wakeFilter = bp;
+    // Slow LFO for irregular wave-lap rhythm
+    const hullLfo = ac.createOscillator();
+    hullLfo.type = 'sine';
+    hullLfo.frequency.value = 0.25; // ~4s cycle
+    const hullLfoDepth = ac.createGain();
+    hullLfoDepth.gain.value = 0.3;
+    const hullMod = ac.createGain();
+    hullMod.gain.value = 0.5;
+    hullLfo.connect(hullLfoDepth).connect(hullMod.gain);
 
-    this.wakeGain = ac.createGain();
-    this.wakeGain.gain.value = 0.0001;
+    this.hullWashGain = ac.createGain();
+    this.hullWashGain.gain.value = 0.0001;
 
-    src.connect(hp).connect(bp).connect(this.wakeGain).connect(this.master!);
-    src.start();
+    hullSrc.connect(hullBp).connect(hullMod).connect(this.hullWashGain).connect(this.master!);
+    hullSrc.start();
+    hullLfo.start();
+
+    // ─ Rigging wind: two detuned oscillators swept by speed ─
+    // Almost subliminal moaning/whistling through the rigging
+    const osc1 = ac.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.value = 180; // will sweep up with speed
+
+    const osc2 = ac.createOscillator();
+    osc2.type = 'triangle';
+    osc2.frequency.value = 195; // slightly detuned for organic beating
+
+    const riggingBp = ac.createBiquadFilter();
+    riggingBp.type = 'bandpass';
+    riggingBp.frequency.value = 400;
+    riggingBp.Q.value = 2.0; // narrow — keeps it from being harsh
+    this.riggingWindFilter = riggingBp;
+
+    const g1 = ac.createGain(); g1.gain.value = 0.3;
+    const g2 = ac.createGain(); g2.gain.value = 0.15;
+
+    this.riggingWindGain = ac.createGain();
+    this.riggingWindGain.gain.value = 0.0001;
+
+    osc1.connect(g1).connect(riggingBp);
+    osc2.connect(g2).connect(riggingBp);
+    riggingBp.connect(this.riggingWindGain).connect(this.master!);
+    osc1.start();
+    osc2.start();
+    this.riggingWindSources = { osc1, osc2 };
+
+    // ─ Sail tension: amplitude-modulated filtered noise ─
+    // Canvas under strain — slow pulse, only at higher speeds
+    const sailLen = ac.sampleRate * 2;
+    const sailBuf = ac.createBuffer(1, sailLen, ac.sampleRate);
+    const sailData = sailBuf.getChannelData(0);
+    // Pink-ish noise for softer character
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < sailLen; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99765 * b0 + white * 0.0990460;
+      b1 = 0.96300 * b1 + white * 0.2965164;
+      b2 = 0.57000 * b2 + white * 1.0526913;
+      sailData[i] = (b0 + b1 + b2 + white * 0.1848) * 0.2;
+    }
+    const sailSrc = ac.createBufferSource();
+    sailSrc.buffer = sailBuf;
+    sailSrc.loop = true;
+
+    const sailBp = ac.createBiquadFilter();
+    sailBp.type = 'bandpass';
+    sailBp.frequency.value = 350;
+    sailBp.Q.value = 1.2;
+
+    // Slow LFO — canvas fluttering under tension
+    const sailLfo = ac.createOscillator();
+    sailLfo.type = 'sine';
+    sailLfo.frequency.value = 0.4; // ~2.5s pulse
+    const sailLfoGain = ac.createGain();
+    sailLfoGain.gain.value = 0.4;
+    this.sailTensionLfoGain = sailLfoGain;
+    const sailMod = ac.createGain();
+    sailMod.gain.value = 0.4;
+    sailLfo.connect(sailLfoGain).connect(sailMod.gain);
+
+    this.sailTensionGain = ac.createGain();
+    this.sailTensionGain.gain.value = 0.0001;
+
+    sailSrc.connect(sailBp).connect(sailMod).connect(this.sailTensionGain).connect(this.master!);
+    sailSrc.start();
+    sailLfo.start();
   }
 
   // ── Smooth gain ramp (avoids clicks) ──────────────────────────────
@@ -287,28 +374,48 @@ class AmbientEngine {
       : 0.0001;
     this.ramp(this.portGain, portTarget);
 
-    // ── Wake/splash: responds to turning and speed while sailing
-    if (!isWalking) {
-      // Compute rotation delta (handle wraparound)
-      let rotDelta = Math.abs(state.playerRot - this.lastRot);
-      if (rotDelta > Math.PI) rotDelta = 2 * Math.PI - rotDelta;
-      this.lastRot = state.playerRot;
+    // ── Sailing layer: hull wash + rigging wind + sail tension
+    // All three scale with speed ratio (0 at rest, 1 at full speed)
+    const speedRatio = isWalking ? 0 : Math.min(state.speed / 8, 1); // 8 ≈ typical maxSpeed
 
-      // turnIntensity: 0 = straight, ~1 = hard turn
-      const turnIntensity = Math.min(1, rotDelta * 6);
-      const speedFactor = Math.min(1, state.speed * 0.15);
-      const wakeTarget = 0.007 * turnIntensity * speedFactor;
-      this.ramp(this.wakeGain, Math.max(0.0001, wakeTarget), turnIntensity > 0.05 ? 0.08 : 0.15);
+    // Hull wash — audible from ~20% speed, soft wash of water on hull
+    const hullTarget = speedRatio > 0.15
+      ? 0.012 + speedRatio * 0.018 // max ~0.03 — very subtle
+      : 0.0001;
+    this.ramp(this.hullWashGain, hullTarget);
 
-      // Shift the peak frequency up during hard turns
-      if (this.wakeFilter && this.ctx) {
-        const freq = 2500 + turnIntensity * 1000;
-        this.wakeFilter.frequency.setValueAtTime(freq, this.ctx.currentTime);
-      }
-    } else {
-      this.ramp(this.wakeGain, 0.0001);
-      this.lastRot = state.playerRot;
+    // Rigging wind — sweep oscillator frequency with speed for pitch shift
+    const riggingTarget = speedRatio > 0.25
+      ? 0.006 + speedRatio * 0.014 // max ~0.02 — almost subliminal
+      : 0.0001;
+    this.ramp(this.riggingWindGain, riggingTarget);
+
+    // Sweep the rigging filter frequency: low moan at slow, gentle whistle at fast
+    if (this.riggingWindFilter && this.ctx) {
+      const freqTarget = 250 + speedRatio * 500; // 250Hz → 750Hz
+      this.riggingWindFilter.frequency.setTargetAtTime(freqTarget, this.ctx.currentTime, 1.0);
     }
+    // Also sweep the oscillator frequencies slightly
+    if (this.riggingWindSources && this.ctx) {
+      const baseFreq = 160 + speedRatio * 120;
+      this.riggingWindSources.osc1.frequency.setTargetAtTime(baseFreq, this.ctx.currentTime, 1.5);
+      this.riggingWindSources.osc2.frequency.setTargetAtTime(baseFreq * 1.08, this.ctx.currentTime, 1.5);
+    }
+
+    // Sail tension — only kicks in at higher speeds (canvas under real strain)
+    const sailTarget = speedRatio > 0.45
+      ? 0.008 + (speedRatio - 0.45) * 0.025 // ramps from 0.008 to ~0.022
+      : 0.0001;
+    this.ramp(this.sailTensionGain, sailTarget);
+
+    // Make sail flutter faster at higher speeds
+    if (this.sailTensionLfoGain && this.ctx) {
+      const lfoDepth = 0.3 + speedRatio * 0.3;
+      this.sailTensionLfoGain.gain.setTargetAtTime(lfoDepth, this.ctx.currentTime, 0.5);
+    }
+
+    // Track rotation for external use
+    this.lastRot = state.playerRot;
   }
 
   setVolume(v: number) {

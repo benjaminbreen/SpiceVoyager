@@ -5,6 +5,8 @@ import { Water } from 'three-stdlib';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
+import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
+import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 const WATER_SURFACE_OFFSET = -0.03;
 const SHALLOW_TINT_OFFSET = 0.012;
@@ -16,6 +18,8 @@ function ShallowWaterTint() {
   const worldSeed = useGameStore((state) => state.worldSeed);
   const worldSize = useGameStore((state) => state.worldSize);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
 
   const { geometry, material } = useMemo(() => {
     const baseSize = devSoloPort ? 1000 : (worldSize || 600);
@@ -26,9 +30,9 @@ function ShallowWaterTint() {
     const colors = new Float32Array(position.count * 3);
     const alphas = new Float32Array(position.count);
 
-    const _turquoiseBase = new THREE.Color().setRGB(0.34, 0.72, 0.67);
-    const _paleSurf = new THREE.Color().setRGB(0.72, 0.84, 0.72);
-    const _outerShallow = new THREE.Color().setRGB(0.16, 0.47, 0.53);
+    const _turquoiseBase = new THREE.Color().setRGB(...waterPalette.oceanOverlay.base);
+    const _paleSurf = new THREE.Color().setRGB(...waterPalette.oceanOverlay.paleSurf);
+    const _outerShallow = new THREE.Color().setRGB(...waterPalette.oceanOverlay.outerShallow);
     const turquoise = new THREE.Color();
 
     for (let i = 0; i < position.count; i++) {
@@ -36,10 +40,17 @@ function ShallowWaterTint() {
       const worldZ = -position.getY(i);
       const terrain = getTerrainData(x, worldZ);
       const tintStrength = Math.min(1, terrain.shallowFactor * 1.45 + terrain.surfFactor * 1.2 + terrain.wetSandFactor * 0.35);
+
+      // Only tint below sea level — above-water terrain is handled by land geometry
+      const aboveWater = terrain.height >= SEA_LEVEL;
+      // Shallow underwater areas get a nice tropical "see the bottom" tint
+      // Deeper water gets no tint (handled by seabed colors + water surface)
+      const depthFade = aboveWater ? 0 : Math.min(1, Math.max(0, 1 + terrain.height * 1.5));
       const alpha =
         tintStrength *
-        (terrain.height < SEA_LEVEL ? 0.58 : 0.24) *
-        (1 - terrain.coastSteepness * 0.28);
+        0.58 *
+        (1 - terrain.coastSteepness * 0.28) *
+        depthFade;
       turquoise.copy(_turquoiseBase);
       turquoise.lerp(_outerShallow, terrain.shallowFactor * 0.72);
       turquoise.lerp(_paleSurf, terrain.surfFactor * 0.72);
@@ -84,7 +95,7 @@ function ShallowWaterTint() {
     });
 
     return { geometry: geo, material: mat };
-  }, [devSoloPort, worldSeed, worldSize]);
+  }, [devSoloPort, waterPalette, worldSeed, worldSize]);
 
   useEffect(() => {
     return () => {
@@ -194,10 +205,10 @@ function ShipWake() {
   }, []);
 
   useFrame((state) => {
-    const store = useGameStore.getState();
-    const speed = Math.abs(store.playerVelocity);
-    const [px, , pz] = store.playerPos;
-    const rot = store.playerRot;
+    const shipTransform = getLiveShipTransform();
+    const speed = Math.abs(shipTransform.vel);
+    const [px, , pz] = shipTransform.pos;
+    const rot = shipTransform.rot;
     const dirX = Math.sin(rot);
     const dirZ = Math.cos(rot);
 
@@ -365,14 +376,21 @@ function BowFoam() {
   useFrame((state) => {
     if (!meshRef.current) return;
     const mat = meshRef.current.material as THREE.ShaderMaterial;
-    const store = useGameStore.getState();
+    const shipTransform = getLiveShipTransform();
     mat.uniforms.uTime.value = state.clock.elapsedTime;
-    mat.uniforms.uShipPos.value.set(store.playerPos[0], store.playerPos[1], store.playerPos[2]);
-    mat.uniforms.uShipSpeed.value = Math.abs(store.playerVelocity);
-    mat.uniforms.uShipDir.value.set(Math.sin(store.playerRot), Math.cos(store.playerRot));
+    mat.uniforms.uShipPos.value.set(
+      shipTransform.pos[0],
+      shipTransform.pos[1],
+      shipTransform.pos[2],
+    );
+    mat.uniforms.uShipSpeed.value = Math.abs(shipTransform.vel);
+    mat.uniforms.uShipDir.value.set(
+      Math.sin(shipTransform.rot),
+      Math.cos(shipTransform.rot),
+    );
 
-    meshRef.current.position.x = store.playerPos[0];
-    meshRef.current.position.z = store.playerPos[2];
+    meshRef.current.position.x = shipTransform.pos[0];
+    meshRef.current.position.z = shipTransform.pos[2];
   });
 
   return (
@@ -509,18 +527,26 @@ function PhosphorescentAlgae() {
     if (!meshRef.current) return;
     const mat = meshRef.current.material as THREE.ShaderMaterial;
     const store = useGameStore.getState();
+    const shipTransform = getLiveShipTransform();
     mat.uniforms.uTime.value = performance.now() * 0.001;
-    mat.uniforms.uPlayerPos.value.set(store.playerPos[0], store.playerPos[1], store.playerPos[2]);
-    mat.uniforms.uShipDir.value.set(Math.sin(store.playerRot), Math.cos(store.playerRot));
-    mat.uniforms.uShipSpeed.value = Math.abs(store.playerVelocity);
+    mat.uniforms.uPlayerPos.value.set(
+      shipTransform.pos[0],
+      shipTransform.pos[1],
+      shipTransform.pos[2],
+    );
+    mat.uniforms.uShipDir.value.set(
+      Math.sin(shipTransform.rot),
+      Math.cos(shipTransform.rot),
+    );
+    mat.uniforms.uShipSpeed.value = Math.abs(shipTransform.vel);
 
     const theta = ((store.timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(theta);
     mat.uniforms.uNightFactor.value = Math.max(0, -sunH);
 
     // Follow player
-    meshRef.current.position.x = store.playerPos[0];
-    meshRef.current.position.z = store.playerPos[2];
+    meshRef.current.position.x = shipTransform.pos[0];
+    meshRef.current.position.z = shipTransform.pos[2];
   });
 
   return (
@@ -542,6 +568,8 @@ export function Ocean() {
   const shipWakeEnabled = useGameStore((state) => state.renderDebug.shipWake);
   const bowFoamEnabled = useGameStore((state) => state.renderDebug.bowFoam);
   const algaeEnabled = useGameStore((state) => state.renderDebug.algae);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
 
   // Load the standard three.js water normals texture for realistic distortion
   const waterNormals = useLoader(
@@ -558,7 +586,7 @@ export function Ocean() {
       waterNormals,
       sunDirection: new THREE.Vector3(1, 1, 0).normalize(),
       sunColor: 0xffffff,
-      waterColor: 0x001e6f,
+      waterColor: waterPalette.surface.fallbackHex,
       distortionScale: 3.7,
       fog: true,
     });
@@ -570,7 +598,7 @@ export function Ocean() {
     waterMaterial.polygonOffsetUnits = 4;
     waterRef.current = w;
     return w;
-  }, [waterNormals]);
+  }, [waterNormals, waterPalette]);
 
   useFrame((_, delta) => {
     if (!waterRef.current) return;
@@ -612,12 +640,16 @@ export function Ocean() {
 
     // Adjust water body color with time
     if (sunH < -0.1) {
-      mat.uniforms.waterColor.value.setRGB(0.0, 0.06, 0.22);
+      mat.uniforms.waterColor.value.setRGB(...waterPalette.surface.night);
     } else if (sunH < 0.2) {
       const t = (sunH + 0.1) / 0.3;
-      mat.uniforms.waterColor.value.setRGB(0.0, 0.06 + t * 0.06, 0.22 + t * 0.21);
+      mat.uniforms.waterColor.value.setRGB(
+        waterPalette.surface.night[0] + (waterPalette.surface.dusk[0] - waterPalette.surface.night[0]) * t,
+        waterPalette.surface.night[1] + (waterPalette.surface.dusk[1] - waterPalette.surface.night[1]) * t,
+        waterPalette.surface.night[2] + (waterPalette.surface.dusk[2] - waterPalette.surface.night[2]) * t,
+      );
     } else {
-      mat.uniforms.waterColor.value.setHex(0x001e6f);
+      mat.uniforms.waterColor.value.setRGB(...waterPalette.surface.day);
     }
   });
 
@@ -625,12 +657,12 @@ export function Ocean() {
     <>
       <ShallowWaterTint />
       {advancedWaterEnabled ? (
-        <primitive object={water} position={[0, SEA_LEVEL + WATER_SURFACE_OFFSET, 0]} />
+        <primitive object={water} position={[0, SEA_LEVEL + WATER_SURFACE_OFFSET, 0]} raycast={() => null} />
       ) : (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, SEA_LEVEL + WATER_SURFACE_OFFSET, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, SEA_LEVEL + WATER_SURFACE_OFFSET, 0]} raycast={() => null}>
           <planeGeometry args={[10000, 10000]} />
           <meshPhongMaterial
-            color="#0b2a63"
+            color={waterPalette.surface.fallbackHex}
             transparent
             opacity={0.96}
             polygonOffset

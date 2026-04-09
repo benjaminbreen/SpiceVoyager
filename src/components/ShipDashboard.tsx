@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGameStore, CrewMember, CrewRole, Commodity } from '../store/gameStore';
+import { useGameStore, CrewMember, CrewRole, CrewQuality, Commodity, WEAPON_DEFS } from '../store/gameStore';
 import {
   X, Shield, Coins, Users, Package,
   Wrench, Heart, Star, ChevronDown, Crosshair, Sailboat, Flag,
@@ -41,6 +41,14 @@ const HEALTH_LABEL: Record<string, { text: string; color: string }> = {
   injured: { text: 'INJ', color: 'text-red-400' },
   scurvy: { text: 'SCRVY', color: 'text-orange-400' },
   fevered: { text: 'FEVER', color: 'text-red-300' },
+};
+
+// Quality tier → portrait border + card accent
+const QUALITY_PORTRAIT: Record<CrewQuality, { border: string; cardBorder: string; cardBg: string; glow?: string }> = {
+  dud:       { border: 'border-amber-800/50',    cardBorder: 'border-amber-900/25',   cardBg: 'bg-amber-950/10' },
+  normal:    { border: 'border-slate-600',        cardBorder: 'border-white/[0.06]',   cardBg: 'bg-white/[0.015]' },
+  rare:      { border: 'border-emerald-500/60',   cardBorder: 'border-emerald-800/30', cardBg: 'bg-emerald-950/15', glow: 'shadow-[0_0_6px_rgba(52,211,153,0.15)]' },
+  legendary: { border: 'border-purple-400/70',    cardBorder: 'border-purple-800/35',  cardBg: 'bg-purple-950/15',  glow: 'shadow-[0_0_10px_rgba(168,85,247,0.2)]' },
 };
 
 // --- SHARED PRIMITIVES ---
@@ -136,7 +144,7 @@ function ShipHeader() {
             <div className="flex items-center gap-2 md:gap-4 mt-1 text-[10px] md:text-[11px] tracking-wide text-slate-500">
               <span className="flex items-center gap-1"><Flag size={9} className="text-slate-600" /> {ship.flag}</span>
               <span className="text-slate-700">|</span>
-              <span>{ship.armed ? `${stats.cannons} Guns` : 'Unarmed'}</span>
+              <span>{ship.armed ? (stats.armament.length === 1 && stats.armament[0] === 'swivelGun' ? '1 Swivel Gun' : `${stats.armament.length} Guns`) : 'Unarmed'}</span>
               <span className="text-slate-700">|</span>
               <span className={hullPct > 50 ? 'text-slate-500' : hullPct > 25 ? 'text-yellow-500' : 'text-red-400'}>Hull {hullPct}%</span>
               {captain && (
@@ -184,11 +192,13 @@ function OverviewTab() {
       className="space-y-4"
     >
       {/* Captain card */}
-      {captain && (
-        <div className="border border-amber-900/30 bg-amber-950/15 p-3 md:p-4">
+      {captain && (() => {
+        const cq = QUALITY_PORTRAIT[captain.quality];
+        return (
+        <div className={`border ${cq.cardBorder} ${cq.cardBg} ${cq.glow ?? ''} p-3 md:p-4`}>
           <div className="flex items-center gap-3">
             {/* Placeholder portrait — square, strategy-game style */}
-            <div className="w-14 h-14 md:w-16 md:h-16 bg-slate-800 border border-amber-800/40 flex items-center justify-center shrink-0 overflow-hidden">
+            <div className={`w-14 h-14 md:w-16 md:h-16 bg-slate-800 border ${cq.border} flex items-center justify-center shrink-0 overflow-hidden`}>
               <span className="text-2xl md:text-3xl opacity-80">🧑‍✈️</span>
             </div>
             <div className="flex-1 min-w-0">
@@ -222,7 +232,8 @@ function OverviewTab() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Status gauges */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-3 md:p-4">
@@ -234,7 +245,7 @@ function OverviewTab() {
           <StatRow label="Sails" value={`${stats.sails}/${stats.maxSails}`} bar={stats.sails} barMax={stats.maxSails} barColor="bg-slate-400" />
           <StatRow label="Cargo" value={`${currentCargo}/${stats.cargoCapacity}`} bar={currentCargo} barMax={stats.cargoCapacity} barColor={currentCargo >= stats.cargoCapacity ? 'bg-red-500' : 'bg-teal-500'} />
           <StatRow label="Morale" value={`${avgMorale}%`} bar={avgMorale} barColor={avgMorale > 60 ? 'bg-green-500' : avgMorale > 30 ? 'bg-yellow-500' : 'bg-red-500'} />
-          <StatRow label="Guns" value={stats.cannons.toString()} bar={stats.cannons} barMax={12} barColor="bg-orange-500" />
+          <StatRow label="Guns" value={stats.armament.length.toString()} bar={stats.armament.length} barMax={12} barColor="bg-orange-500" />
         </div>
       </div>
 
@@ -342,16 +353,13 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
   onToggle?: () => void; onRoleChange?: (role: CrewRole) => void;
 }) {
   const health = HEALTH_LABEL[member.health];
+  const q = QUALITY_PORTRAIT[member.quality];
   return (
-    <div className={`border transition-colors ${
-      isCaptain ? 'border-amber-900/30 bg-amber-950/15' : 'border-white/[0.04] bg-white/[0.015] hover:bg-white/[0.03]'
-    }`}>
+    <div className={`border transition-colors ${q.cardBorder} ${q.cardBg} ${q.glow ?? ''} hover:bg-white/[0.03]`}>
       {/* Desktop layout */}
       <div className="hidden md:flex items-center gap-2 px-3 py-2.5">
         {/* Portrait */}
-        <div className={`w-8 h-8 flex items-center justify-center shrink-0 text-base ${
-          isCaptain ? 'bg-slate-800 border border-amber-800/40' : 'bg-slate-800 border border-slate-700'
-        }`}>
+        <div className={`w-8 h-8 flex items-center justify-center shrink-0 text-base bg-slate-800 border ${q.border}`}>
           {isCaptain ? '🧑‍✈️' : '👤'}
         </div>
         {/* Role badge */}
@@ -393,9 +401,7 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
 
       {/* Mobile layout */}
       <div className="flex md:hidden items-center gap-2 px-3 py-2.5" onClick={!isCaptain ? onToggle : undefined}>
-        <div className={`w-9 h-9 flex items-center justify-center shrink-0 text-lg ${
-          isCaptain ? 'bg-slate-800 border border-amber-800/40' : 'bg-slate-800 border border-slate-700'
-        }`}>
+        <div className={`w-9 h-9 flex items-center justify-center shrink-0 text-lg bg-slate-800 border ${q.border}`}>
           {isCaptain ? '🧑‍✈️' : '👤'}
         </div>
         <div className="flex-1 min-w-0">
@@ -565,7 +571,7 @@ function ShipTab() {
           <SpecLine icon={<Activity size={11} />} label="Top Speed" value={`${stats.speed} kn`} />
           <SpecLine icon={<Navigation size={11} />} label="Handling" value={`${stats.turnSpeed}`} />
           <SpecLine icon={<Package size={11} />} label="Cargo Cap." value={`${stats.cargoCapacity} units`} />
-          <SpecLine icon={<Crosshair size={11} />} label="Armament" value={`${stats.cannons} guns`} />
+          <SpecLine icon={<Crosshair size={11} />} label="Armament" value={stats.armament.map(w => WEAPON_DEFS[w].name).join(', ')} />
         </div>
       </div>
 
@@ -577,8 +583,8 @@ function ShipTab() {
         <div className="flex items-center gap-3">
           <Swords size={16} className="text-orange-500/70" />
           <div className="flex-1">
-            <div className="text-sm text-slate-300">{stats.cannons} cannons · {ship.armed ? 'Combat ready' : 'Not armed'}</div>
-            <div className="text-[10px] text-slate-600 mt-0.5">Broadside capacity: {Math.floor(stats.cannons / 2)} per side</div>
+            <div className="text-sm text-slate-300">{stats.armament.map(w => WEAPON_DEFS[w].name).join(', ')} · {ship.armed ? 'Combat ready' : 'Not armed'}</div>
+            <div className="text-[10px] text-slate-600 mt-0.5">{stats.cannons > 0 ? `Broadside capacity: ${Math.floor(stats.cannons / 2)} per side` : 'No broadside cannons'}</div>
           </div>
         </div>
       </div>

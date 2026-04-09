@@ -6,13 +6,19 @@ import { Sky } from '@react-three/drei';
 import { NPCShip } from './NPCShip';
 import { getTerrainData, reseedTerrain } from '../utils/terrain';
 import { useFrame } from '@react-three/fiber';
-import { generateMap, singlePortConfig, devModeConfig, findSafeSpawn } from '../utils/mapGenerator';
-import { startTerrainPreRender } from './WorldMap';
+import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '../utils/mapGenerator';
+import { invalidateTerrainCache, startTerrainPreRender } from './WorldMap';
 import { SEA_LEVEL } from '../constants/world';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
+import { resolveCampaignPortId } from '../utils/worldPorts';
 
 import { ProceduralCity } from './ProceduralCity';
 import { PortIndicators } from './PortIndicators';
 import { generateNPCShip } from '../utils/npcShipGenerator';
+import { pickFishType, randomShoalSize, type FishType } from '../utils/fishTypes';
+import { generateEncounter, type OceanEncounterDef } from '../utils/oceanEncounters';
+import { OceanEncounter } from './OceanEncounter';
+import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 // ── Shared crab state (readable by Player.tsx for collection) ─────────────────
 export type CrabEntry = { position: [number, number, number]; rotation: number };
@@ -23,8 +29,16 @@ export function getCrabData() { return _crabData; }
 export function getCollectedCrabs() { return _collectedCrabs; }
 export function collectCrabAt(index: number) { _collectedCrabs.add(index); }
 
+// Module-level fish shoal data for shift-select overlay (synced from store)
+import type { FishShoalEntry } from '../store/gameStore';
+export type { FishShoalEntry };
+let _fishShoalData: FishShoalEntry[] = [];
+export function getFishShoalData() { return _fishShoalData; }
+
 const COMMODITIES: Commodity[] = ['Spices', 'Silk', 'Tea', 'Wood', 'Cannonballs'];
-const COASTLINE_CLIP_LEVEL = SEA_LEVEL - 0.22;
+// Clip land geometry at the water surface so no land triangles exist below
+// the water plane — this eliminates z-fighting at the coastline.
+const COASTLINE_CLIP_LEVEL = SEA_LEVEL - 0.02;
 
 type TerrainVertex = {
   position: THREE.Vector3;
@@ -149,25 +163,35 @@ export function World() {
   const timeOfDay = useGameStore((state) => state.timeOfDay);
   const setNpcPositions = useGameStore((state) => state.setNpcPositions);
   const setNpcShips = useGameStore((state) => state.setNpcShips);
+  const setOceanEncounters = useGameStore((state) => state.setOceanEncounters);
+  const setFishShoals = useGameStore((state) => state.setFishShoals);
+  const tickFishRespawn = useGameStore((state) => state.tickFishRespawn);
   const npcShips = useGameStore((state) => state.npcShips);
+  const oceanEncounters = useGameStore((state) => state.oceanEncounters);
   const worldSeed = useGameStore((state) => state.worldSeed);
   const worldSize = useGameStore((state) => state.worldSize);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const setPlayerPos = useGameStore((state) => state.setPlayerPos);
   const shadowsEnabled = useGameStore((state) => state.renderDebug.shadows);
   const wildlifeMotionEnabled = useGameStore((state) => state.renderDebug.wildlifeMotion);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   // Generate world data once
   const { 
     landTerrainGeometry, seabedTerrainGeometry, generatedPorts, generatedNpcs,
-    treeData, deadTreeData, cactusData, crabData, fishData 
+    treeData, deadTreeData, cactusData, crabData, fishData, fishShoalData, gullData, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
     reseedTerrain(worldSeed);
     // Generate ports — use dev mode config if a solo port is selected
     const mapConfig = devSoloPort
       ? devModeConfig(devSoloPort, worldSeed)
-      : singlePortConfig(worldSeed, worldSize);
+      : focusedPortConfig(
+          resolveCampaignPortId({ worldSeed, devSoloPort, currentWorldPortId }),
+          worldSeed,
+          worldSize
+        );
     const portsData = generateMap(mapConfig);
     
     const npcs: [number, number, number][] = [];
@@ -175,7 +199,10 @@ export function World() {
     const deadTrees: { position: [number, number, number], scale: number }[] = [];
     const cacti: { position: [number, number, number], scale: number }[] = [];
     const crabs: { position: [number, number, number], rotation: number }[] = [];
-    const fishes: { position: [number, number, number], rotation: number }[] = [];
+    const fishes: { position: [number, number, number], rotation: number, scale: number, color: [number, number, number], shoalIdx: number }[] = [];
+    const fishShoals: { center: [number, number, number], fishType: FishType, startIdx: number, count: number, maxCount: number, lastFished: number, scattered: boolean }[] = [];
+    const gulls: { position: [number, number, number], phase: number, radius: number }[] = [];
+    const encounters: OceanEncounterDef[] = [];
     
     // Single port at center: mesh just needs to cover the archetype zone + some ocean margin
     const size = devSoloPort ? 1000 : Math.max(mapConfig.worldSize || 300, 600);
@@ -192,7 +219,7 @@ export function World() {
       const y_orig = posAttribute.getY(i); // Plane is created in XY
       const worldZ = -y_orig; // We rotate it -90 degrees on X later
 
-      const { height, biome, color } = getTerrainData(x, worldZ);
+      const { height, biome, color, moisture } = getTerrainData(x, worldZ);
       posAttribute.setZ(i, height);
       if (height > SEA_LEVEL - 2) isLand[i] = 1;
       
@@ -216,24 +243,60 @@ export function World() {
           cacti.push({ position: [x, height, worldZ], scale: 0.5 + Math.random() * 1.0 });
         }
       } else if (biome === 'beach') {
-        if (rand > 0.95) {
+        // Food score: higher near shallow water, sheltered coasts, river mouths
+        // coastSteepness < 0.4 = sheltered/flat = more food; shallow nearby = tidal zone
+        const td = getTerrainData(x, worldZ);
+        const shelterBonus = td.coastSteepness < 0.4 ? 0.06 : 0;
+        const shallowBonus = td.shallowFactor > 0.3 ? 0.04 : 0;
+        const moistureBonus = td.moisture > 0.5 ? 0.03 : 0;
+        const foodScore = 0.02 + shelterBonus + shallowBonus + moistureBonus; // 0.02–0.15
+        if (rand < foodScore) {
           crabs.push({ position: [x, height, worldZ], rotation: Math.random() * Math.PI * 2 });
         }
-      } else if (biome === 'ocean' && height > -3 && height < SEA_LEVEL - 0.5) {
-        if (rand > 0.98) {
-          // Shoal of fish
-          for (let f = 0; f < 3 + Math.random() * 5; f++) {
-            fishes.push({ 
-              position: [x + (Math.random()-0.5)*2, height - Math.random(), worldZ + (Math.random()-0.5)*2], 
-              rotation: Math.random() * Math.PI * 2 
+        // Seagulls — loosely correlated with food-rich areas, not exact
+        // Spawn above the beach with jitter so they don't pinpoint crabs
+        if (rand < foodScore * 0.4 && gulls.length < 80) {
+          gulls.push({
+            position: [
+              x + (Math.random() - 0.5) * 15,
+              height + 8 + Math.random() * 12,
+              worldZ + (Math.random() - 0.5) * 15,
+            ],
+            phase: Math.random() * Math.PI * 2,
+            radius: 3 + Math.random() * 8,
+          });
+        }
+      } else if (biome === 'ocean' && height < SEA_LEVEL - 0.3) {
+        // Fish shoals — very rare, at the surface regardless of depth
+        if (rand > 0.9998) {
+          const ft = pickFishType(moisture);
+          const count = randomShoalSize(ft);
+          const startIdx = fishes.length;
+          const spread = ft.scale > 2 ? 1.5 : 3 + count * 0.3; // sharks stay tight, shoals spread
+          for (let f = 0; f < count; f++) {
+            fishes.push({
+              position: [
+                x + (Math.random() - 0.5) * spread,
+                SEA_LEVEL - 0.08 - Math.random() * 0.2,
+                worldZ + (Math.random() - 0.5) * spread,
+              ],
+              rotation: Math.random() * Math.PI * 2,
+              scale: ft.scale,
+              color: ft.color,
+              shoalIdx: fishShoals.length,
             });
           }
+          fishShoals.push({ center: [x, SEA_LEVEL, worldZ], fishType: ft, startIdx, count, maxCount: count, lastFished: 0, scattered: false });
         }
       }
       
       // Spawn NPCs in deep water
       if (height < -10 && rand > 0.9995 && npcs.length < 20) {
         npcs.push([x, SEA_LEVEL, worldZ]);
+      }
+      // Rare ocean encounters — whales, turtles, wreckage
+      if (height < -5 && rand > 0.99997 && encounters.length < 5) {
+        encounters.push(generateEncounter([x, SEA_LEVEL, worldZ]));
       }
     }
     
@@ -281,15 +344,19 @@ export function World() {
       deadTreeData: deadTrees,
       cactusData: cacti,
       crabData: crabs,
-      fishData: fishes
+      fishData: fishes,
+      fishShoalData: fishShoals,
+      gullData: gulls,
+      encounterData: encounters,
     };
-  }, [worldSeed, worldSize, devSoloPort]);
+  }, [currentWorldPortId, waterPaletteId, worldSeed, worldSize, devSoloPort]);
 
-  // Sync module-level crab state for Player.tsx to read
+  // Sync module-level crab/fish state for Player.tsx and ShiftSelectOverlay
   useEffect(() => {
     _crabData = crabData;
     _collectedCrabs = new Set();
-  }, [crabData]);
+    _fishShoalData = fishShoalData;
+  }, [crabData, fishShoalData]);
 
   useEffect(() => {
     initWorld(generatedPorts);
@@ -297,12 +364,15 @@ export function World() {
     // Generate rich NPC ship identities
     const ships = generatedNpcs.map(pos => generateNPCShip(pos));
     setNpcShips(ships);
+    setOceanEncounters(encounterData);
+    setFishShoals(fishShoalData);
     // Spawn player in safe water near the first port
     const spawn = findSafeSpawn(generatedPorts);
     setPlayerPos(spawn);
     // Start pre-rendering the local map terrain in the background
-    startTerrainPreRender();
-  }, [generatedPorts, generatedNpcs, initWorld, setNpcPositions, setNpcShips, setPlayerPos]);
+    invalidateTerrainCache();
+    startTerrainPreRender(waterPaletteId);
+  }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos, waterPaletteId]);
 
   // Calculate sun position and all time-of-day lighting parameters
   const { sunPosition, ambientColor, groundColor, ambientIntensity, sunColor, sunIntensity, moonPosition, moonIntensity, skyTurbidity, skyRayleigh } = useMemo(() => {
@@ -412,8 +482,41 @@ export function World() {
   }, []);
   const crabMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ff4444' }), []);
   
-  const fishGeometry = useMemo(() => new THREE.ConeGeometry(0.1, 0.4, 4), []);
-  const fishMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#44aaff' }), []);
+  // Fish — flattened ellipsoid body + tail fin, silver-blue
+  const fishGeometry = useMemo(() => {
+    const body = new THREE.SphereGeometry(0.2, 6, 4);
+    body.scale(1, 0.4, 2); // flat and elongated
+    const tail = new THREE.ConeGeometry(0.15, 0.3, 3);
+    tail.rotateX(Math.PI / 2);
+    tail.translate(0, 0.05, 0.45);
+    const merged = mergeGeometries([body, tail]);
+    body.dispose(); tail.dispose();
+    return merged ?? new THREE.SphereGeometry(0.2, 6, 4);
+  }, []);
+  const fishMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#ffffff', // base white — per-instance color tints this
+    metalness: 0.3,
+    roughness: 0.4,
+  }), []);
+
+  // Seagull — simple bird shape: body + two angled wings
+  const gullGeometry = useMemo(() => {
+    const body = new THREE.ConeGeometry(0.08, 0.5, 4);
+    body.rotateX(Math.PI / 2);
+    const wingL = new THREE.PlaneGeometry(0.7, 0.12);
+    wingL.translate(-0.35, 0, 0);
+    wingL.rotateZ(0.15); // slight upward angle
+    const wingR = new THREE.PlaneGeometry(0.7, 0.12);
+    wingR.translate(0.35, 0, 0);
+    wingR.rotateZ(-0.15);
+    const merged = mergeGeometries([body, wingL, wingR]);
+    body.dispose(); wingL.dispose(); wingR.dispose();
+    return merged ?? new THREE.ConeGeometry(0.1, 0.4, 4);
+  }, []);
+  const gullMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#e8e0d0',
+    side: THREE.DoubleSide,
+  }), []);
 
   const sunLightRef = useRef<THREE.DirectionalLight>(null);
   const trunkMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -422,7 +525,9 @@ export function World() {
   const cactusMeshRef = useRef<THREE.InstancedMesh>(null);
   const crabMeshRef = useRef<THREE.InstancedMesh>(null);
   const fishMeshRef = useRef<THREE.InstancedMesh>(null);
+  const gullMeshRef = useRef<THREE.InstancedMesh>(null);
   const dummyRef = useRef(new THREE.Object3D());
+  const respawnCheckAccum = useRef(0);
 
   useEffect(() => {
     const dummy = dummyRef.current;
@@ -477,22 +582,38 @@ export function World() {
     }
 
     if (fishMeshRef.current) {
+      const col = new THREE.Color();
       fishData.forEach((fish, i) => {
         dummy.position.set(fish.position[0], fish.position[1], fish.position[2]);
-        dummy.scale.set(1, 1, 1);
-        dummy.rotation.set(Math.PI / 2, fish.rotation, 0); // Point forward
+        const s = fish.scale;
+        dummy.scale.set(s, s, s);
+        dummy.rotation.set(0, fish.rotation, 0);
         dummy.updateMatrix();
         fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        col.setRGB(fish.color[0], fish.color[1], fish.color[2]);
+        fishMeshRef.current!.setColorAt(i, col);
       });
       fishMeshRef.current.instanceMatrix.needsUpdate = true;
+      if (fishMeshRef.current.instanceColor) fishMeshRef.current.instanceColor.needsUpdate = true;
     }
-  }, [treeData, deadTreeData, cactusData, crabData, fishData]);
+
+    if (gullMeshRef.current) {
+      gullData.forEach((gull, i) => {
+        dummy.position.set(gull.position[0], gull.position[1], gull.position[2]);
+        dummy.scale.set(1, 1, 1);
+        dummy.rotation.set(0, gull.phase, 0);
+        dummy.updateMatrix();
+        gullMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      gullMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+  }, [treeData, deadTreeData, cactusData, crabData, fishData, gullData]);
 
   // Stabilize shadow camera — snap target to texel grid to prevent shimmer
   useFrame(() => {
     const light = sunLightRef.current;
     if (!light || !light.shadow?.camera) return;
-    const { playerPos } = useGameStore.getState();
+    const playerPos = getLiveShipTransform().pos;
     const cam = light.shadow.camera as THREE.OrthographicCamera;
     // Texel size = shadow frustum width / shadow map resolution
     const frustumWidth = cam.right - cam.left;
@@ -504,23 +625,45 @@ export function World() {
     light.target.updateMatrixWorld();
   });
 
-  // Animate fish and crabs slightly
-  useFrame((state) => {
+  // Animate fish and crabs; tick fish respawn
+  useFrame((state, delta) => {
+    respawnCheckAccum.current += delta;
+    if (respawnCheckAccum.current >= 1) {
+      tickFishRespawn();
+      respawnCheckAccum.current = 0;
+    }
     if (!wildlifeMotionEnabled) return;
     const time = state.clock.elapsedTime;
     const dummy = dummyRef.current;
     
     if (fishMeshRef.current) {
+      const storeShoals = useGameStore.getState().fishShoals;
       fishData.forEach((fish, i) => {
-        // Swim in circles
-        const angle = fish.rotation + time * 0.5;
-        const radius = 0.5;
+        // Hide fish from scattered/depleted shoals
+        const shoal = storeShoals[fish.shoalIdx];
+        if (shoal?.scattered) {
+          dummy.position.set(0, -100, 0);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
+          return;
+        }
+        // Swim in wider circles with varied speed
+        const speed = 0.4 + (i % 7) * 0.08;
+        const angle = fish.rotation + time * speed;
+        const radius = 1.0 + (i % 3) * 0.5;
+        const baseY = fish.position[1];
+        // Occasional break-surface jump
+        const jumpPhase = Math.sin(time * 0.3 + i * 2.1);
+        const jump = jumpPhase > 0.92 ? (jumpPhase - 0.92) * 8 : 0;
         dummy.position.set(
           fish.position[0] + Math.cos(angle) * radius,
-          fish.position[1] + Math.sin(time * 2 + i) * 0.1, // Bob up and down
+          baseY + Math.sin(time * 1.5 + i) * 0.12 + jump,
           fish.position[2] + Math.sin(angle) * radius
         );
-        dummy.rotation.set(Math.PI / 2, -angle, 0);
+        const s = fish.scale;
+        dummy.rotation.set(jump > 0.05 ? -0.4 : 0, -angle, 0);
+        dummy.scale.set(s, s, s);
         dummy.updateMatrix();
         fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
       });
@@ -530,15 +673,13 @@ export function World() {
     if (crabMeshRef.current) {
       crabData.forEach((crab, i) => {
         if (_collectedCrabs.has(i)) {
-          // Hide collected crabs by scaling to zero
           dummy.position.set(0, -100, 0);
           dummy.scale.set(0, 0, 0);
           dummy.updateMatrix();
           crabMeshRef.current!.setMatrixAt(i, dummy.matrix);
-          return;
+            return;
         }
         dummy.scale.set(1, 1, 1);
-        // Scuttle side to side
         const offset = Math.sin(time + i) * 0.2;
         dummy.position.set(
           crab.position[0] + Math.cos(crab.rotation + Math.PI/2) * offset,
@@ -550,6 +691,31 @@ export function World() {
         crabMeshRef.current!.setMatrixAt(i, dummy.matrix);
       });
       crabMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // Seagulls — lazy circling with altitude bobbing
+    if (gullMeshRef.current) {
+      gullData.forEach((gull, i) => {
+        const t = time * (0.3 + (i % 5) * 0.06) + gull.phase; // varied speed per bird
+        const cx = gull.position[0]; // orbit center
+        const cz = gull.position[2];
+        const r = gull.radius;
+        // Circular orbit
+        const gx = cx + Math.cos(t) * r;
+        const gz = cz + Math.sin(t) * r;
+        // Gentle altitude bob — longer period than the orbit
+        const gy = gull.position[1] + Math.sin(t * 0.4 + i) * 1.5;
+        // Face direction of travel (tangent to circle)
+        const heading = t + Math.PI / 2;
+        // Slight wing-bank into the turn
+        const bank = Math.sin(t * 1.2) * 0.15;
+        dummy.position.set(gx, gy, gz);
+        dummy.rotation.set(bank, heading, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        gullMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
   });
 
@@ -578,7 +744,7 @@ export function World() {
       />
 
       {/* Procedural Terrain */}
-      <mesh geometry={seabedTerrainGeometry} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh geometry={seabedTerrainGeometry} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
         <meshStandardMaterial vertexColors roughness={0.9} />
       </mesh>
       <mesh
@@ -586,6 +752,7 @@ export function World() {
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow={shadowsEnabled}
         castShadow={shadowsEnabled}
+        raycast={() => null}
       >
         <meshStandardMaterial vertexColors roughness={0.8} />
       </mesh>
@@ -604,10 +771,48 @@ export function World() {
         <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} castShadow={shadowsEnabled} receiveShadow={shadowsEnabled} />
       )}
       {crabData.length > 0 && (
-        <instancedMesh ref={crabMeshRef} args={[crabGeometry, crabMaterial, crabData.length]} castShadow={shadowsEnabled} receiveShadow={shadowsEnabled} />
+        <instancedMesh
+          ref={crabMeshRef}
+          args={[crabGeometry, crabMaterial, crabData.length]}
+          castShadow={shadowsEnabled}
+          receiveShadow={shadowsEnabled}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            const { addNotification } = useGameStore.getState();
+            addNotification('Shore Crab', 'info', {
+              size: 'grand',
+              subtitle: 'Grapsidae · Walk over to collect (+1 provisions)',
+            });
+          }}
+        />
       )}
       {fishData.length > 0 && (
-        <instancedMesh ref={fishMeshRef} args={[fishGeometry, fishMaterial, fishData.length]} castShadow={shadowsEnabled} />
+        <instancedMesh
+          ref={fishMeshRef}
+          args={[fishGeometry, fishMaterial, fishData.length]}
+          castShadow={shadowsEnabled}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            const idx = e.instanceId;
+            if (idx == null) return;
+            const fish = fishData[idx];
+            if (!fish) return;
+            const shoal = fishShoalData[fish.shoalIdx];
+            if (!shoal) return;
+            const ft = shoal.fishType;
+            const { addNotification } = useGameStore.getState();
+            addNotification(
+              ft.name,
+              'info',
+              { size: 'grand', subtitle: `${ft.latin} \u00b7 ${ft.climate} waters` },
+            );
+          }}
+          onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+          onPointerOut={() => { document.body.style.cursor = ''; }}
+        />
+      )}
+      {gullData.length > 0 && (
+        <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} />
       )}
 
       {/* Ports */}
@@ -617,6 +822,11 @@ export function World() {
       {/* NPC Ships */}
       {npcShips.map((ship) => (
         <NPCShip key={ship.id} identity={ship} initialPosition={ship.position} />
+      ))}
+
+      {/* Rare ocean encounters — whales, turtles, wreckage */}
+      {oceanEncounters.map((enc) => (
+        <OceanEncounter key={enc.id} encounter={enc} />
       ))}
     </group>
   );
