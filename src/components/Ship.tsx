@@ -1,14 +1,15 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, getRoleBonus, captainHasTrait } from '../store/gameStore';
 import * as THREE from 'three';
-import { getTerrainHeight } from '../utils/terrain';
+import { getTerrainHeight, getMeshHalf } from '../utils/terrain';
 import { Text } from '@react-three/drei';
 import { FACTIONS } from '../constants/factions';
 import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxRiggingCreak, sfxTreasureFind } from '../audio/SoundEffects';
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
+import { swivelAimAngle, broadsideReload } from '../utils/combatState';
 
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
@@ -37,6 +38,7 @@ export function Ship() {
   // Recoil state: slow drift away from land after collision
   const recoilVelX = useRef(0);
   const recoilVelZ = useRef(0);
+  const edgePressTime = useRef(0); // seconds spent pressed against map edge
   const windVector = useRef(new THREE.Vector2());
   const shipVelocityVector = useRef(new THREE.Vector2());
   const apparentWindVector = useRef(new THREE.Vector2());
@@ -49,6 +51,7 @@ export function Ship() {
   // Visual effects state
   const lastDamageTime = useRef(0);
   const [showExclamation, setShowExclamation] = useState(false);
+  const exclamationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Particles
   const particlesRef = useRef<THREE.InstancedMesh>(null);
@@ -70,6 +73,16 @@ export function Ship() {
   const anchorSplashRef = useRef<THREE.InstancedMesh>(null);
   const anchorSplashData = useRef<{pos: THREE.Vector3, vel: THREE.Vector3, life: number}[]>([]);
   const ANCHOR_SPLASH_COUNT = 15;
+
+  // Swivel gun pivot ref + muzzle flash
+  const swivelPivotRef = useRef<THREE.Group>(null);
+  const muzzleFlashRef = useRef<THREE.InstancedMesh>(null);
+  const muzzleParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number }[]>([]);
+  const MUZZLE_PARTICLE_COUNT = 20;
+
+  // Broadside arc indicators
+  const portArcRef = useRef<THREE.Mesh>(null);
+  const starboardArcRef = useRef<THREE.Mesh>(null);
 
   // Sailing sound triggers (cooldown-gated one-shots)
   const sailsCaughtRef = useRef(false); // true once we pass 40% speed, resets when below 20%
@@ -252,6 +265,14 @@ export function Ship() {
         life: 0,
       });
     }
+    // Initialize muzzle flash particles
+    for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+      muzzleParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -259,6 +280,7 @@ export function Ship() {
       mainSailGeometry.dispose();
       foreSailGeometry.dispose();
       flagGeometry.dispose();
+      if (exclamationTimer.current) clearTimeout(exclamationTimer.current);
     };
   }, [mainSailGeometry, foreSailGeometry, flagGeometry]);
 
@@ -270,9 +292,10 @@ export function Ship() {
       addNotification('Hull damaged!', 'error');
       if (source === 'shore') sfxShoreCollision(); else sfxShipCollision();
       setShowExclamation(true);
-      
+
       // Hide exclamation after 2 seconds
-      setTimeout(() => setShowExclamation(false), 2000);
+      if (exclamationTimer.current) clearTimeout(exclamationTimer.current);
+      exclamationTimer.current = setTimeout(() => setShowExclamation(false), 2000);
 
       // Spawn particles
       if (group.current) {
@@ -307,6 +330,80 @@ export function Ship() {
     };
     window.addEventListener('ship-collision', handleCollisionEvent);
     return () => window.removeEventListener('ship-collision', handleCollisionEvent);
+  }, []);
+
+  // Muzzle flash on swivel gun fire
+  useEffect(() => {
+    const handleFired = () => {
+      if (!group.current) return;
+      const shipPos = group.current.position;
+      const shipRot = rotation.current;
+      const aimAngle = swivelAimAngle;
+      // Gun mount is at bow (z=3.0 in local space), barrel extends ~1 unit along aim
+      const bowX = shipPos.x + Math.sin(shipRot) * 3.0;
+      const bowZ = shipPos.z + Math.cos(shipRot) * 3.0;
+      const muzzleX = bowX + Math.sin(aimAngle) * 1.2;
+      const muzzleZ = bowZ + Math.cos(aimAngle) * 1.2;
+      const muzzleY = 1.8;
+
+      for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+        const p = muzzleParticles.current[i];
+        // Mix of smoke (slow, rising) and sparks (fast, directional)
+        const isSpark = i < 8;
+        const spread = isSpark ? 0.3 : 0.8;
+        const speed = isSpark ? (8 + Math.random() * 12) : (1 + Math.random() * 3);
+        p.pos.set(
+          muzzleX + (Math.random() - 0.5) * 0.3,
+          muzzleY + (Math.random() - 0.5) * 0.3,
+          muzzleZ + (Math.random() - 0.5) * 0.3
+        );
+        p.vel.set(
+          Math.sin(aimAngle) * speed + (Math.random() - 0.5) * spread * speed,
+          (isSpark ? 2 + Math.random() * 3 : 1 + Math.random() * 2),
+          Math.cos(aimAngle) * speed + (Math.random() - 0.5) * spread * speed
+        );
+        p.life = isSpark ? 0.2 + Math.random() * 0.3 : 0.5 + Math.random() * 0.6;
+      }
+    };
+    window.addEventListener('swivel-fired', handleFired);
+    return () => window.removeEventListener('swivel-fired', handleFired);
+  }, []);
+
+  // Broadside smoke — reuse muzzle particles with side-directed burst
+  useEffect(() => {
+    const handleBroadside = (e: Event) => {
+      if (!group.current) return;
+      const side = (e as CustomEvent).detail?.side as 'port' | 'starboard';
+      const shipPos = group.current.position;
+      const shipRot = rotation.current;
+      // Perpendicular direction
+      const sideAngle = side === 'port' ? shipRot + Math.PI / 2 : shipRot - Math.PI / 2;
+      const sideX = Math.sin(sideAngle);
+      const sideZ = Math.cos(sideAngle);
+
+      // Burst particles outward from the firing side
+      for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+        const p = muzzleParticles.current[i];
+        // Spread along ship length
+        const along = (Math.random() - 0.5) * 6;
+        const startX = shipPos.x + Math.sin(shipRot) * along + sideX * 1.2;
+        const startZ = shipPos.z + Math.cos(shipRot) * along + sideZ * 1.2;
+        p.pos.set(
+          startX + (Math.random() - 0.5) * 0.5,
+          1.2 + Math.random() * 0.5,
+          startZ + (Math.random() - 0.5) * 0.5,
+        );
+        const speed = 2 + Math.random() * 4;
+        p.vel.set(
+          sideX * speed + (Math.random() - 0.5) * 2,
+          1.5 + Math.random() * 2,
+          sideZ * speed + (Math.random() - 0.5) * 2,
+        );
+        p.life = 0.6 + Math.random() * 0.8;
+      }
+    };
+    window.addEventListener('broadside-fired', handleBroadside);
+    return () => window.removeEventListener('broadside-fired', handleBroadside);
   }, []);
 
   // Reset net state on unmount (world reload / teleport)
@@ -378,7 +475,10 @@ export function Ship() {
 
     if (playerMode === 'ship' && !paused) {
       // Acceleration and Inertia
-      const maxSpeed = stats.speed;
+      const store = useGameStore.getState();
+      const navBonus = getRoleBonus(store, 'Navigator', 'perception');
+      const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
+      const maxSpeed = stats.speed * navBonus * seaLegsBonus;
       const accel = 5 * delta;
       const drag = 2 * delta;
 
@@ -500,6 +600,45 @@ export function Ship() {
         heelVelocity.current += (Math.sign(normalizedDiff) || 1) * Math.min(impactSpeed * 0.06, 0.4);
       }
       
+      // ── Map-edge boundary ──
+      // Prevent ship from sailing off the terrain mesh. Nudge it back and
+      // prompt the player to open the sea chart for fast travel.
+      const meshHalf = getMeshHalf();
+      const boundaryDist = meshHalf * 0.96;
+      const px = group.current.position.x;
+      const pz = group.current.position.z;
+      const edgeDist = Math.max(Math.abs(px), Math.abs(pz));
+
+      if (edgeDist > boundaryDist) {
+        // Push ship back toward center along the outward axis
+        const nx = Math.abs(px) > boundaryDist ? -Math.sign(px) : 0;
+        const nz = Math.abs(pz) > boundaryDist ? -Math.sign(pz) : 0;
+        const nLen = Math.sqrt(nx * nx + nz * nz) || 1;
+        group.current.position.x += (nx / nLen) * 0.6;
+        group.current.position.z += (nz / nLen) * 0.6;
+        // Clamp to boundary
+        group.current.position.x = Math.max(-boundaryDist, Math.min(boundaryDist, group.current.position.x));
+        group.current.position.z = Math.max(-boundaryDist, Math.min(boundaryDist, group.current.position.z));
+
+        velocity.current *= 0.85; // bleed speed
+        recoilVelX.current = (nx / nLen) * 2;
+        recoilVelZ.current = (nz / nLen) * 2;
+
+        edgePressTime.current += delta;
+        if (edgePressTime.current > 1.5) {
+          // Sustained edge press → open world map for fast travel
+          useGameStore.getState().setRequestWorldMap(true);
+          edgePressTime.current = 0;
+        } else if (edgePressTime.current > 0.1 && edgePressTime.current < 0.2) {
+          useGameStore.getState().addNotification(
+            'Open waters ahead — consult your sea chart',
+            'info'
+          );
+        }
+      } else {
+        edgePressTime.current = Math.max(0, edgePressTime.current - delta * 2);
+      }
+
       group.current.rotation.y = rotation.current;
       group.current.position.y = SHIP_ROOT_Y;
 
@@ -650,33 +789,44 @@ export function Ship() {
 
     // ── Mast flag cloth sim ──
     if (flagMeshRef.current && flagPivotRef.current) {
-      // Wind direction in ship-local space determines which way the flag blows
-      // Also factor in ship movement (flag blows backward when moving forward)
-      const combinedWindX = localWindX - velocity.current * 0.3;
-      const combinedWindZ = localWindForward - velocity.current * 0.8;
-      const targetAngle = Math.atan2(combinedWindX, -Math.abs(combinedWindZ));
-      flagWindAngle.current = THREE.MathUtils.lerp(flagWindAngle.current, targetAngle, 1 - Math.exp(-delta * 4));
-      // Rotate the pivot group so the flag swings from the hoist edge (mast attachment)
+      // Apparent wind in ship-local space: real wind minus ship motion
+      // When moving forward with no wind, apparent wind blows from the bow (negative forward)
+      const apparentX = localWindX;
+      const apparentZ = localWindForward - velocity.current * 1.2;
+      // Flag trails downwind: pivot rotation maps +X to the flag direction,
+      // so -π/2 = flag points aft (+Z apparent wind → flag blows -Z)
+      const targetAngle = Math.atan2(-apparentZ, apparentX);
+
+      // Angular velocity with drag for natural swing (not snapping)
+      const angleDiff = Math.atan2(
+        Math.sin(targetAngle - flagWindAngle.current),
+        Math.cos(targetAngle - flagWindAngle.current),
+      );
+      flagWindAngle.current += angleDiff * (1 - Math.exp(-delta * 2.5));
       flagPivotRef.current.rotation.y = flagWindAngle.current;
 
       const windStr = Math.min(apparentSpeed * 0.15 + Math.abs(velocity.current) * 0.08, 1);
+      const t = state.clock.elapsedTime;
       const pos = flagGeometry.attributes.position as THREE.BufferAttribute;
       const arr = pos.array as Float32Array;
       const hw = 0.7; // half width
-      const hh = 0.45; // half height
 
       for (let i = 0; i < arr.length; i += 3) {
         const bx = flagBase[i];
         const by = flagBase[i + 1];
-        // Distance from the hoist (left edge) drives the wave amplitude
-        const xNorm = (bx + hw) / (hw * 2); // 0 at hoist, 1 at fly
-        const wave = Math.sin(state.clock.elapsedTime * 5 + xNorm * 4) * 0.06 * xNorm;
-        const flutter = Math.sin(state.clock.elapsedTime * 8.5 + xNorm * 6 + by * 3) * 0.03 * xNorm * xNorm;
-        const droop = (1 - windStr) * xNorm * xNorm * 0.15;
+        // 0 at hoist (mast), 1 at fly (free end)
+        const xNorm = (bx + hw) / (hw * 2);
+        const xCube = xNorm * xNorm * xNorm;
+
+        // Wave propagates from hoist to fly (negative phase = traveling outward)
+        const wave = Math.sin(t * 5 - xNorm * 3.5) * 0.08 * xNorm;
+        // Higher-frequency flutter, stronger at the fly end
+        const flutter = Math.sin(t * 9 - xNorm * 5 + by * 4) * 0.04 * xCube;
+        const droop = (1 - windStr) * xCube * 0.2;
 
         arr[i] = bx;
         arr[i + 1] = by - droop;
-        arr[i + 2] = (wave + flutter) * (0.3 + windStr * 0.7);
+        arr[i + 2] = (wave + flutter) * (0.2 + windStr * 0.8);
       }
       pos.needsUpdate = true;
       flagGeometry.computeVertexNormals();
@@ -891,6 +1041,40 @@ export function Ship() {
       }
     }
 
+    // ── Muzzle flash particles ──
+    if (muzzleFlashRef.current) {
+      const dummy = new THREE.Object3D();
+      let needsUpdate = false;
+      for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+        const p = muzzleParticles.current[i];
+        if (!p) continue;
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 6 * delta; // light gravity — smoke drifts
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          // Sparks (first 8) shrink fast; smoke (rest) expand then fade
+          const isSpark = i < 8;
+          const s = isSpark
+            ? Math.max(0, p.life * 2) * 0.15
+            : (0.2 + (1 - p.life) * 0.4) * Math.max(0, p.life);
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          muzzleFlashRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.updateMatrix();
+          muzzleFlashRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) {
+        muzzleFlashRef.current.instanceMatrix.needsUpdate = true;
+      }
+    }
+
     // ── Fishing: auto-catch proximity check ──
     if (netCooldown.current > 0) netCooldown.current -= delta;
 
@@ -1018,6 +1202,34 @@ export function Ship() {
       }
     }
 
+    // ── Swivel gun aim ──
+    if (swivelPivotRef.current && store.combatMode) {
+      // swivelAimAngle is in world space; subtract ship heading to get local rotation
+      const localAim = swivelAimAngle - rotation.current;
+      swivelPivotRef.current.rotation.y = localAim;
+      swivelPivotRef.current.visible = true;
+    } else if (swivelPivotRef.current) {
+      swivelPivotRef.current.visible = false;
+    }
+
+    // ── Broadside arc indicators ──
+    const hasBroadside = store.stats.armament.some(w => w !== 'swivelGun');
+    const nowMs = Date.now();
+    if (portArcRef.current) {
+      portArcRef.current.visible = store.combatMode && hasBroadside;
+      if (portArcRef.current.visible) {
+        const portReady = nowMs >= broadsideReload.port;
+        (portArcRef.current.material as THREE.MeshBasicMaterial).opacity = portReady ? 0.18 : 0.06;
+      }
+    }
+    if (starboardArcRef.current) {
+      starboardArcRef.current.visible = store.combatMode && hasBroadside;
+      if (starboardArcRef.current.visible) {
+        const starReady = nowMs >= broadsideReload.starboard;
+        (starboardArcRef.current.material as THREE.MeshBasicMaterial).opacity = starReady ? 0.18 : 0.06;
+      }
+    }
+
     // Update torch intensity based on time of day
     const tod = useGameStore.getState().timeOfDay;
     const thetaTorch = ((tod - 6) / 24) * Math.PI * 2;
@@ -1107,6 +1319,35 @@ export function Ship() {
           {/* Fore Sail */}
           <mesh ref={foreSailRef} geometry={foreSailGeometry} position={[0, 3, 2.6]} castShadow>
             <meshStandardMaterial color="#ece4cf" roughness={0.95} side={THREE.DoubleSide} />
+          </mesh>
+          {/* Swivel gun — bow-mounted, rotates toward cursor in combat mode */}
+          <group ref={swivelPivotRef} position={[0, 1.5, 3.0]} visible={false}>
+            {/* Mounting post */}
+            <mesh position={[0, -0.15, 0]}>
+              <cylinderGeometry args={[0.08, 0.1, 0.3, 6]} />
+              <meshStandardMaterial color="#555" roughness={0.5} metalness={0.7} />
+            </mesh>
+            {/* Barrel */}
+            <mesh position={[0, 0, 0.5]} rotation={[Math.PI / 2, 0, 0]}>
+              <cylinderGeometry args={[0.06, 0.08, 1.0, 8]} />
+              <meshStandardMaterial color="#333" roughness={0.4} metalness={0.8} />
+            </mesh>
+            {/* Muzzle flare ring */}
+            <mesh position={[0, 0, 1.0]} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[0.09, 0.025, 6, 8]} />
+              <meshStandardMaterial color="#444" roughness={0.4} metalness={0.8} />
+            </mesh>
+          </group>
+          {/* Broadside firing arcs — translucent wedges on port & starboard */}
+          {/* Port (left) arc — red tint */}
+          <mesh ref={portArcRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <circleGeometry args={[12, 16, Math.PI * 0.7, Math.PI * 0.6]} />
+            <meshBasicMaterial color="#ff4444" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+          </mesh>
+          {/* Starboard (right) arc — blue tint */}
+          <mesh ref={starboardArcRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <circleGeometry args={[12, 16, -Math.PI * 0.3, Math.PI * 0.6]} />
+            <meshBasicMaterial color="#4488ff" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
           {/* Night torch on stern cabin */}
           <group position={[0.6, 2.8, -1.5]}>
@@ -1209,6 +1450,19 @@ export function Ship() {
       <instancedMesh ref={anchorSplashRef} args={[undefined, undefined, ANCHOR_SPLASH_COUNT]}>
         <sphereGeometry args={[0.15, 6, 6]} />
         <meshStandardMaterial color="#88ccdd" roughness={0.3} transparent opacity={0.7} />
+      </instancedMesh>
+
+      {/* Muzzle Flash — sparks + smoke from swivel gun */}
+      <instancedMesh ref={muzzleFlashRef} args={[undefined, undefined, MUZZLE_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.25, 5, 5]} />
+        <meshStandardMaterial
+          color="#ccaa77"
+          emissive="#ff8833"
+          emissiveIntensity={3}
+          transparent
+          opacity={0.9}
+          toneMapped={false}
+        />
       </instancedMesh>
     </>
   );

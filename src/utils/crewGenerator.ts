@@ -1,4 +1,4 @@
-import { Nationality, CrewMember, CrewRole, CrewQuality, HealthFlag } from '../store/gameStore';
+import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, HealthFlag } from '../store/gameStore';
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -249,12 +249,115 @@ function rollCrewQuality(skill: number, morale: number): CrewQuality {
   return 'normal';
 }
 
+// ── Stat generation (D&D-style 1-20) ─────────────────
+
+// Role bonuses: each role has primary/secondary stats that get a boost
+const ROLE_STAT_BONUS: Record<CrewRole, Partial<Record<keyof CrewStats, number>>> = {
+  Captain:   { charisma: 3, perception: 2, luck: 1 },
+  Navigator: { perception: 4, luck: 1 },
+  Gunner:    { strength: 3, perception: 2 },
+  Sailor:    { strength: 3, luck: 1 },
+  Factor:    { charisma: 4, luck: 1 },
+  Surgeon:   { perception: 3, charisma: 1, luck: 1 },
+};
+
+const QUALITY_STAT_BONUS: Record<CrewQuality, number> = {
+  dud: -2, normal: 0, rare: 2, legendary: 4,
+};
+
+function rollStats(role: CrewRole, quality: CrewQuality): CrewStats {
+  const base = () => randInt(5, 14); // base roll 5-14
+  const bonus = ROLE_STAT_BONUS[role];
+  const qBonus = QUALITY_STAT_BONUS[quality];
+
+  const clamp = (v: number) => Math.max(1, Math.min(20, v));
+  return {
+    strength:   clamp(base() + (bonus.strength ?? 0) + qBonus),
+    perception: clamp(base() + (bonus.perception ?? 0) + qBonus),
+    charisma:   clamp(base() + (bonus.charisma ?? 0) + qBonus),
+    luck:       clamp(base() + (bonus.luck ?? 0) + qBonus),
+  };
+}
+
+// ── Backstory generation ─────────────────────────────
+
+const BACKSTORY_TEMPLATES: Record<CrewRole, string[]> = {
+  Captain: [
+    'Rose through the ranks after years commanding smaller vessels in the {region}.',
+    'A veteran of {count} voyages, known for {trait} and an iron nerve.',
+    'Earned a captain\'s commission after a daring exploit near {place}.',
+    'Comes from a family of mariners in {place}. Has sailed these waters since youth.',
+    'Once served aboard a {nationality} warship before taking up the merchant trade.',
+  ],
+  Navigator: [
+    'Learned celestial navigation from {nationality} masters in {place}.',
+    'Can read the stars and currents like a book. Trained in {place}.',
+    'Served as pilot on three previous voyages through the Indian Ocean.',
+    'A quiet scholar of charts and tides, born in {place}.',
+    'Self-taught navigator who learned the monsoon winds by bitter experience.',
+  ],
+  Gunner: [
+    'Served as a gunner\'s mate aboard a {nationality} man-of-war.',
+    'Learned powder and shot in the arsenals of {place}.',
+    'A steady hand with a cannon. Survived two engagements at sea.',
+    'Fled military service in {place} and took to merchant vessels.',
+    'Known for cool nerves under fire. Has the scars to prove it.',
+  ],
+  Sailor: [
+    'Signed on at the docks of {place}, seeking fortune overseas.',
+    'A common seaman with strong arms and no complaints.',
+    'Has worked the rigging since the age of twelve in {place}.',
+    'Drifted between ships across the Indian Ocean for years.',
+    'Quiet but reliable. The other hands respect the work.',
+  ],
+  Factor: [
+    'Trained as a merchant\'s apprentice in the counting-houses of {place}.',
+    'Speaks three languages and knows the price of pepper in every port.',
+    'A shrewd negotiator. Previously traded on behalf of {nationality} merchants.',
+    'Has contacts in ports from {place} to the Spice Islands.',
+    'A keen eye for quality goods and a silver tongue at the bargaining table.',
+  ],
+  Surgeon: [
+    'Studied medicine in {place} before shipping out for better pay.',
+    'A barber-surgeon who learned anatomy through hard experience at sea.',
+    'Carries a worn medical chest and a knowledge of tropical fevers.',
+    'Trained under {nationality} physicians. Knows herbs and remedies from many lands.',
+    'Quietly competent. Has saved more lives than most captains have lost.',
+  ],
+};
+
+const REGION_NAMES = ['Indian Ocean', 'Arabian Sea', 'Bay of Bengal', 'South China Sea', 'Strait of Malacca', 'East African coast', 'Red Sea'];
+const TRAIT_ADJECTIVES = ['steady judgment', 'bold tactics', 'careful planning', 'shrewd diplomacy', 'fierce loyalty', 'relentless ambition'];
+
+function generateBackstory(role: CrewRole, nationality: Nationality, birthplace: string, age: number, quality: CrewQuality): string {
+  const templates = BACKSTORY_TEMPLATES[role];
+  let text = pick(templates);
+
+  text = text.replace('{place}', birthplace);
+  text = text.replace('{nationality}', nationality);
+  text = text.replace('{region}', pick(REGION_NAMES));
+  text = text.replace('{count}', randInt(3, 12).toString());
+  text = text.replace('{trait}', pick(TRAIT_ADJECTIVES));
+
+  // Add quality flavor
+  if (quality === 'legendary') {
+    text += ' Spoken of with reverence by those who\'ve sailed with them.';
+  } else if (quality === 'rare') {
+    text += ' Has a reputation that precedes them in many ports.';
+  } else if (quality === 'dud') {
+    text += ' Though somewhat unreliable, they were the best available.';
+  }
+
+  return text;
+}
+
 // ── Public API ─────────────────────────────────────────
 
 /** Generate a single crew member of a given nationality and role. */
 export function generateCrewMember(
   nationality: Nationality,
   role: CrewRole,
+  hireDay: number = 0,
 ): CrewMember {
   const pool = NAME_POOLS[nationality];
   const first = pick(pool.first);
@@ -262,6 +365,11 @@ export function generateCrewMember(
   const [minSkill, maxSkill] = SKILL_RANGE[role];
   const skill = randInt(minSkill, maxSkill);
   const morale = randInt(65, 100);
+  const age = randInt(role === 'Captain' ? 32 : 18, role === 'Captain' ? 55 : 50);
+  const birthplace = pick(pool.birthplaces);
+  const quality = rollCrewQuality(skill, morale);
+  const stats = rollStats(role, quality);
+  const backstory = generateBackstory(role, nationality, birthplace, age, quality);
 
   return {
     id: generateId(),
@@ -269,11 +377,20 @@ export function generateCrewMember(
     role,
     skill,
     morale,
-    age: randInt(role === 'Captain' ? 32 : 18, role === 'Captain' ? 55 : 50),
+    age,
     nationality,
-    birthplace: pick(pool.birthplaces),
+    birthplace,
     health: 'healthy' as HealthFlag,
-    quality: rollCrewQuality(skill, morale),
+    quality,
+    stats,
+    backstory,
+    history: [{ day: hireDay, event: `Joined the crew as ${role}` }],
+    hireDay,
+    traits: [],
+    abilities: [],
+    level: 1,
+    xp: 0,
+    xpToNext: 100,
   };
 }
 
@@ -288,8 +405,10 @@ export function generateStartingCrew(
   const mix = CREW_MIX[factionFlag] ?? CREW_MIX['English'];
   const crew: CrewMember[] = [];
 
-  // Captain is always from the faction
-  crew.push(generateCrewMember(factionFlag, 'Captain'));
+  // Captain is always from the faction, starts with Silver Tongue trait
+  const captain = generateCrewMember(factionFlag, 'Captain');
+  captain.traits = ['Silver Tongue'];
+  crew.push(captain);
 
   // Assign officer roles first, then fill with sailors
   const officerRoles: CrewRole[] = ['Navigator', 'Gunner', 'Factor'];

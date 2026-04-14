@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
+import { ALL_COMMODITIES, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 
 // ── Colors ───────────────────────────────────────────────────────────────────
 const GOLD      = '#c9a84c';
@@ -15,6 +16,10 @@ const TXT       = '#9a9080';
 const BRIGHT    = '#d8ccb0';
 const BG        = '#0c0b08';
 
+// ── Inner width: chars between the ║ borders ─────────────────────────────────
+// Total line width = 2 (║ + space) + IW + 2 (space + ║) = IW + 4 = 52
+const IW = 48;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function C({ c, children }: { c: string; children: React.ReactNode }) {
   return <span style={{ color: c }}>{children}</span>;
@@ -24,7 +29,6 @@ function pad(s: string, n: number) {
   return s.length >= n ? s.slice(0, n) : s + ' '.repeat(n - s.length);
 }
 
-// Safe padding — never goes negative
 function sp(n: number) {
   return ' '.repeat(Math.max(0, n));
 }
@@ -51,21 +55,24 @@ function statBar(value: number, max: number, color: string, width = 12): React.R
   );
 }
 
-// ── Ornamental divider ───────────────────────────────────────────────────────
-function Divider({ ornChar, width = 44 }: { ornChar: string; width?: number }) {
-  const sideLen = Math.floor((width - 3) / 2);
+// ── Ornamental divider — always exactly `width` chars ────────────────────────
+function Divider({ ornChar, width = IW }: { ornChar: string; width?: number }) {
+  const innerW = width - 2; // leading 2 spaces
+  const leftW = Math.floor((innerW - 1) / 2);
+  const rightW = innerW - 1 - leftW;
   const dash = '\u2500';
-  const side = (dash + ' ').repeat(Math.floor(sideLen / 2)).slice(0, sideLen);
+  const left = (dash + ' ').repeat(Math.ceil(leftW / 2)).slice(0, leftW);
+  const right = (' ' + dash).repeat(Math.ceil(rightW / 2)).slice(0, rightW);
   return (
     <span>
-      <C c={RULE_LT}>{'  '}{side}</C>
+      <C c={RULE_LT}>{'  '}{left}</C>
       <C c={GOLD}>{ornChar}</C>
-      <C c={RULE_LT}>{side}</C>
+      <C c={RULE_LT}>{right}</C>
     </span>
   );
 }
 
-// ── Side border wrapper ──────────────────────────────────────────────────────
+// ── Side border wrapper — every L child must be exactly IW chars ─────────────
 function L({ children }: { children: React.ReactNode }) {
   return (
     <span>
@@ -77,18 +84,36 @@ function L({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Small animated wave strip ────────────────────────────────────────────────
-function WaveStrip({ tick, width = 48 }: { tick: number; width?: number }) {
-  const chars: React.ReactNode[] = [];
-  const waveChars = [' ', '\u00b7', '~', '\u223c', '\u2248'];
-  const colors = ['#142830', '#1a3a4a', '#2a5a6a', '#3a7a8a', '#4a8a9a'];
-  for (let i = 0; i < width; i++) {
-    const t = tick * 0.15;
-    const wave = Math.sin(i * 0.4 + t) * 0.4 + Math.sin(i * 0.15 - t * 0.6) * 0.35 + Math.sin(i * 0.8 + t * 1.3) * 0.25;
-    const idx = Math.max(0, Math.min(waveChars.length - 1, Math.floor((wave + 1) * 0.5 * waveChars.length)));
-    chars.push(<span key={i} style={{ color: colors[idx] }}>{waveChars[idx]}</span>);
-  }
-  return <>{chars}</>;
+// ── Animated wave strip (ref-based, no re-renders) ──────────────────────────
+function WaveStripAnimated({ width = IW }: { width?: number }) {
+  const spanRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    let animId: number;
+    let last = 0;
+    let tick = 0;
+    const waveChars = [' ', '\u00b7', '~', '\u223c', '\u2248'];
+    const colors = ['#142830', '#1a3a4a', '#2a5a6a', '#3a7a8a', '#4a8a9a'];
+    const frame = (time: number) => {
+      animId = requestAnimationFrame(frame);
+      if (time - last < 100) return;
+      last = time;
+      tick++;
+      const el = spanRef.current;
+      if (!el) return;
+      let html = '';
+      for (let i = 0; i < width; i++) {
+        const t = tick * 0.15;
+        const wave = Math.sin(i * 0.4 + t) * 0.4 + Math.sin(i * 0.15 - t * 0.6) * 0.35 + Math.sin(i * 0.8 + t * 1.3) * 0.25;
+        const idx = Math.max(0, Math.min(waveChars.length - 1, Math.floor((wave + 1) * 0.5 * waveChars.length)));
+        const ch = waveChars[idx];
+        html += ch === ' ' ? ' ' : `<span style="color:${colors[idx]}">${ch}</span>`;
+      }
+      el.innerHTML = html;
+    };
+    animId = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(animId);
+  }, [width]);
+  return <span ref={spanRef} />;
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -99,39 +124,31 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const goldAmount = useGameStore(s => s.gold);
   const stats = useGameStore(s => s.stats);
   const ports = useGameStore(s => s.ports);
+  const cargo = useGameStore(s => s.cargo);
 
   const captain = crew.find(c => c.role === 'Captain');
   const startPort = ports[0];
 
-  // ── Inner width: total chars between the ║ borders ──
-  const IW = 48;
-
-  // Twinkling ornament animation
-  const [tick, setTick] = useState(0);
+  // Ornament animation — ref-based to avoid full re-renders
+  const ornamentRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const ORNAMENT_CHARS = useMemo(() => ['\u2726', '\u2727', '\u00b7', '\u2727', '\u2726', '\u25c7'], []);
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 350);
+    const id = setInterval(() => {
+      const tick = Math.floor(Date.now() / 350);
+      ornamentRefs.current.forEach((el, i) => {
+        if (el) el.textContent = ORNAMENT_CHARS[(tick + i) % ORNAMENT_CHARS.length];
+      });
+    }, 350);
     return () => clearInterval(id);
-  }, []);
+  }, [ORNAMENT_CHARS]);
 
-  // Wave animation
-  const [waveTick, setWaveTick] = useState(0);
-  useEffect(() => {
-    let animId: number;
-    let last = 0;
-    const frame = (time: number) => {
-      animId = requestAnimationFrame(frame);
-      if (time - last < 100) return;
-      last = time;
-      setWaveTick(t => t + 1);
-    };
-    animId = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(animId);
-  }, []);
-
-  const ornamentAt = useCallback((phase: number) => {
-    const chars = ['\u2726', '\u2727', '\u00b7', '\u2727', '\u2726', '\u25c7'];
-    return chars[(tick + phase) % chars.length];
-  }, [tick]);
+  const ornamentSpan = useCallback((phase: number) => {
+    return (
+      <span ref={el => { ornamentRefs.current[phase] = el; }}>
+        {ORNAMENT_CHARS[phase % ORNAMENT_CHARS.length]}
+      </span>
+    );
+  }, [ORNAMENT_CHARS]);
 
   // Keyboard dismiss
   useEffect(() => {
@@ -163,8 +180,18 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const captainName = captain?.name ?? 'the Captain';
   const cmdLine = `command of `;
 
-  // ── Top border total width: IW + 4 (for ║ + space on each side) = 52 chars ──
-  const railW = IW; // inner rail between the two ═ bookends
+  const divChar = '\u2726';
+
+  // ── Cartouche geometry ──
+  const cartInner = IW - 8; // inner width of the ╭───╮ box (3 margin + 1 border each side)
+
+  // ── Godspeed box geometry ──
+  const godW = 26; // inner width of the ┌───┐ box
+  const godBox = godW + 2; // including │ borders
+  const godPadL = Math.floor((IW - godBox) / 2);
+  const godPadR = IW - godBox - godPadL;
+
+  const monoFont = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 
   return (
     <motion.div
@@ -177,41 +204,42 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
       onClick={onDismiss}
     >
       <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 8 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.05 }}
         onClick={e => e.stopPropagation()}
         className="relative select-none"
+        style={{
+          backgroundColor: 'rgba(8,7,5,0.92)',
+          padding: '12px 16px',
+          borderRadius: '4px',
+          boxShadow: '0 0 40px rgba(0,0,0,0.6), 0 0 80px rgba(0,0,0,0.3)',
+          willChange: 'opacity, transform',
+        }}
       >
         <pre
           className="text-[10.5px] leading-[1.55] whitespace-pre"
-          style={{
-            fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace',
-            color: TXT,
-          }}
+          style={{ fontFamily: monoFont, color: TXT }}
         >
-          {/* ═══ Floating ornaments above border ═══ */}
-          {'   '}<C c={DIM}>{ornamentAt(0)}</C>
-          {'        '}<C c={DIM}>{ornamentAt(1)}</C>
-          {'              '}<C c={DIM}>{ornamentAt(2)}</C>
-          {'              '}<C c={DIM}>{ornamentAt(3)}</C>
-          {'        '}<C c={DIM}>{ornamentAt(4)}</C>{'\n'}
+          {/* ═══ Floating ornaments above ═══ */}
+          {'   '}<C c={DIM}>{ornamentSpan(0)}</C>
+          {'        '}<C c={DIM}>{ornamentSpan(1)}</C>
+          {'              '}<C c={DIM}>{ornamentSpan(2)}</C>
+          {'              '}<C c={DIM}>{ornamentSpan(3)}</C>
+          {'        '}<C c={DIM}>{ornamentSpan(4)}</C>{'\n'}
 
-          {/* ═══ Top rail ═══ */}
-          <C c={GOLD}>{ornamentAt(5)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}</C>
-          <C c={DIM_GOLD}>{'\u2550'.repeat(railW + 2)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}</C>
-          <C c={GOLD}>{ornamentAt(0)}</C>{'\n'}
+          {/* ═══ Top rail — total IW+4 = 52 chars ═══ */}
+          <C c={GOLD}>{ornamentSpan(5)}</C>
+          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(IW)}{'\u2500'}</C>
+          <C c={GOLD}>{ornamentSpan(6)}</C>{'\n'}
 
-          {/* ═══ Empty ═══ */}
           <L><C c={BG}>{sp(IW)}</C></L>
 
           {/* ═══ Title cartouche ═══ */}
           <L>
             <C c={BG}>{'   '}</C>
-            <C c={DIM_GOLD}>{'\u256d'}{'\u2500'.repeat(IW - 8)}{'\u256e'}</C>
+            <C c={DIM_GOLD}>{'\u256d'}{'\u2500'.repeat(cartInner)}{'\u256e'}</C>
             <C c={BG}>{'   '}</C>
           </L>
           <L>
@@ -219,23 +247,18 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={DIM_GOLD}>{'\u2502'}</C>
             <C c={BG}>{' '}</C>
             <C c={GOLD}>{'C O M M I S S I O N  O F  V O Y A G E'}</C>
-            <C c={BG}>{sp(IW - 8 - 2 - 37)}</C>
+            <C c={BG}>{sp(cartInner - 1 - 37)}</C>
             <C c={DIM_GOLD}>{'\u2502'}</C>
             <C c={BG}>{'   '}</C>
           </L>
           <L>
             <C c={BG}>{'   '}</C>
-            <C c={DIM_GOLD}>{'\u2570'}{'\u2500'.repeat(IW - 8)}{'\u256f'}</C>
+            <C c={DIM_GOLD}>{'\u2570'}{'\u2500'.repeat(cartInner)}{'\u256f'}</C>
             <C c={BG}>{'   '}</C>
           </L>
 
-          {/* ═══ Empty ═══ */}
           <L><C c={BG}>{sp(IW)}</C></L>
-
-          {/* ═══ Divider ═══ */}
-          <L><Divider ornChar={ornamentAt(1)} width={IW} /></L>
-
-          {/* ═══ Empty ═══ */}
+          <L><Divider ornChar={divChar} /></L>
           <L><C c={BG}>{sp(IW)}</C></L>
 
           {/* ═══ Ship & Captain ═══ */}
@@ -258,16 +281,11 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={BG}>{sp(IW - 4 - cmdLine.length - captainName.length - 1)}</C>
           </L>
 
-          {/* ═══ Empty ═══ */}
+          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><Divider ornChar={divChar} /></L>
           <L><C c={BG}>{sp(IW)}</C></L>
 
-          {/* ═══ Divider ═══ */}
-          <L><Divider ornChar={ornamentAt(3)} width={IW} /></L>
-
-          {/* ═══ Empty ═══ */}
-          <L><C c={BG}>{sp(IW)}</C></L>
-
-          {/* ═══ Crew table header ═══ */}
+          {/* ═══ Crew table ═══ */}
           <L>
             <C c={BG}>{'    '}</C>
             <C c={WARM}>{pad('NAME', 19)}{pad('ROLE', 13)}{pad('SKILL', 5)}</C>
@@ -279,7 +297,6 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={BG}>{sp(IW - 4 - 37)}</C>
           </L>
 
-          {/* ═══ Crew rows ═══ */}
           {crewLines.map((m, i) => (
             <L key={i}>
               <C c={BG}>{'    '}</C>
@@ -290,13 +307,8 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             </L>
           ))}
 
-          {/* ═══ Empty ═══ */}
           <L><C c={BG}>{sp(IW)}</C></L>
-
-          {/* ═══ Divider ═══ */}
-          <L><Divider ornChar={ornamentAt(5)} width={IW} /></L>
-
-          {/* ═══ Empty ═══ */}
+          <L><Divider ornChar={divChar} /></L>
           <L><C c={BG}>{sp(IW)}</C></L>
 
           {/* ═══ Stats ═══ */}
@@ -321,65 +333,124 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={BG}>{sp(IW - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.sails}/${stats.maxSails}`.length)}</C>
           </L>
 
-          {/* ═══ Empty ═══ */}
+          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><Divider ornChar={divChar} /></L>
           <L><C c={BG}>{sp(IW)}</C></L>
 
-          {/* ═══ Wave strip ═══ */}
-          <L><WaveStrip tick={waveTick} width={IW} /></L>
+          {/* ═══ Cargo manifest ═══ */}
+          <L>
+            <C c={BG}>{'    '}</C>
+            <C c={WARM}>{'CARGO MANIFEST'}</C>
+            <C c={BG}>{sp(IW - 4 - 14)}</C>
+          </L>
+          <L>
+            <C c={BG}>{'    '}</C>
+            <C c={RULE}>{'\u2500'.repeat(37)}</C>
+            <C c={BG}>{sp(IW - 4 - 37)}</C>
+          </L>
 
-          {/* ═══ Empty ═══ */}
+          {ALL_COMMODITIES.filter(c => cargo[c] > 0).map((c, i) => {
+            const def = COMMODITY_DEFS[c];
+            const qty = cargo[c];
+            const qtyStr = String(qty);
+            const nameStr = c.length > 22 ? c.slice(0, 21) + '\u2026' : c;
+            const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+            // Layout: 4 margin + icon(1) + space(1) + name(22) + space(1) + qty(4) + tier(1) + fill
+            const usedW = 4 + 1 + 1 + 22 + 1 + 4 + 1;
+            return (
+              <L key={c}>
+                <C c={BG}>{'    '}</C>
+                <C c={def.color}>{def.icon}</C>
+                <C c={BG}>{' '}</C>
+                <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, 22)}</C>
+                <C c={BG}>{' '}</C>
+                <C c={BRIGHT}>{pad(qtyStr, 4)}</C>
+                <C c={DIM}>{tierTag}</C>
+                <C c={BG}>{sp(IW - usedW)}</C>
+              </L>
+            );
+          })}
+
+          {/* Cargo weight summary */}
+          {(() => {
+            const totalWeight = Object.entries(cargo).reduce(
+              (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+            );
+            const summaryStr = `${totalWeight}/${stats.cargoCapacity} hold capacity`;
+            return (
+              <>
+                <L>
+                  <C c={BG}>{'    '}</C>
+                  <C c={RULE}>{'\u2500'.repeat(37)}</C>
+                  <C c={BG}>{sp(IW - 4 - 37)}</C>
+                </L>
+                <L>
+                  <C c={BG}>{'    '}</C>
+                  <C c={DIM}>{summaryStr}</C>
+                  <C c={BG}>{sp(IW - 4 - summaryStr.length)}</C>
+                </L>
+              </>
+            );
+          })()}
+
+          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><WaveStripAnimated /></L>
           <L><C c={BG}>{sp(IW)}</C></L>
 
           {/* ═══ Godspeed button ═══ */}
-          <L>
-            <C c={BG}>{sp(10)}</C>
-            <C c={GOLD}>{'\u250c'}{'\u2500'.repeat(26)}{'\u2510'}</C>
-            <C c={BG}>{sp(IW - 10 - 28)}</C>
-          </L>
-          <L>
-            <C c={BG}>{sp(10)}</C>
-            <C c={GOLD}>{'\u2502  \u25b6 '}</C>
-            <C c={BRIGHT}>{'G O D S P E E D'}</C>
-            <C c={GOLD}>{sp(26 - 4 - 15)}{'\u2502'}</C>
-            <C c={BG}>{sp(IW - 10 - 28)}</C>
-          </L>
-          <L>
-            <C c={BG}>{sp(10)}</C>
-            <C c={GOLD}>{'\u2514'}{'\u2500'.repeat(26)}{'\u2518'}</C>
-            <C c={BG}>{sp(IW - 10 - 28)}</C>
-          </L>
+          <span
+            onClick={onDismiss}
+            role="button"
+            tabIndex={0}
+            className="cursor-pointer"
+            style={{ transition: 'filter 0.15s ease' }}
+            onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.3)'; }}
+            onMouseLeave={e => { e.currentTarget.style.filter = ''; }}
+          >
+            <L>
+              {sp(godPadL)}
+              <C c={GOLD}>{'\u250c'}{'\u2500'.repeat(godW)}{'\u2510'}</C>
+              {sp(godPadR)}
+            </L>
+            <L>
+              {sp(godPadL)}
+              <C c={GOLD}>{'\u2502  \u25b6 '}</C>
+              <C c={BRIGHT}>{'G O D S P E E D'}</C>
+              <C c={GOLD}>{sp(godW - 4 - 15)}{'\u2502'}</C>
+              {sp(godPadR)}
+            </L>
+            <L>
+              {sp(godPadL)}
+              <C c={GOLD}>{'\u2514'}{'\u2500'.repeat(godW)}{'\u2518'}</C>
+              {sp(godPadR)}
+            </L>
+          </span>
 
-          {/* ═══ Hint ═══ */}
-          <L>
-            <C c={BG}>{sp(14)}</C>
-            <C c={DIM}>{'press enter'}</C>
-            <C c={BG}>{sp(IW - 14 - 11)}</C>
-          </L>
-
-          {/* ═══ Empty ═══ */}
           <L><C c={BG}>{sp(IW)}</C></L>
 
-          {/* ═══ Bottom rail ═══ */}
-          <C c={GOLD}>{ornamentAt(0)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}</C>
-          <C c={DIM_GOLD}>{'\u2550'.repeat(railW + 2)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}</C>
-          <C c={GOLD}>{ornamentAt(5)}</C>{'\n'}
+          {/* ═══ Bottom rail — total IW+4 = 52 chars ═══ */}
+          <C c={GOLD}>{ornamentSpan(7)}</C>
+          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(IW)}{'\u2500'}</C>
+          <C c={GOLD}>{ornamentSpan(8)}</C>{'\n'}
 
-          {/* ═══ Floating ornaments below border ═══ */}
-          {'   '}<C c={DIM}>{ornamentAt(4)}</C>
-          {'        '}<C c={DIM}>{ornamentAt(3)}</C>
-          {'              '}<C c={DIM}>{ornamentAt(2)}</C>
-          {'              '}<C c={DIM}>{ornamentAt(1)}</C>
-          {'        '}<C c={DIM}>{ornamentAt(0)}</C>
+          {/* ═══ Floating ornaments below ═══ */}
+          {'   '}<C c={DIM}>{ornamentSpan(9)}</C>
+          {'        '}<C c={DIM}>{ornamentSpan(10)}</C>
+          {'              '}<C c={DIM}>{ornamentSpan(11)}</C>
+          {'              '}<C c={DIM}>{ornamentSpan(12)}</C>
+          {'        '}<C c={DIM}>{ornamentSpan(13)}</C>
         </pre>
 
-        {/* Invisible click target over the button area */}
-        <button
-          onClick={onDismiss}
-          className="absolute bottom-[70px] left-1/2 -translate-x-1/2 w-[200px] h-[50px] cursor-pointer opacity-0"
-          aria-label="Dismiss"
-        />
+        {/* ═══ Animated hint ═══ */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: [0, 0.6, 0.4, 0.6] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="text-center mt-1 text-[9px] tracking-[0.25em] uppercase"
+          style={{ color: DIM }}
+        >
+          press enter
+        </motion.div>
       </motion.div>
     </motion.div>
   );

@@ -14,6 +14,8 @@ export const WORLD_PORT_COORDS: Record<string, [number, number]> = {
   muscat: [58.59, 23.61],
   mocha: [43.25, 13.32],
   bantam: [106.15, -6.02],
+  socotra: [53.87, 12.47],
+  diu: [70.92, 20.71],
 };
 
 export type WorldPortSummary = Pick<PortDefinition, 'id' | 'name' | 'culture' | 'scale' | 'climate'> & {
@@ -38,17 +40,19 @@ export const WORLD_PORTS: WorldPortSummary[] = CORE_PORTS
   }));
 
 const SEA_LANE_GRAPH: Record<string, string[]> = {
-  aden: ['mocha', 'mombasa'],
+  aden: ['mocha', 'mombasa', 'socotra'],
   bantam: ['calicut', 'macau', 'malacca'],
-  calicut: ['bantam', 'goa', 'malacca', 'mocha', 'surat', 'zanzibar'],
-  goa: ['calicut', 'hormuz', 'malacca', 'surat', 'zanzibar'],
-  hormuz: ['goa', 'muscat', 'surat'],
+  calicut: ['bantam', 'diu', 'goa', 'malacca', 'mocha', 'surat', 'zanzibar'],
+  diu: ['calicut', 'hormuz', 'muscat', 'surat'],
+  goa: ['calicut', 'diu', 'hormuz', 'malacca', 'surat', 'zanzibar'],
+  hormuz: ['diu', 'goa', 'muscat', 'surat'],
   macau: ['bantam', 'malacca'],
   malacca: ['bantam', 'calicut', 'goa', 'macau'],
-  mombasa: ['aden', 'muscat', 'zanzibar'],
+  mombasa: ['aden', 'muscat', 'socotra', 'zanzibar'],
   mocha: ['aden', 'calicut', 'muscat', 'surat'],
-  muscat: ['hormuz', 'mombasa', 'mocha', 'surat'],
-  surat: ['calicut', 'goa', 'hormuz', 'mocha', 'muscat'],
+  muscat: ['diu', 'hormuz', 'mombasa', 'mocha', 'socotra', 'surat'],
+  socotra: ['aden', 'mombasa', 'muscat'],
+  surat: ['calicut', 'diu', 'goa', 'hormuz', 'mocha', 'muscat'],
   zanzibar: ['calicut', 'goa', 'mombasa'],
 };
 

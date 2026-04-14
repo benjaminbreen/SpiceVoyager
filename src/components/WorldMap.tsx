@@ -1,20 +1,37 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
-import { getTerrainData } from '../utils/terrain';
+import { getTerrainData, type TerrainData } from '../utils/terrain';
 import { motion } from 'framer-motion';
 import { X, Compass, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
 import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
 import type { WaterPalette, WaterPaletteId } from '../utils/waterPalettes';
 
-const WORLD_HALF = 1000;
-const TERRAIN_RESOLUTION = 1200; // pixels for the terrain texture (pre-rendered once)
-const UNITS_PER_PIXEL = (WORLD_HALF * 2) / TERRAIN_RESOLUTION;
+const WORLD_HALF = 550;
+const TERRAIN_RESOLUTION = 512; // pixels for the cached terrain texture
+const PRE_RENDER_MIN_ROWS_PER_SLICE = 1;
+const PRE_RENDER_MAX_ROWS_PER_SLICE = 8;
+const PRE_RENDER_IDLE_BUDGET_MS = 1.5;
+
+type IdleDeadlineLike = {
+  timeRemaining: () => number;
+};
+
+function scheduleBackgroundRender(cb: (deadline?: IdleDeadlineLike) => void) {
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(cb, { timeout: 1000 });
+    return;
+  }
+  (setTimeout as typeof globalThis.setTimeout)(() => cb(), 16);
+}
 
 // ── Module-level terrain cache (pre-renders in background at import time) ─────
 let _terrainCanvas: HTMLCanvasElement | null = null;
 let _terrainReady = false;
 let _terrainPaletteId: WaterPaletteId | null = null;
+let _terrainWorldHalf = WORLD_HALF;
+let _terrainRendering = false;
+let _terrainRenderToken = 0;
 const _readyCallbacks: Array<() => void> = [];
 
 function onTerrainReady(cb: () => void) {
@@ -23,56 +40,45 @@ function onTerrainReady(cb: () => void) {
 }
 
 function _preRenderTerrain(waterPalette: WaterPalette) {
+  const renderToken = ++_terrainRenderToken;
+  _terrainRendering = true;
   const imgData = new ImageData(TERRAIN_RESOLUTION, TERRAIN_RESOLUTION);
+  const renderWorldHalf = _terrainWorldHalf;
+  const unitsPerPixel = (renderWorldHalf * 2) / TERRAIN_RESOLUTION;
   let row = 0;
-  const CHUNK_SIZE = 40; // rows per frame
+  const renderChunk = (deadline?: IdleDeadlineLike) => {
+    if (renderToken !== _terrainRenderToken) return;
 
-  const renderChunk = () => {
-    const endRow = Math.min(row + CHUNK_SIZE, TERRAIN_RESOLUTION);
-    for (let y = row; y < endRow; y++) {
+    const startedAt = performance.now();
+    let rowsProcessed = 0;
+
+    const hasBudget = () => {
+      if (rowsProcessed < PRE_RENDER_MIN_ROWS_PER_SLICE) return true;
+      if (rowsProcessed >= PRE_RENDER_MAX_ROWS_PER_SLICE) return false;
+      if (deadline) return deadline.timeRemaining() > 1;
+      return performance.now() - startedAt < PRE_RENDER_IDLE_BUDGET_MS;
+    };
+
+    while (row < TERRAIN_RESOLUTION && hasBudget()) {
+      const y = row;
       for (let x = 0; x < TERRAIN_RESOLUTION; x++) {
-        const worldX = -WORLD_HALF + x * UNITS_PER_PIXEL;
-        const worldZ = -WORLD_HALF + y * UNITS_PER_PIXEL;
+        const worldX = -renderWorldHalf + x * unitsPerPixel;
+        const worldZ = -renderWorldHalf + y * unitsPerPixel;
         const terrain = getTerrainData(worldX, worldZ);
         const idx = (y * TERRAIN_RESOLUTION + x) * 4;
-
-        if (isCoastline(worldX, worldZ, UNITS_PER_PIXEL)) {
-          imgData.data[idx] = 35;
-          imgData.data[idx + 1] = 30;
-          imgData.data[idx + 2] = 20;
-          imgData.data[idx + 3] = 255;
-          continue;
-        }
-
-        const terrainTint = tintColor(terrain.color[0], terrain.color[1], terrain.color[2]);
-        let [r, g, b] = terrain.height < SEA_LEVEL
-          ? (() => {
-              const stylizedOcean = oceanColor(terrain.height, waterPalette);
-              const blend = Math.min(1, terrain.shallowFactor * 0.8 + terrain.surfFactor * 0.7);
-              return [
-                stylizedOcean[0] * (1 - blend) + terrainTint[0] * blend,
-                stylizedOcean[1] * (1 - blend) + terrainTint[1] * blend,
-                stylizedOcean[2] * (1 - blend) + terrainTint[2] * blend,
-              ] as [number, number, number];
-            })()
-          : terrainTint;
-
-        if (terrain.height > 0) {
-          const hs = getHillshade(worldX, worldZ, UNITS_PER_PIXEL * 2);
-          r = Math.min(1, r * hs);
-          g = Math.min(1, g * hs);
-          b = Math.min(1, b * hs);
-        }
+        const [r, g, b] = terrainChartColor(terrain, waterPalette);
 
         imgData.data[idx] = r * 255;
         imgData.data[idx + 1] = g * 255;
         imgData.data[idx + 2] = b * 255;
         imgData.data[idx + 3] = 255;
       }
+      row++;
+      rowsProcessed++;
     }
-    row = endRow;
+
     if (row < TERRAIN_RESOLUTION) {
-      requestAnimationFrame(renderChunk);
+      scheduleBackgroundRender(renderChunk);
     } else {
       const tc = document.createElement('canvas');
       tc.width = TERRAIN_RESOLUTION;
@@ -80,13 +86,15 @@ function _preRenderTerrain(waterPalette: WaterPalette) {
       tc.getContext('2d')!.putImageData(imgData, 0, 0);
       _terrainCanvas = tc;
       _terrainReady = true;
+      _terrainRendering = false;
       _terrainPaletteId = waterPalette.id;
+      _terrainWorldHalf = renderWorldHalf;
       for (const cb of _readyCallbacks) cb();
       _readyCallbacks.length = 0;
     }
   };
 
-  renderChunk();
+  scheduleBackgroundRender(renderChunk);
 }
 
 /** Call this once after the world/terrain is initialized to start background rendering */
@@ -95,15 +103,30 @@ export function startTerrainPreRender(waterPaletteId: WaterPaletteId) {
   if (_terrainPaletteId !== null && _terrainPaletteId !== waterPaletteId) {
     invalidateTerrainCache();
   }
-  if (_readyCallbacks.length > 0) return;
+  if (_terrainRendering) return;
   _preRenderTerrain(getWaterPalette(waterPaletteId));
+}
+
+export function registerTerrainMapCanvas(canvas: HTMLCanvasElement, waterPaletteId: WaterPaletteId, worldHalf: number) {
+  _terrainRenderToken++;
+  _terrainCanvas = canvas;
+  _terrainReady = true;
+  _terrainRendering = false;
+  _terrainPaletteId = waterPaletteId;
+  _terrainWorldHalf = worldHalf;
+  for (const cb of _readyCallbacks) cb();
+  _readyCallbacks.length = 0;
 }
 
 /** Invalidate the cache (call after fast-travel regenerates the world) */
 export function invalidateTerrainCache() {
+  _terrainRenderToken++;
   _terrainCanvas = null;
   _terrainReady = false;
+  _terrainRendering = false;
   _terrainPaletteId = null;
+  _terrainWorldHalf = WORLD_HALF;
+  _readyCallbacks.length = 0;
 }
 
 // Warm sepia tint for the terrain to give a vintage cartographic feel
@@ -123,34 +146,80 @@ function oceanColor(height: number, waterPalette: WaterPalette): [number, number
   return tintColor(r, g, b);
 }
 
-// Hillshading: compute illumination from NW light source using neighboring heights
-function getHillshade(x: number, z: number, step: number): number {
-  const hL = getTerrainData(x - step, z).height;
-  const hR = getTerrainData(x + step, z).height;
-  const hU = getTerrainData(x, z - step).height;
-  const hD = getTerrainData(x, z + step).height;
-  // Normal approximation
-  const dx = (hL - hR) / (2 * step);
-  const dz = (hU - hD) / (2 * step);
-  // Light from NW, elevated 45 degrees
-  const lightX = -0.7071;
-  const lightZ = -0.7071;
-  const lightY = 0.7071;
-  const len = Math.sqrt(dx * dx + dz * dz + 1);
-  const shade = (dx * lightX + dz * lightZ + lightY) / len;
-  return Math.max(0.3, Math.min(1.2, shade + 0.5));
+function mixColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  const blend = Math.max(0, Math.min(1, t));
+  return [
+    a[0] + (b[0] - a[0]) * blend,
+    a[1] + (b[1] - a[1]) * blend,
+    a[2] + (b[2] - a[2]) * blend,
+  ];
 }
 
-// Coastline detection
-function isCoastline(x: number, z: number, step: number): boolean {
-  const center = getTerrainData(x, z);
-  if (center.height < -2 || center.height > 4) return false;
-  const isLand = center.height >= SEA_LEVEL;
-  const offsets = [[-step, 0], [step, 0], [0, -step], [0, step]];
-  for (const [dx, dz] of offsets) {
-    if ((getTerrainData(x + dx, z + dz).height >= SEA_LEVEL) !== isLand) return true;
+function clampMapColor(color: [number, number, number], min = 0.18): [number, number, number] {
+  return [
+    Math.max(min, Math.min(1, color[0])),
+    Math.max(min, Math.min(1, color[1])),
+    Math.max(min, Math.min(1, color[2])),
+  ];
+}
+
+export function terrainChartColor(terrain: TerrainData, waterPalette: WaterPalette): [number, number, number] {
+  if (terrain.surfFactor > 0.6) return [0.38, 0.31, 0.20];
+
+  if (terrain.height < SEA_LEVEL) {
+    let color = oceanColor(terrain.height, waterPalette);
+    const shallow = tintColor(...waterPalette.map.shallow);
+    color = mixColor(color, shallow, Math.min(1, terrain.shallowFactor * 0.75 + terrain.reefFactor * 0.35));
+    return clampMapColor(color, 0.12);
   }
-  return false;
+
+  let color: [number, number, number];
+  switch (terrain.biome) {
+    case 'beach':
+      color = [0.78, 0.68, 0.43];
+      break;
+    case 'desert':
+      color = [0.76, 0.63, 0.36];
+      break;
+    case 'scrubland':
+      color = [0.58, 0.56, 0.36];
+      break;
+    case 'paddy':
+      color = [0.40, 0.58, 0.34];
+      break;
+    case 'swamp':
+      color = [0.30, 0.43, 0.31];
+      break;
+    case 'forest':
+      color = [0.28, 0.48, 0.29];
+      break;
+    case 'jungle':
+      color = [0.22, 0.46, 0.24];
+      break;
+    case 'arroyo':
+      color = [0.66, 0.45, 0.30];
+      break;
+    case 'snow':
+      color = [0.82, 0.84, 0.82];
+      break;
+    case 'volcano':
+      color = [0.44, 0.38, 0.34];
+      break;
+    case 'river':
+    case 'waterfall':
+      color = [0.40, 0.62, 0.72];
+      break;
+    case 'grassland':
+    default:
+      color = [0.48, 0.58, 0.34];
+      break;
+  }
+
+  color = mixColor(color, [0.48, 0.42, 0.34], Math.min(0.28, terrain.slope * 0.35));
+  color = mixColor(color, [0.82, 0.70, 0.45], terrain.beachFactor * 0.35);
+  color = mixColor(color, [0.58, 0.48, 0.34], terrain.wetSandFactor * 0.45);
+
+  return clampMapColor(color, 0.22);
 }
 
 interface WorldMapProps {
@@ -165,7 +234,9 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hoveredPort, setHoveredPort] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(!_terrainReady);
+  const [mapWorldHalf, setMapWorldHalf] = useState(_terrainWorldHalf);
   const containerRef = useRef<HTMLDivElement>(null);
+  const didSetInitialOffsetRef = useRef(false);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   const playerPos = useGameStore(s => s.playerPos);
@@ -177,21 +248,31 @@ export function WorldMap({ onClose }: WorldMapProps) {
   // Wait for the module-level pre-render (usually already done by the time modal opens)
   useEffect(() => {
     if (_terrainReady && _terrainPaletteId === waterPaletteId) {
+      setMapWorldHalf(_terrainWorldHalf);
       setIsRendering(false);
       return;
     }
+    let active = true;
     setIsRendering(true);
     startTerrainPreRender(waterPaletteId);
-    onTerrainReady(() => setIsRendering(false));
+    onTerrainReady(() => {
+      if (!active) return;
+      setMapWorldHalf(_terrainWorldHalf);
+      setIsRendering(false);
+    });
+    return () => { active = false; };
   }, [waterPaletteId]);
 
   // Center on player initially
   useEffect(() => {
+    if (isRendering) return;
+    if (didSetInitialOffsetRef.current) return;
+    didSetInitialOffsetRef.current = true;
     setOffset({
-      x: -(playerPos[0] / WORLD_HALF) * 0.5,
-      y: -(playerPos[2] / WORLD_HALF) * 0.5,
+      x: -(playerPos[0] / mapWorldHalf) * 0.5,
+      y: -(playerPos[2] / mapWorldHalf) * 0.5,
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isRendering, mapWorldHalf, playerPos]);
 
   // Keyboard shortcuts: +/- to zoom, Escape to close
   useEffect(() => {
@@ -280,8 +361,8 @@ export function WorldMap({ onClose }: WorldMapProps) {
 
     // Helper: world coords to canvas coords
     const worldToCanvas = (wx: number, wz: number) => ({
-      x: (wx / WORLD_HALF) * (w / 2),
-      y: (wz / WORLD_HALF) * (h / 2),
+      x: (wx / mapWorldHalf) * (w / 2),
+      y: (wz / mapWorldHalf) * (h / 2),
     });
 
     // Draw trade route lines between discovered ports (subtle)
@@ -444,29 +525,20 @@ export function WorldMap({ onClose }: WorldMapProps) {
     ctx.stroke();
     ctx.restore();
 
-    // Pulsing ring around player
-    const pulse = (Date.now() % 2000) / 2000;
-    const pulseRadius = (12 + pulse * 10) / zoom;
+    // Ring around player
+    const pulseRadius = 14 / zoom;
     ctx.beginPath();
     ctx.arc(pp.x, pp.y, pulseRadius, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(100, 180, 255, ${0.5 - pulse * 0.5})`;
+    ctx.strokeStyle = 'rgba(100, 180, 255, 0.45)';
     ctx.lineWidth = 1.5 / zoom;
     ctx.stroke();
 
     ctx.restore();
-  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts]);
+  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, mapWorldHalf]);
 
-  // Animation loop for the pulsing effect
   useEffect(() => {
     if (isRendering) return;
-    let running = true;
-    const animate = () => {
-      if (!running) return;
-      draw();
-      requestAnimationFrame(animate);
-    };
-    animate();
-    return () => { running = false; };
+    draw();
   }, [draw, isRendering]);
 
   // Mouse handlers for pan
@@ -489,8 +561,8 @@ export function WorldMap({ onClose }: WorldMapProps) {
     // Reverse the transform to get world coordinates
     const cx = (mouseX - w / 2) / zoom - offset.x * w / 2;
     const cy = (mouseY - h / 2) / zoom - offset.y * h / 2;
-    const worldX = (cx / (w / 2)) * WORLD_HALF;
-    const worldZ = (cy / (h / 2)) * WORLD_HALF;
+    const worldX = (cx / (w / 2)) * mapWorldHalf;
+    const worldZ = (cy / (h / 2)) * mapWorldHalf;
 
     let found: string | null = null;
     ports.forEach(port => {
@@ -525,8 +597,8 @@ export function WorldMap({ onClose }: WorldMapProps) {
 
   const centerOnPlayer = () => {
     setOffset({
-      x: -(playerPos[0] / WORLD_HALF) * 0.5,
-      y: -(playerPos[2] / WORLD_HALF) * 0.5,
+      x: -(playerPos[0] / mapWorldHalf) * 0.5,
+      y: -(playerPos[2] / mapWorldHalf) * 0.5,
     });
     setZoom(1.5);
   };

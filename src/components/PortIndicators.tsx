@@ -135,6 +135,7 @@ function PortLabel({
       position={[port.position[0], 8, port.position[2]]}
       center
       sprite
+      zIndexRange={[10, 0]}
       style={{ pointerEvents: 'none', opacity, transition: 'opacity 0.3s' }}
     >
       <div className="select-none text-center whitespace-nowrap">

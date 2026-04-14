@@ -327,6 +327,7 @@ const GEO_ICONS: Record<string, string> = {
   bay: '🌊',
   strait: '⛵',
   island: '🏝️',
+  coastal_island: '🏘️',
   peninsula: '🗻',
   estuary: '🏞️',
   crater_harbor: '🌋',

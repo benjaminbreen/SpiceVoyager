@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getTerrainData } from '../utils/terrain';
@@ -25,6 +25,7 @@ export function Player() {
   const paused = useGameStore((state) => state.paused);
   const viewMode = useGameStore((state) => state.viewMode);
   
+  const { camera } = useThree();
   const keys = useRef({ w: false, a: false, s: false, d: false });
   const isMoving = useRef(false);
   const jumpVelocity = useRef(0);
@@ -80,16 +81,33 @@ export function Player() {
     const walkingRot = walking.rot;
 
     const speed = 10 * delta;
-    const turnSpeed = 3 * delta;
     const GRAVITY = 30;
 
+    // Get camera forward/right projected onto XZ plane
+    const camForward = new THREE.Vector3();
+    camera.getWorldDirection(camForward);
+    camForward.y = 0;
+    camForward.normalize();
+    const camRight = new THREE.Vector3(-camForward.z, 0, camForward.x);
+
+    // Build input vector
+    let inputX = 0;
+    let inputZ = 0;
+    if (keys.current.w) inputZ += 1;
+    if (keys.current.s) inputZ -= 1;
+    if (keys.current.d) inputX += 1;
+    if (keys.current.a) inputX -= 1;
+
+    // Transform input by camera orientation
     let moveX = 0;
     let moveZ = 0;
-
-    if (keys.current.w) moveZ -= speed;
-    if (keys.current.s) moveZ += speed;
-    if (keys.current.a) moveX -= speed;
-    if (keys.current.d) moveX += speed;
+    const inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
+    if (inputLen > 0) {
+      const nx = inputX / inputLen;
+      const nz = inputZ / inputLen;
+      moveX = (camRight.x * nx + camForward.x * nz) * speed;
+      moveZ = (camRight.z * nx + camForward.z * nz) * speed;
+    }
 
     isMoving.current = moveX !== 0 || moveZ !== 0;
 
@@ -117,12 +135,13 @@ export function Player() {
       // Calculate target rotation
       const targetRot = Math.atan2(moveX, moveZ);
 
-      // Smooth rotation
+      // Smooth rotation — fast lerp so character faces movement direction quickly
       let rotDiff = targetRot - walkingRot;
       while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
       while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
 
-      const newRot = walkingRot + rotDiff * turnSpeed * 5;
+      const rotLerp = 1 - Math.pow(0.001, delta); // ~exponential ease, frame-rate independent
+      const newRot = walkingRot + rotDiff * rotLerp;
       group.current.rotation.y = newRot;
 
       // Update position

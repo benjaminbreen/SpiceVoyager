@@ -1,14 +1,24 @@
 import { useMemo, useRef, useEffect } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 
 interface Part {
   geo: 'box' | 'cylinder' | 'cone' | 'sphere';
-  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw' | 'road_dirt' | 'road_stone' | 'dark';
+  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw' | 'dark';
   pos: [number, number, number];
   scale: [number, number, number];
   rot: [number, number, number];
-  color?: [number, number, number]; // per-instance RGB override
+  color?: [number, number, number];
+}
+
+interface TorchSpot {
+  pos: [number, number, number];
+}
+
+interface SmokeSpot {
+  pos: [number, number, number];
+  seed: number; // per-chimney offset for staggered animation
 }
 
 // Simple seeded random for deterministic color variation
@@ -21,7 +31,6 @@ function mulberry32(a: number) {
   };
 }
 
-// Base colors for each material - used to create per-instance variation
 const BASE_COLORS: Record<string, [number, number, number]> = {
   white: [0.94, 0.94, 0.94],
   mud: [0.76, 0.63, 0.47],
@@ -29,8 +38,6 @@ const BASE_COLORS: Record<string, [number, number, number]> = {
   terracotta: [0.80, 0.36, 0.36],
   stone: [0.53, 0.53, 0.53],
   straw: [0.83, 0.75, 0.48],
-  road_dirt: [0.55, 0.45, 0.33],
-  road_stone: [0.48, 0.48, 0.45],
   dark: [0.12, 0.10, 0.08],
 };
 
@@ -42,19 +49,124 @@ function varyColor(base: [number, number, number], rng: () => number, amount = 0
   ];
 }
 
-export function ProceduralCity() {
-  const { ports } = useGameStore();
+// ── Culture-specific color palettes ──────────────────────────────────────────
+// Each building randomly selects a base wall color from its culture's palette.
+// Weighted by repeating common colors. Historically grounded for c. 1612.
 
-  const parts = useMemo(() => {
+const WALL_PALETTES: Record<string, [number, number, number][]> = {
+  'Indian Ocean': [
+    [0.76, 0.63, 0.47],  // mud brick
+    [0.76, 0.63, 0.47],  // mud brick (weighted)
+    [0.90, 0.86, 0.78],  // whitewashed lime
+    [0.90, 0.86, 0.78],  // whitewashed lime (weighted)
+    [0.80, 0.74, 0.68],  // coral stone (Swahili coast)
+    [0.84, 0.74, 0.56],  // aged ochre plaster
+  ],
+  'European': [
+    [0.94, 0.92, 0.88],  // clean white
+    [0.94, 0.92, 0.88],  // clean white (weighted)
+    [0.95, 0.90, 0.78],  // warm cream
+    [0.96, 0.88, 0.62],  // Goa golden yellow
+    [0.84, 0.87, 0.93],  // Portuguese blue-white
+    [0.93, 0.80, 0.76],  // terracotta pink (Macau)
+  ],
+  'Caribbean': [
+    [0.36, 0.25, 0.20],  // dark hardwood
+    [0.36, 0.25, 0.20],  // dark hardwood (weighted)
+    [0.46, 0.36, 0.28],  // lighter weathered wood
+    [0.42, 0.30, 0.22],  // reddish tropical wood
+    [0.52, 0.44, 0.32],  // sun-bleached planks
+  ],
+};
+
+interface RoofStyle {
+  color: [number, number, number];
+  geo: 'box' | 'cone';
+  h: number;
+}
+
+const ROOF_PALETTES: Record<string, RoofStyle[]> = {
+  'Indian Ocean': [
+    { color: [0.72, 0.60, 0.45], geo: 'box', h: 0.4 },   // flat mud
+    { color: [0.72, 0.60, 0.45], geo: 'box', h: 0.4 },   // flat mud (weighted)
+    { color: [0.88, 0.84, 0.76], geo: 'box', h: 0.35 },  // whitewashed flat
+    { color: [0.78, 0.70, 0.42], geo: 'cone', h: 1.2 },  // palm thatch
+  ],
+  'European': [
+    { color: [0.80, 0.36, 0.36], geo: 'cone', h: 1.5 },  // classic terracotta
+    { color: [0.80, 0.36, 0.36], geo: 'cone', h: 1.5 },  // terracotta (weighted)
+    { color: [0.70, 0.30, 0.28], geo: 'cone', h: 1.5 },  // aged dark terracotta
+    { color: [0.48, 0.48, 0.55], geo: 'cone', h: 1.3 },  // slate grey
+  ],
+  'Caribbean': [
+    { color: [0.36, 0.25, 0.20], geo: 'cone', h: 1.5 },  // wood shingle
+    { color: [0.36, 0.25, 0.20], geo: 'cone', h: 1.5 },  // wood shingle (weighted)
+    { color: [0.78, 0.70, 0.42], geo: 'cone', h: 1.3 },  // palm thatch
+  ],
+};
+
+// Portuguese colonial shutter colors (Goa, Macau)
+const EU_SHUTTER_COLORS: [number, number, number][] = [
+  [0.20, 0.35, 0.58],  // Portuguese blue
+  [0.22, 0.45, 0.30],  // forest green
+  [0.65, 0.50, 0.20],  // ochre
+  [0.55, 0.15, 0.12],  // ox-blood red
+  [0.35, 0.30, 0.25],  // dark brown
+];
+
+// Dyed fabric colors for market awnings
+const AWNING_COLORS: Record<string, [number, number, number][]> = {
+  'Indian Ocean': [
+    [0.72, 0.22, 0.15],  // madder red
+    [0.20, 0.35, 0.55],  // indigo
+    [0.85, 0.65, 0.15],  // turmeric gold
+    [0.60, 0.25, 0.40],  // lac dye purple
+  ],
+  'European': [
+    [0.75, 0.25, 0.20],  // Portuguese red
+    [0.80, 0.72, 0.45],  // canvas/linen
+    [0.25, 0.35, 0.50],  // navy
+  ],
+  'Caribbean': [
+    [0.78, 0.70, 0.42],  // natural palm
+    [0.60, 0.40, 0.22],  // bark cloth
+    [0.45, 0.55, 0.30],  // dyed green
+  ],
+};
+
+export function ProceduralCity() {
+  const ports = useGameStore(s => s.ports);
+  const timeOfDay = useGameStore(s => s.timeOfDay);
+
+  // Dark material created separately for per-frame emissive updates (window glow)
+  const darkMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#1e1a14', roughness: 0.95,
+  }), []);
+
+  // Animate window glow based on time of day
+  useFrame(() => {
+    const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
+    const sunH = Math.sin(sunAngle);
+    // Ramp up glow as sun drops below horizon
+    const nightFactor = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
+    darkMat.emissive.setRGB(0.95, 0.6, 0.2);
+    darkMat.emissiveIntensity = nightFactor * 0.7;
+  });
+
+  // Build all geometry parts + collect torch positions
+  const { parts, torchSpots, smokeSpots } = useMemo(() => {
     const allParts: Part[] = [];
+    const torches: TorchSpot[] = [];
+    const smokeSpots: SmokeSpot[] = [];
 
     ports.forEach(port => {
+      let fortSeen = false;
+
       port.buildings.forEach((b, bi) => {
         const [w, h, d] = b.scale;
         const [x, y, z] = b.position;
         const rot = b.rotation;
         const c = port.culture;
-        // Per-building seeded RNG for deterministic variation
         const rng = mulberry32(bi * 7919 + (x * 1000 | 0) + (z * 31 | 0));
 
         const addPart = (geo: Part['geo'], mat: Part['mat'], lx: number, ly: number, lz: number, sw: number, sh: number, sd: number, colorOverride?: [number, number, number]) => {
@@ -65,15 +177,20 @@ export function ProceduralCity() {
             pos: [x + rx, y + ly, z + rz],
             scale: [sw, sh, sd],
             rot: [0, rot, 0],
-            color: colorOverride ?? varyColor(BASE_COLORS[mat], rng),
+            color: colorOverride ?? varyColor(BASE_COLORS[mat] ?? BASE_COLORS.dark, rng),
           });
         };
 
-        if (b.type === 'road') {
-          const roadMat = c === 'European' ? 'road_stone' : 'road_dirt';
-          addPart('box', roadMat, 0, 0, 0, w, h, d);
-        }
-        else if (b.type === 'dock') {
+        // Helper to add a torch at a local offset from this building
+        const addTorch = (lx: number, ly: number, lz: number) => {
+          const rx = lx * Math.cos(rot) - lz * Math.sin(rot);
+          const rz = lx * Math.sin(rot) + lz * Math.cos(rot);
+          torches.push({ pos: [x + rx, y + ly, z + rz] });
+          // Torch bracket (small wood cylinder)
+          addPart('cylinder', 'wood', lx, ly - 0.3, lz, 0.08, 0.6, 0.08);
+        };
+
+        if (b.type === 'dock') {
           const deckColor = varyColor(BASE_COLORS.wood, rng, 0.06);
           addPart('box', 'wood', 0, 0, 0, w, 0.2, d, deckColor);
           const pileColor = varyColor(BASE_COLORS.wood, rng, 0.1);
@@ -85,9 +202,16 @@ export function ProceduralCity() {
           addPart('cylinder', 'wood', w/2, 0.4, 0, 0.12, 0.8, 0.12);
           addPart('cylinder', 'wood', -w/2, 0.4, 0, 0.12, 0.8, 0.12);
           // Crates on dock
-          const crateColor = varyColor(BASE_COLORS.wood, rng, 0.12);
-          addPart('box', 'wood', w/4, 0.4, d/4, 0.5, 0.5, 0.5, crateColor);
+          addPart('box', 'wood', w/4, 0.4, d/4, 0.5, 0.5, 0.5, varyColor(BASE_COLORS.wood, rng, 0.12));
           addPart('box', 'wood', -w/4, 0.4, -d/4, 0.4, 0.4, 0.4, varyColor(BASE_COLORS.wood, rng, 0.12));
+          // Moored boat — small hull shape
+          const boatSide = rng() > 0.5 ? 1 : -1;
+          const boatColor = varyColor(BASE_COLORS.wood, rng, 0.15);
+          addPart('box', 'wood', boatSide * (w/2 + 1.5), -0.3, d * 0.2, 0.8, 0.5, 2.5, boatColor);
+          // Boat bow (small tapered cone)
+          addPart('cone', 'wood', boatSide * (w/2 + 1.5), -0.1, d * 0.2 + 1.4, 0.4, 0.4, 0.3, boatColor);
+          // Torch at end of dock
+          addTorch(0, 1.4, d/2 - 0.3);
         }
         else if (b.type === 'fort') {
           const mat = c === 'Indian Ocean' ? 'mud' : 'stone';
@@ -101,10 +225,57 @@ export function ProceduralCity() {
           addPart('cylinder', mat, -w/2, h/2+1, -d/2, 1.5, h+2, 1.5, towerColor);
           // Gate
           addPart('box', 'dark', 0, h*0.35, d/2+0.05, 2.5, h*0.6, 0.15);
-          // Battlements on top (small blocks)
+          // Battlements on top
           for (let bx = -w/2 + 1; bx <= w/2 - 1; bx += 2) {
             addPart('box', mat, bx, h + 0.5, d/2, 0.6, 1, 0.6, towerColor);
             addPart('box', mat, bx, h + 0.5, -d/2, 0.6, 1, 0.6, towerColor);
+          }
+
+          // ── Flags on two front towers ──
+          const flagColor: [number, number, number] = c === 'Indian Ocean'
+            ? [0.15, 0.55, 0.25]   // green
+            : c === 'European'
+              ? [0.85, 0.15, 0.15] // red (Portuguese)
+              : [0.2, 0.2, 0.7];   // blue
+          // Right tower flagpole + flag
+          addPart('cylinder', 'wood', w/2, h + 3.5, d/2, 0.06, 3, 0.06);
+          addPart('box', 'straw', w/2 + 0.45, h + 4.5, d/2, 0.8, 0.5, 0.05, flagColor);
+          // Left tower flagpole + flag
+          addPart('cylinder', 'wood', -w/2, h + 3.5, d/2, 0.06, 3, 0.06);
+          addPart('box', 'straw', -w/2 + 0.45, h + 4.5, d/2, 0.8, 0.5, 0.05, flagColor);
+
+          // ── Torches flanking gate ──
+          addTorch(1.8, h * 0.7, d/2 + 0.3);
+          addTorch(-1.8, h * 0.7, d/2 + 0.3);
+
+          // ── Culture-specific landmark (once per port) ──
+          if (!fortSeen) {
+            fortSeen = true;
+            if (c === 'Indian Ocean') {
+              // Minaret near the fort
+              const mColor = varyColor([0.88, 0.82, 0.72], rng, 0.05);
+              addPart('cylinder', 'white', w/2 + 4, h/2 + 4, -d/2, 0.9, 10, 0.9, mColor);
+              // Minaret gallery (slightly wider ring)
+              addPart('cylinder', 'white', w/2 + 4, h/2 + 8.5, -d/2, 1.2, 0.4, 1.2, mColor);
+              // Dome on top
+              addPart('sphere', 'white', w/2 + 4, h/2 + 9.5, -d/2, 0.7, 0.9, 0.7, mColor);
+              // Crescent finial (tiny sphere offset)
+              addPart('sphere', 'straw', w/2 + 4, h/2 + 10.5, -d/2, 0.2, 0.2, 0.2, [0.85, 0.75, 0.2]);
+            } else if (c === 'European') {
+              // Stone cross on the tallest tower
+              addPart('box', 'stone', w/2, h + 5.5, d/2, 0.15, 1.8, 0.15);
+              addPart('box', 'stone', w/2, h + 6.0, d/2, 0.8, 0.15, 0.15);
+              // Small chapel nearby — box + pitched roof + cross
+              const chapelColor = varyColor(BASE_COLORS.white, rng, 0.06);
+              addPart('box', 'white', -w/2 - 4, h * 0.4, 0, 3, h * 0.8, 4, chapelColor);
+              addPart('cone', 'terracotta', -w/2 - 4, h * 0.8 + 1, 0, 2.5, 2, 3.2, varyColor(BASE_COLORS.terracotta, rng, 0.08));
+              // Chapel bell tower
+              addPart('box', 'white', -w/2 - 4, h * 0.8 + 2.5, -2.2, 1, 3, 1, chapelColor);
+              addPart('cone', 'stone', -w/2 - 4, h * 0.8 + 4.5, -2.2, 0.8, 1.5, 0.8);
+              // Cross on chapel
+              addPart('box', 'stone', -w/2 - 4, h * 0.8 + 5.5, -2.2, 0.1, 0.8, 0.1);
+              addPart('box', 'stone', -w/2 - 4, h * 0.8 + 5.8, -2.2, 0.5, 0.1, 0.1);
+            }
           }
         }
         else if (b.type === 'market') {
@@ -121,110 +292,163 @@ export function ProceduralCity() {
           } else {
             addPart('cone', 'wood', 0, h+1, 0, w/1.5, 2, d/1.5);
           }
-          // Awnings hanging from pillars
-          const awningColor = varyColor(c === 'Indian Ocean' ? [0.72, 0.22, 0.15] : BASE_COLORS.straw, rng, 0.12);
-          addPart('box', 'straw', w/2-0.5, h*0.55, 0, 1.2, 0.08, d*0.7, awningColor);
-          addPart('box', 'straw', -w/2+0.5, h*0.55, 0, 1.2, 0.08, d*0.7, varyColor(awningColor, rng, 0.1));
+          // Awnings — each side picks from culture-specific dyed fabric colors
+          const awningPalette = AWNING_COLORS[c] ?? AWNING_COLORS['Indian Ocean'];
+          const awning1 = varyColor(awningPalette[Math.floor(rng() * awningPalette.length)], rng, 0.08);
+          const awning2 = varyColor(awningPalette[Math.floor(rng() * awningPalette.length)], rng, 0.08);
+          addPart('box', 'straw', w/2-0.5, h*0.55, 0, 1.2, 0.08, d*0.7, awning1);
+          addPart('box', 'straw', -w/2+0.5, h*0.55, 0, 1.2, 0.08, d*0.7, awning2);
           // Counter/table
           addPart('box', 'wood', 0, 1.0, 0, w*0.5, 0.15, d*0.4);
-          // Goods on counter (small colorful boxes)
+          // Goods on counter — varied spice/textile colors
           addPart('box', 'straw', 0.4, 1.2, 0.2, 0.3, 0.25, 0.3, varyColor([0.85, 0.65, 0.2], rng, 0.15));
           addPart('box', 'straw', -0.3, 1.2, -0.1, 0.25, 0.2, 0.25, varyColor([0.6, 0.3, 0.15], rng, 0.15));
+          addPart('box', 'straw', 0.1, 1.2, -0.3, 0.2, 0.18, 0.2, varyColor([0.35, 0.55, 0.25], rng, 0.12));
+
+          // Torches at market corners
+          addTorch(w/2 - 0.3, h + 0.5, d/2 - 0.3);
+          addTorch(-w/2 + 0.3, h + 0.5, d/2 - 0.3);
         }
         else if (b.type === 'shack') {
-          const wallColor = varyColor(BASE_COLORS.wood, rng, 0.1);
-          const roofColor = varyColor(BASE_COLORS.straw, rng, 0.1);
+          // Shacks use rougher, more varied materials
+          const shackWallPalette: [number,number,number][] = c === 'Indian Ocean'
+            ? [[0.55, 0.40, 0.28], [0.62, 0.48, 0.32], [0.70, 0.58, 0.42], [0.48, 0.38, 0.25]]
+            : [[0.36, 0.25, 0.20], [0.42, 0.30, 0.22], [0.50, 0.38, 0.26], [0.38, 0.28, 0.18]];
+          const wallColor = varyColor(shackWallPalette[Math.floor(rng() * shackWallPalette.length)], rng, 0.08);
+          const roofColor = varyColor(BASE_COLORS.straw, rng, 0.12);
           if (c === 'Indian Ocean') {
+            // Stilted shack
             addPart('cylinder', 'wood', w/2-0.2, 0.5, d/2-0.2, 0.1, 1, 0.1);
             addPart('cylinder', 'wood', -w/2+0.2, 0.5, d/2-0.2, 0.1, 1, 0.1);
             addPart('cylinder', 'wood', w/2-0.2, 0.5, -d/2+0.2, 0.1, 1, 0.1);
             addPart('cylinder', 'wood', -w/2+0.2, 0.5, -d/2+0.2, 0.1, 1, 0.1);
             addPart('box', 'wood', 0, 1.5, 0, w, h, d, wallColor);
             addPart('cone', 'straw', 0, 1.5+h/2+0.5, 0, w/1.2, 1, d/1.2, roofColor);
-            // Door opening
             addPart('box', 'dark', 0, 1.3, d/2+0.05, 0.6, 1.0, 0.1);
           } else {
             addPart('box', 'wood', 0, h/2, 0, w, h, d, wallColor);
             addPart('cone', 'straw', 0, h+0.5, 0, w/1.2, 1, d/1.2, roofColor);
-            // Door
             addPart('box', 'dark', 0, h*0.35, d/2+0.05, 0.6, h*0.6, 0.1);
-            // Window
             addPart('box', 'dark', w/2+0.05, h*0.55, 0, 0.1, 0.4, 0.5);
           }
         }
         else {
-          // House, Warehouse, Estate, Farmhouse
-          let wallMat: Part['mat'] = 'white';
-          let roofMat: Part['mat'] = 'terracotta';
-          let roofGeo: Part['geo'] = 'cone';
-          let roofH = 1.5;
+          // ── House, Warehouse, Estate, Farmhouse ──
+          // Per-building wall color from culture palette
+          const wallPalette = WALL_PALETTES[c] ?? WALL_PALETTES['Indian Ocean'];
+          const wallBase = wallPalette[Math.floor(rng() * wallPalette.length)];
+          const wallColor = varyColor(wallBase, rng, 0.05);
 
-          if (c === 'Indian Ocean') {
-            wallMat = 'mud';
-            roofMat = 'mud';
-            roofGeo = 'box';
-            roofH = 0.4;
-          } else if (c === 'Caribbean') {
-            wallMat = 'wood';
-            roofMat = 'wood';
-            roofGeo = 'cone';
-          }
+          // Material determines roughness; color comes from instance override
+          const wallMat: Part['mat'] = c === 'Indian Ocean' ? 'mud' : c === 'European' ? 'white' : 'wood';
+
+          // Per-building roof style from culture palette
+          let roofGeo: Part['geo'];
+          let roofH: number;
+          let roofColor: [number, number, number];
 
           if (b.type === 'farmhouse') {
-            roofMat = 'straw';
             roofGeo = 'cone';
+            roofH = 1.2;
+            roofColor = varyColor(BASE_COLORS.straw, rng, 0.08);
+          } else {
+            const roofPalette = ROOF_PALETTES[c] ?? ROOF_PALETTES['Indian Ocean'];
+            const roofChoice = roofPalette[Math.floor(rng() * roofPalette.length)];
+            roofGeo = roofChoice.geo;
+            roofH = roofChoice.h;
+            roofColor = varyColor(roofChoice.color, rng, 0.06);
           }
 
-          const wallColor = varyColor(BASE_COLORS[wallMat], rng, 0.08);
-          const roofColor = varyColor(BASE_COLORS[roofMat], rng, 0.10);
+          const roofMat: Part['mat'] = roofGeo === 'box' ? 'mud' : 'terracotta';
 
+          // ── Foundation / plinth ──
+          if (c === 'Indian Ocean' && (b.type === 'house' || b.type === 'estate')) {
+            addPart('box', 'stone', 0, 0.12, 0, w + 0.3, 0.25, d + 0.3, varyColor(BASE_COLORS.stone, rng, 0.06));
+          } else if (c === 'European' && b.type !== 'farmhouse') {
+            addPart('box', 'stone', 0, 0.08, 0, w + 0.15, 0.16, d + 0.15, varyColor([0.58, 0.55, 0.52], rng, 0.04));
+          }
+
+          // ── Main walls ──
           addPart('box', wallMat, 0, h/2, 0, w, h, d, wallColor);
 
+          // ── Roof ──
           if (roofGeo === 'box') {
-            addPart('box', roofMat, 0, h + roofH/2, 0, w+0.4, roofH, d+0.4, roofColor);
+            addPart('box', roofMat, 0, h + roofH/2, 0, w + 0.4, roofH, d + 0.4, roofColor);
           } else {
             addPart('cone', roofMat, 0, h + roofH/2, 0, w/1.2, roofH, d/1.2, roofColor);
           }
 
-          // --- Detail parts ---
-          // Door (front wall)
+          // ── Door with lintel and step ──
           addPart('box', 'dark', 0, h*0.3, d/2+0.05, 0.55, h*0.55, 0.1);
+          // Lintel above door
+          addPart('box', wallMat, 0, h*0.6, d/2+0.06, 0.75, 0.1, 0.08, varyColor(wallBase, rng, 0.03));
+          // Door step
+          addPart('box', 'stone', 0, 0.06, d/2+0.35, 0.7, 0.12, 0.3);
 
-          // Windows
+          // ── Windows with culture-specific details ──
           if (b.type === 'house' || b.type === 'farmhouse') {
             // Side windows
             addPart('box', 'dark', w/2+0.05, h*0.55, 0, 0.1, 0.45, 0.55);
             addPart('box', 'dark', -w/2-0.05, h*0.55, 0, 0.1, 0.45, 0.55);
+
+            if (c === 'European') {
+              // Painted shutters — the iconic Goa/Macau look
+              const shutterBase = EU_SHUTTER_COLORS[Math.floor(rng() * EU_SHUTTER_COLORS.length)];
+              const sc = varyColor(shutterBase, rng, 0.06);
+              addPart('box', 'wood', w/2+0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
+              addPart('box', 'wood', w/2+0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
+              addPart('box', 'wood', -w/2-0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
+              addPart('box', 'wood', -w/2-0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
+              // Window sills
+              addPart('box', 'stone', w/2+0.06, h*0.31, 0, 0.08, 0.06, 0.65);
+              addPart('box', 'stone', -w/2-0.06, h*0.31, 0, 0.08, 0.06, 0.65);
+            } else if (c === 'Indian Ocean') {
+              // Wooden window frames (jali-style implied by thick frame)
+              const frameColor = varyColor(BASE_COLORS.wood, rng, 0.08);
+              addPart('box', 'wood', w/2+0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
+              addPart('box', 'wood', -w/2-0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
+            }
           }
 
           if (b.type === 'warehouse') {
             // Large loading door
             addPart('box', 'dark', 0, h*0.35, d/2+0.05, 1.8, h*0.6, 0.1);
+            // Lintel over loading door
+            addPart('box', wallMat, 0, h*0.68, d/2+0.06, 2.0, 0.12, 0.08, varyColor(wallBase, rng, 0.03));
             // Side windows (high, small)
             addPart('box', 'dark', w/2+0.05, h*0.7, d/4, 0.1, 0.35, 0.4);
             addPart('box', 'dark', w/2+0.05, h*0.7, -d/4, 0.1, 0.35, 0.4);
-            // Crates stacked outside
-            const crateColor = varyColor(BASE_COLORS.wood, rng, 0.15);
-            addPart('box', 'wood', w/2+1.0, 0.35, 0, 0.7, 0.7, 0.7, crateColor);
+            // Crates and barrels stacked outside
+            addPart('box', 'wood', w/2+1.0, 0.35, 0, 0.7, 0.7, 0.7, varyColor(BASE_COLORS.wood, rng, 0.15));
             addPart('box', 'wood', w/2+1.0, 0.25, 0.9, 0.5, 0.5, 0.5, varyColor(BASE_COLORS.wood, rng, 0.15));
+            // Barrel (cylinder)
+            addPart('cylinder', 'wood', w/2+1.5, 0.3, -0.4, 0.3, 0.6, 0.3, varyColor(BASE_COLORS.wood, rng, 0.12));
           }
 
-          // Chimney (European and Caribbean houses/estates/farmhouses, not warehouses)
-          if (b.type !== 'warehouse' && c !== 'Indian Ocean') {
+          // Chimney (non-Indian Ocean, non-warehouse, ~50% of buildings)
+          if (b.type !== 'warehouse' && c !== 'Indian Ocean' && rng() < 0.5) {
             addPart('box', 'stone', w/4, h + roofH + 0.3, d/4, 0.4, 0.8, 0.4);
+            // ~40% of chimneys are actively smoking
+            if (rng() < 0.4) {
+              const rx = (w/4) * Math.cos(rot) - (d/4) * Math.sin(rot);
+              const rz = (w/4) * Math.sin(rot) + (d/4) * Math.cos(rot);
+              smokeSpots.push({
+                pos: [x + rx, y + h + roofH + 0.8, z + rz],
+                seed: bi * 137 + (x * 100 | 0),
+              });
+            }
           }
 
-          // Estates get extra details
+          // ── Estates — larger and more detailed ──
           if (b.type === 'estate') {
             if (c === 'Caribbean') {
               // Wraparound porch
               addPart('box', 'wood', 0, h/2, 0, w+2, 0.2, d+2);
-              // Porch posts
               addPart('cylinder', 'wood', w/2+0.8, h*0.35, d/2+0.8, 0.12, h*0.6, 0.12);
               addPart('cylinder', 'wood', -w/2-0.8, h*0.35, d/2+0.8, 0.12, h*0.6, 0.12);
               addPart('cylinder', 'wood', w/2+0.8, h*0.35, -d/2-0.8, 0.12, h*0.6, 0.12);
               addPart('cylinder', 'wood', -w/2-0.8, h*0.35, -d/2-0.8, 0.12, h*0.6, 0.12);
-            } else {
+            } else if (c === 'European') {
               // Second floor
               addPart('box', wallMat, 0, h + h/2, 0, w-0.5, h, d-0.5, wallColor);
               if (roofGeo === 'box') {
@@ -232,26 +456,46 @@ export function ProceduralCity() {
               } else {
                 addPart('cone', roofMat, 0, h*2 + roofH/2, 0, w/1.2, roofH, d/1.2, roofColor);
               }
-              // Upper floor windows
+              // Upper floor windows with shutters
+              const shutterBase = EU_SHUTTER_COLORS[Math.floor(rng() * EU_SHUTTER_COLORS.length)];
+              const sc = varyColor(shutterBase, rng, 0.06);
               addPart('box', 'dark', w/2-0.2, h*1.55, d/2-0.2+0.05, 0.1, 0.45, 0.5);
               addPart('box', 'dark', -w/2+0.7, h*1.55, d/2-0.2+0.05, 0.1, 0.45, 0.5);
+              addPart('box', 'wood', w/2-0.2, h*1.55, d/2+0.12, 0.06, 0.48, 0.12, sc);
+              addPart('box', 'wood', -w/2+0.7, h*1.55, d/2+0.12, 0.06, 0.48, 0.12, sc);
+              // Balcony (thin platform projecting from upper floor)
+              addPart('box', 'stone', 0, h + 0.1, d/2 + 0.5, w * 0.6, 0.1, 0.6);
+              // Balcony railing
+              addPart('cylinder', 'wood', w*0.25, h + 0.4, d/2 + 0.75, 0.04, 0.5, 0.04);
+              addPart('cylinder', 'wood', -w*0.25, h + 0.4, d/2 + 0.75, 0.04, 0.5, 0.04);
+            } else {
+              // Indian Ocean — second floor with flat roof
+              addPart('box', wallMat, 0, h + h/2, 0, w-0.5, h, d-0.5, wallColor);
+              addPart('box', roofMat, 0, h*2 + 0.2, 0, w, 0.4, d, roofColor);
+              // Upper windows
+              addPart('box', 'dark', w/2-0.2, h*1.55, d/2-0.2+0.05, 0.1, 0.4, 0.45);
+              addPart('box', 'dark', -w/2+0.7, h*1.55, d/2-0.2+0.05, 0.1, 0.4, 0.45);
             }
-            // Front windows (ground floor, flanking door)
+            // Front windows flanking door (all cultures)
             addPart('box', 'dark', w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
             addPart('box', 'dark', -w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
+            // Torch at estate entrance
+            addTorch(0.8, h * 0.7, d/2 + 0.3);
           }
 
-          // Farmhouse: fence posts
+          // Farmhouse — fence posts + trough
           if (b.type === 'farmhouse') {
             addPart('cylinder', 'wood', w/2+1.5, 0.35, d/2+1.5, 0.08, 0.7, 0.08);
             addPart('cylinder', 'wood', -w/2-1.5, 0.35, d/2+1.5, 0.08, 0.7, 0.08);
             addPart('cylinder', 'wood', w/2+1.5, 0.35, -d/2-1.5, 0.08, 0.7, 0.08);
+            // Water trough
+            addPart('box', 'wood', -w/2-1.0, 0.25, 0, 0.5, 0.4, 1.0, varyColor(BASE_COLORS.wood, rng, 0.1));
           }
         }
       });
     });
 
-    return allParts;
+    return { parts: allParts, torchSpots: torches, smokeSpots };
   }, [ports]);
 
   // Group parts by geo+mat
@@ -269,8 +513,8 @@ export function ProceduralCity() {
   const geos = useMemo(() => ({
     box: new THREE.BoxGeometry(1, 1, 1),
     cylinder: new THREE.CylinderGeometry(1, 1, 1, 8),
-    cone: new THREE.CylinderGeometry(0, 1, 1, 4), // 4-sided pyramid
-    sphere: new THREE.SphereGeometry(1, 16, 16)
+    cone: new THREE.CylinderGeometry(0, 1, 1, 4),
+    sphere: new THREE.SphereGeometry(1, 16, 16),
   }), []);
 
   // Materials
@@ -281,29 +525,174 @@ export function ProceduralCity() {
     terracotta: new THREE.MeshStandardMaterial({ color: '#cd5c5c', roughness: 0.7 }),
     stone: new THREE.MeshStandardMaterial({ color: '#888888', roughness: 0.9 }),
     straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0 }),
-    road_dirt: new THREE.MeshStandardMaterial({ color: '#8b7355', roughness: 1.0 }),
-    road_stone: new THREE.MeshStandardMaterial({ color: '#7a7a72', roughness: 0.85 }),
-    dark: new THREE.MeshStandardMaterial({ color: '#1e1a14', roughness: 0.95 }),
-  }), []);
+    dark: darkMat,
+  }), [darkMat]);
 
   return (
     <group>
       {Array.from(groups.entries()).map(([key, groupParts]) => {
         const [geoName, matName] = key.split('_') as [keyof typeof geos, keyof typeof mats];
         return (
-          <InstancedParts 
-            key={key} 
-            parts={groupParts} 
-            geometry={geos[geoName]} 
-            material={mats[matName]} 
+          <InstancedParts
+            key={key}
+            parts={groupParts}
+            geometry={geos[geoName]}
+            material={mats[matName]}
           />
         );
       })}
+      <CityTorches spots={torchSpots} timeOfDay={timeOfDay} />
+      <ChimneySmoke spots={smokeSpots} />
     </group>
   );
 }
 
-function InstancedParts({ parts, geometry, material }: { parts: Part[], geometry: THREE.BufferGeometry, material: THREE.Material }) {
+// ── Torch Lights ──────────────────────────────────────────────────────────────
+// Renders emissive flame spheres (instanced, all ports) + limited PointLights
+// for actual illumination (max 6 to keep draw calls sane).
+
+function CityTorches({ spots, timeOfDay }: { spots: TorchSpot[]; timeOfDay: number }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const lightsRef = useRef<(THREE.PointLight | null)[]>([]);
+
+  const flameGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 6), []);
+  const flameMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#ff6600',
+    emissive: '#ff8822',
+    emissiveIntensity: 0,
+    toneMapped: false,
+    transparent: true,
+    opacity: 0,
+  }), []);
+
+  // Position all flame instances once
+  useEffect(() => {
+    if (!meshRef.current || spots.length === 0) return;
+    const dummy = new THREE.Object3D();
+    spots.forEach((s, i) => {
+      dummy.position.set(s.pos[0], s.pos[1], s.pos[2]);
+      dummy.scale.set(0.18, 0.28, 0.18);
+      dummy.updateMatrix();
+      meshRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [spots]);
+
+  // Animate flame intensity + point light brightness based on time of day
+  useFrame(({ clock }) => {
+    const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
+    const sunH = Math.sin(sunAngle);
+    const nightFactor = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
+
+    // Organic flicker from overlapping sine waves
+    const t = clock.elapsedTime;
+    const flicker = 0.82 + Math.sin(t * 7.3) * 0.09 + Math.sin(t * 13.1) * 0.05 + Math.sin(t * 3.7) * 0.04;
+
+    flameMat.emissiveIntensity = nightFactor * 3.0 * flicker;
+    flameMat.opacity = nightFactor * 0.85;
+
+    for (const light of lightsRef.current) {
+      if (light) {
+        light.intensity = nightFactor * 4 * flicker;
+      }
+    }
+  });
+
+  if (spots.length === 0) return null;
+
+  // Only create PointLights for first 6 torch spots (performance budget)
+  const lightCount = Math.min(spots.length, 6);
+
+  return (
+    <group>
+      <instancedMesh ref={meshRef} args={[flameGeo, flameMat, spots.length]} />
+      {spots.slice(0, lightCount).map((s, i) => (
+        <pointLight
+          key={i}
+          ref={(el) => { lightsRef.current[i] = el; }}
+          position={s.pos}
+          color="#ff8833"
+          intensity={0}
+          distance={18}
+          decay={2}
+        />
+      ))}
+    </group>
+  );
+}
+
+// ── Chimney Smoke ─────────────────────────────────────────────────────────────
+// Each smoking chimney spawns 3 instanced puffs that rise, drift, expand, and
+// fade in a looping cycle. Uses a single InstancedMesh for all puffs.
+
+const PUFFS_PER_CHIMNEY = 3;
+const PUFF_CYCLE = 4.0; // seconds for one puff to rise and fade
+
+function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  const puffGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
+  const puffMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#9a9590',
+    transparent: true,
+    opacity: 0.25,
+    depthWrite: false,
+    roughness: 1,
+  }), []);
+
+  const totalPuffs = spots.length * PUFFS_PER_CHIMNEY;
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current || totalPuffs === 0) return;
+    const t = clock.elapsedTime;
+    const dummy = new THREE.Object3D();
+
+    for (let si = 0; si < spots.length; si++) {
+      const spot = spots[si];
+      const baseSeed = spot.seed * 0.01;
+
+      for (let p = 0; p < PUFFS_PER_CHIMNEY; p++) {
+        const idx = si * PUFFS_PER_CHIMNEY + p;
+        // Stagger each puff's phase
+        const phase = (t + baseSeed + p * (PUFF_CYCLE / PUFFS_PER_CHIMNEY)) % PUFF_CYCLE;
+        const progress = phase / PUFF_CYCLE; // 0..1
+
+        // Rise upward, drift slightly in wind
+        const rise = progress * 3.5;
+        const drift = Math.sin(baseSeed + t * 0.3) * progress * 0.8;
+        const driftZ = Math.cos(baseSeed * 1.7 + t * 0.2) * progress * 0.4;
+
+        // Expand as it rises
+        const scale = 0.15 + progress * 0.35;
+
+        // Fade out toward end of cycle
+        const alpha = progress < 0.15
+          ? progress / 0.15           // fade in
+          : 1.0 - (progress - 0.15) / 0.85; // fade out
+
+        dummy.position.set(
+          spot.pos[0] + drift,
+          spot.pos[1] + rise,
+          spot.pos[2] + driftZ,
+        );
+        dummy.scale.setScalar(scale * Math.max(0.01, alpha));
+        dummy.updateMatrix();
+        meshRef.current!.setMatrixAt(idx, dummy.matrix);
+      }
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (totalPuffs === 0) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[puffGeo, puffMat, totalPuffs]} />
+  );
+}
+
+// ── Instanced Parts Renderer ──────────────────────────────────────────────────
+
+function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry: THREE.BufferGeometry; material: THREE.Material }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   useEffect(() => {
@@ -314,13 +703,11 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[], geometry
       dummy.position.set(...p.pos);
       dummy.scale.set(...p.scale);
       dummy.rotation.set(...p.rot);
-      // For cones (pyramids), rotate 45 deg so flat sides align with boxes
       if (geometry instanceof THREE.CylinderGeometry && geometry.parameters.radialSegments === 4) {
         dummy.rotation.y += Math.PI / 4;
       }
       dummy.updateMatrix();
       meshRef.current!.setMatrixAt(i, dummy.matrix);
-      // Per-instance color variation
       if (p.color) {
         color.setRGB(p.color[0], p.color[1], p.color[2]);
         meshRef.current!.setColorAt(i, color);

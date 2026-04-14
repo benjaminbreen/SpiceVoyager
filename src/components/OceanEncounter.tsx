@@ -131,7 +131,7 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
       const breachHeight = breathCycle > 0.85 ? (breathCycle - 0.85) * 12 : 0;
       group.current.position.set(
         pos[0] + Math.sin(time * 0.08) * 3,
-        SEA_LEVEL - 0.3 + Math.sin(time * 0.3) * 0.15 + breachHeight,
+        SEA_LEVEL - 0.5 + Math.sin(time * 0.3) * 0.1 + breachHeight,
         pos[2] + Math.cos(time * 0.08) * 3,
       );
       group.current.rotation.set(
@@ -140,10 +140,11 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         breachHeight > 0.1 ? -0.15 : Math.sin(time * 0.25) * 0.05,
       );
     } else if (encounter.type === 'turtle') {
-      // Gentle drift + flipper paddle (rotation wiggle)
+      // Gentle drift + flipper paddle — stays below surface
+      const turtleY = SEA_LEVEL - 0.7 + Math.sin(time * 0.5) * 0.04;
       group.current.position.set(
         pos[0] + Math.sin(time * 0.12 + 1) * 2,
-        SEA_LEVEL - 0.05 + Math.sin(time * 0.5) * 0.08,
+        turtleY,
         pos[2] + Math.cos(time * 0.12 + 1) * 2,
       );
       group.current.rotation.set(
@@ -152,10 +153,11 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         Math.sin(time * 0.8) * 0.04,
       );
     } else {
-      // Wreckage — slow bob and drift
+      // Wreckage — slow bob, stays at/just below surface
+      const wreckY = SEA_LEVEL - 0.2 + Math.sin(time * 0.6) * 0.05;
       group.current.position.set(
         pos[0] + Math.sin(time * 0.05) * 1.5,
-        SEA_LEVEL - 0.1 + Math.sin(time * 0.6) * 0.1,
+        wreckY,
         pos[2] + Math.cos(time * 0.07) * 1.5,
       );
       group.current.rotation.set(

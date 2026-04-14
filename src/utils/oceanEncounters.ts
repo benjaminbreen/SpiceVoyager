@@ -1,4 +1,4 @@
-import type { Commodity } from '../store/gameStore';
+import type { Commodity } from './commodities';
 
 export type EncounterType = 'whale' | 'turtle' | 'wreckage';
 
@@ -91,7 +91,7 @@ const TURTLE_LOOT: (() => EncounterLoot)[] = [
 
 const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   () => {
-    const commodity = pick(['Spices', 'Silk', 'Tea'] as Commodity[]);
+    const commodity = pick(['Black Pepper', 'Cinnamon', 'Tea', 'Coffee', 'Cotton Textiles'] as Commodity[]);
     return {
       gold: randInt(10, 50),
       provisions: randInt(0, 3),
@@ -112,7 +112,7 @@ const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   () => ({
     gold: randInt(30, 120),
     provisions: randInt(1, 5),
-    cargo: { Wood: randInt(3, 8) },
+    cargo: { Timber: randInt(3, 8) },
     title: 'Abandoned Boat',
     subtitle: 'A waterlogged pinnace',
     description: 'A small boat, waterlogged and listing, with no crew aboard. Its stores are still partly intact.',
@@ -128,7 +128,7 @@ const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   () => ({
     gold: randInt(50, 200),
     provisions: 0,
-    cargo: { Cannonballs: randInt(2, 5) },
+    cargo: { Munitions: randInt(2, 5) },
     title: 'Sunken Cargo',
     subtitle: 'Jettisoned stores',
     description: 'Barrels and crates bob in the swell — cargo thrown overboard in a storm. Some are still sealed.',

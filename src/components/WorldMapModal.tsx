@@ -15,6 +15,7 @@ import {
   getWorldPortById,
   resolveCampaignPortId,
 } from '../utils/worldPorts';
+import TravelModalB from './TravelModalB';
 
 interface WorldMapModalProps {
   onClose: () => void;
@@ -38,6 +39,14 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
     () => worldPorts.filter((port) => reachablePortIds.includes(port.id)),
     [worldPorts, reachablePortIds]
   );
+
+  const ship = useGameStore(s => s.ship);
+  const [travelModal, setTravelModal] = useState<{
+    fromPort: string;
+    toPort: string;
+    totalDays: number;
+    targetPortId: string;
+  } | null>(null);
 
   // Calculate travel info for selected port
   const travelInfo = useMemo(() => {
@@ -198,8 +207,29 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
 
   const handleSetSail = () => {
     if (!selectedPort || !canDirectlySail(nearestPortId, selectedPort)) return;
+    const travel = estimateSeaTravel(nearestPortId, selectedPort);
+    const fromName = getWorldPortById(nearestPortId)?.name ?? nearestPortId;
+    const toName = getWorldPortById(selectedPort)?.name ?? selectedPort;
     sfxSail();
-    fastTravel(selectedPort);
+    setTravelModal({
+      fromPort: fromName,
+      toPort: toName,
+      totalDays: travel?.days ?? 1,
+      targetPortId: selectedPort,
+    });
+  };
+
+  const handleTravelComplete = () => {
+    if (!travelModal) return;
+    fastTravel(travelModal.targetPortId);
+    setTravelModal(null);
+    onClose();
+  };
+
+  const handleTravelSkip = () => {
+    if (!travelModal) return;
+    fastTravel(travelModal.targetPortId);
+    setTravelModal(null);
     onClose();
   };
 
@@ -418,6 +448,19 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
           </div>
         </div>
       </motion.div>
+
+      {/* Travel animation modal */}
+      {travelModal && (
+        <TravelModalB
+          fromPort={travelModal.fromPort}
+          toPort={travelModal.toPort}
+          totalDays={travelModal.totalDays}
+          shipType={ship.type}
+          shipName={ship.name}
+          onComplete={handleTravelComplete}
+          onSkip={handleTravelSkip}
+        />
+      )}
     </motion.div>
   );
 }

@@ -1,14 +1,16 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation } from '@react-three/postprocessing';
+import { ContactShadows } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO } from '@react-three/postprocessing';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
 import { World } from './World';
 import { UI } from './UI';
 import { Player } from './Player';
 import { GameOverScreen } from './GameOverScreen';
-import { useGameStore } from '../store/gameStore';
+import { CrewDeathModal } from './CrewDeathModal';
+import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
-import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh } from '../audio/SoundEffects';
+import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo } from 'react';
@@ -19,9 +21,62 @@ import {
   getLiveShipTransform,
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
+import {
+  mouseWorldPos,
+  projectiles,
+  spawnProjectile,
+  setSwivelAimAngle,
+  swivelAimAngle,
+  npcLivePositions,
+  fireHeld,
+  setFireHeld,
+  broadsideQueue,
+  broadsideReload,
+} from '../utils/combatState';
+import { WEAPON_DEFS, type WeaponType } from '../store/gameStore';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ── Reputation-aware hail responses ─────────────────────────────────────────
+function getHailResponse(npc: { captainName: string; shipName: string; flag: string }, rep: number): string {
+  const name = npc.captainName;
+  if (rep <= -60) {
+    return pick([
+      `Captain ${name} of the ${npc.shipName} shouts: "Stay away from us, you devils!"`,
+      `The ${npc.shipName} raises battle flags. "${name} wants nothing to do with you."`,
+      `"Turn about or we open fire!" bellows Captain ${name}.`,
+    ]);
+  }
+  if (rep <= -25) {
+    return pick([
+      `Captain ${name} eyes you warily from the ${npc.shipName}. "State your business."`,
+      `The ${npc.shipName} keeps her distance. ${name} signals suspicion.`,
+      `"We know your reputation," calls Captain ${name}. "Keep your distance."`,
+    ]);
+  }
+  if (rep >= 60) {
+    return pick([
+      `Captain ${name} hails warmly: "Well met, friend! Fair winds to you!"`,
+      `"Ahoy! The ${npc.shipName} is at your service," calls Captain ${name} with a grin.`,
+      `Captain ${name} waves from the ${npc.shipName}. "A pleasure as always! Safe waters ahead."`,
+    ]);
+  }
+  if (rep >= 25) {
+    return pick([
+      `Captain ${name} tips his hat from the ${npc.shipName}. "Good sailing to you."`,
+      `"Hail, friend!" calls ${name}. "The ${npc.shipName} wishes you calm seas."`,
+      `Captain ${name} signals a friendly greeting from the ${npc.shipName}.`,
+    ]);
+  }
+  // Neutral
+  return pick([
+    `Captain ${name} of the ${npc.shipName} signals back. They keep their distance.`,
+    `The ${npc.shipName} acknowledges your hail. Captain ${name} watches cautiously.`,
+    `"Fair winds," signals Captain ${name} from the deck of the ${npc.shipName}.`,
+    `Captain ${name} raises a hand in greeting from the ${npc.shipName}.`,
+  ]);
+}
 
 function landfallDescription(x: number, z: number): { title: string; subtitle: string } {
   const td = getTerrainData(x, z);
@@ -66,6 +121,14 @@ function landfallDescription(x: number, z: number): { title: string; subtitle: s
       titles: ['Stepped onto black volcanic rock', 'Made landfall on a smoldering shore', 'Reached a coast of dark basalt'],
       subtitles: ['The ground radiates faint warmth.', 'Sulfur hangs in the air.', 'A forbidding, primordial landscape.'],
     },
+    scrubland: {
+      titles: ['Stepped onto dry, thorny ground', 'Made landfall on a scrubby coast', 'Reached a dusty shore dotted with thornbush'],
+      subtitles: ['Dry twigs snap underfoot.', 'Thorny brush catches at your clothes.', 'The land is parched but not quite barren.'],
+    },
+    paddy: {
+      titles: ['Waded into flooded rice fields', 'Stepped onto a muddy bund between paddies', 'Made landfall among terraced fields'],
+      subtitles: ['Ankle-deep in warm, murky water.', 'Green shoots rise from flooded earth.', 'The air hums with insects and birdsong.'],
+    },
   };
 
   const biome: string = td.biome === 'ocean' || td.biome === 'river' || td.biome === 'waterfall'
@@ -76,23 +139,85 @@ function landfallDescription(x: number, z: number): { title: string; subtitle: s
   return { title: pick(pool.titles), subtitle: pick(pool.subtitles) };
 }
 
-// Custom camera controller
+// Custom camera controller with right-click-drag panning
 function CameraController() {
   const setCameraZoom = useGameStore((state) => state.setCameraZoom);
   const { camera, gl } = useThree();
   const currentPos = useRef(new THREE.Vector3());
   const targetPos = useRef(new THREE.Vector3());
 
+  // Pan state — all transient, no store needed
+  const panOffset = useRef({ x: 0, z: 0 });
+  const lastPlayerPos = useRef({ x: 0, z: 0 });
+  const snapBack = useRef(false);
+
+  // Smooth zoom — store a target and lerp toward it each frame
+  const zoomTarget = useRef(useGameStore.getState().cameraZoom);
+
+  // Raycaster for mouse→world projection (combat aiming)
+  const raycaster = useRef(new THREE.Raycaster());
+  const mouseNDC = useRef(new THREE.Vector2());
+  const waterPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+
   useEffect(() => {
+    const el = gl.domElement;
+
     const handleWheel = (e: WheelEvent) => {
-      const { cameraZoom } = useGameStore.getState();
-      setCameraZoom(cameraZoom + (e.deltaY > 0 ? 5 : -5));
+      // Accumulate into target; actual zoom lerps in useFrame
+      zoomTarget.current = Math.max(10, Math.min(150,
+        zoomTarget.current + (e.deltaY > 0 ? 4 : -4)
+      ));
     };
-    gl.domElement.addEventListener('wheel', handleWheel);
-    return () => gl.domElement.removeEventListener('wheel', handleWheel);
+
+    const handleContextMenu = (e: MouseEvent) => e.preventDefault();
+
+    const handlePointerMove = (e: PointerEvent) => {
+      // Track mouse NDC for combat aiming
+      const rect = el.getBoundingClientRect();
+      mouseNDC.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseNDC.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      // Right-button drag (buttons bitmask: 2 = right)
+      if (!(e.buttons & 2)) return;
+      const { cameraZoom } = useGameStore.getState();
+      const scale = cameraZoom / el.clientHeight * 2;
+      panOffset.current.x -= e.movementX * scale;
+      panOffset.current.z -= e.movementY * scale;
+      snapBack.current = false;
+    };
+
+    const handlePointerDown = (e: PointerEvent) => {
+      // Left click (button 0) in combat mode = fire
+      if (e.button === 0 && useGameStore.getState().combatMode) {
+        setFireHeld(true);
+      }
+    };
+    const handlePointerUp = (e: PointerEvent) => {
+      if (e.button === 0) setFireHeld(false);
+    };
+
+    el.addEventListener('wheel', handleWheel);
+    el.addEventListener('contextmenu', handleContextMenu);
+    el.addEventListener('pointermove', handlePointerMove);
+    el.addEventListener('pointerdown', handlePointerDown);
+    el.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener('contextmenu', handleContextMenu);
+      el.removeEventListener('pointermove', handlePointerMove);
+      el.removeEventListener('pointerdown', handlePointerDown);
+      el.removeEventListener('pointerup', handlePointerUp);
+    };
   }, [gl, setCameraZoom]);
 
   useFrame((_, delta) => {
+    // Smooth zoom lerp
+    const currentZoom = useGameStore.getState().cameraZoom;
+    if (Math.abs(zoomTarget.current - currentZoom) > 0.05) {
+      const lerpSpeed = 1 - Math.pow(0.001, delta); // ~6x per second smoothing
+      setCameraZoom(currentZoom + (zoomTarget.current - currentZoom) * lerpSpeed);
+    }
+
     const { playerMode, cameraZoom, viewMode } = useGameStore.getState();
     const shipTransform = getLiveShipTransform();
     const walkingTransform = getLiveWalkingTransform();
@@ -100,12 +225,37 @@ function CameraController() {
     const activeRot = playerMode === 'ship' ? shipTransform.rot : walkingTransform.rot;
     targetPos.current.set(activePos[0], activePos[1], activePos[2]);
 
+    // Detect player movement → trigger snap-back
+    const dx = activePos[0] - lastPlayerPos.current.x;
+    const dz = activePos[2] - lastPlayerPos.current.z;
+    if (dx * dx + dz * dz > 0.01) {
+      snapBack.current = true;
+    }
+    lastPlayerPos.current.x = activePos[0];
+    lastPlayerPos.current.z = activePos[2];
+
+    // Smooth snap-back
+    if (snapBack.current) {
+      const a = 1 - Math.exp(-delta * 10);
+      panOffset.current.x *= 1 - a;
+      panOffset.current.z *= 1 - a;
+      if (panOffset.current.x * panOffset.current.x + panOffset.current.z * panOffset.current.z < 0.1) {
+        panOffset.current.x = 0;
+        panOffset.current.z = 0;
+        snapBack.current = false;
+      }
+    }
+
     if (playerMode === 'ship') {
       currentPos.current.copy(targetPos.current);
     } else {
       const followAlpha = 1 - Math.exp(-delta * 14);
       currentPos.current.lerp(targetPos.current, followAlpha);
     }
+
+    // Apply pan offset
+    currentPos.current.x += panOffset.current.x;
+    currentPos.current.z += panOffset.current.z;
 
     if (viewMode === 'firstperson') {
       // First-person: camera at eye level, looking in heading direction
@@ -141,12 +291,143 @@ function CameraController() {
       camera.position.z = currentPos.current.z + cameraZoom;
       camera.lookAt(currentPos.current);
     }
+
+    // Raycast mouse onto water plane — always active so aiming is ready when combat starts
+    raycaster.current.setFromCamera(mouseNDC.current, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.current.ray.intersectPlane(waterPlane.current, hit)) {
+      mouseWorldPos.x = hit.x;
+      mouseWorldPos.z = hit.z;
+      mouseWorldPos.valid = true;
+      if (useGameStore.getState().combatMode) {
+        const shipPos = getLiveShipTransform().pos;
+        setSwivelAimAngle(Math.atan2(hit.x - shipPos[0], hit.z - shipPos[2]));
+      }
+    }
   });
 
   return null;
 }
 
 // Interaction controller
+// Shared fire logic — called by both spacebar and mouse hold
+const lastFireTimeGlobal = { current: 0 };
+function tryFireSwivel() {
+  const now = Date.now();
+  const reloadMs = WEAPON_DEFS.swivelGun.reloadTime * 1000;
+  if (now - lastFireTimeGlobal.current < reloadMs) return;
+  if (!mouseWorldPos.valid) return;
+  const state = useGameStore.getState();
+  if (!state.combatMode || state.playerMode !== 'ship') return;
+
+  lastFireTimeGlobal.current = now;
+  const { pos: shipPos, rot: shipRot } = getLiveShipTransform();
+  // Barrel tip: bow (3 units forward along ship heading) + 1.2 along aim direction
+  const bowX = shipPos[0] + Math.sin(shipRot) * 3.0;
+  const bowZ = shipPos[2] + Math.cos(shipRot) * 3.0;
+  const flatDir = new THREE.Vector3(
+    mouseWorldPos.x - shipPos[0], 0, mouseWorldPos.z - shipPos[2]
+  ).normalize();
+  const origin = new THREE.Vector3(
+    bowX + flatDir.x * 1.2, 1.8, bowZ + flatDir.z * 1.2
+  );
+  const dir = new THREE.Vector3(flatDir.x, 0.35, flatDir.z).normalize();
+  spawnProjectile(origin, dir, WEAPON_DEFS.swivelGun.range * 4, 'swivelGun');
+  sfxCannonFire();
+  // Notify Ship.tsx to spawn muzzle flash particles
+  window.dispatchEvent(new CustomEvent('swivel-fired'));
+}
+
+// ── Broadside fire ─────────────────────────────────────────────────────────
+// side: 'port' (left) or 'starboard' (right)
+function tryFireBroadside(side: 'port' | 'starboard') {
+  const now = Date.now();
+  if (now < broadsideReload[side]) return;
+
+  const state = useGameStore.getState();
+  if (!state.combatMode || state.playerMode !== 'ship') return;
+
+  // Collect broadside weapons (everything non-aimable in armament)
+  const broadsideWeapons = state.stats.armament.filter(w => !WEAPON_DEFS[w].aimable);
+  if (broadsideWeapons.length === 0) {
+    state.addNotification('No broadside cannons mounted!', 'warning');
+    return;
+  }
+
+  // Check ammo
+  if (state.cargo.Munitions < broadsideWeapons.length) {
+    state.addNotification('Not enough shot! Need munitions.', 'warning');
+    return;
+  }
+
+  // Consume munitions
+  const newCargo = { ...state.cargo, Munitions: state.cargo.Munitions - broadsideWeapons.length };
+  // Use direct set via store — can't call buyCommodity here
+  useGameStore.setState({ cargo: newCargo });
+
+  const { pos: shipPos, rot: shipRot } = getLiveShipTransform();
+
+  // Perpendicular direction: port = left of heading, starboard = right
+  const sideAngle = side === 'port'
+    ? shipRot + Math.PI / 2   // left
+    : shipRot - Math.PI / 2;  // right
+  const sideDir = new THREE.Vector3(Math.sin(sideAngle), 0, Math.cos(sideAngle)).normalize();
+
+  // Ship hull half-width for gun port positions
+  const HULL_HALF_WIDTH = 1.2;
+  // Gun ports are spaced along the ship's length
+  const SHIP_LENGTH = 6;
+
+  // Determine reload time from the slowest weapon in the broadside
+  let maxReload = 0;
+  for (const wt of broadsideWeapons) {
+    maxReload = Math.max(maxReload, WEAPON_DEFS[wt].reloadTime);
+  }
+  // Gunner skill bonus: find best gunner, reduce reload by up to 20%
+  const gunner = state.crew.find(c => c.role === 'Gunner');
+  const gunnerBonus = gunner ? 1 - (gunner.skill / 500) : 1; // skill 100 → 20% faster
+  broadsideReload[side] = now + maxReload * 1000 * gunnerBonus;
+
+  // Queue rolling broadside — stagger each cannon by ~150ms
+  const STAGGER_MS = 150;
+  broadsideWeapons.forEach((weaponType, idx) => {
+    // Position along ship length: spread guns evenly from stern to bow
+    const t = broadsideWeapons.length === 1 ? 0.5 : idx / (broadsideWeapons.length - 1);
+    const alongShip = (t - 0.5) * SHIP_LENGTH;
+
+    const originX = shipPos[0] + Math.sin(shipRot) * alongShip + sideDir.x * HULL_HALF_WIDTH;
+    const originZ = shipPos[2] + Math.cos(shipRot) * alongShip + sideDir.z * HULL_HALF_WIDTH;
+    const origin = new THREE.Vector3(originX, 1.2, originZ);
+
+    // Direction: perpendicular + slight random spread (±5°)
+    const spread = (Math.random() - 0.5) * 0.17; // ~±5 degrees
+    const dirAngle = sideAngle + spread;
+    const dir = new THREE.Vector3(
+      Math.sin(dirAngle),
+      0.15 + Math.random() * 0.1, // slight upward arc
+      Math.cos(dirAngle),
+    ).normalize();
+
+    const speed = WEAPON_DEFS[weaponType].range * 3.5;
+
+    broadsideQueue.push({
+      fireAt: now + idx * STAGGER_MS,
+      origin,
+      direction: dir,
+      speed,
+      weaponType,
+      fired: false,
+    });
+  });
+
+  // Notify Ship.tsx for smoke effects
+  window.dispatchEvent(new CustomEvent('broadside-fired', { detail: { side } }));
+  state.addNotification(
+    `${side === 'port' ? 'Port' : 'Starboard'} broadside! (${broadsideWeapons.length} guns)`,
+    'info',
+  );
+}
+
 function InteractionController() {
   const nearestLandRef = useRef<[number, number, number] | null>(null);
   const nextCheckRef = useRef(0);
@@ -170,10 +451,14 @@ function InteractionController() {
     const walkingPos = walkingTransform.pos;
     const activePos = playerMode === 'ship' ? playerPos : walkingPos;
     
-    // Check for nearby ports to discover
+    // Check for nearby ports to discover (Navigator perception + Keen Eye trait extend range)
+    const discState = useGameStore.getState();
+    const navDiscBonus = getRoleBonus(discState, 'Navigator', 'perception');
+    const keenEyeBonus = captainHasTrait(discState, 'Keen Eye') ? 1.25 : 1.0;
+    const discoveryRange = 60 * navDiscBonus * keenEyeBonus;
     ports.forEach(port => {
       const dist = Math.sqrt((port.position[0] - activePos[0])**2 + (port.position[2] - activePos[2])**2);
-      if (dist < 60) {
+      if (dist < discoveryRange) {
         discoverPort(port.id);
       }
     });
@@ -246,9 +531,21 @@ function InteractionController() {
         }
       } else if (key === 't') {
         if (state.interactionPrompt === 'Press T to Hail') {
-          // Placeholder — will open dialogue in the future
-          state.addNotification('They signal back but keep their distance.', 'info');
+          const npc = state.nearestHailableNpc;
+          if (npc) {
+            const rep = state.getReputation(npc.flag);
+            const response = getHailResponse(npc, rep);
+            state.addNotification(response, rep < -25 ? 'warning' : rep > 25 ? 'success' : 'info');
+            // Small reputation boost for peaceful hailing
+            state.adjustReputation(npc.flag, 1);
+          } else {
+            state.addNotification('They signal back but keep their distance.', 'info');
+          }
         }
+      } else if (key === 'q' && state.playerMode === 'ship' && state.combatMode) {
+        tryFireBroadside('port');
+      } else if (key === 'r' && state.playerMode === 'ship' && state.combatMode) {
+        tryFireBroadside('starboard');
       } else if (key === 'f' && state.playerMode === 'ship') {
         // Toggle combat mode
         const next = !state.combatMode;
@@ -266,9 +563,8 @@ function InteractionController() {
       } else if (key === ' ' && state.playerMode === 'ship') {
         e.preventDefault();
         if (state.combatMode) {
-          // Spacebar in combat mode = fire swivel gun (tap)
-          // TODO: hold-spacebar aiming mode with cursor targeting
-          window.dispatchEvent(new CustomEvent('fire-swivel'));
+          setFireHeld(true);
+          tryFireSwivel();
         } else {
           // Spacebar in normal mode = toggle anchor
           const nextAnchored = !state.anchored;
@@ -283,11 +579,127 @@ function InteractionController() {
         }
       }
     };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') setFireHeld(false);
+    };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, []);
 
   return null;
+}
+
+// ── Projectile renderer + hit detection ─────────────────────────────────────
+const NPC_HIT_RADIUS = 4;
+const PROJECTILE_COUNT = 30; // increased for broadsides
+
+function ProjectileSystem() {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useFrame((_, delta) => {
+    if (!meshRef.current) return;
+
+    // Auto-fire while mouse is held in combat mode
+    if (fireHeld) tryFireSwivel();
+
+    // ── Process broadside queue (rolling fire) ──
+    const now = Date.now();
+    for (let i = broadsideQueue.length - 1; i >= 0; i--) {
+      const shot = broadsideQueue[i];
+      if (shot.fired) {
+        broadsideQueue.splice(i, 1);
+        continue;
+      }
+      if (now >= shot.fireAt) {
+        spawnProjectile(shot.origin, shot.direction, shot.speed, shot.weaponType);
+        sfxBroadsideCannon();
+        shot.fired = true;
+      }
+    }
+
+    const { adjustReputation, addNotification } = useGameStore.getState();
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      p.life -= delta;
+      if (p.life <= 0) {
+        projectiles.splice(i, 1);
+        continue;
+      }
+      p.vel.y -= 15 * delta;
+      p.pos.addScaledVector(p.vel, delta);
+
+      if (p.pos.y < 0) {
+        sfxCannonSplash();
+        projectiles.splice(i, 1);
+        continue;
+      }
+
+      let hit = false;
+      for (const [, npc] of npcLivePositions) {
+        if (npc.sunk) continue;
+        const dx = p.pos.x - npc.x;
+        const dz = p.pos.z - npc.z;
+        if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
+          sfxCannonImpact();
+          // Deal damage based on projectile's weapon type + gunner/ability bonuses
+          const gState = useGameStore.getState();
+          const gunner = getCrewByRole(gState, 'Gunner');
+          const gunnerMod = gunner ? 1.0 + (gunner.stats.strength / 200) + (gunner.stats.perception / 400) : 1.0;
+          const abilityMod = captainHasAbility(gState, 'Broadside Master') ? 1.15 : 1.0;
+          const damage = Math.floor(WEAPON_DEFS[p.weaponType].damage * gunnerMod * abilityMod);
+          npc.hull = Math.max(0, npc.hull - damage);
+          // Reputation penalty scaled: swivel = -5, broadside = -15
+          const repPenalty = p.weaponType === 'swivelGun' ? -5 : -15;
+          adjustReputation(npc.flag as any, repPenalty);
+          const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
+          if (npc.hull > 0) {
+            addNotification(`Hit the ${npc.shipName}! Hull: ${hullPct}%`, 'warning');
+          }
+          npc.hitAlert = Date.now() + 10000;
+          projectiles.splice(i, 1);
+          hit = true;
+          break;
+        }
+      }
+      if (hit) continue;
+    }
+
+    // Update instanced mesh — scale broadside cannonballs larger
+    for (let i = 0; i < PROJECTILE_COUNT; i++) {
+      if (i < projectiles.length) {
+        dummy.position.copy(projectiles[i].pos);
+        // Broadside projectiles are visually bigger
+        const s = projectiles[i].weaponType === 'swivelGun' ? 1 : 1.6;
+        dummy.scale.setScalar(s);
+      } else {
+        dummy.position.set(0, -1000, 0);
+        dummy.scale.setScalar(0);
+      }
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, PROJECTILE_COUNT]} frustumCulled={false}>
+      <sphereGeometry args={[0.35, 8, 8]} />
+      <meshStandardMaterial
+        color="#aaa"
+        emissive="#ff6600"
+        emissiveIntensity={2}
+        roughness={0.3}
+        metalness={0.5}
+        toneMapped={false}
+      />
+    </instancedMesh>
+  );
 }
 
 // Time controller
@@ -430,7 +842,6 @@ function AtmosphereSync() {
 }
 
 export function Game() {
-  const shadowsEnabled = useGameStore((state) => state.renderDebug.shadows);
   const postprocessingEnabled = useGameStore((state) => state.renderDebug.postprocessing);
   const bloomEnabled = useGameStore((state) => state.renderDebug.bloom);
   const vignetteEnabled = useGameStore((state) => state.renderDebug.vignette);
@@ -440,7 +851,7 @@ export function Game() {
       <Canvas
         dpr={[1, 2]}
         gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
-        shadows={shadowsEnabled ? { type: THREE.PCFSoftShadowMap } : false}
+        shadows={{ type: THREE.PCFSoftShadowMap }}
         camera={{ position: [0, 50, 50], fov: 45 }}
       >
         <Suspense fallback={null}>
@@ -451,9 +862,11 @@ export function Game() {
           <Ocean />
           <Ship />
           <Player />
+          <GroundContactShadows />
 
           <CameraController />
           <InteractionController />
+          <ProjectileSystem />
           <TimeController />
           <AtmosphereSync />
           <ShiftSelectOverlay />
@@ -464,8 +877,41 @@ export function Game() {
         </Suspense>
       </Canvas>
       <UI />
+      <CrewDeathModal />
       <GameOverScreen />
     </div>
+  );
+}
+
+/** Soft pooled shadows at object bases — follows the player, only active during daytime */
+function GroundContactShadows() {
+  const groupRef = useRef<THREE.Group>(null);
+  const shadowsActive = useGameStore((state) => {
+    if (!state.renderDebug.shadows) return false;
+    const angle = ((state.timeOfDay - 6) / 24) * Math.PI * 2;
+    return Math.sin(angle) > 0.13;
+  });
+
+  useFrame(() => {
+    if (!groupRef.current) return;
+    const pos = getLiveShipTransform().pos;
+    groupRef.current.position.set(pos[0], 0.05, pos[2]);
+  });
+
+  if (!shadowsActive) return null;
+
+  return (
+    <group ref={groupRef}>
+      <ContactShadows
+        resolution={512}
+        frames={1}
+        scale={80}
+        blur={2.5}
+        opacity={0.35}
+        far={15}
+        color="#2a3a5c"
+      />
+    </group>
   );
 }
 
@@ -474,7 +920,16 @@ function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boole
 
   return (
     <EffectComposer>
-      {bloomEnabled && <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.9} height={300} intensity={1.1} />}
+      <N8AO
+        aoRadius={1.4}
+        intensity={1.4}
+        aoSamples={8}
+        denoiseSamples={4}
+        denoiseRadius={12}
+        distanceFalloff={1.2}
+        halfRes
+      />
+      {bloomEnabled && <Bloom luminanceThreshold={0.65} luminanceSmoothing={0.9} height={300} intensity={0.8} />}
       <BrightnessContrast brightness={brightness} contrast={contrast} />
       <HueSaturation hue={hue} saturation={saturation} />
       {vignetteEnabled && <Vignette eskil={false} offset={0.18} darkness={0.85} />}

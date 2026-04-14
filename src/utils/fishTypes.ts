@@ -202,7 +202,7 @@ export const FISH_TYPES: FishType[] = [
     shoalRange: [1, 2],
     rarity: 'rare',
     provisions: 2,
-    cargo: { type: 'Spices', amount: 1 }, // tortoiseshell traded as luxury
+    cargo: { type: 'Aloes', amount: 1 }, // tortoiseshell traded as luxury
     ascii: [
       '        ___....___',
       '      /`  .  .   `\\',
@@ -241,7 +241,7 @@ export const FISH_TYPES: FishType[] = [
     shoalRange: [1, 1],
     rarity: 'legendary',
     provisions: 8,
-    cargo: { type: 'Spices', amount: 2 }, // tortoiseshell
+    cargo: { type: 'Aloes', amount: 2 }, // tortoiseshell
     ascii: [
       '       _____===_____',
       '     /`  . ~ . ~ .  `\\',
@@ -460,7 +460,7 @@ export function rollManualCast(): ManualCastResult {
       message: 'A branch of red coral tangled in the net. Valuable in any market.',
       provisions: 0,
       gold: 30 + Math.floor(Math.random() * 40),
-      cargo: { type: 'Spices', amount: 1 },
+      cargo: { type: 'Pearls', amount: 1 },
       toastType: 'success',
     };
   }

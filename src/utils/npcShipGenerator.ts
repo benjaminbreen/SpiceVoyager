@@ -100,8 +100,7 @@ function generateCaptainName(nat: Nationality): string {
 }
 
 // ── Cargo types ──────────────────────────────────────────────────────────────
-type Commodity = 'Spices' | 'Silk' | 'Tea' | 'Wood' | 'Cannonballs';
-const ALL_COMMODITIES: Commodity[] = ['Spices', 'Silk', 'Tea', 'Wood', 'Cannonballs'];
+import { type Commodity, ALL_COMMODITIES } from './commodities';
 
 function generateCargo(): Partial<Record<Commodity, number>> {
   const cargo: Partial<Record<Commodity, number>> = {};
@@ -115,6 +114,15 @@ function generateCargo(): Partial<Record<Commodity, number>> {
 
 // ── Main export ──────────────────────────────────────────────────────────────
 
+// Hull strength by ship type — galleons are warships, pinnaces are fragile
+const HULL_BY_TYPE: Record<ShipType, [number, number]> = {
+  Pinnace: [30, 50],
+  Dhow:    [40, 70],
+  Junk:    [50, 80],
+  Carrack: [60, 100],
+  Galleon: [80, 130],
+};
+
 export interface NPCShipIdentity {
   id: string;
   captainName: string;
@@ -127,6 +135,7 @@ export interface NPCShipIdentity {
   cargo: Partial<Record<Commodity, number>>;
   appearancePhrase: string;
   position: [number, number, number];
+  maxHull: number;
 }
 
 const ALL_NATIONALITIES: Nationality[] = [
@@ -144,6 +153,9 @@ export function generateNPCShip(position: [number, number, number]): NPCShipIden
     : shipType === 'Junk' ? randInt(15, 50)
     : randInt(20, 80);
 
+  const [minHull, maxHull] = HULL_BY_TYPE[shipType];
+  const hull = randInt(minHull, maxHull);
+
   return {
     id: Math.random().toString(36).substring(2, 9),
     captainName: generateCaptainName(flag),
@@ -156,5 +168,6 @@ export function generateNPCShip(position: [number, number, number]): NPCShipIden
     cargo: generateCargo(),
     appearancePhrase: appearancePhrase(shipType, morale),
     position,
+    maxHull: hull,
   };
 }

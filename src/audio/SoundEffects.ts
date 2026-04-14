@@ -818,9 +818,16 @@ export function sfxFootstep(biome: string) {
   switch (biome) {
     case 'beach':
     case 'desert':
+    case 'scrubland':
       // Soft sand scrunch — muffled low noise
       noise(ac, 0.06, v, 800, 0.6);
       ping(ac, 100, 0.04, v * 0.3, 'sine');
+      break;
+
+    case 'paddy':
+      // Wet squelch — shallow water splashing
+      noise(ac, 0.05, v * 0.7, 1200, 0.8);
+      ping(ac, 160, 0.03, v * 0.25, 'sine');
       break;
 
     case 'grassland':
@@ -1211,6 +1218,168 @@ export function sfxRiggingCreak() {
 }
 
 /** Anchor weigh — chain hauling up + creak. */
+/** Single broadside cannon report — deeper, heavier than swivel gun.
+ *  Call once per cannon in a rolling broadside with ~150ms spacing. */
+export function sfxBroadsideCannon() {
+  const ac = getCtx();
+  const v = masterVolume * 0.45;
+  const t = ac.currentTime;
+
+  // Deep boom — lower and longer than swivel
+  const boom = ac.createOscillator();
+  boom.type = 'sine';
+  boom.frequency.setValueAtTime(55 + Math.random() * 15, t);
+  boom.frequency.exponentialRampToValueAtTime(20, t + 0.6);
+  const boomGain = ac.createGain();
+  boomGain.gain.setValueAtTime(v, t);
+  boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+  boom.connect(boomGain).connect(ac.destination);
+  boom.start(t);
+  boom.stop(t + 0.6);
+
+  // Heavy blast noise — wider band than swivel
+  noise(ac, 0.2, v * 0.7, 500 + Math.random() * 200, 1.0);
+
+  // Sub-bass thump — felt more than heard
+  const sub = ac.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(35, t);
+  sub.frequency.exponentialRampToValueAtTime(15, t + 0.3);
+  const subGain = ac.createGain();
+  subGain.gain.setValueAtTime(v * 0.5, t);
+  subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  sub.connect(subGain).connect(ac.destination);
+  sub.start(t);
+  sub.stop(t + 0.35);
+}
+
+export function sfxCannonFire() {
+  const ac = getCtx();
+  const v = masterVolume * 0.4;
+  const t = ac.currentTime;
+
+  // Low boom — the main cannon report
+  const boom = ac.createOscillator();
+  boom.type = 'sine';
+  boom.frequency.setValueAtTime(80, t);
+  boom.frequency.exponentialRampToValueAtTime(30, t + 0.4);
+  const boomGain = ac.createGain();
+  boomGain.gain.setValueAtTime(v, t);
+  boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  boom.connect(boomGain).connect(ac.destination);
+  boom.start(t);
+  boom.stop(t + 0.5);
+
+  // Noise burst — the crack/blast
+  noise(ac, 0.15, v * 0.6, 800, 1.5);
+
+  // High metallic ping — swivel gun ring
+  ping(ac, 2200, 0.08, v * 0.15, 'sine');
+  ping(ac, 1400, 0.12, v * 0.1, 'triangle');
+}
+
+export function sfxCannonImpact() {
+  const ac = getCtx();
+  const v = masterVolume * 0.35;
+  const t = ac.currentTime;
+
+  // Thud
+  const thud = ac.createOscillator();
+  thud.type = 'sine';
+  thud.frequency.setValueAtTime(120, t);
+  thud.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+  const thudGain = ac.createGain();
+  thudGain.gain.setValueAtTime(v, t);
+  thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  thud.connect(thudGain).connect(ac.destination);
+  thud.start(t);
+  thud.stop(t + 0.3);
+
+  // Splintering wood — noise burst
+  noise(ac, 0.2, v * 0.5, 1200, 2);
+}
+
+export function sfxCannonSplash() {
+  const ac = getCtx();
+  const v = masterVolume * 0.2;
+  // Water splash — short filtered noise
+  noise(ac, 0.25, v, 600, 0.8);
+}
+
+/** Funeral bell — single solemn toll for crew death */
+export function sfxFuneralBell() {
+  const ac = getCtx();
+  const v = masterVolume * 0.3;
+  const t = ac.currentTime;
+
+  // Bell strike — two sine tones for a rich bell timbre
+  const f1 = ac.createOscillator();
+  f1.type = 'sine';
+  f1.frequency.value = 220;
+  const f2 = ac.createOscillator();
+  f2.type = 'sine';
+  f2.frequency.value = 554; // overtone
+  const g1 = ac.createGain();
+  g1.gain.setValueAtTime(v, t);
+  g1.gain.exponentialRampToValueAtTime(v * 0.3, t + 0.8);
+  g1.gain.exponentialRampToValueAtTime(0.001, t + 3.0);
+  const g2 = ac.createGain();
+  g2.gain.setValueAtTime(v * 0.25, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 2.0);
+  f1.connect(g1).connect(ac.destination);
+  f2.connect(g2).connect(ac.destination);
+  f1.start(t);
+  f1.stop(t + 3.0);
+  f2.start(t);
+  f2.stop(t + 2.0);
+
+  // Soft metallic shimmer
+  noise(ac, 0.15, v * 0.15, 3000, 2);
+}
+
+/** Ship sinking — deep groan + water rush + cracking timber */
+export function sfxShipSink() {
+  const ac = getCtx();
+  const v = masterVolume * 0.4;
+  const t = ac.currentTime;
+
+  // Deep hull groan — descending sine
+  const groan = ac.createOscillator();
+  groan.type = 'sine';
+  groan.frequency.setValueAtTime(100, t);
+  groan.frequency.exponentialRampToValueAtTime(25, t + 1.5);
+  const groanGain = ac.createGain();
+  groanGain.gain.setValueAtTime(v, t);
+  groanGain.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+  groan.connect(groanGain).connect(ac.destination);
+  groan.start(t);
+  groan.stop(t + 1.5);
+
+  // Timber cracking — sharp noise bursts
+  for (let i = 0; i < 3; i++) {
+    const delay = 0.1 + i * 0.25;
+    const len = ac.sampleRate * 0.08;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < len; j++) data[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = 1800 + i * 400;
+    filt.Q.value = 3;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(v * 0.4, t + delay);
+    g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.1);
+    src.connect(filt).connect(g).connect(ac.destination);
+    src.start(t + delay);
+    src.stop(t + delay + 0.1);
+  }
+
+  // Water rushing in — long low noise
+  noise(ac, 1.2, v * 0.35, 300, 0.5);
+}
+
 export function sfxAnchorWeigh() {
   const ac = getCtx();
   const v = masterVolume * 0.3;

@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGameStore, CrewMember, CrewRole, CrewQuality, Commodity, WEAPON_DEFS } from '../store/gameStore';
+import { useGameStore, CrewMember, CrewRole, CrewQuality, WEAPON_DEFS } from '../store/gameStore';
+import type { Commodity } from '../utils/commodities';
+import { ALL_COMMODITIES, COMMODITY_DEFS } from '../utils/commodities';
 import {
   X, Shield, Coins, Users, Package,
   Wrench, Heart, Star, ChevronDown, Crosshair, Sailboat, Flag,
   Navigation, Swords, Briefcase, Activity
 } from 'lucide-react';
 import { FactionFlag } from './FactionFlag';
+import { CrewPortrait, CrewPortraitSquare } from './CrewPortrait';
 
 type DashboardTab = 'overview' | 'crew' | 'cargo' | 'ship';
 
 const ASSIGNABLE_ROLES: CrewRole[] = ['Sailor', 'Navigator', 'Gunner', 'Factor', 'Surgeon'];
-const COMMODITIES: Commodity[] = ['Spices', 'Silk', 'Tea', 'Wood', 'Cannonballs'];
 
 const ROLE_ABBR: Record<string, string> = {
   Captain: 'CPT', Navigator: 'NAV', Gunner: 'GNR', Sailor: 'SAI', Factor: 'FCT', Surgeon: 'SRG',
@@ -88,7 +90,7 @@ function StatRow({ label, value, bar, barColor, barMax = 100 }: {
 // --- PERSISTENT HEADER (ship banner) ---
 
 function ShipHeader() {
-  const { ship, stats, gold, captainInfo, crew } = useGameStore();
+  const { ship, stats, gold, crew } = useGameStore();
   const captain = crew.find(c => c.role === 'Captain');
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
 
@@ -151,7 +153,7 @@ function ShipHeader() {
                 <>
                   <span className="text-slate-700">|</span>
                   <span className="text-amber-500/70 hidden md:inline">
-                    Cpt. {captain.name.split(' ').pop()} · Lvl {captainInfo.level}
+                    Cpt. {captain.name.split(' ').pop()} · Lvl {captain.level}
                   </span>
                 </>
               )}
@@ -175,9 +177,11 @@ function ShipHeader() {
 // --- OVERVIEW TAB ---
 
 function OverviewTab() {
-  const { crew, stats, cargo, ship, captainInfo, playerPos } = useGameStore();
+  const { crew, stats, cargo, ship, playerPos } = useGameStore();
   const captain = crew.find(c => c.role === 'Captain');
-  const currentCargo = Object.values(cargo).reduce((a, b) => a + b, 0);
+  const currentCargo = Object.entries(cargo).reduce(
+    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+  );
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
   const sailsPct = Math.round((stats.sails / stats.maxSails) * 100);
   const avgMorale = Math.round(crew.reduce((a, c) => a + c.morale, 0) / crew.length);
@@ -197,9 +201,9 @@ function OverviewTab() {
         return (
         <div className={`border ${cq.cardBorder} ${cq.cardBg} ${cq.glow ?? ''} p-3 md:p-4`}>
           <div className="flex items-center gap-3">
-            {/* Placeholder portrait — square, strategy-game style */}
+            {/* Procedural captain portrait */}
             <div className={`w-14 h-14 md:w-16 md:h-16 bg-slate-800 border ${cq.border} flex items-center justify-center shrink-0 overflow-hidden`}>
-              <span className="text-2xl md:text-3xl opacity-80">🧑‍✈️</span>
+              <CrewPortraitSquare member={captain} size={64} />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -211,12 +215,12 @@ function OverviewTab() {
               </div>
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 <span className="text-[10px] text-cyan-500 flex items-center gap-0.5">
-                  <Star size={9} /> LVL {captainInfo.level}
+                  <Star size={9} /> LVL {captain?.level ?? 1}
                 </span>
                 <span className="text-[9px] tracking-wide text-slate-600">
-                  {captainInfo.xp}/{captainInfo.xpToNext} XP
+                  {captain?.xp ?? 0}/{captain?.xpToNext ?? 100} XP
                 </span>
-                {captainInfo.traits.map(t => (
+                {(captain?.traits ?? []).map(t => (
                   <span key={t} className="text-[9px] tracking-[0.1em] uppercase text-teal-400 bg-teal-500/10 border border-teal-500/15 px-1.5 py-px">
                     {t}
                   </span>
@@ -273,7 +277,7 @@ function OverviewTab() {
             Cargo Hold
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-1">
-            {COMMODITIES.filter(c => cargo[c] > 0).map(c => (
+            {ALL_COMMODITIES.filter(c => cargo[c] > 0).map(c => (
               <div key={c} className="flex items-center gap-2 text-xs">
                 <span className="text-slate-400">{c}</span>
                 <span className="font-mono text-slate-200">{cargo[c]}</span>
@@ -359,8 +363,8 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
       {/* Desktop layout */}
       <div className="hidden md:flex items-center gap-2 px-3 py-2.5">
         {/* Portrait */}
-        <div className={`w-8 h-8 flex items-center justify-center shrink-0 text-base bg-slate-800 border ${q.border}`}>
-          {isCaptain ? '🧑‍✈️' : '👤'}
+        <div className={`w-8 h-8 flex items-center justify-center shrink-0 bg-slate-800 border ${q.border} overflow-hidden`}>
+          <CrewPortraitSquare member={member} size={32} />
         </div>
         {/* Role badge */}
         <span className={`font-mono text-[10px] font-bold w-7 ${ROLE_ACCENT[member.role]}`}>
@@ -401,8 +405,8 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
 
       {/* Mobile layout */}
       <div className="flex md:hidden items-center gap-2 px-3 py-2.5" onClick={!isCaptain ? onToggle : undefined}>
-        <div className={`w-9 h-9 flex items-center justify-center shrink-0 text-lg bg-slate-800 border ${q.border}`}>
-          {isCaptain ? '🧑‍✈️' : '👤'}
+        <div className={`w-9 h-9 flex items-center justify-center shrink-0 bg-slate-800 border ${q.border} overflow-hidden`}>
+          <CrewPortraitSquare member={member} size={36} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
@@ -456,7 +460,9 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
 
 function CargoTab() {
   const { cargo, stats } = useGameStore();
-  const currentCargo = Object.values(cargo).reduce((a, b) => a + b, 0);
+  const currentCargo = Object.entries(cargo).reduce(
+    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+  );
   const freePct = Math.round(((stats.cargoCapacity - currentCargo) / stats.cargoCapacity) * 100);
 
   return (
@@ -486,7 +492,7 @@ function CargoTab() {
           <span className="w-12 text-right">Qty</span>
           <span className="w-10 text-right">%</span>
         </div>
-        {COMMODITIES.map((c, i) => {
+        {ALL_COMMODITIES.map((c, i) => {
           const qty = cargo[c];
           const pct = stats.cargoCapacity > 0 ? Math.round((qty / stats.cargoCapacity) * 100) : 0;
           return (
@@ -494,7 +500,7 @@ function CargoTab() {
               key={c}
               className={`flex items-center gap-2 px-3 py-2 transition-colors ${
                 qty > 0 ? 'hover:bg-white/[0.02]' : 'opacity-40'
-              } ${i < COMMODITIES.length - 1 ? 'border-b border-white/[0.03]' : ''}`}
+              } ${i < ALL_COMMODITIES.length - 1 ? 'border-b border-white/[0.03]' : ''}`}
             >
               <span className={`flex-1 text-sm ${qty > 0 ? 'text-slate-200' : 'text-slate-600'}`}>{c}</span>
               <div className="w-24 hidden md:block">

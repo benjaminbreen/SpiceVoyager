@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
-import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import {
@@ -10,24 +9,27 @@ import {
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
-
-// Check if a pixel is on a coastline by sampling neighbors
-function isCoastline(x: number, z: number, step: number): boolean {
-  const center = getTerrainData(x, z);
-  if (center.height < -1 || center.height > 3) return false; // only near sea level
-  const offsets = [[-step, 0], [step, 0], [0, -step], [0, step]];
-  const isLand = center.height >= SEA_LEVEL + 0.3;
-  for (const [dx, dz] of offsets) {
-    const neighbor = getTerrainData(x + dx, z + dz);
-    if ((neighbor.height >= SEA_LEVEL + 0.3) !== isLand) return true;
-  }
-  return false;
-}
+const BUFFER_SIZE = MAP_SIZE + 40; // extra padding for smooth panning
+const ROWS_PER_FRAME = 15; // rows of terrain to compute per frame (~2,850 samples)
+const REDRAW_DIST = 10; // world units before triggering a new terrain build
 
 export function Minimap({ onClick }: { onClick?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Double-buffered offscreen canvases: display from one while building the other
+  const bufferA = useRef<HTMLCanvasElement | null>(null);
+  const bufferB = useRef<HTMLCanvasElement | null>(null);
+  const displayBuffer = useRef<'A' | 'B'>('A');
   const lastDrawPos = useRef<{x: number, z: number} | null>(null);
+  // Progressive build state
+  const buildState = useRef<{
+    imgData: ImageData;
+    ctx: CanvasRenderingContext2D;
+    startWorldX: number;
+    startWorldZ: number;
+    centerX: number;
+    centerZ: number;
+    currentRow: number;
+  } | null>(null);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   useEffect(() => {
@@ -36,28 +38,28 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Create offscreen canvas for terrain caching
-    if (!offscreenCanvasRef.current) {
-      const offCanvas = document.createElement('canvas');
-      // Make it slightly larger so we can pan smoothly without edge artifacts
-      offCanvas.width = MAP_SIZE + 40; 
-      offCanvas.height = MAP_SIZE + 40;
-      offscreenCanvasRef.current = offCanvas;
+    // Create double buffers
+    for (const ref of [bufferA, bufferB]) {
+      if (!ref.current) {
+        const c = document.createElement('canvas');
+        c.width = BUFFER_SIZE;
+        c.height = BUFFER_SIZE;
+        ref.current = c;
+      }
     }
-    const offCtx = offscreenCanvasRef.current.getContext('2d')!;
+
+    const getDisplayCanvas = () =>
+      displayBuffer.current === 'A' ? bufferA.current! : bufferB.current!;
+    const getBuildCanvas = () =>
+      displayBuffer.current === 'A' ? bufferB.current! : bufferA.current!;
 
     lastDrawPos.current = null;
+    buildState.current = null;
 
     let animationFrameId: number;
-    let lastFrameTime = 0;
-    const FRAME_INTERVAL = 100; // ms — ~10fps is plenty for a minimap
+    const unitsPerPixel = WORLD_RANGE / MAP_SIZE;
 
-    const render = (now: number = 0) => {
-      if (now - lastFrameTime < FRAME_INTERVAL) {
-        animationFrameId = requestAnimationFrame(render);
-        return;
-      }
-      lastFrameTime = now;
+    const render = () => {
       const state = useGameStore.getState();
       const shipTransform = getLiveShipTransform();
       const walkingTransform = getLiveWalkingTransform();
@@ -66,57 +68,64 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
       const px = activePos[0];
       const pz = activePos[2];
 
-      // Check if we need to redraw the cached terrain
+      // ── Progressive terrain build ──────────────────────────────────────────
       const lastPos = lastDrawPos.current;
       const distMoved = lastPos ? Math.sqrt((px - lastPos.x)**2 + (pz - lastPos.z)**2) : Infinity;
-      
-      const unitsPerPixel = WORLD_RANGE / MAP_SIZE;
 
-      if (distMoved > 5) { // Redraw cache every 5 units
-        lastDrawPos.current = { x: px, z: pz };
-        
-        const pixelsAcross = offscreenCanvasRef.current!.width;
-        
-        const startWorldX = px - (pixelsAcross / 2) * unitsPerPixel;
-        const startWorldZ = pz - (pixelsAcross / 2) * unitsPerPixel;
-
-        const imgData = offCtx.createImageData(pixelsAcross, pixelsAcross);
-        
-        for (let y = 0; y < pixelsAcross; y++) {
-          for (let x = 0; x < pixelsAcross; x++) {
-            const worldX = startWorldX + x * unitsPerPixel;
-            const worldZ = startWorldZ + y * unitsPerPixel;
-            const { color } = getTerrainData(worldX, worldZ);
-
-            const idx = (y * pixelsAcross + x) * 4;
-
-            // Coastline detection — draw dark outline at land/sea borders
-            if (isCoastline(worldX, worldZ, unitsPerPixel)) {
-              imgData.data[idx] = 40;
-              imgData.data[idx+1] = 35;
-              imgData.data[idx+2] = 25;
-              imgData.data[idx+3] = 255;
-            } else {
-              imgData.data[idx] = color[0] * 255;
-              imgData.data[idx+1] = color[1] * 255;
-              imgData.data[idx+2] = color[2] * 255;
-              imgData.data[idx+3] = 255;
-            }
-          }
-        }
-        offCtx.putImageData(imgData, 0, 0);
+      // Start a new progressive build when we've moved far enough
+      if (distMoved > REDRAW_DIST && !buildState.current) {
+        const buildCtx = getBuildCanvas().getContext('2d')!;
+        buildState.current = {
+          imgData: buildCtx.createImageData(BUFFER_SIZE, BUFFER_SIZE),
+          ctx: buildCtx,
+          startWorldX: px - (BUFFER_SIZE / 2) * unitsPerPixel,
+          startWorldZ: pz - (BUFFER_SIZE / 2) * unitsPerPixel,
+          centerX: px,
+          centerZ: pz,
+          currentRow: 0,
+        };
       }
 
-      // Clear main canvas
+      // Process a batch of rows if a build is in progress
+      if (buildState.current) {
+        const bs = buildState.current;
+        const endRow = Math.min(bs.currentRow + ROWS_PER_FRAME, BUFFER_SIZE);
+
+        for (let y = bs.currentRow; y < endRow; y++) {
+          for (let x = 0; x < BUFFER_SIZE; x++) {
+            const worldX = bs.startWorldX + x * unitsPerPixel;
+            const worldZ = bs.startWorldZ + y * unitsPerPixel;
+            const { color } = getTerrainData(worldX, worldZ);
+
+            const idx = (y * BUFFER_SIZE + x) * 4;
+            bs.imgData.data[idx]     = color[0] * 255;
+            bs.imgData.data[idx + 1] = color[1] * 255;
+            bs.imgData.data[idx + 2] = color[2] * 255;
+            bs.imgData.data[idx + 3] = 255;
+          }
+        }
+
+        bs.currentRow = endRow;
+
+        // Build complete — swap buffers
+        if (bs.currentRow >= BUFFER_SIZE) {
+          bs.ctx.putImageData(bs.imgData, 0, 0);
+          displayBuffer.current = displayBuffer.current === 'A' ? 'B' : 'A';
+          lastDrawPos.current = { x: bs.centerX, z: bs.centerZ };
+          buildState.current = null;
+        }
+      }
+
+      // ── Draw ───────────────────────────────────────────────────────────────
       ctx.clearRect(0, 0, MAP_SIZE, MAP_SIZE);
 
-      // Draw cached terrain with smooth sub-grid offset
+      // Draw cached terrain with smooth sub-pixel panning
       if (lastDrawPos.current) {
         const offsetX = (lastDrawPos.current.x - px) / unitsPerPixel;
         const offsetZ = (lastDrawPos.current.z - pz) / unitsPerPixel;
-        
-        // The offscreen canvas is larger by 40 pixels (20 each side)
-        ctx.drawImage(offscreenCanvasRef.current!, -20 + offsetX, -20 + offsetZ);
+
+        // Offscreen has 20px padding per side
+        ctx.drawImage(getDisplayCanvas(), -20 + offsetX, -20 + offsetZ);
       }
 
       // Draw Ports

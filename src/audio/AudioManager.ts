@@ -22,6 +22,9 @@ class AudioManager {
   private fightTrack: HTMLAudioElement | null = null;
   private fightActive = false;
   private savedOverworldVolume = 0;
+  private portTrack: HTMLAudioElement | null = null;
+  private portTrackSrc: string | null = null;
+  private portTrackGain = 0.3;
 
   playSplash() {
     if (this.splashPlaying) return;
@@ -95,6 +98,11 @@ class AudioManager {
     }, 2000);
   }
 
+  private getCurrentOverworldTarget() {
+    const entry = OVERWORLD_TRACKS[this.trackIndex];
+    return entry ? this.musicVolume * entry.gain : this.musicVolume * 0.3;
+  }
+
   // ── Fade helpers ──────────────────────────────────────────────────
 
   private fadeIn(el: HTMLAudioElement, target: number, duration = 2.5) {
@@ -142,6 +150,50 @@ class AudioManager {
     this.fightTrack.volume = 0;
     this.fightTrack.play().catch(() => {});
     this.fadeIn(this.fightTrack, this.musicVolume * 0.35, 1.5);
+  }
+
+  /** Crossfade to port music while a port modal is open. */
+  startPortMusic(src: string, gain = 0.3) {
+    this.portTrackGain = gain;
+    if (this.portTrack && this.portTrackSrc === src) return;
+
+    const oldPortTrack = this.portTrack;
+    if (oldPortTrack) {
+      this.fadeOut(oldPortTrack, 1, () => {
+        oldPortTrack.pause();
+        oldPortTrack.src = '';
+      });
+    }
+
+    if (this.overworldTrack && !this.fightActive) {
+      this.fadeOut(this.overworldTrack, 1.5);
+    }
+
+    const track = new Audio(src);
+    track.loop = true;
+    track.volume = 0;
+    this.portTrack = track;
+    this.portTrackSrc = src;
+    track.play().catch(() => {});
+    this.fadeIn(track, this.musicVolume * gain, 1.8);
+  }
+
+  /** Stop port music and return to the overworld track. */
+  stopPortMusic() {
+    if (!this.portTrack) return;
+
+    const track = this.portTrack;
+    this.portTrack = null;
+    this.portTrackSrc = null;
+    this.fadeOut(track, 1.5, () => {
+      track.pause();
+      track.src = '';
+    });
+
+    if (!this.fightActive && this.overworldTrack) {
+      this.overworldTrack.play().catch(() => {});
+      this.fadeIn(this.overworldTrack, this.getCurrentOverworldTarget(), 2.2);
+    }
   }
 
   /** Crossfade back from fight mode music to overworld. */
@@ -201,6 +253,16 @@ class AudioManager {
         ft.src = '';
       });
     }
+
+    if (this.portTrack) {
+      const pt = this.portTrack;
+      this.portTrack = null;
+      this.portTrackSrc = null;
+      this.fadeOut(pt, 1, () => {
+        pt.pause();
+        pt.src = '';
+      });
+    }
   }
 
   // ── Volume control ────────────────────────────────────────────────
@@ -212,6 +274,7 @@ class AudioManager {
       const entry = OVERWORLD_TRACKS[this.trackIndex];
       if (entry) this.overworldTrack.volume = this.musicVolume * entry.gain;
     }
+    if (this.portTrack) this.portTrack.volume = this.musicVolume * this.portTrackGain;
   }
 
   getMusicVolume() {

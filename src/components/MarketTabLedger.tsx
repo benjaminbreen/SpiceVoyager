@@ -1,0 +1,451 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Anchor, Coins, Package, ShipWheel } from 'lucide-react';
+import { useGameStore } from '../store/gameStore';
+import type { Commodity } from '../utils/commodities';
+import {
+  ALL_COMMODITIES,
+  COMMODITY_DEFS,
+  TIER_LABELS,
+  getGlobalAveragePrice,
+  getTradeRole,
+  type CommodityTier,
+} from '../utils/commodities';
+import { sfxCoin } from '../audio/SoundEffects';
+
+export interface MarketTabLedgerProps {
+  port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
+  cargo: Record<Commodity, number>;
+  gold: number;
+  cargoWeight: number;
+  cargoCapacity: number;
+  ports: ReturnType<typeof useGameStore.getState>['ports'];
+  buyCommodity: (c: Commodity, amount: number) => void;
+  sellCommodity: (c: Commodity, amount: number) => void;
+}
+
+type TradeSignal = 'low' | 'fair' | 'high';
+
+interface MarketRow {
+  commodity: Commodity;
+  tier: CommodityTier;
+  price: number;
+  sellPrice: number;
+  avg: number;
+  ratio: number;
+  signal: TradeSignal;
+  role: ReturnType<typeof getTradeRole>;
+  portInv: number;
+  playerInv: number;
+  maxBuy: number;
+  maxSell: number;
+}
+
+const TIERS: CommodityTier[] = [1, 2, 3, 4, 5];
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function formatPrice(value: number) {
+  return `${value.toLocaleString()}g`;
+}
+
+function getSignal(ratio: number): TradeSignal {
+  if (ratio < 0.75) return 'low';
+  if (ratio > 1.25) return 'high';
+  return 'fair';
+}
+
+function getRoleLabel(role: MarketRow['role']) {
+  if (role === 'produces') return { label: 'Local', className: 'text-emerald-400 bg-emerald-400/[0.08] border-emerald-400/20' };
+  if (role === 'demands') return { label: 'Wanted', className: 'text-[#fbbf24] bg-[#fbbf24]/[0.08] border-[#fbbf24]/20' };
+  if (role === 'trades') return { label: 'Traded', className: 'text-slate-500 bg-white/[0.03] border-white/[0.06]' };
+  return { label: 'Foreign', className: 'text-slate-600 bg-white/[0.02] border-white/[0.04]' };
+}
+
+function getSignalLabel(signal: TradeSignal) {
+  if (signal === 'low') return { label: 'Low', className: 'text-emerald-400 bg-emerald-400/[0.08] border-emerald-400/20' };
+  if (signal === 'high') return { label: 'High', className: 'text-red-400 bg-red-400/[0.08] border-red-400/20' };
+  return { label: 'Fair', className: 'text-slate-500 bg-white/[0.03] border-white/[0.06]' };
+}
+
+function getCommodityImage(commodity: Commodity) {
+  return COMMODITY_DEFS[commodity].iconImage;
+}
+
+function quantityUnit(amount: number) {
+  return amount === 1 ? 'unit' : 'units';
+}
+
+export function MarketTabLedger({
+  port,
+  cargo,
+  gold,
+  cargoWeight,
+  cargoCapacity,
+  ports,
+  buyCommodity,
+  sellCommodity,
+}: MarketTabLedgerProps) {
+  const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(null);
+  const [quantity, setQuantity] = useState(1);
+
+  const spaceLeft = Math.max(0, cargoCapacity - cargoWeight);
+
+  const rows = useMemo<MarketRow[]>(() => {
+    const averageFor = (commodity: Commodity) => {
+      const knownPorts = ports.filter(p => p.prices[commodity] > 0);
+      if (knownPorts.length > 1) {
+        return knownPorts.reduce((sum, p) => sum + p.prices[commodity], 0) / knownPorts.length;
+      }
+      return getGlobalAveragePrice(commodity);
+    };
+
+    return ALL_COMMODITIES.flatMap((commodity) => {
+      const def = COMMODITY_DEFS[commodity];
+      const portInv = port.inventory[commodity] ?? 0;
+      const playerInv = cargo[commodity] ?? 0;
+      const price = port.prices[commodity] ?? 0;
+      const available = price > 0 || portInv > 0 || playerInv > 0;
+      if (!available) return [];
+
+      const avg = averageFor(commodity);
+      const portStocksGood = port.basePrices[commodity] > 0;
+      const sellPrice = portStocksGood
+        ? Math.max(1, Math.floor(Math.max(1, price) * 0.8))
+        : Math.max(1, Math.floor(getGlobalAveragePrice(commodity) * 0.5));
+      const maxBuyByGold = price > 0 ? Math.floor(gold / price) : 0;
+      const maxBuyBySpace = def.weight > 0 ? Math.floor(spaceLeft / def.weight) : 0;
+      const maxBuy = Math.max(0, Math.min(maxBuyByGold, maxBuyBySpace, portInv));
+      const ratio = avg > 0 && price > 0 ? price / avg : 1;
+
+      return [{
+        commodity,
+        tier: def.tier,
+        price,
+        sellPrice,
+        avg,
+        ratio,
+        signal: getSignal(ratio),
+        role: getTradeRole(port.id, commodity),
+        portInv,
+        playerInv,
+        maxBuy,
+        maxSell: playerInv,
+      }];
+    });
+  }, [cargo, gold, port.basePrices, port.id, port.inventory, port.prices, ports, spaceLeft]);
+
+  const rowsByTier = useMemo(() => {
+    const grouped = new Map<CommodityTier, MarketRow[]>();
+    for (const row of rows) {
+      const list = grouped.get(row.tier) ?? [];
+      list.push(row);
+      grouped.set(row.tier, list);
+    }
+    return grouped;
+  }, [rows]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setSelectedCommodity(null);
+      return;
+    }
+    if (!selectedCommodity || !rows.some(row => row.commodity === selectedCommodity)) {
+      setSelectedCommodity(rows[0].commodity);
+      setQuantity(1);
+    }
+  }, [rows, selectedCommodity]);
+
+  const selected = rows.find(row => row.commodity === selectedCommodity) ?? rows[0];
+  const maxSelectedQuantity = selected ? Math.max(selected.maxBuy, selected.maxSell, 1) : 1;
+  const clampedQuantity = clamp(quantity, 1, maxSelectedQuantity);
+
+  useEffect(() => {
+    if (quantity !== clampedQuantity) setQuantity(clampedQuantity);
+  }, [clampedQuantity, quantity]);
+
+  const buyQty = selected ? Math.min(clampedQuantity, selected.maxBuy) : 0;
+  const sellQty = selected ? Math.min(clampedQuantity, selected.maxSell) : 0;
+  const buyTotal = selected ? buyQty * selected.price : 0;
+  const sellTotal = selected ? sellQty * selected.sellPrice : 0;
+  const holdAfterBuy = selected ? cargoWeight + buyQty * COMMODITY_DEFS[selected.commodity].weight : cargoWeight;
+  const holdAfterSell = selected ? cargoWeight - sellQty * COMMODITY_DEFS[selected.commodity].weight : cargoWeight;
+
+  const executeTrade = (isBuy: boolean) => {
+    if (!selected) return;
+    const amount = isBuy ? buyQty : sellQty;
+    const total = isBuy ? buyTotal : sellTotal;
+    if (amount <= 0) return;
+    sfxCoin(total);
+    if (isBuy) buyCommodity(selected.commodity, amount);
+    else sellCommodity(selected.commodity, amount);
+  };
+
+  if (!selected) {
+    return (
+      <div className="rounded-lg border border-white/[0.05] bg-white/[0.018] px-4 py-6 text-center">
+        <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          Market Ledger
+        </div>
+        <p className="mt-2 text-[12px] text-slate-500" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
+          No goods are changing hands in this harbor today.
+        </p>
+      </div>
+    );
+  }
+
+  const selectedDef = COMMODITY_DEFS[selected.commodity];
+  const selectedRole = getRoleLabel(selected.role);
+  const selectedSignal = getSignalLabel(selected.signal);
+  const selectedImage = getCommodityImage(selected.commodity);
+  const priceMeterPct = Math.round(clamp(selected.ratio / 2, 0.06, 1) * 100);
+
+  return (
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.46fr)]">
+      <section className="min-w-0">
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-2 px-1">
+          <div>
+            <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              Market Ledger
+            </div>
+            <div className="mt-1 text-[12px] text-slate-500" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
+              Choose a good, set a quantity, then commit the bargain.
+            </div>
+          </div>
+          <div className="flex items-center gap-2" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+            <span className="flex items-center gap-2 rounded-lg border border-[#c9a84c]/15 bg-white/[0.025] px-3 py-2">
+              <Coins size={15} className="text-[#c9a84c]" />
+              <span>
+                <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Gold</span>
+                <span className="block font-mono text-[17px] font-bold leading-none text-[#d8c47a]">{gold.toLocaleString()}g</span>
+              </span>
+            </span>
+            <span className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-3 py-2">
+              <Anchor size={15} className={cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-400'} />
+              <span>
+                <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Hold</span>
+                <span className={`block font-mono text-[17px] font-bold leading-none ${cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-200'}`}>
+                  {cargoWeight}<span className="text-slate-600">/{cargoCapacity}</span>
+                </span>
+              </span>
+            </span>
+          </div>
+        </div>
+
+        <div className="max-h-[50vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+          <div className="sticky top-0 z-10 hidden grid-cols-[minmax(180px,1.35fr)_76px_92px_84px_84px] gap-3 rounded-t-lg border border-white/[0.05] bg-[#080c14]/95 px-3 py-2 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600 backdrop-blur md:grid" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+            <span>Ware</span>
+            <span className="text-right">Buy</span>
+            <span>Market</span>
+            <span className="text-right">Hold</span>
+            <span className="text-right">Port</span>
+          </div>
+
+          {TIERS.map((tier) => {
+            const tierRows = rowsByTier.get(tier);
+            if (!tierRows?.length) return null;
+
+            return (
+              <div key={tier} className="mb-2">
+                <div className="px-1 py-2 text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                  {TIER_LABELS[tier]} <span className="font-normal text-slate-700">/ {tierRows.length} goods</span>
+                </div>
+
+                <div className="overflow-hidden rounded-lg border border-white/[0.05] bg-white/[0.018]">
+                  {tierRows.map((row) => {
+                    const def = COMMODITY_DEFS[row.commodity];
+                    const isSelected = row.commodity === selected.commodity;
+                    const signal = getSignalLabel(row.signal);
+                    const role = getRoleLabel(row.role);
+                    const image = getCommodityImage(row.commodity);
+                    const meterPct = Math.round(clamp(row.ratio / 2, 0.06, 1) * 100);
+
+                    return (
+                      <button
+                        key={row.commodity}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCommodity(row.commodity);
+                          setQuantity(Math.min(Math.max(quantity, 1), Math.max(row.maxBuy, row.maxSell, 1)));
+                        }}
+                        className={`group grid min-h-[64px] w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-white/[0.04] px-3 py-2 text-left transition-all last:border-b-0 md:grid-cols-[minmax(180px,1.35fr)_76px_92px_84px_84px] md:items-center ${
+                          isSelected ? 'bg-white/[0.045] shadow-[inset_2px_0_0_rgba(201,168,76,0.7)]' : 'bg-transparent hover:bg-white/[0.03]'
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          {image ? (
+                            <img src={image} alt="" className="h-11 w-11 shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.03] object-cover opacity-90" />
+                          ) : (
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-lg" style={{ color: def.color }}>
+                              {def.icon}
+                            </span>
+                          )}
+                          <span className="min-w-0">
+                            <span className="block truncate text-[15px] font-bold leading-tight text-slate-200" style={{ fontFamily: '"Fraunces", serif' }}>
+                              {row.commodity}
+                            </span>
+                            <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] ${role.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                {role.label}
+                              </span>
+                              <span className="hidden truncate text-[10px] text-slate-600 sm:inline" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                {def.description}
+                              </span>
+                            </span>
+                          </span>
+                        </span>
+
+                        <span className="text-right font-mono text-[15px] font-bold text-slate-200">
+                          {row.price > 0 ? formatPrice(row.price) : 'n/a'}
+                        </span>
+
+                        <span className="hidden md:block">
+                          <span className={`inline-flex min-w-[64px] justify-center rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${signal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                            {signal.label}
+                          </span>
+                          <span className="mt-1 block h-[3px] overflow-hidden rounded-full bg-white/[0.06]">
+                            <span className={`block h-full rounded-full ${row.signal === 'low' ? 'bg-emerald-400/45' : row.signal === 'high' ? 'bg-red-400/40' : 'bg-slate-500/35'}`} style={{ width: `${meterPct}%` }} />
+                          </span>
+                        </span>
+
+                        <span className="hidden text-right md:block">
+                          <span className="font-mono text-[15px] font-bold text-slate-300">{row.playerInv}</span>
+                          <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>aboard</span>
+                        </span>
+
+                        <span className="hidden text-right md:block">
+                          <span className="font-mono text-[15px] font-bold text-slate-300">{row.portInv}</span>
+                          <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>quay</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <aside className="rounded-lg border border-white/[0.05] bg-white/[0.018] p-4">
+        <div className="flex items-start gap-4">
+          {selectedImage ? (
+            <img src={selectedImage} alt="" className="h-24 w-24 shrink-0 rounded-lg border border-white/[0.07] bg-white/[0.025] object-cover opacity-95" />
+          ) : (
+            <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] text-4xl" style={{ color: selectedDef.color }}>
+              {selectedDef.icon}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              Trade Ticket
+            </div>
+            <h3 className="mt-1 text-xl font-bold leading-tight text-slate-100" style={{ fontFamily: '"Fraunces", serif' }}>
+              {selected.commodity}
+            </h3>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedRole.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                {selectedRole.label}
+              </span>
+              <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                {selectedSignal.label}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <p className="mt-4 text-[15px] leading-relaxed text-slate-400" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
+          {selectedDef.description}
+        </p>
+
+        <div className="mt-3 h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
+          <div className={`h-full rounded-full ${selected.signal === 'low' ? 'bg-emerald-400/45' : selected.signal === 'high' ? 'bg-red-400/40' : 'bg-slate-500/35'}`} style={{ width: `${priceMeterPct}%` }} />
+        </div>
+        <div className="mt-1 flex justify-between text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <span>Cheap</span>
+          <span>Average {Math.round(selected.avg)}g</span>
+          <span>Dear</span>
+        </div>
+
+        <div className="mt-4 grid grid-cols-[40px_minmax(0,1fr)_40px_56px] gap-2">
+          <button
+            type="button"
+            aria-label="Decrease quantity"
+            disabled={clampedQuantity <= 1}
+            onClick={() => setQuantity(q => clamp(q - 1, 1, maxSelectedQuantity))}
+            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+          >
+            -
+          </button>
+          <div className="flex h-10 items-center justify-center rounded-lg border border-[#fbbf24]/15 bg-white/[0.035] text-center font-mono text-[15px] font-bold text-slate-100">
+            {clampedQuantity} {quantityUnit(clampedQuantity)}
+          </div>
+          <button
+            type="button"
+            aria-label="Increase quantity"
+            disabled={clampedQuantity >= maxSelectedQuantity}
+            onClick={() => setQuantity(q => clamp(q + 1, 1, maxSelectedQuantity))}
+            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            disabled={clampedQuantity >= maxSelectedQuantity}
+            onClick={() => setQuantity(maxSelectedQuantity)}
+            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Max
+          </button>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-2">
+            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              <Package size={11} /> Buy Cost
+            </div>
+            <div className="mt-1 font-mono text-[15px] font-bold text-slate-200">{formatPrice(buyTotal)}</div>
+          </div>
+          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-2">
+            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              <ShipWheel size={11} /> Sell Gain
+            </div>
+            <div className="mt-1 font-mono text-[15px] font-bold text-slate-200">{formatPrice(sellTotal)}</div>
+          </div>
+        </div>
+
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div>After buy: <span className={holdAfterBuy > cargoCapacity ? 'font-mono text-red-400' : 'font-mono text-slate-400'}>{holdAfterBuy}/{cargoCapacity}</span></div>
+          <div>After sell: <span className="font-mono text-slate-400">{holdAfterSell}/{cargoCapacity}</span></div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={sellQty <= 0}
+            onClick={() => executeTrade(false)}
+            className="h-11 rounded-lg border border-amber-300/30 bg-amber-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200/90 transition-all hover:border-amber-300/45 hover:bg-amber-400/[0.15] hover:text-amber-100 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:border-white/[0.04] disabled:hover:bg-white/[0.015] disabled:hover:text-slate-700"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Sell {sellQty}
+          </button>
+          <button
+            type="button"
+            disabled={buyQty <= 0}
+            onClick={() => executeTrade(true)}
+            className="h-11 rounded-lg border border-emerald-300/30 bg-emerald-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200/90 transition-all hover:border-emerald-300/45 hover:bg-emerald-400/[0.15] hover:text-emerald-100 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:border-white/[0.04] disabled:hover:bg-white/[0.015] disabled:hover:text-slate-700"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Buy {buyQty}
+          </button>
+        </div>
+
+        <div className="mt-3 rounded-lg border border-white/[0.04] bg-white/[0.018] px-3 py-2 text-[10px] leading-relaxed text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          Quantity buttons stage the order only. The trade happens when you choose Sell or Buy.
+        </div>
+      </aside>
+    </div>
+  );
+}

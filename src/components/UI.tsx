@@ -9,19 +9,21 @@ import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { PortModal } from './PortModal';
-import { ShipDashboard } from './ShipDashboard';
+import { ASCIIDashboard } from './ASCIIDashboard';
 import { JournalPanel } from './Journal';
 import { SettingsModal } from './SettingsModal';
-import { WorldMap } from './WorldMap';
+import { WorldMap, startTerrainPreRender } from './WorldMap';
 import { WorldMapModal } from './WorldMapModal';
 import { FactionFlag } from './FactionFlag';
 import { OpeningASCII } from './OpeningASCII';
 import { EventModalASCII } from './EventModalASCII';
 import { ASCIIToast } from './ASCIIToast';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
+import { getDefaultPortImageCandidates } from '../utils/portAssets';
 // import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
 
 const PORT_RADIUS_SQ = 20 * 20;
@@ -72,7 +74,7 @@ function isInsideBuildingFootprint(
   port: Port
 ): boolean {
   return port.buildings.some((building) => {
-    if (building.type === 'road' || building.type === 'dock') return false;
+    if (building.type === 'dock') return false;
 
     const dx = pointX - building.position[0];
     const dz = pointZ - building.position[2];
@@ -134,6 +136,9 @@ function findNearbyPort(
 // Animated ASCII alert that appears top-center when fight mode is active
 function CombatModeBanner() {
   const [frame, setFrame] = useState(0);
+  const cannons = useGameStore((state) => state.stats.cannons);
+  const cannonballs = useGameStore((state) => state.cargo.Munitions);
+
   useEffect(() => {
     const id = setInterval(() => setFrame(f => f + 1), 400);
     return () => clearInterval(id);
@@ -171,6 +176,9 @@ function CombatModeBanner() {
           </pre>
           <div className="text-center text-red-500/50 text-[9px] font-mono tracking-wider mt-0.5">
             [SPACE] fire · [F] stand down
+          </div>
+          <div className="text-center text-red-500/40 text-[9px] font-mono tracking-wider mt-0.5">
+            ● Swivel Gun{cannons > 0 ? ` · Munitions: ${cannonballs}` : ''}
           </div>
         </div>
       </div>
@@ -289,10 +297,21 @@ export function UI() {
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
   const [showInstructions, setShowInstructions] = useState(true);
+
+  // Ship hitting map edge can request the world map be opened
+  const requestWorldMap = useGameStore(s => s.requestWorldMap);
+  const setRequestWorldMap = useGameStore(s => s.setRequestWorldMap);
+  useEffect(() => {
+    if (requestWorldMap) {
+      setShowWorldMap(true);
+      setRequestWorldMap(false);
+    }
+  }, [requestWorldMap, setRequestWorldMap]);
   const [showDashboard, setShowDashboard] = useState(false);
   const paused = useGameStore(s => s.paused);
   const setPaused = useGameStore(s => s.setPaused);
@@ -303,6 +322,8 @@ export function UI() {
   const [loadingReady, setLoadingReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
+  const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupOverlayActive = showInstructions || showCommission;
 
   // Collision warning banner state
   const [collisionShipDesc, setCollisionShipDesc] = useState<string | null>(null);
@@ -334,6 +355,17 @@ export function UI() {
   const closeCommission = useCallback(() => {
     setShowCommission(false);
     audioManager.transitionToOverworld();
+    if (mapPreRenderTimerRef.current) clearTimeout(mapPreRenderTimerRef.current);
+    mapPreRenderTimerRef.current = setTimeout(() => {
+      startTerrainPreRender(waterPaletteId);
+      mapPreRenderTimerRef.current = null;
+    }, 10_000);
+  }, [waterPaletteId]);
+
+  useEffect(() => {
+    return () => {
+      if (mapPreRenderTimerRef.current) clearTimeout(mapPreRenderTimerRef.current);
+    };
   }, []);
 
   // SimCity-style loading messages — cycle until the world is actually ready
@@ -346,7 +378,7 @@ export function UI() {
     const interval = setInterval(() => {
       i = (i + 1) % LOADING_MESSAGES.length;
       setLoadingMessage(LOADING_MESSAGES[i]);
-      setLoadingProgress((current) => Math.min(current + 7, 88));
+      setLoadingProgress((current) => current >= 100 ? 100 : Math.min(current + 7, 88));
     }, 1800);
     return () => clearInterval(interval);
   }, [showInstructions]);
@@ -383,6 +415,11 @@ export function UI() {
   // Check for nearby ports — approach toast + activation
   const PORT_APPROACH_RADIUS_SQ = 60 * 60; // grand toast at ~60 units
   useEffect(() => {
+    if (startupOverlayActive) {
+      if (useGameStore.getState().activePort) setActivePort(null);
+      return;
+    }
+
     const checkPorts = setInterval(() => {
       const {
         playerMode,
@@ -415,7 +452,11 @@ export function UI() {
             notify(
               port.name,
               'info',
-              { size: 'grand', subtitle: `${port.scale} port \u00b7 ${port.culture}` },
+              {
+                size: 'grand',
+                subtitle: `${port.scale} port \u00b7 ${port.culture}`,
+                imageCandidates: getDefaultPortImageCandidates(port.id),
+              },
             );
           }
           // Clear approach flag when far enough away
@@ -427,7 +468,7 @@ export function UI() {
     }, 250);
 
     return () => clearInterval(checkPorts);
-  }, [setActivePort]);
+  }, [setActivePort, startupOverlayActive]);
 
   // Escape key closes modals
   useEffect(() => {
@@ -458,6 +499,45 @@ export function UI() {
 
   const toggleLocalMap = useCallback(() => { sfxOpen(); setShowLocalMap(prev => !prev); }, []);
   const toggleWorldMap = useCallback(() => { sfxOpen(); setShowWorldMap(prev => !prev); }, []);
+  const cycleViewMode = useGameStore((state) => state.cycleViewMode);
+
+  // Number key hotkeys for bottom action bar
+  useEffect(() => {
+    const handleHotkey = (e: KeyboardEvent) => {
+      // Don't fire hotkeys when a modal is open or typing in an input
+      if (showInstructions || showSettings || activePort) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch (e.key) {
+        case '1': // Learn
+          sfxClick();
+          break;
+        case '2': // Help
+          sfxClick();
+          break;
+        case '3': // Settings
+          sfxOpen();
+          setShowSettings(true);
+          break;
+        case '4': // Pause/Play
+          sfxClick();
+          setPaused(!paused);
+          break;
+        case '5': // View Mode
+          sfxClick();
+          cycleViewMode();
+          break;
+        case '6': // Quests
+          sfxClick();
+          break;
+        case '7': // Navigate (world map)
+          toggleWorldMap();
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleHotkey);
+    return () => window.removeEventListener('keydown', handleHotkey);
+  }, [showInstructions, showSettings, activePort, paused, setPaused, cycleViewMode, toggleWorldMap]);
 
   return (
     <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none">
@@ -604,7 +684,7 @@ export function UI() {
 
       {/* Interaction Prompt */}
       <AnimatePresence>
-        {interactionPrompt && !activePort && !showLocalMap && !showWorldMap && !showInstructions && !showDashboard && (
+        {interactionPrompt && !activePort && !showLocalMap && !showWorldMap && !startupOverlayActive && !showDashboard && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -617,14 +697,16 @@ export function UI() {
       </AnimatePresence>
 
       {/* Port Trading Modal */}
-      <PortModal onDismiss={() => {
-        if (activePort) dismissedPortRef.current = activePort.id;
-        setActivePort(null);
-      }} />
+      {!startupOverlayActive && (
+        <PortModal onDismiss={() => {
+          if (activePort) dismissedPortRef.current = activePort.id;
+          setActivePort(null);
+        }} />
+      )}
 
       {/* Ship Dashboard Modal */}
       <AnimatePresence>
-        <ShipDashboard open={showDashboard} onClose={() => setShowDashboard(false)} />
+        <ASCIIDashboard open={showDashboard} onClose={() => setShowDashboard(false)} />
       </AnimatePresence>
 
       {/* Notifications */}
@@ -680,9 +762,9 @@ export function UI() {
           <div className="absolute top-1/2 left-5 right-5 h-[2px] -translate-y-1/2 bg-gradient-to-r from-[#2a2520]/30 via-[#3a3530]/50 to-[#2a2520]/30 rounded-full" />
           <div className="relative flex items-center gap-3">
             {/* Left group: Learn - Help - Settings */}
-            <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" accentColor="#60a5fa" glowColor="96,165,250" />
-            <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" />
-            <ActionBarButton icon={<Settings size={13} />} label="Settings" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
+            <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" />
+            <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" />
+            <ActionBarButton icon={<Settings size={13} />} label="Settings" hotkey="3" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
             {/* Center — pause/play, bigger */}
             <button
               onClick={() => { sfxClick(); setPaused(!paused); }}
@@ -691,17 +773,17 @@ export function UI() {
                   ? 'bg-[#1a1e2e] border-2 border-amber-600/70 text-amber-400 shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.08),0_0_14px_rgba(217,169,56,0.3)] hover:border-amber-500/90 hover:shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.1),0_0_20px_rgba(217,169,56,0.45)]'
                   : 'bg-[#1a1e2e] border-2 border-[#5a5540]/70 text-[#9a9070] shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.06),0_2px_8px_rgba(0,0,0,0.5)] hover:text-amber-300 hover:border-amber-700/60 hover:shadow-[inset_0_2px_5px_rgba(0,0,0,0.4),inset_0_-1px_3px_rgba(255,255,255,0.1),0_0_18px_rgba(217,169,56,0.35)]'
                 }`}
-              title={paused ? 'Resume' : 'Pause'}
+              title={paused ? 'Resume [4]' : 'Pause [4]'}
             >
               {paused ? <Play size={16} /> : <Pause size={16} />}
               <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                {paused ? 'Resume' : 'Pause'}
+                {paused ? 'Resume' : 'Pause'}<span className="ml-1 text-slate-500">[4]</span>
               </span>
             </button>
             {/* Right group: View - Quests - Navigate */}
             <ViewModeButton />
-            <ActionBarButton icon={<Scroll size={13} />} label="Quests" accentColor="#fbbf24" glowColor="251,191,36" />
-            <ActionBarButton icon={<Compass size={13} />} label="Navigate" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
+            <ActionBarButton icon={<Scroll size={13} />} label="Quests" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" />
+            <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
           </div>
         </div>
       </div>
@@ -1111,17 +1193,17 @@ function ViewModeButton() {
           btn.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 2px rgba(255,255,255,0.05), 0 1px 4px rgba(0,0,0,0.4)';
         }
       }}
-      title={`View: ${VIEW_MODE_LABELS[viewMode]}`}
+      title={`View: ${VIEW_MODE_LABELS[viewMode]} [5]`}
     >
       <Eye size={13} />
       <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        {VIEW_MODE_LABELS[viewMode]}
+        {VIEW_MODE_LABELS[viewMode]}<span className="ml-1 text-slate-500">[5]</span>
       </span>
     </button>
   );
 }
 
-function ActionBarButton({ icon, label, accentColor = '#b0a880', glowColor = '176,168,128', onClick }: { icon: React.ReactNode; label: string; accentColor?: string; glowColor?: string; onClick?: () => void }) {
+function ActionBarButton({ icon, label, hotkey, accentColor = '#b0a880', glowColor = '176,168,128', onClick }: { icon: React.ReactNode; label: string; hotkey?: string; accentColor?: string; glowColor?: string; onClick?: () => void }) {
   return (
     <button
       onClick={() => { sfxClick(); onClick?.(); }}
@@ -1145,12 +1227,12 @@ function ActionBarButton({ icon, label, accentColor = '#b0a880', glowColor = '17
         btn.style.borderColor = 'rgba(58,53,48,0.5)';
         btn.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 2px rgba(255,255,255,0.05), 0 1px 4px rgba(0,0,0,0.4)';
       }}
-      title={label}
+      title={hotkey ? `${label} [${hotkey}]` : label}
     >
       {icon}
       {/* Tooltip */}
       <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        {label}
+        {label}{hotkey && <span className="ml-1 text-slate-500">[{hotkey}]</span>}
       </span>
     </button>
   );

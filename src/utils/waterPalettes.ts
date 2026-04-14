@@ -45,26 +45,26 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
   tropical: {
     id: 'tropical',
     label: 'Tropical',
-    description: 'Paler blue water with bright lagoon shallows.',
+    description: 'Electric cyan-turquoise water with bright lagoon shallows.',
     terrain: {
-      deep: [0.26, 0.58, 0.64],
-      shallow: [0.40, 0.76, 0.78],
-      surf: [0.90, 0.96, 0.92],
+      deep: [0.0, 0.52, 0.68],
+      shallow: [0.18, 0.78, 0.82],
+      surf: [0.72, 0.96, 0.95],
     },
     oceanOverlay: {
-      base: [0.48, 0.82, 0.80],
-      outerShallow: [0.36, 0.72, 0.74],
-      paleSurf: [0.88, 0.96, 0.94],
+      base: [0.12, 0.82, 0.85],
+      outerShallow: [0.06, 0.68, 0.78],
+      paleSurf: [0.65, 0.96, 0.96],
     },
     surface: {
-      day: [0.34, 0.72, 0.74],
-      dusk: [0.22, 0.58, 0.64],
-      night: [0.08, 0.24, 0.34],
-      fallbackHex: 0x58bcc3,
+      day: [0.0, 0.58, 0.82],
+      dusk: [0.02, 0.38, 0.56],
+      night: [0.01, 0.04, 0.09],
+      fallbackHex: 0x0094d1,
     },
     map: {
-      deep: [0.24, 0.54, 0.64],
-      shallow: [0.38, 0.72, 0.78],
+      deep: [0.0, 0.48, 0.68],
+      shallow: [0.15, 0.72, 0.82],
     },
   },
   mediterranean: {
@@ -84,7 +84,7 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
     surface: {
       day: [0.02, 0.20, 0.52],
       dusk: [0.01, 0.13, 0.38],
-      night: [0.00, 0.07, 0.24],
+      night: [0.00, 0.01, 0.07],
       fallbackHex: 0x08388a,
     },
     map: {
@@ -109,7 +109,7 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
     surface: {
       day: [0.00, 0.12, 0.44],
       dusk: [0.00, 0.09, 0.33],
-      night: [0.00, 0.06, 0.22],
+      night: [0.00, 0.01, 0.06],
       fallbackHex: 0x001e6f,
     },
     map: {
@@ -127,9 +127,8 @@ export function getDefaultWaterPaletteForClimate(climate: ClimateLike): WaterPal
   switch (climate) {
     case 'tropical':
     case 'monsoon':
-      return 'tropical';
     case 'arid':
-      return 'mediterranean';
+      return 'tropical';
     case 'temperate':
       return 'temperate';
   }

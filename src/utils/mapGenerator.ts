@@ -1,6 +1,6 @@
 import { getTerrainData, setPlacedArchetypes } from './terrain';
-import { Commodity } from '../store/gameStore';
 import { generateCity } from './cityGenerator';
+import { generatePortPrices, generatePortInventory, supplyDemandModifier, ALL_COMMODITIES, type Commodity } from './commodities';
 import {
   PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
@@ -59,7 +59,7 @@ export function focusedPortConfig(portId: string, seed: number, worldSize: numbe
 
 export const DEFAULT_MAP_CONFIG: MapConfig = {
   seed: 1612,
-  worldSize: 300,
+  worldSize: 150,
   portOverrides: corePortsToOverrides(),
 };
 
@@ -226,15 +226,21 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
     }
 
     const portIdx = generatedPorts.length;
+    const baseInventory = generatePortInventory(override.id, prng);
+    const basePrices = generatePortPrices(override.id, prng);
+    // Compute initial effective prices (at baseline supply, modifier = 1.0)
+    const prices = { ...basePrices };
     generatedPorts.push({
       id: override.id,
       name: override.name,
       culture: override.culture,
       scale: override.scale,
       position: [portX, 0.5, portZ] as [number, number, number],
-      inventory: generateInventory(prng),
-      prices: generatePrices(prng),
-      buildings: generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx),
+      inventory: { ...baseInventory },
+      baseInventory,
+      basePrices,
+      prices,
+      buildings: generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx, override.name),
     });
   }
 
@@ -300,22 +306,5 @@ export function findSafeSpawn(ports: { position: [number, number, number] }[]): 
   return [0, 0, 0]; // absolute fallback
 }
 
-function generateInventory(prng: () => number): Record<Commodity, number> {
-  return {
-    Spices: Math.floor(prng() * 100),
-    Silk: Math.floor(prng() * 50),
-    Tea: Math.floor(prng() * 80),
-    Wood: Math.floor(prng() * 200),
-    Cannonballs: Math.floor(prng() * 100),
-  };
-}
-
-function generatePrices(prng: () => number): Record<Commodity, number> {
-  return {
-    Spices: 10 + Math.floor(prng() * 40),
-    Silk: 20 + Math.floor(prng() * 60),
-    Tea: 15 + Math.floor(prng() * 30),
-    Wood: 2 + Math.floor(prng() * 8),
-    Cannonballs: 5 + Math.floor(prng() * 15),
-  };
-}
+// Price & inventory generation now delegated to commodities.ts
+// with per-port trade profiles (produces/trades/demands)
