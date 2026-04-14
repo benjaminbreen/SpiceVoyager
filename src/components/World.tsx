@@ -266,7 +266,7 @@ export function World() {
   // Generate world data once
   const { 
     landTerrainGeometry, generatedPorts, generatedNpcs, terrainMapCanvas, terrainMapWorldHalf,
-    treeData, deadTreeData, cactusData, crabData, palmData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, encounterData,
+    treeData, deadTreeData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
     reseedTerrain(worldSeed);
@@ -287,6 +287,10 @@ export function World() {
     const cacti: { position: [number, number, number], scale: number }[] = [];
     const crabs: { position: [number, number, number], rotation: number }[] = [];
     const palms: PalmEntry[] = [];
+    const mangroves: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const reedBeds: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const siltPatches: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const saltStains: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const thornbushes: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const riceShoots: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const driftwood: { position: [number, number, number], scale: number, rotation: number }[] = [];
@@ -319,7 +323,7 @@ export function World() {
       const worldZ = -y_orig; // We rotate it -90 degrees on X later
 
       const terrain = getTerrainData(x, worldZ);
-      const { height, biome, color, moisture, reefFactor, paddyFlooded, coastSteepness, shallowFactor } = terrain;
+      const { height, biome, color, moisture, reefFactor, paddyFlooded, coastSteepness, shallowFactor, surfFactor, wetSandFactor, beachFactor, slope } = terrain;
       posAttribute.setZ(i, height);
       if (height > SEA_LEVEL - 2) isLand[i] = 1;
 
@@ -389,9 +393,92 @@ export function World() {
             rotation: Math.random() * Math.PI * 2,
           });
         }
+      } else if (biome === 'mangrove') {
+        const flatness = Math.max(0, 1 - slope * 3.2);
+        const edgeWetness = Math.max(wetSandFactor, surfFactor * 0.7);
+        const mangroveDensity = flatness * (0.45 + moisture * 0.45) * (0.55 + edgeWetness * 0.45);
+        if (rand < 0.32 * mangroveDensity && mangroves.length < 340) {
+          mangroves.push({
+            position: [x, height, worldZ],
+            scale: 0.75 + Math.random() * 0.7,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand > 0.88 && edgeWetness > 0.16 && reedBeds.length < 500) {
+          reedBeds.push({
+            position: [x, height + 0.03, worldZ],
+            scale: 0.7 + Math.random() * 0.7,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand > 0.94 && siltPatches.length < 320) {
+          siltPatches.push({
+            position: [x, height + 0.035, worldZ],
+            scale: 0.55 + Math.random() * 0.65,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand < 0.08) {
+          crabs.push({ position: [x, height, worldZ], rotation: Math.random() * Math.PI * 2 });
+        }
+      } else if (biome === 'tidal_flat') {
+        const flatness = Math.max(0, 1 - slope * 4);
+        const reedEdge = Math.max(wetSandFactor, moisture * 0.45);
+        if (rand > 0.91 && reedEdge > 0.22 && reedBeds.length < 500) {
+          reedBeds.push({
+            position: [x, height + 0.03, worldZ],
+            scale: 0.45 + Math.random() * 0.55,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand < 0.16 * flatness && siltPatches.length < 320) {
+          siltPatches.push({
+            position: [x, height + 0.035, worldZ],
+            scale: 0.45 + Math.random() * 0.8,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand < 0.06) {
+          crabs.push({ position: [x, height, worldZ], rotation: Math.random() * Math.PI * 2 });
+        }
+        if (rand > 0.965 && driftwood.length < 200) {
+          driftwood.push({
+            position: [x, height + 0.04, worldZ],
+            scale: 0.12 + Math.random() * 0.18,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+      } else if (biome === 'rocky_shore') {
+        const rockDensity = Math.min(1, coastSteepness * 0.65 + slope * 1.7);
+        if (rand < 0.22 * rockDensity && beachRocks.length < 350) {
+          beachRocks.push({
+            position: [x, height + 0.1, worldZ],
+            scale: 0.25 + Math.random() * 0.55,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand > 0.94 && surfFactor > 0.12 && saltStains.length < 220) {
+          saltStains.push({
+            position: [x, height + 0.04, worldZ],
+            scale: 0.35 + Math.random() * 0.45,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        if (rand > 0.985 && gulls.length < 80) {
+          gulls.push({
+            position: [
+              x + (Math.random() - 0.5) * 16,
+              height + 10 + Math.random() * 12,
+              worldZ + (Math.random() - 0.5) * 16,
+            ],
+            phase: Math.random() * Math.PI * 2,
+            radius: 8 + Math.random() * 12,
+          });
+        }
       } else if (biome === 'beach') {
         // Palm trees on tropical/monsoon beaches
-        if (moisture > 0.35 && rand > 0.94 && palms.length < 500) {
+        const stableSand = beachFactor > wetSandFactor && slope < 0.32;
+        if (stableSand && moisture > 0.35 && rand > 0.94 && palms.length < 500) {
           palms.push({
             position: [x, height, worldZ],
             scale: 0.7 + Math.random() * 0.8,
@@ -417,7 +504,7 @@ export function World() {
             rotation: Math.random() * Math.PI * 2,
           });
         }
-        if (rand2 > 0.95 && coastSteepness > 0.3 && beachRocks.length < 250) {
+        if (rand2 > 0.95 && coastSteepness > 0.3 && beachRocks.length < 350) {
           beachRocks.push({
             position: [x, height + 0.1, worldZ],
             scale: 0.2 + Math.random() * 0.4,
@@ -437,9 +524,9 @@ export function World() {
             radius: 3 + Math.random() * 8,
           });
         }
-      } else if (biome === 'ocean' && height < SEA_LEVEL - 0.3) {
+      } else if ((biome === 'ocean' || biome === 'lagoon') && height < SEA_LEVEL - 0.3) {
         // Coral reef 3D instances — in reef zones, capped for performance
-        if (reefFactor > 0.15 && rand > 0.96 && corals.length < 400) {
+        if ((reefFactor > 0.15 || biome === 'lagoon') && rand > (biome === 'lagoon' ? 0.985 : 0.96) && corals.length < 400) {
           corals.push({
             position: [x, height + 0.1, worldZ],
             scale: 0.3 + Math.random() * 0.7,
@@ -532,6 +619,10 @@ export function World() {
       cactusData: cacti,
       crabData: crabs,
       palmData: palms,
+      mangroveData: mangroves,
+      reedBedData: reedBeds,
+      siltPatchData: siltPatches,
+      saltStainData: saltStains,
       thornbushData: thornbushes,
       riceShootData: riceShoots,
       driftwoodData: driftwood,
@@ -820,6 +911,92 @@ export function World() {
     color: '#2a6e1e',
     side: THREE.DoubleSide,
   }), []);
+
+  // Mangrove cluster — separate prop roots and canopy so the silhouette reads at distance.
+  const mangroveRootGeometry = useMemo(() => {
+    const trunk = new THREE.CylinderGeometry(0.08, 0.12, 1.1, 5);
+    trunk.translate(0, 0.55, 0);
+    const roots: THREE.BufferGeometry[] = [];
+    for (let r = 0; r < 8; r++) {
+      const angle = (r / 8) * Math.PI * 2;
+      const root = new THREE.CylinderGeometry(0.018, 0.038, 1.0 + (r % 3) * 0.12, 4);
+      root.rotateZ(0.72 + (r % 2) * 0.12);
+      root.rotateY(angle);
+      root.translate(Math.sin(angle) * 0.34, 0.34, Math.cos(angle) * 0.34);
+      roots.push(root);
+    }
+    const merged = mergeGeometries([trunk, ...roots]);
+    [trunk, ...roots].forEach(g => g.dispose());
+    return merged ?? new THREE.CylinderGeometry(0.08, 0.12, 1.1, 5);
+  }, []);
+  const mangroveRootMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#4a3324',
+    roughness: 0.95,
+  }), []);
+
+  const mangroveCanopyGeometry = useMemo(() => {
+    const canopyA = new THREE.IcosahedronGeometry(0.55, 0);
+    canopyA.scale(1.25, 0.62, 1.0);
+    canopyA.translate(-0.18, 1.28, 0.02);
+    const canopyB = new THREE.IcosahedronGeometry(0.48, 0);
+    canopyB.scale(1.15, 0.58, 0.95);
+    canopyB.translate(0.32, 1.2, -0.1);
+    const merged = mergeGeometries([canopyA, canopyB]);
+    canopyA.dispose(); canopyB.dispose();
+    return merged ?? new THREE.IcosahedronGeometry(0.6, 0);
+  }, []);
+  const mangroveCanopyMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#1f4b2b',
+    roughness: 0.95,
+  }), []);
+
+  // Reed bed — a small fan of vertical blades, used on tidal flats and mangrove edges
+  const reedBedGeometry = useMemo(() => {
+    const reeds: THREE.BufferGeometry[] = [];
+    for (let r = 0; r < 7; r++) {
+      const reed = new THREE.CylinderGeometry(0.012, 0.018, 0.7 + (r % 3) * 0.14, 3);
+      const angle = (r / 7) * Math.PI * 2;
+      reed.rotateZ((r % 2 === 0 ? 1 : -1) * 0.1);
+      reed.translate(Math.sin(angle) * 0.16, 0.35, Math.cos(angle) * 0.16);
+      reeds.push(reed);
+    }
+    const merged = mergeGeometries(reeds);
+    reeds.forEach(g => g.dispose());
+    return merged ?? new THREE.CylinderGeometry(0.02, 0.02, 0.7, 3);
+  }, []);
+  const reedBedMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#6f7d3d',
+    roughness: 0.9,
+  }), []);
+
+  const siltPatchGeometry = useMemo(() => {
+    const geo = new THREE.CircleGeometry(0.55, 9);
+    geo.scale(1.35, 0.62, 1);
+    geo.rotateX(-Math.PI / 2);
+    return geo;
+  }, []);
+  const siltPatchMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#7a725a',
+    roughness: 1,
+    transparent: true,
+    opacity: 0.58,
+    depthWrite: false,
+  }), []);
+
+  const saltStainGeometry = useMemo(() => {
+    const geo = new THREE.CircleGeometry(0.45, 8);
+    geo.scale(1.45, 0.5, 1);
+    geo.rotateX(-Math.PI / 2);
+    return geo;
+  }, []);
+  const saltStainMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#b7b0a0',
+    roughness: 1,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+  }), []);
+
   const cactusGeometry = useMemo(() => new THREE.CylinderGeometry(0.3, 0.3, 2, 6), []);
   const cactusMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#2E8B57' }), []);
 
@@ -1028,6 +1205,11 @@ export function World() {
   const deadTreeMeshRef = useRef<THREE.InstancedMesh>(null);
   const palmTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const palmFrondMeshRef = useRef<THREE.InstancedMesh>(null);
+  const mangroveRootMeshRef = useRef<THREE.InstancedMesh>(null);
+  const mangroveCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const reedBedMeshRef = useRef<THREE.InstancedMesh>(null);
+  const siltPatchMeshRef = useRef<THREE.InstancedMesh>(null);
+  const saltStainMeshRef = useRef<THREE.InstancedMesh>(null);
   const cactusMeshRef = useRef<THREE.InstancedMesh>(null);
   const thornbushMeshRef = useRef<THREE.InstancedMesh>(null);
   const riceShootMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -1121,6 +1303,52 @@ export function World() {
       });
       palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (mangroveRootMeshRef.current && mangroveCanopyMeshRef.current) {
+      mangroveData.forEach((mangrove, i) => {
+        dummy.position.set(mangrove.position[0], mangrove.position[1], mangrove.position[2]);
+        dummy.scale.set(mangrove.scale, mangrove.scale, mangrove.scale);
+        dummy.rotation.set(0, mangrove.rotation, 0);
+        dummy.updateMatrix();
+        mangroveRootMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        mangroveCanopyMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      mangroveRootMeshRef.current.instanceMatrix.needsUpdate = true;
+      mangroveCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (reedBedMeshRef.current) {
+      reedBedData.forEach((reed, i) => {
+        dummy.position.set(reed.position[0], reed.position[1], reed.position[2]);
+        dummy.scale.set(reed.scale, reed.scale * (0.8 + Math.random() * 0.4), reed.scale);
+        dummy.rotation.set(0, reed.rotation, 0);
+        dummy.updateMatrix();
+        reedBedMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      reedBedMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (siltPatchMeshRef.current) {
+      siltPatchData.forEach((patch, i) => {
+        dummy.position.set(patch.position[0], patch.position[1], patch.position[2]);
+        dummy.scale.set(patch.scale, patch.scale, patch.scale);
+        dummy.rotation.set(0, patch.rotation, 0);
+        dummy.updateMatrix();
+        siltPatchMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      siltPatchMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (saltStainMeshRef.current) {
+      saltStainData.forEach((patch, i) => {
+        dummy.position.set(patch.position[0], patch.position[1], patch.position[2]);
+        dummy.scale.set(patch.scale, patch.scale, patch.scale);
+        dummy.rotation.set(0, patch.rotation, 0);
+        dummy.updateMatrix();
+        saltStainMeshRef.current!.setMatrixAt(i, dummy.matrix);
+      });
+      saltStainMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     if (cactusMeshRef.current) {
@@ -1251,7 +1479,7 @@ export function World() {
       });
       gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
-  }, [treeData, deadTreeData, palmData, cactusData, thornbushData, riceShootData, driftwoodData, beachRockData, crabData, coralData, fishData, turtleData, gullData]);
+  }, [treeData, deadTreeData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, cactusData, thornbushData, riceShootData, driftwoodData, beachRockData, crabData, coralData, fishData, turtleData, gullData]);
 
   // Stabilize shadow camera — snap target to texel grid to prevent shimmer,
   // and move the light position with the player so shadow direction stays constant.
@@ -1555,6 +1783,21 @@ export function World() {
           <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
           <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
         </>
+      )}
+      {mangroveData.length > 0 && (
+        <>
+          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        </>
+      )}
+      {reedBedData.length > 0 && (
+        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+      )}
+      {siltPatchData.length > 0 && (
+        <instancedMesh ref={siltPatchMeshRef} args={[siltPatchGeometry, siltPatchMaterial, siltPatchData.length]} renderOrder={2} />
+      )}
+      {saltStainData.length > 0 && (
+        <instancedMesh ref={saltStainMeshRef} args={[saltStainGeometry, saltStainMaterial, saltStainData.length]} renderOrder={2} />
       )}
       {cactusData.length > 0 && (
         <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />

@@ -169,6 +169,10 @@ export type Nationality =
   | 'Swahili'
   | 'Malay' | 'Acehnese' | 'Javanese' | 'Moluccan'
   | 'Siamese' | 'Japanese' | 'Chinese';
+export type Language =
+  | 'Arabic' | 'Persian' | 'Gujarati' | 'Hindustani'
+  | 'Portuguese' | 'Dutch' | 'English' | 'Spanish' | 'French'
+  | 'Turkish' | 'Malay' | 'Swahili' | 'Chinese' | 'Japanese';
 export type CaptainTrait =
   | 'Silver Tongue'   // better prices at port
   | 'Iron Will'       // slower morale decay
@@ -199,6 +203,7 @@ export interface CrewMember {
   morale: number;      // 1-100
   age: number;
   nationality: Nationality;
+  languages: Language[];
   birthplace: string;
   health: HealthFlag;
   quality: CrewQuality;
@@ -236,6 +241,7 @@ export interface Notification {
   size?: 'normal' | 'grand';
   subtitle?: string;
   imageCandidates?: string[];
+  openPortId?: string;
   timestamp: number;
 }
 
@@ -381,7 +387,7 @@ interface GameState {
   setCrewRole: (crewId: string, role: CrewRole) => void;
   addCrewHistory: (crewId: string, event: string) => void;
 
-  addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; subtitle?: string; imageCandidates?: string[] }) => void;
+  addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; subtitle?: string; imageCandidates?: string[]; openPortId?: string }) => void;
   removeNotification: (id: string) => void;
   addJournalEntry: (category: JournalCategory, message: string, portName?: string) => void;
   addJournalNote: (entryId: string, text: string) => void;
@@ -697,7 +703,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   addNotification: (message, type = 'info', opts) => set((state) => ({
     notifications: [...state.notifications, {
       id: generateId(), message, type, timestamp: Date.now(),
-      size: opts?.size, subtitle: opts?.subtitle, imageCandidates: opts?.imageCandidates,
+      size: opts?.size, subtitle: opts?.subtitle, imageCandidates: opts?.imageCandidates, openPortId: opts?.openPortId,
     }].slice(-5)
   })),
   

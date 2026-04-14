@@ -95,10 +95,10 @@ function useSparkle(interval = 400) {
 
 function NormalToast({
   notification,
-  onDismiss,
+  onClick,
 }: {
   notification: Notification;
-  onDismiss: () => void;
+  onClick: () => void;
 }) {
   const accent = ACCENT[notification.type];
   const sparkle = useSparkle(400);
@@ -120,7 +120,7 @@ function NormalToast({
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      onClick={onDismiss}
+      onClick={onClick}
       className="pointer-events-auto cursor-pointer"
       style={{
         background: `linear-gradient(135deg, ${BG}, #100f0c)`,
@@ -171,10 +171,10 @@ function NormalToast({
 
 function GrandToast({
   notification,
-  onDismiss,
+  onClick,
 }: {
   notification: Notification;
-  onDismiss: () => void;
+  onClick: () => void;
 }) {
   const accent = ACCENT[notification.type];
   const sparkle = useSparkle(350);
@@ -216,7 +216,7 @@ function GrandToast({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      onClick={onDismiss}
+      onClick={onClick}
       className="pointer-events-auto cursor-pointer flex items-center gap-3"
       style={{
         background: `linear-gradient(180deg, #0e0d0a, ${BG})`,
@@ -317,12 +317,16 @@ function GrandToast({
 export function ASCIIToast({
   notification,
   onDismiss,
+  onClick,
 }: {
   notification: Notification;
   onDismiss: () => void;
+  onClick?: () => void;
 }) {
+  const handleClick = onClick ?? onDismiss;
+
   if (notification.size === 'grand') {
-    return <GrandToast notification={notification} onDismiss={onDismiss} />;
+    return <GrandToast notification={notification} onClick={handleClick} />;
   }
-  return <NormalToast notification={notification} onDismiss={onDismiss} />;
+  return <NormalToast notification={notification} onClick={handleClick} />;
 }

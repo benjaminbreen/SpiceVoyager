@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Market of Goa — Trade UI Mockup</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0908;
+    color: #c8bfa8;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .market-panel {
+    width: 100%;
+    max-width: 520px;
+    background: linear-gradient(180deg, #0f0e0b 0%, #0c0b08 100%);
+    border: 1px solid rgba(201,168,76,0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 120px rgba(0,0,0,0.3);
+  }
+
+  /* ── Header ── */
+  .market-header {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    background: rgba(201,168,76,0.03);
+  }
+
+  .market-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #c9a84c;
+    margin-bottom: 10px;
+  }
+
+  .market-stats {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: #6a6355;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .stat-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: #d8ccb0;
+  }
+
+  .hold-bar-wrap {
+    flex: 1;
+    min-width: 80px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hold-bar {
+    flex: 1;
+    height: 5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .hold-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #5a9aaa, #4a8a7a);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  /* ── Tier sections ── */
+  .tier-section {
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .tier-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .tier-header:hover {
+    background: rgba(255,255,255,0.02);
+  }
+
+  .tier-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #5a5445;
+  }
+
+  .tier-count {
+    font-size: 9px;
+    color: #3a3528;
+    margin-left: auto;
+  }
+
+  /* ── Column headers ── */
+  .col-headers {
+    display: grid;
+    grid-template-columns: 28px 1fr 56px 70px 44px 44px;
+    gap: 0;
+    padding: 4px 20px;
+    align-items: center;
+  }
+
+  .col-header {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #4a4538;
+  }
+
+  .col-header.right { text-align: right; }
+  .col-header.center { text-align: center; }
+
+  /* ── Commodity rows ── */
+  .commodity-row {
+    display: grid;
+    grid-template-columns: 28px 1fr 56px 70px 44px 44px;
+    gap: 0;
+    padding: 7px 20px;
+    align-items: center;
+    cursor: pointer;
+    transition: background 0.12s;
+    border-left: 2px solid transparent;
+  }
+
+  .commodity-row:hover {
+    background: rgba(255,255,255,0.025);
+  }
+
+  .commodity-row.selected {
+    background: rgba(201,168,76,0.04);
+    border-left-color: #c9a84c;
+  }
+
+  .commodity-icon {
+    font-size: 14px;
+    text-align: center;
+    line-height: 1;
+  }
+
+  .commodity-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .commodity-name {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: #c8bfa8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .commodity-badge {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    line-height: 1;
+  }
+
+  .badge-local { color: #34d399; }
+  .badge-wanted { color: #fbbf24; }
+
+  .commodity-price {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: #d8ccb0;
+    text-align: right;
+  }
+
+  .price-bar-col {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .price-bar {
+    flex: 1;
+    height: 3px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .price-bar-mid {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255,255,255,0.12);
+  }
+
+  .price-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+
+  .price-tag {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    width: 28px;
+    text-align: left;
+  }
+
+  .tag-low { color: #34d399; }
+  .tag-high { color: #f87171; }
+
+  .inv-cell {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    text-align: right;
+    color: #7a7368;
+  }
+
+  .inv-cell.has-stock { color: #b0a890; }
+
+  /* ── Trade ticket (expanded) ── */
+  .trade-ticket {
+    margin: 0 16px 8px;
+    padding: 14px 16px 16px;
+    background: rgba(201,168,76,0.03);
+    border: 1px solid rgba(201,168,76,0.08);
+    border-radius: 6px;
+    animation: ticketIn 0.2s ease;
+  }
+
+  @keyframes ticketIn {
+    from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+    to { opacity: 1; max-height: 300px; }
+  }
+
+  .ticket-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+
+  .ticket-commodity-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #d8ccb0;
+  }
+
+  .ticket-desc {
+    font-size: 10px;
+    color: #6a6355;
+    font-style: italic;
+    max-width: 200px;
+    text-align: right;
+  }
+
+  .ticket-info {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .ticket-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .ticket-info-label {
+    font-size: 9px;
+    color: #5a5445;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .ticket-info-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: #d8ccb0;
+  }
+
+  .qty-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .qty-label {
+    font-size: 10px;
+    color: #6a6355;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-right: 4px;
+  }
+
+  .qty-presets {
+    display: flex;
+    gap: 3px;
+  }
+
+  .qty-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+    color: #9a9080;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .qty-btn:hover {
+    background: rgba(255,255,255,0.08);
+    color: #d8ccb0;
+  }
+
+  .qty-btn.active {
+    background: rgba(201,168,76,0.12);
+    border-color: rgba(201,168,76,0.25);
+    color: #c9a84c;
+  }
+
+  .qty-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .qty-stepper {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #6a6355;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.12s;
+    user-select: none;
+  }
+
+  .qty-stepper:hover {
+    color: #d8ccb0;
+    background: rgba(255,255,255,0.06);
+  }
+
+  .qty-current {
+    font-family: 'DM Mono', monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: #d8ccb0;
+    min-width: 32px;
+    text-align: center;
+  }
+
+  /* ── Projected costs ── */
+  .projections {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 8px 10px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 4px;
+    flex-wrap: wrap;
+  }
+
+  .projection {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 100px;
+  }
+
+  .proj-label {
+    font-size: 9px;
+    color: #5a5445;
+    font-weight: 500;
+  }
+
+  .proj-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .proj-buy { color: #6dc7a0; }
+  .proj-sell { color: #dba65a; }
+  .proj-hold { color: #7a9aaa; }
+
+  /* ── Trade action buttons ── */
+  .trade-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .trade-btn {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'DM Sans', sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid;
+  }
+
+  .trade-btn .btn-sub {
+    font-size: 10px;
+    font-weight: 500;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0;
+    text-transform: none;
+    opacity: 0.7;
+  }
+
+  .btn-sell {
+    background: rgba(219,166,90,0.06);
+    border-color: rgba(219,166,90,0.15);
+    color: #dba65a;
+  }
+
+  .btn-sell:hover {
+    background: rgba(219,166,90,0.12);
+    border-color: rgba(219,166,90,0.3);
+  }
+
+  .btn-buy {
+    background: rgba(52,211,153,0.06);
+    border-color: rgba(52,211,153,0.15);
+    color: #34d399;
+  }
+
+  .btn-buy:hover {
+    background: rgba(52,211,153,0.12);
+    border-color: rgba(52,211,153,0.3);
+  }
+
+  .btn-disabled {
+    opacity: 0.25;
+    pointer-events: none;
+  }
+
+  /* ── Divider line ── */
+  .section-rule {
+    height: 1px;
+    margin: 0 20px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  }
+
+  /* ── Comparison: old vs new label ── */
+  .version-label {
+    text-align: center;
+    padding: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #5a5445;
+    margin-bottom: 4px;
+  }
+
+  .panels-wrap {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 1100px;
+  }
+
+  .panel-column {
+    flex: 1;
+    min-width: 340px;
+    max-width: 520px;
+  }
+
+  /* OLD STYLE — for comparison */
+  .old-market {
+    width: 100%;
+    max-width: 520px;
+    background: linear-gradient(180deg, #0f0e0b 0%, #0c0b08 100%);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    overflow: hidden;
+    padding: 12px;
+  }
+
+  .old-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .old-row:hover { background: rgba(255,255,255,0.02); }
+
+  .old-pip {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .old-name {
+    font-size: 10px;
+    color: #b0a890;
+    width: 80px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .old-price {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    color: #b0a890;
+    width: 32px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .old-bar-wrap {
+    width: 50px;
+    height: 3px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .old-bar-mid {
+    position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 1px; background: rgba(255,255,255,0.1);
+  }
+
+  .old-bar-fill {
+    height: 100%; border-radius: 2px;
+  }
+
+  .old-tag {
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    width: 24px;
+    flex-shrink: 0;
+  }
+
+  .old-inv {
+    font-size: 7px;
+    color: #4a4538;
+    flex-shrink: 0;
+    width: 50px;
+    display: flex;
+    gap: 6px;
+  }
+
+  .old-btns {
+    display: flex;
+    gap: 1px;
+    flex-shrink: 0;
+  }
+
+  .old-btn {
+    padding: 2px 5px;
+    font-size: 7px;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .old-btn-sell {
+    background: rgba(251,191,36,0.05);
+    color: rgba(251,191,36,0.6);
+  }
+
+  .old-btn-buy {
+    background: rgba(52,211,153,0.05);
+    color: rgba(52,211,153,0.6);
+  }
+</style>
+</head>
+<body>
+
+<div class="panels-wrap">
+
+<!-- ═══════════ OLD (CURRENT) VERSION ═══════════ -->
+<div class="panel-column">
+  <div class="version-label">Current UI (for comparison)</div>
+  <div class="old-market">
+    <div style="font-size:8px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#5a5445;margin-bottom:6px;padding:0 4px;">
+      ▸ Staples & Materials · 5 goods
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#34d399"></div>
+      <div class="old-name">Rice</div>
+      <div class="old-price">3g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:22%;background:rgba(52,211,153,0.4)"></div></div>
+      <div class="old-tag" style="color:#34d399">LOW</div>
+      <div class="old-inv"><span>5⛵</span><span>48⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-sell">-5</button>
+        <button class="old-btn old-btn-sell">All</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#475569"></div>
+      <div class="old-name">Timber</div>
+      <div class="old-price">5g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:40%;background:rgba(71,85,105,0.25)"></div></div>
+      <div class="old-tag"></div>
+      <div class="old-inv"><span>3⛵</span><span>12⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#475569"></div>
+      <div class="old-name">Iron</div>
+      <div class="old-price">7g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:52%;background:rgba(71,85,105,0.25)"></div></div>
+      <div class="old-tag"></div>
+      <div class="old-inv"><span>0⛵</span><span>8⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#f87171"></div>
+      <div class="old-name" style="font-size:9px">Cotton Textiles</div>
+      <div class="old-price">9g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:72%;background:rgba(248,113,113,0.3)"></div></div>
+      <div class="old-tag" style="color:#f87171">HIGH</div>
+      <div class="old-inv"><span>12⛵</span><span>22⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-sell">-5</button>
+        <button class="old-btn old-btn-sell">All</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#475569"></div>
+      <div class="old-name">Munitions</div>
+      <div class="old-price">8g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:48%;background:rgba(71,85,105,0.25)"></div></div>
+      <div class="old-tag"></div>
+      <div class="old-inv"><span>6⛵</span><span>15⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-sell">-5</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div style="font-size:8px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#5a5445;margin:8px 0 6px;padding:0 4px;">
+      ▸ Spices & Stimulants · 6 goods
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#34d399"></div>
+      <div class="old-name">Black Pepper</div>
+      <div class="old-price">18g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:28%;background:rgba(52,211,153,0.4)"></div></div>
+      <div class="old-tag" style="color:#34d399">LOW</div>
+      <div class="old-inv"><span>6⛵</span><span>42⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-sell">-5</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#475569"></div>
+      <div class="old-name">Cinnamon</div>
+      <div class="old-price">26g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:45%;background:rgba(71,85,105,0.25)"></div></div>
+      <div class="old-tag"></div>
+      <div class="old-inv"><span>0⛵</span><span>14⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#34d399"></div>
+      <div class="old-name">Cardamom</div>
+      <div class="old-price">14g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:30%;background:rgba(52,211,153,0.4)"></div></div>
+      <div class="old-tag" style="color:#34d399">LOW</div>
+      <div class="old-inv"><span>2⛵</span><span>38⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-sell">-1</button>
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#34d399"></div>
+      <div class="old-name">Ginger</div>
+      <div class="old-price">11g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:32%;background:rgba(52,211,153,0.4)"></div></div>
+      <div class="old-tag" style="color:#34d399">LOW</div>
+      <div class="old-inv"><span>0⛵</span><span>30⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">+5</button>
+        <button class="old-btn old-btn-buy">+10</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+
+    <div class="old-row">
+      <div class="old-pip" style="background:#f87171"></div>
+      <div class="old-name">Coffee</div>
+      <div class="old-price">34g</div>
+      <div class="old-bar-wrap"><div class="old-bar-mid"></div><div class="old-bar-fill" style="width:78%;background:rgba(248,113,113,0.3)"></div></div>
+      <div class="old-tag" style="color:#f87171">HIGH</div>
+      <div class="old-inv"><span>0⛵</span><span>3⚓</span></div>
+      <div class="old-btns">
+        <button class="old-btn old-btn-buy">+1</button>
+        <button class="old-btn old-btn-buy">Max</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ NEW VERSION ═══════════ -->
+<div class="panel-column">
+  <div class="version-label">Proposed UI</div>
+  <div class="market-panel">
+    <div class="market-header">
+      <div class="market-title">Market of Goa</div>
+      <div class="market-stats">
+        <div class="stat-item">
+          <span class="stat-label">Purse</span>
+          <span class="stat-value" style="color:#c9a84c">1,240g</span>
+        </div>
+        <div class="stat-item hold-bar-wrap">
+          <span class="stat-label">Hold</span>
+          <div class="hold-bar"><div class="hold-bar-fill" style="width:47%"></div></div>
+          <span class="stat-value" style="font-size:11px">38<span style="color:#4a4538">/80</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tier: Staples -->
+    <div class="tier-section">
+      <div class="tier-header">
+        <span class="tier-label">Staples & Materials</span>
+        <span class="tier-count">5 goods</span>
+      </div>
+
+      <div class="col-headers">
+        <div class="col-header"></div>
+        <div class="col-header">Good</div>
+        <div class="col-header right">Price</div>
+        <div class="col-header center">Market</div>
+        <div class="col-header right">Port</div>
+        <div class="col-header right">Hold</div>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#d4c090">⁂</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Rice</span>
+        </div>
+        <span class="commodity-price">3g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:22%;background:rgba(52,211,153,0.5)"></div></div>
+          <span class="price-tag tag-low">LOW</span>
+        </div>
+        <span class="inv-cell has-stock">48</span>
+        <span class="inv-cell has-stock">5</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#8B6914">≡</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Timber</span>
+        </div>
+        <span class="commodity-price">5g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:40%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">12</span>
+        <span class="inv-cell has-stock">3</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#7a8a9a">⚒</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Iron</span>
+        </div>
+        <span class="commodity-price">7g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:52%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">8</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#e8dcc8">⚑</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Cotton Textiles</span>
+        </div>
+        <span class="commodity-price">9g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:72%;background:rgba(248,113,113,0.35)"></div></div>
+          <span class="price-tag tag-high">HIGH</span>
+        </div>
+        <span class="inv-cell has-stock">22</span>
+        <span class="inv-cell has-stock">12</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#78909c">●</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Munitions</span>
+        </div>
+        <span class="commodity-price">8g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:48%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">15</span>
+        <span class="inv-cell has-stock">6</span>
+      </div>
+    </div>
+
+    <div class="section-rule"></div>
+
+    <!-- Tier: Spices -->
+    <div class="tier-section">
+      <div class="tier-header">
+        <span class="tier-label">Spices & Stimulants</span>
+        <span class="tier-count">6 goods</span>
+      </div>
+
+      <div class="col-headers">
+        <div class="col-header"></div>
+        <div class="col-header">Good</div>
+        <div class="col-header right">Price</div>
+        <div class="col-header center">Market</div>
+        <div class="col-header right">Port</div>
+        <div class="col-header right">Hold</div>
+      </div>
+
+      <!-- SELECTED ROW -->
+      <div class="commodity-row selected">
+        <span class="commodity-icon" style="color:#4a4a4a">✦</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Black Pepper</span>
+          <span class="commodity-badge badge-local">LOCAL</span>
+        </div>
+        <span class="commodity-price">18g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:28%;background:rgba(52,211,153,0.5)"></div></div>
+          <span class="price-tag tag-low">LOW</span>
+        </div>
+        <span class="inv-cell has-stock">42</span>
+        <span class="inv-cell has-stock">6</span>
+      </div>
+
+      <!-- TRADE TICKET (expanded) -->
+      <div class="trade-ticket">
+        <div class="ticket-top">
+          <span class="ticket-commodity-name">✦ Black Pepper</span>
+          <span class="ticket-desc">The king of spices. Malabar Coast monopoly.</span>
+        </div>
+
+        <div class="ticket-info">
+          <div class="ticket-info-item">
+            <span class="ticket-info-label">Port stock</span>
+            <span class="ticket-info-value">42</span>
+          </div>
+          <div class="ticket-info-item">
+            <span class="ticket-info-label">In hold</span>
+            <span class="ticket-info-value">6</span>
+          </div>
+          <div class="ticket-info-item">
+            <span class="ticket-info-label">Price</span>
+            <span class="ticket-info-value">18g <span style="color:#34d399;font-size:9px">LOW</span></span>
+          </div>
+          <div class="ticket-info-item">
+            <span class="ticket-info-label">Weight</span>
+            <span class="ticket-info-value">1t each</span>
+          </div>
+        </div>
+
+        <div class="qty-section">
+          <span class="qty-label">Qty</span>
+          <div class="qty-presets">
+            <button class="qty-btn">1</button>
+            <button class="qty-btn">5</button>
+            <button class="qty-btn active">10</button>
+            <button class="qty-btn">Max</button>
+          </div>
+          <div class="qty-display">
+            <div class="qty-stepper">−</div>
+            <span class="qty-current">10</span>
+            <div class="qty-stepper">+</div>
+          </div>
+        </div>
+
+        <div class="projections">
+          <div class="projection">
+            <span class="proj-label">Buy cost</span>
+            <span class="proj-value proj-buy">180g</span>
+          </div>
+          <div class="projection">
+            <span class="proj-label">Sell gain</span>
+            <span class="proj-value proj-sell">86g</span>
+          </div>
+          <div class="projection">
+            <span class="proj-label">Hold after buy</span>
+            <span class="proj-value proj-hold">48 / 80t</span>
+          </div>
+        </div>
+
+        <div class="trade-actions">
+          <button class="trade-btn btn-sell">
+            Sell 6
+            <span class="btn-sub">+86g</span>
+          </button>
+          <button class="trade-btn btn-buy">
+            Buy 10
+            <span class="btn-sub">−180g</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Remaining rows -->
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#c47a3a">⌇</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Cinnamon</span>
+          <span class="commodity-badge badge-local">LOCAL</span>
+        </div>
+        <span class="commodity-price">26g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:45%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">14</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#7cb342">❧</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Cardamom</span>
+          <span class="commodity-badge badge-local">LOCAL</span>
+        </div>
+        <span class="commodity-price">14g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:30%;background:rgba(52,211,153,0.5)"></div></div>
+          <span class="price-tag tag-low">LOW</span>
+        </div>
+        <span class="inv-cell has-stock">38</span>
+        <span class="inv-cell has-stock">2</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#e6a830">⌁</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Ginger</span>
+          <span class="commodity-badge badge-local">LOCAL</span>
+        </div>
+        <span class="commodity-price">11g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:32%;background:rgba(52,211,153,0.5)"></div></div>
+          <span class="price-tag tag-low">LOW</span>
+        </div>
+        <span class="inv-cell has-stock">30</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#5d4037">♨</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Coffee</span>
+        </div>
+        <span class="commodity-price">34g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:78%;background:rgba(248,113,113,0.35)"></div></div>
+          <span class="price-tag tag-high">HIGH</span>
+        </div>
+        <span class="inv-cell">3</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#7c6b4f">⌘</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Tobacco</span>
+        </div>
+        <span class="commodity-price">15g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:42%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">9</span>
+        <span class="inv-cell">0</span>
+      </div>
+    </div>
+
+    <div class="section-rule"></div>
+
+    <!-- Tier: Luxury -->
+    <div class="tier-section">
+      <div class="tier-header">
+        <span class="tier-label">Luxury Goods</span>
+        <span class="tier-count">4 goods</span>
+      </div>
+
+      <div class="col-headers">
+        <div class="col-header"></div>
+        <div class="col-header">Good</div>
+        <div class="col-header right">Price</div>
+        <div class="col-header center">Market</div>
+        <div class="col-header right">Port</div>
+        <div class="col-header right">Hold</div>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#8b4513">✿</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Cloves</span>
+          <span class="commodity-badge badge-wanted">WANTED</span>
+        </div>
+        <span class="commodity-price">58g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:68%;background:rgba(248,113,113,0.35)"></div></div>
+          <span class="price-tag tag-high">HIGH</span>
+        </div>
+        <span class="inv-cell">2</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#3f51b5">◆</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Indigo</span>
+        </div>
+        <span class="commodity-price">22g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:44%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">18</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#b0bec5">☿</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Quicksilver</span>
+        </div>
+        <span class="commodity-price">38g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:50%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">6</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#e53935">⌗</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Red Coral</span>
+        </div>
+        <span class="commodity-price">31g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:46%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">4</span>
+        <span class="inv-cell">0</span>
+      </div>
+    </div>
+
+    <div class="section-rule"></div>
+
+    <!-- Tier: Precious -->
+    <div class="tier-section">
+      <div class="tier-header">
+        <span class="tier-label">Precious Rarities</span>
+        <span class="tier-count">2 goods</span>
+      </div>
+
+      <div class="col-headers">
+        <div class="col-header"></div>
+        <div class="col-header">Good</div>
+        <div class="col-header right">Price</div>
+        <div class="col-header center">Market</div>
+        <div class="col-header right">Port</div>
+        <div class="col-header right">Hold</div>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#a1887f">◎</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Bezoar Stones</span>
+        </div>
+        <span class="commodity-price">140g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:55%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell">3</span>
+        <span class="inv-cell">0</span>
+      </div>
+
+      <div class="commodity-row">
+        <span class="commodity-icon" style="color:#880e4f">❀</span>
+        <div class="commodity-name-col">
+          <span class="commodity-name">Opium</span>
+        </div>
+        <span class="commodity-price">52g</span>
+        <div class="price-bar-col">
+          <div class="price-bar"><div class="price-bar-mid"></div><div class="price-bar-fill" style="width:44%;background:rgba(71,85,105,0.3)"></div></div>
+          <span class="price-tag"></span>
+        </div>
+        <span class="inv-cell has-stock">8</span>
+        <span class="inv-cell">0</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div>
+
+</body>
+</html>

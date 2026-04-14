@@ -170,13 +170,16 @@ export function terrainChartColor(terrain: TerrainData, waterPalette: WaterPalet
     let color = oceanColor(terrain.height, waterPalette);
     const shallow = tintColor(...waterPalette.map.shallow);
     color = mixColor(color, shallow, Math.min(1, terrain.shallowFactor * 0.75 + terrain.reefFactor * 0.35));
+    if (terrain.biome === 'lagoon') {
+      color = mixColor(color, [0.26, 0.58, 0.52], 0.35);
+    }
     return clampMapColor(color, 0.12);
   }
 
   let color: [number, number, number];
   switch (terrain.biome) {
     case 'beach':
-      color = [0.78, 0.68, 0.43];
+      color = [0.86, 0.76, 0.50];
       break;
     case 'desert':
       color = [0.76, 0.63, 0.36];
@@ -186,6 +189,15 @@ export function terrainChartColor(terrain: TerrainData, waterPalette: WaterPalet
       break;
     case 'paddy':
       color = [0.40, 0.58, 0.34];
+      break;
+    case 'mangrove':
+      color = [0.24, 0.38, 0.28];
+      break;
+    case 'tidal_flat':
+      color = [0.47, 0.43, 0.34];
+      break;
+    case 'rocky_shore':
+      color = [0.42, 0.38, 0.33];
       break;
     case 'swamp':
       color = [0.30, 0.43, 0.31];
@@ -216,10 +228,40 @@ export function terrainChartColor(terrain: TerrainData, waterPalette: WaterPalet
   }
 
   color = mixColor(color, [0.48, 0.42, 0.34], Math.min(0.28, terrain.slope * 0.35));
-  color = mixColor(color, [0.82, 0.70, 0.45], terrain.beachFactor * 0.35);
-  color = mixColor(color, [0.58, 0.48, 0.34], terrain.wetSandFactor * 0.45);
+  color = mixColor(color, [0.92, 0.84, 0.58], terrain.beachFactor * 0.42);
+  color = mixColor(color, [0.68, 0.58, 0.40], terrain.wetSandFactor * 0.38);
 
   return clampMapColor(color, 0.22);
+}
+
+function terrainHoverLabel(terrain: TerrainData): string {
+  if (terrain.biome === 'lagoon') return 'Lagoon';
+  if (terrain.height < SEA_LEVEL) {
+    if (terrain.reefFactor > 0.24) return 'Coral reef';
+    if (terrain.surfFactor > 0.45) return 'Surf';
+    if (terrain.shallowFactor > 0.28) return 'Shallow water';
+    return 'Deep water';
+  }
+
+  switch (terrain.biome) {
+    case 'mangrove': return 'Mangrove';
+    case 'tidal_flat': return 'Tidal flat';
+    case 'rocky_shore': return 'Rocky shore';
+    case 'beach': return 'Beach';
+    case 'desert': return 'Desert';
+    case 'scrubland': return 'Scrubland';
+    case 'paddy': return 'Paddy field';
+    case 'swamp': return 'Swamp';
+    case 'grassland': return 'Grassland';
+    case 'forest': return 'Forest';
+    case 'jungle': return 'Jungle';
+    case 'arroyo': return 'Arroyo';
+    case 'snow': return 'Snowfield';
+    case 'volcano': return 'Volcanic slope';
+    case 'river': return 'River';
+    case 'waterfall': return 'Waterfall';
+    default: return 'Terrain';
+  }
 }
 
 interface WorldMapProps {
@@ -233,6 +275,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const [dragging, setDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hoveredPort, setHoveredPort] = useState<string | null>(null);
+  const [hoveredTerrainLabel, setHoveredTerrainLabel] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(!_terrainReady);
   const [mapWorldHalf, setMapWorldHalf] = useState(_terrainWorldHalf);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -563,6 +606,8 @@ export function WorldMap({ onClose }: WorldMapProps) {
     const cy = (mouseY - h / 2) / zoom - offset.y * h / 2;
     const worldX = (cx / (w / 2)) * mapWorldHalf;
     const worldZ = (cy / (h / 2)) * mapWorldHalf;
+    const terrainLabel = terrainHoverLabel(getTerrainData(worldX, worldZ));
+    setHoveredTerrainLabel(prev => prev === terrainLabel ? prev : terrainLabel);
 
     let found: string | null = null;
     ports.forEach(port => {
@@ -588,6 +633,11 @@ export function WorldMap({ onClose }: WorldMapProps) {
   };
 
   const handleMouseUp = () => setDragging(false);
+  const handleMouseLeave = () => {
+    setDragging(false);
+    setHoveredPort(null);
+    setHoveredTerrainLabel(null);
+  };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.stopPropagation();
@@ -651,7 +701,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
           onWheel={handleWheel}
         />
 
@@ -760,6 +810,17 @@ export function WorldMap({ onClose }: WorldMapProps) {
           <span>Scroll or +/- to zoom</span>
           <span>ESC to close</span>
         </div>
+
+        {/* Hovered terrain label */}
+        {hoveredTerrainLabel && !isRendering && (
+          <div className="absolute bottom-9 left-1/2 -translate-x-1/2 z-20 pointer-events-none
+            rounded-md border border-[#2a2d3a]/60 bg-[#0a0e18]/75 backdrop-blur-md
+            px-3 py-1 shadow-lg">
+            <span className="text-[11px] font-semibold tracking-wide text-amber-100/90">
+              {hoveredTerrainLabel}
+            </span>
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

@@ -101,7 +101,34 @@ function bandFactor(value: number, start: number, fullStart: number, fullEnd: nu
   return clamp01(smoothstep(start, fullStart, value) * (1 - smoothstep(fullEnd, end, value)));
 }
 
-export type BiomeType = 'ocean' | 'beach' | 'desert' | 'scrubland' | 'paddy' | 'swamp' | 'grassland' | 'forest' | 'jungle' | 'arroyo' | 'snow' | 'volcano' | 'river' | 'waterfall';
+const CARDINAL_RADIANS = {
+  N: 0,
+  NE: Math.PI / 4,
+  E: Math.PI / 2,
+  SE: (3 * Math.PI) / 4,
+  S: Math.PI,
+  SW: (5 * Math.PI) / 4,
+  W: (3 * Math.PI) / 2,
+  NW: (7 * Math.PI) / 4,
+} as const;
+
+export type CoastalBiomeType = 'mangrove' | 'tidal_flat' | 'rocky_shore' | 'lagoon';
+export type BiomeType =
+  | 'ocean'
+  | 'beach'
+  | 'desert'
+  | 'scrubland'
+  | 'paddy'
+  | 'swamp'
+  | 'grassland'
+  | 'forest'
+  | 'jungle'
+  | 'arroyo'
+  | 'snow'
+  | 'volcano'
+  | 'river'
+  | 'waterfall'
+  | CoastalBiomeType;
 
 // Find nearest port climate for biome decisions that depend on cultural context.
 // Results are cached in a spatial grid so repeated queries for nearby coords are O(1).
@@ -144,8 +171,8 @@ export interface TerrainData {
   slope: number;
 }
 
-const WET_SAND_COLOR: TerrainColor = [0.68, 0.59, 0.43];
-const DRY_SAND_COLOR: TerrainColor = [0.86, 0.78, 0.58];
+const WET_SAND_COLOR: TerrainColor = [0.76, 0.68, 0.50];
+const DRY_SAND_COLOR: TerrainColor = [0.94, 0.86, 0.62];
 const ROCKY_SHORE_COLOR: TerrainColor = [0.47, 0.41, 0.35];
 
 // Cache resolved water palette to avoid store lookups per vertex
@@ -183,7 +210,7 @@ function getHeightOnly(x: number, z: number): number {
       const fade = 1 - smoothstep(_meshHalf * 0.88, _meshHalf, edgeDist);
       shape = shape * fade - (1 - fade) * 0.5;
     }
-    h = shape > 0 ? shape * 22 + _mainNoise(x * 0.02, z * 0.02) * 4 : shape * 12;
+    h = archetypeHeightFromShape(x, z, dx, dz, shape, pa.def);
     appliedArchetype = true;
   }
 
@@ -191,6 +218,140 @@ function getHeightOnly(x: number, z: number): number {
     h = SEA_LEVEL - 5;
   }
   return h - 7;
+}
+
+function climateWindStrength(climate: ClimateProfile): number {
+  switch (climate) {
+    case 'monsoon': return 1.0;
+    case 'tropical': return 0.85;
+    case 'temperate': return 0.55;
+    case 'arid': return 0.35;
+  }
+}
+
+function archetypeMountainStrength(archetype: PortDefinition): number {
+  let strength = 0.58;
+  switch (archetype.geography) {
+    case 'bay':
+    case 'crater_harbor':
+      strength = 1.15;
+      break;
+    case 'continental_coast':
+    case 'inlet':
+    case 'peninsula':
+      strength = 0.70;
+      break;
+    case 'island':
+    case 'coastal_island':
+      strength = 0.58;
+      break;
+    case 'estuary':
+    case 'strait':
+      strength = 0.34;
+      break;
+    case 'archipelago':
+      strength = 0.45;
+      break;
+  }
+
+  if (archetype.climate === 'arid') strength += 0.12;
+  if (archetype.id === 'muscat' || archetype.id === 'aden' || archetype.id === 'socotra') strength += 0.55;
+  if (archetype.id === 'mocha') strength += 0.65;
+  if (archetype.id === 'zanzibar' || archetype.id === 'diu') strength -= 0.12;
+  return Math.max(0.18, strength);
+}
+
+function archetypeHeightFromShape(
+  x: number,
+  z: number,
+  localX: number,
+  localZ: number,
+  shape: number,
+  archetype: PortDefinition,
+): number {
+  if (shape <= 0) return shape * 12;
+
+  // Keep beaches, harbor edges, and most low ground calm; concentrate relief inland.
+  const landDepth = smoothstep(0.24, 0.70, shape);
+  const inlandBack = smoothstep(0.50, 0.86, shape);
+  const strength = archetypeMountainStrength(archetype);
+  const openAngle = CARDINAL_RADIANS[archetype.openDirection];
+  const openX = Math.sin(openAngle);
+  const openZ = Math.cos(openAngle);
+  const harborSide = localX * openX + localZ * openZ;
+  const inlandDistance = -harborSide;
+  const inlandBias = smoothstep(-18, 95, inlandDistance);
+  const summitOffset = archetype.geography === 'island' || archetype.geography === 'coastal_island'
+    ? 35
+    : archetype.geography === 'continental_coast' || archetype.geography === 'inlet' || archetype.geography === 'peninsula'
+    ? 125
+    : 85;
+  const ruggedBackdrop = archetype.id === 'muscat'
+    || archetype.id === 'aden'
+    || archetype.id === 'socotra'
+    || archetype.id === 'mocha';
+  const summitSpread = ruggedBackdrop
+    ? 170
+    : 135;
+  const summitX = -openX * summitOffset;
+  const summitZ = -openZ * summitOffset;
+  const summitDist = Math.sqrt((localX - summitX) ** 2 + (localZ - summitZ) ** 2);
+  const interiorSummit = (1 - smoothstep(summitSpread * 0.34, summitSpread, summitDist))
+    * smoothstep(0.34, 0.72, shape)
+    * (0.45 + inlandBias * 0.55);
+
+  const ridgeNoise = 1 - Math.abs(_mainNoise(x * 0.010 + 712.4, z * 0.006 - 248.1));
+  const ridge = smoothstep(0.66, 0.90, ridgeNoise);
+  const massifNoise = (_patchNoise(x * 0.0035 - 190.0, z * 0.0035 + 503.0) + 1) * 0.5;
+  const massif = Math.max(interiorSummit * 0.85, smoothstep(0.66, 0.88, massifNoise));
+  const peakNoise = (_volcanoNoise(x * 0.004 + 914.0, z * 0.004 - 313.0) + 1) * 0.5;
+  const peak = Math.max(interiorSummit * 0.75, smoothstep(0.90, 0.985, peakNoise));
+  const detail = _mainNoise(x * 0.025, z * 0.025) * 3.2;
+  const escarpment = bandFactor(
+    inlandDistance,
+    45,
+    ruggedBackdrop ? 90 : 115,
+    ruggedBackdrop ? 230 : 190,
+    ruggedBackdrop ? 320 : 270,
+  ) * smoothstep(0.26, 0.62, shape);
+
+  const ridgeUplift = ridge * (0.35 + massif * 0.65) * landDepth * inlandBias * strength * 8.5;
+  const massifUplift = massif * inlandBack * strength * 11;
+  const peakUplift = peak * massif * inlandBack * strength * 12;
+  const escarpmentUplift = escarpment * strength * (ruggedBackdrop ? 14 : 7);
+
+  return shape * 22.5 + detail + ridgeUplift + massifUplift + peakUplift + escarpmentUplift;
+}
+
+function applyWindwardMoisture(
+  x: number,
+  z: number,
+  height: number,
+  moisture: number,
+  archetype: PortDefinition,
+): number {
+  const openAngle = CARDINAL_RADIANS[archetype.openDirection];
+  const openX = Math.sin(openAngle);
+  const openZ = Math.cos(openAngle);
+  // Treat the harbor-facing sea direction as the prevailing source of moist air.
+  const flowX = -openX;
+  const flowZ = -openZ;
+  const ridgeSample = 70;
+  const slopeSample = 22;
+  const upwindHeight = getHeightOnly(x - flowX * ridgeSample, z - flowZ * ridgeSample);
+  const downwindHeight = getHeightOnly(x + flowX * slopeSample, z + flowZ * slopeSample);
+  const slopeIntoWind = downwindHeight - getHeightOnly(x - flowX * slopeSample, z - flowZ * slopeSample);
+  const oceanFetch = smoothstep(SEA_LEVEL + 0.8, SEA_LEVEL - 1.8, upwindHeight);
+  const orographicLift = smoothstep(1.0, 7.0, slopeIntoWind);
+  const rainShadow = smoothstep(5.0, 16.0, upwindHeight - height);
+  const strength = climateWindStrength(archetype.climate);
+
+  return clamp01(
+    moisture
+      + oceanFetch * strength * 0.09
+      + orographicLift * strength * 0.13
+      - rainShadow * strength * 0.16,
+  );
 }
 
 export function getTerrainData(x: number, z: number): TerrainData {
@@ -248,10 +409,8 @@ export function getTerrainData(x: number, z: number): TerrainData {
       shape = shape * fade - (1 - fade) * 0.5;
     }
 
-    // Convert shape to height: positive = land (~15-25 units), negative = water (~-10)
-    const archetypeHeight = shape > 0
-      ? shape * 22 + _mainNoise(x * 0.02, z * 0.02) * 4
-      : shape * 12;
+    // Convert shape to height, with occasional inland ridges/massifs while keeping coastlines low.
+    const archetypeHeight = archetypeHeightFromShape(x, z, dx, dz, shape, pa.def);
 
     finalHeight = archetypeHeight;
     appliedArchetype = true;
@@ -259,6 +418,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
     // Climate moisture override
     const [moistMin, moistMax] = getClimateMoisture(pa.def.climate);
     moisture = moistMin + (_moistureNoise(x * 0.004, z * 0.004) + 1) / 2 * (moistMax - moistMin);
+    moisture = applyWindwardMoisture(x, z, finalHeight - 7, moisture, pa.def);
   }
 
   // Suppress random noise-based islands when an archetype is active
@@ -311,11 +471,14 @@ export function getTerrainData(x: number, z: number): TerrainData {
   const coastReliefNoise = Math.abs(_mainNoise(x * 0.008 + 321.5, z * 0.008 - 187.2));
   const coastSteepness = clamp01(smoothstep(0.42, 0.86, mask) * 0.48 + coastReliefNoise * 0.52);
   const coastWidthScale = 1 - coastSteepness;
+  const nearbyClimate = getNearestClimate(x, z);
+  const sandyClimate = nearbyClimate === 'tropical' || nearbyClimate === 'monsoon';
+  const beachWidthBoost = (0.72 + (sandyClimate ? 0.42 : 0)) * coastWidthScale * (1 - slope * 0.55);
 
-  const shallowDepth = lerp(2.4, 5.8, coastWidthScale);
-  const surfHeight = lerp(0.16, 0.62, coastWidthScale);
-  const wetSandHeight = lerp(0.42, 1.15, coastWidthScale);
-  const dryBeachHeight = lerp(0.95, 2.45, coastWidthScale);
+  const shallowDepth = lerp(2.4, 5.8 + beachWidthBoost * 1.1, coastWidthScale);
+  const surfHeight = lerp(0.16, 0.62 + beachWidthBoost * 0.12, coastWidthScale);
+  const wetSandHeight = lerp(0.42, 1.15 + beachWidthBoost * 0.34, coastWidthScale);
+  const dryBeachHeight = lerp(0.95, 2.45 + beachWidthBoost * 0.95, coastWidthScale);
   const coastlineNoise = _mainNoise(x * 0.014 + 913.2, z * 0.014 - 447.7) * lerp(0.14, 0.42, coastWidthScale);
   const coastalHeight = finalHeight - coastlineNoise;
 
@@ -413,6 +576,18 @@ export function getTerrainData(x: number, z: number): TerrainData {
         : [0.58, 0.68, 0.32];  // yellow-green
       color = mixColor(color, coralColor, reefFactor * 0.4);
     }
+
+    if (shallowFactor > 0.45 && coastSteepness < 0.36 && moisture > 0.48) {
+      biome = 'lagoon';
+      const lagoonColor: TerrainColor = [0.20, 0.62, 0.58];
+      const sandbarColor: TerrainColor = [0.58, 0.70, 0.52];
+      const channelColor: TerrainColor = [0.10, 0.42, 0.48];
+      const sandbarBlend = smoothstep(0.30, 0.58, patch1) * shallowFactor * 0.28;
+      const channelBlend = smoothstep(-0.20, -0.46, patch2) * 0.22;
+      color = mixColor(color, lagoonColor, 0.35 + shallowFactor * 0.25);
+      color = mixColor(color, sandbarColor, sandbarBlend);
+      color = mixColor(color, channelColor, channelBlend);
+    }
   } else if (isVolcano) {
     biome = 'volcano';
     const volNoise = _mainNoise(x * 0.04 + 77, z * 0.04 + 77) * 0.04;
@@ -429,14 +604,27 @@ export function getTerrainData(x: number, z: number): TerrainData {
       const glowVar = _mainNoise(x * 0.08, z * 0.08) * 0.1;
       inlandColor = [0.8 + glowVar, 0.2 - glowVar * 0.5, 0.0];
     }
-  } else if (biomeHeight > 22) {
+  } else if (biomeHeight > 28) {
     biome = 'snow';
     const snowNoise = _mainNoise(x * 0.03 + 55, z * 0.03 + 55) * 0.03;
     // Patchy snow — windswept rock exposure, deep drifts
     const pureSnow: TerrainColor = [0.92 + snowNoise, 0.92 + snowNoise * 0.5, 0.96 - snowNoise];
     const windsweptRock: TerrainColor = [0.52, 0.48, 0.45];
-    const snowPatch = smoothstep(0.1, 0.4, patch1);
-    inlandColor = mixColor(windsweptRock, pureSnow, 0.5 + snowPatch * 0.5);
+    const snowPatch = smoothstep(0.05, 0.42, patch1);
+    const altitudeSnow = smoothstep(28, 42, biomeHeight);
+    inlandColor = mixColor(windsweptRock, pureSnow, 0.35 + snowPatch * 0.35 + altitudeSnow * 0.30);
+  } else if (biomeHeight > 20) {
+    biome = moisture > 0.45 ? 'forest' : 'arroyo';
+    const alpineNoise = _mainNoise(x * 0.035 + 177, z * 0.035 - 211) * 0.06;
+    const bareRock: TerrainColor = [
+      0.46 + (1 - moisture) * 0.12 + alpineNoise,
+      0.42 - moisture * 0.04 + alpineNoise * 0.5,
+      0.36 + moisture * 0.03,
+    ];
+    const scree: TerrainColor = [0.55, 0.52, 0.45];
+    const alpineGreen: TerrainColor = moisture > 0.55 ? [0.18, 0.34, 0.18] : [0.42, 0.40, 0.25];
+    inlandColor = mixColor(bareRock, scree, smoothstep(0.18, 0.50, patch1) * 0.35);
+    inlandColor = mixColor(inlandColor, alpineGreen, smoothstep(-0.18, -0.46, patch2) * 0.22);
   } else if (biomeHeight > 10) {
     // Highlands — with sub-biome feature patches
     const hillNoise = _moistureNoise(x * 0.025 + 150, z * 0.025 + 150) * 0.04;
@@ -556,17 +744,62 @@ export function getTerrainData(x: number, z: number): TerrainData {
   }
 
   if (finalHeight >= SEA_LEVEL && biome !== 'waterfall' && biome !== 'river') {
-    const drySandColor = mixColor(DRY_SAND_COLOR, ROCKY_SHORE_COLOR, coastSteepness * 0.38);
-    const wetSandColor = mixColor(WET_SAND_COLOR, ROCKY_SHORE_COLOR, coastSteepness * 0.52);
-    const washColor = mixColor(surfZoneColor, wetSandColor, coastSteepness * 0.35);
+    const tropicalCoast = sandyClimate;
+    const coralSand: TerrainColor = [0.96, 0.93, 0.78];
+    const tropicalSandBlend = tropicalCoast ? 0.58 * (1 - coastSteepness * 0.55) : 0;
+    const drySandColor = mixColor(
+      mixColor(DRY_SAND_COLOR, coralSand, tropicalSandBlend),
+      ROCKY_SHORE_COLOR,
+      coastSteepness * 0.34,
+    );
+    const wetSandColor = mixColor(
+      mixColor(WET_SAND_COLOR, coralSand, tropicalSandBlend * 0.42),
+      ROCKY_SHORE_COLOR,
+      coastSteepness * 0.46,
+    );
+    const washColor = mixColor(surfZoneColor, wetSandColor, coastSteepness * 0.30);
+    const lowCoast = finalHeight < SEA_LEVEL + wetSandHeight + 0.9;
+    const shelteredCoast = coastSteepness < 0.42;
 
     color = inlandColor;
     color = mixColor(color, drySandColor, beachFactor);
     color = mixColor(color, wetSandColor, wetSandFactor);
     color = mixColor(color, washColor, surfFactor * 0.72);
 
-    if (coastFactor > 0.14 && finalHeight < SEA_LEVEL + dryBeachHeight + 0.35) {
-      biome = 'beach';
+    if (coastFactor > 0.10 && finalHeight < SEA_LEVEL + dryBeachHeight + 0.58) {
+      if (coastSteepness > 0.68) {
+        biome = 'rocky_shore';
+        const cliffColor = mixColor(ROCKY_SHORE_COLOR, rockColor, 0.45);
+        const sprayStain: TerrainColor = [0.62, 0.60, 0.54];
+        const darkCrevice: TerrainColor = [0.24, 0.23, 0.22];
+        color = mixColor(color, cliffColor, 0.58);
+        color = mixColor(color, sprayStain, smoothstep(0.28, 0.55, patch2) * surfFactor * 0.28);
+        color = mixColor(color, darkCrevice, smoothstep(-0.20, -0.48, patch1) * 0.22);
+      } else if (tropicalCoast && shelteredCoast && lowCoast && moisture > 0.68 && wetSandFactor > beachFactor * 0.65) {
+        biome = 'mangrove';
+        const mangroveMud: TerrainColor = [0.22, 0.28, 0.20];
+        const brackishGreen: TerrainColor = [0.18, 0.36, 0.26];
+        const rootShadow: TerrainColor = [0.10, 0.16, 0.12];
+        const reedFringe: TerrainColor = [0.32, 0.42, 0.22];
+        color = mixColor(mangroveMud, brackishGreen, smoothstep(0.62, 0.86, moisture));
+        color = mixColor(color, wetSandColor, wetSandFactor * 0.35);
+        color = mixColor(color, rootShadow, smoothstep(-0.18, -0.44, patch1) * 0.30);
+        color = mixColor(color, reedFringe, smoothstep(0.24, 0.52, patch2) * 0.22);
+      } else if (shelteredCoast && lowCoast && wetSandFactor + surfFactor > 0.24 && beachFactor < 0.45) {
+        biome = 'tidal_flat';
+        const siltColor: TerrainColor = [0.54, 0.49, 0.39];
+        const slickMud: TerrainColor = [0.38, 0.42, 0.38];
+        const paleSilt: TerrainColor = [0.66, 0.61, 0.48];
+        const waterStreak: TerrainColor = [0.30, 0.44, 0.46];
+        color = mixColor(siltColor, slickMud, smoothstep(0.35, 0.75, moisture));
+        color = mixColor(color, washColor, surfFactor * 0.45);
+        color = mixColor(color, paleSilt, smoothstep(0.22, 0.54, patch1) * 0.26);
+        color = mixColor(color, waterStreak, smoothstep(-0.16, -0.42, patch2) * wetSandFactor * 0.32);
+      } else {
+        biome = 'beach';
+        const wrackLine: TerrainColor = [0.44, 0.34, 0.20];
+        color = mixColor(color, wrackLine, smoothstep(0.18, 0.46, patch2) * wetSandFactor * 0.18);
+      }
     }
   }
 
@@ -583,7 +816,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
     coastSteepness,
     reefFactor,
     paddyFlooded,
-    slope: 0,
+    slope,
   };
 }
 

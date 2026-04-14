@@ -1,4 +1,4 @@
-import { Nationality } from '../store/gameStore';
+import { Language, Nationality } from '../store/gameStore';
 
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -112,6 +112,54 @@ function generateCargo(): Partial<Record<Commodity, number>> {
   return cargo;
 }
 
+const PRIMARY_HAIL_LANGUAGE: Record<Nationality, Language> = {
+  English: 'English',
+  Portuguese: 'Portuguese',
+  Dutch: 'Dutch',
+  Spanish: 'Spanish',
+  French: 'French',
+  Danish: 'Dutch',
+  Mughal: 'Hindustani',
+  Gujarati: 'Gujarati',
+  Persian: 'Persian',
+  Ottoman: 'Turkish',
+  Omani: 'Arabic',
+  Swahili: 'Swahili',
+  Malay: 'Malay',
+  Acehnese: 'Malay',
+  Javanese: 'Malay',
+  Moluccan: 'Malay',
+  Siamese: 'Malay',
+  Japanese: 'Japanese',
+  Chinese: 'Chinese',
+};
+
+const TRADE_HAIL_LANGUAGES: Partial<Record<Nationality, Language[]>> = {
+  Mughal: ['Persian', 'Gujarati'],
+  Gujarati: ['Hindustani', 'Persian', 'Arabic'],
+  Ottoman: ['Arabic', 'Persian'],
+  Omani: ['Persian', 'Swahili', 'Gujarati'],
+  Swahili: ['Arabic', 'Portuguese'],
+  Malay: ['Portuguese', 'Chinese', 'Arabic'],
+  Acehnese: ['Arabic', 'Portuguese'],
+  Javanese: ['Portuguese', 'Chinese'],
+  Moluccan: ['Portuguese', 'Malay'],
+  Chinese: ['Malay', 'Portuguese'],
+  Japanese: ['Portuguese', 'Chinese'],
+  Portuguese: ['Arabic', 'Malay', 'Gujarati'],
+  Dutch: ['Portuguese', 'Malay'],
+  English: ['Portuguese', 'Arabic'],
+  French: ['Portuguese', 'Arabic'],
+  Spanish: ['Portuguese', 'Chinese'],
+  Persian: ['Arabic', 'Gujarati'],
+};
+
+function hailLanguageForNation(nat: Nationality): Language {
+  const tradeLanguages = TRADE_HAIL_LANGUAGES[nat] ?? [];
+  if (tradeLanguages.length && Math.random() < 0.2) return pick(tradeLanguages);
+  return PRIMARY_HAIL_LANGUAGE[nat];
+}
+
 // ── Main export ──────────────────────────────────────────────────────────────
 
 // Hull strength by ship type — galleons are warships, pinnaces are fragile
@@ -129,6 +177,7 @@ export interface NPCShipIdentity {
   shipName: string;
   shipType: ShipType;
   flag: Nationality;
+  hailLanguage: Language;
   crewCount: number;
   morale: number; // 0-100
   armed: boolean;
@@ -162,6 +211,7 @@ export function generateNPCShip(position: [number, number, number]): NPCShipIden
     shipName: pick(SHIP_NAMES[shipType]),
     shipType,
     flag,
+    hailLanguage: hailLanguageForNation(flag),
     crewCount,
     morale,
     armed: shipType === 'Galleon' ? true : Math.random() > 0.6,

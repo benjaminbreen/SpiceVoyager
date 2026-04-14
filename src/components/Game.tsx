@@ -38,46 +38,6 @@ import { WEAPON_DEFS, type WeaponType } from '../store/gameStore';
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 
-// ── Reputation-aware hail responses ─────────────────────────────────────────
-function getHailResponse(npc: { captainName: string; shipName: string; flag: string }, rep: number): string {
-  const name = npc.captainName;
-  if (rep <= -60) {
-    return pick([
-      `Captain ${name} of the ${npc.shipName} shouts: "Stay away from us, you devils!"`,
-      `The ${npc.shipName} raises battle flags. "${name} wants nothing to do with you."`,
-      `"Turn about or we open fire!" bellows Captain ${name}.`,
-    ]);
-  }
-  if (rep <= -25) {
-    return pick([
-      `Captain ${name} eyes you warily from the ${npc.shipName}. "State your business."`,
-      `The ${npc.shipName} keeps her distance. ${name} signals suspicion.`,
-      `"We know your reputation," calls Captain ${name}. "Keep your distance."`,
-    ]);
-  }
-  if (rep >= 60) {
-    return pick([
-      `Captain ${name} hails warmly: "Well met, friend! Fair winds to you!"`,
-      `"Ahoy! The ${npc.shipName} is at your service," calls Captain ${name} with a grin.`,
-      `Captain ${name} waves from the ${npc.shipName}. "A pleasure as always! Safe waters ahead."`,
-    ]);
-  }
-  if (rep >= 25) {
-    return pick([
-      `Captain ${name} tips his hat from the ${npc.shipName}. "Good sailing to you."`,
-      `"Hail, friend!" calls ${name}. "The ${npc.shipName} wishes you calm seas."`,
-      `Captain ${name} signals a friendly greeting from the ${npc.shipName}.`,
-    ]);
-  }
-  // Neutral
-  return pick([
-    `Captain ${name} of the ${npc.shipName} signals back. They keep their distance.`,
-    `The ${npc.shipName} acknowledges your hail. Captain ${name} watches cautiously.`,
-    `"Fair winds," signals Captain ${name} from the deck of the ${npc.shipName}.`,
-    `Captain ${name} raises a hand in greeting from the ${npc.shipName}.`,
-  ]);
-}
-
 function landfallDescription(x: number, z: number): { title: string; subtitle: string } {
   const td = getTerrainData(x, z);
   const steep = td.coastSteepness > 0.6;
@@ -530,18 +490,7 @@ function InteractionController() {
           sfxEmbark();
         }
       } else if (key === 't') {
-        if (state.interactionPrompt === 'Press T to Hail') {
-          const npc = state.nearestHailableNpc;
-          if (npc) {
-            const rep = state.getReputation(npc.flag);
-            const response = getHailResponse(npc, rep);
-            state.addNotification(response, rep < -25 ? 'warning' : rep > 25 ? 'success' : 'info');
-            // Small reputation boost for peaceful hailing
-            state.adjustReputation(npc.flag, 1);
-          } else {
-            state.addNotification('They signal back but keep their distance.', 'info');
-          }
-        }
+        // Hailing is handled by the HUD HailPanel so it can present choices.
       } else if (key === 'q' && state.playerMode === 'ship' && state.combatMode) {
         tryFireBroadside('port');
       } else if (key === 'r' && state.playerMode === 'ship' && state.combatMode) {

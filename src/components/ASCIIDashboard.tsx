@@ -995,11 +995,15 @@ function CrewTab() {
   }
 
   if (selectedMember) {
+    const sortedCrew = [...crew].sort((a, b) => (ROLE_SORT_ORDER[a.role] ?? 9) - (ROLE_SORT_ORDER[b.role] ?? 9));
+    const currentIndex = sortedCrew.findIndex(c => c.id === selectedMember.id);
     return (
       <CrewDetailView
         member={selectedMember}
         onBack={() => setSelectedId(null)}
         onRoleChange={(role) => { setCrewRole(selectedMember.id, role); }}
+        onPrev={currentIndex > 0 ? () => { sfxClick(); setSelectedId(sortedCrew[currentIndex - 1].id); } : undefined}
+        onNext={currentIndex < sortedCrew.length - 1 ? () => { sfxClick(); setSelectedId(sortedCrew[currentIndex + 1].id); } : undefined}
       />
     );
   }
@@ -1432,13 +1436,25 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
 
 // ── Crew detail view (full-page character sheet) ────────────────────────
 
-function CrewDetailView({ member, onBack, onRoleChange }: {
+function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
   member: CrewMember;
   onBack: () => void;
   onRoleChange: (role: CrewRole) => void;
+  onPrev?: () => void;
+  onNext?: () => void;
 }) {
   const [portraitModalOpen, setPortraitModalOpen] = useState(false);
   const sparkle = useSparkle();
+
+  // Arrow key navigation between crew members
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' && onPrev) { e.preventDefault(); onPrev(); }
+      if (e.key === 'ArrowDown' && onNext) { e.preventDefault(); onNext(); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onPrev, onNext]);
   const qs = QUALITY_STYLE[member.quality];
   const roleColor = ROLE_COLOR[member.role] ?? CLR.txt;
   const moraleColor_ = member.morale > 60 ? CLR.green : member.morale > 30 ? CLR.yellow : CLR.red;

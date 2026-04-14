@@ -37,8 +37,8 @@ interface CrewPortraitProps {
 export function CrewPortrait({ member, size = 64, className = '', showBackground = true }: CrewPortraitProps) {
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
-    return renderPortrait(config, showBackground);
-  }, [member.id, member.name, member.role, member.quality, showBackground]);
+    return renderPortrait(config, showBackground, member.morale);
+  }, [member.id, member.name, member.role, member.quality, member.morale, showBackground]);
 
   return (
     <svg
@@ -58,8 +58,8 @@ export function CrewPortrait({ member, size = 64, className = '', showBackground
 export function CrewPortraitSquare({ member, size = 32, className = '' }: Omit<CrewPortraitProps, 'showBackground'>) {
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
-    return renderPortrait(config, false);
-  }, [member.id, member.name, member.role, member.quality]);
+    return renderPortrait(config, false, member.morale);
+  }, [member.id, member.name, member.role, member.quality, member.morale]);
 
   return (
     <svg
@@ -77,7 +77,7 @@ export function CrewPortraitSquare({ member, size = 32, className = '' }: Omit<C
 
 // ── Core renderer ────────────────────────────────────────
 
-function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNode {
+function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number): React.ReactNode {
   const rng = mulberry32(config.seed);
   const skin = getSkin(config);
   const eyeColor = getEyeColor(config);
@@ -90,22 +90,31 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
   const foreheadHeight = 8 + rng() * 5;
   const cheekWidth = headWidth + rng() * 4;
 
-  // ── Eyes — BIGGER than before ──
-  const eyeSpacing = 18 + (rng() - 0.5) * 4;       // wider apart
+  // ── Eyes ──
+  const eyeSpacing = 16 + rng() * 6;                 // 16–22, allows wide-set and close-set
   const eyeY = 100 + (rng() - 0.5) * 3;
-  const eyeHeight = 5 + rng() * 3;                   // taller
-  const eyeWidth = 13 + rng() * 4;                   // wider
-  const eyeSlant = (rng() - 0.5) * 3;
-  const eyeLidWeight = 0.3 + rng() * 0.4;            // how much lid covers eye (0-1)
+  const eyeHeight = 3.5 + rng() * 5;                 // 3.5–8.5, narrow slits to open eyes
+  const eyeWidth = 14 + rng() * 6;                   // 14–20, always wider than tall
+  const eyeSlant = (rng() - 0.5) * 5;                // -2.5 to +2.5
+  const eyeLidWeight = 0.15 + rng() * 0.6;            // 0.15–0.75, always some lid visible
+  // Eye shape type — controls how round vs almond vs droopy the eye is
+  const eyeShapeRoll = rng();
+  const eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' =
+    eyeShapeRoll < 0.2 ? 'round' :
+    eyeShapeRoll < 0.45 ? 'almond' :
+    eyeShapeRoll < 0.6 ? 'wide' :
+    eyeShapeRoll < 0.8 ? 'hooded' : 'droopy';
+  const gazeOffsetX = (rng() - 0.5) * 2.5;           // iris shift left/right — makes eyes feel alive
+  const gazeOffsetY = rng() * 1.5;                    // iris shift slightly down (never up — looks unnatural)
 
   const isEastAsian = config.culturalGroup === 'EastAsian';
   const isSEAsian = config.culturalGroup === 'SoutheastAsian';
   const epicanthicFold = isEastAsian ? 2 + rng() * 1.5 : isSEAsian ? rng() * 1.5 : 0;
 
-  // ── Nose — bigger ──
-  const noseWidth = 7 + rng() * 7;
+  // ── Nose ──
+  const noseWidth = 6 + rng() * 10;                  // 6–16, button to broad
   const noseBridge = 3 + rng() * 3;
-  const noseLength = 22 + (rng() - 0.5) * 8;
+  const noseLength = 16 + rng() * 12;                // 16–28, short to long aquiline
   const noseTip = (rng() - 0.5) * 4;
   const noseCurve = (rng() - 0.5) * 3;
 
@@ -114,17 +123,18 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
                     config.culturalGroup === 'SoutheastAsian' ? rng() * 2 : 0;
   const effNoseWidth = noseWidth + noseWiden;
 
-  // ── Mouth — bigger ──
-  const mouthWidth = 15 + (rng() - 0.5) * 7;
+  // ── Mouth ──
+  const mouthWidth = 12 + rng() * 10;                // 12–22, tight to wide
   const mouthY = eyeY + noseLength + 16 + (rng() - 0.5) * 3;
-  const upperLip = 2 + rng() * 3.5;
-  const lowerLip = 2.5 + rng() * 5;
+  const upperLip = 2 + rng() * 4;                    // 2–6
+  const lowerLip = 2.5 + rng() * 6;                  // 2.5–8.5
 
   const lipBoost = config.culturalGroup === 'Swahili' ? 2 + rng() * 2 :
                    config.culturalGroup === 'Indian' ? rng() * 1.2 :
                    config.culturalGroup === 'SoutheastAsian' ? rng() * 1 : 0;
-  const effUpperLip = upperLip + lipBoost * 0.7;
-  const effLowerLip = lowerLip + lipBoost;
+  const lipFullness = 0.5 + rng() * 0.7;             // 0.5 = thin/taut, 1.2 = full/rounded
+  const effUpperLip = (upperLip + lipBoost * 0.7) * lipFullness;
+  const effLowerLip = (lowerLip + lipBoost) * lipFullness;
 
   // ── Ears ──
   const earSize = 8 + rng() * 5;
@@ -146,11 +156,41 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
     setBrowR: (i: number, o: number) => { browInnerR = i; browOuterR = o; },
   });
 
+  // Morale-based expression nudges — only at extremes, blends with base personality
+  if (morale !== undefined) {
+    if (morale < 20) {
+      // Miserable: angry frown, furrowed brows
+      mouthCurve = Math.max(mouthCurve, 2.5);
+      browInnerL += 3; browInnerR += 3;
+      browOuterL -= 2; browOuterR -= 2;
+    } else if (morale < 40) {
+      // Unhappy: slight downturn, tenser brows
+      mouthCurve += 1.2;
+      browInnerL += 1.5; browInnerR += 1.5;
+    } else if (morale > 85) {
+      // Elated: broad smile, relaxed lifted brows
+      mouthCurve = Math.min(mouthCurve, -3);
+      browInnerL -= 2; browInnerR -= 2;
+      browOuterL += 1.5; browOuterR += 1.5;
+    } else if (morale > 70) {
+      // Content: gentle upturn, slightly relaxed brows
+      mouthCurve -= 1.2;
+      browInnerL -= 1; browInnerR -= 1;
+    }
+  }
+
   // ── Age ──
   const ageIdx = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
   const wrinkleAlpha = Math.max(0, (ageIdx - 1) * 0.15);
   const jowlSag = ageIdx >= 3 ? (ageIdx - 2) * 1.5 : 0;
   const underEyeBags = ageIdx >= 2 ? (ageIdx - 1) * 0.08 : 0;
+
+  // ── Skin texture ──
+  // Outdoor/older crew get coarser, more visible skin texture
+  const isOutdoorRole = config.role === 'Sailor' || config.role === 'Gunner' || config.role === 'Captain';
+  const skinRoughness = 0.02 + ageIdx * 0.008 + (isOutdoorRole ? 0.008 : 0) + rng() * 0.01;
+  const skinTextureOpacity = 0.06 + ageIdx * 0.03 + (isOutdoorRole ? 0.025 : 0);
+  const skinTextureSeed = Math.floor(rng() * 9999);  // unique noise per portrait
 
   // ── Layout constants ──
   const cx = 100;
@@ -158,6 +198,7 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
   const chinY = eyeY + jawLength;
   const noseY = eyeY + noseLength;
   const bgColor = getRoleBgColor(config);
+  const culturalAccent = getCulturalAccent(config.culturalGroup);
   const uid = `p${Math.abs(config.seed)}`;
 
   // ── Chiaroscuro: directional light from one side ──
@@ -211,12 +252,38 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
           <stop offset="70%" stopColor="rgba(0,0,0,0)" />
           <stop offset="100%" stopColor="rgba(0,0,0,0.4)" />
         </radialGradient>
+
+        {/* Cultural origin accent — soft radial wash */}
+        <radialGradient id={`culture-${uid}`} cx="50%" cy="50%" r="75%">
+          <stop offset="0%" stopColor={culturalAccent.color} stopOpacity={culturalAccent.opacity} />
+          <stop offset="55%" stopColor={culturalAccent.color} stopOpacity={culturalAccent.opacity * 0.5} />
+          <stop offset="100%" stopColor={culturalAccent.color} stopOpacity={0} />
+        </radialGradient>
+
+        {/* Skin texture filter — organic noise that breaks up smooth gradients */}
+        <filter id={`skinTex-${uid}`} x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency={skinRoughness}
+            numOctaves={3} seed={skinTextureSeed} result="noise" />
+          <feColorMatrix type="saturate" values="0" in="noise" result="grayNoise" />
+          <feBlend mode="multiply" in="SourceGraphic" in2="grayNoise" />
+        </filter>
+
+        {/* Subtle displacement filter for skin unevenness on weathered faces */}
+        {ageIdx >= 2 && (
+          <filter id={`skinDisp-${uid}`} x="-5%" y="-5%" width="110%" height="110%">
+            <feTurbulence type="turbulence" baseFrequency={0.04 + ageIdx * 0.006}
+              numOctaves={2} seed={skinTextureSeed + 1} result="warp" />
+            <feDisplacementMap in="SourceGraphic" in2="warp" scale={0.8 + ageIdx * 0.4}
+              xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+        )}
       </defs>
 
-      {/* Background with vignette */}
+      {/* Background with vignette + cultural accent */}
       {showBg && (
         <g key="bg">
           <rect width="200" height="250" fill={`url(#bg-${uid})`} />
+          <rect width="200" height="250" fill={`url(#culture-${uid})`} />
           <rect width="200" height="250" fill={`url(#vign-${uid})`} />
         </g>
       )}
@@ -232,6 +299,8 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
         fill={`url(#skin-${uid})`} />
       <path d={`M ${cx - 15} ${chinY - 8} L ${cx - 17} ${chinY + 25} L ${cx + 17} ${chinY + 25} L ${cx + 15} ${chinY - 8} Z`}
         fill={`url(#shadow-${uid})`} />
+      <path d={`M ${cx - 15} ${chinY - 8} L ${cx - 17} ${chinY + 25} L ${cx + 17} ${chinY + 25} L ${cx + 15} ${chinY - 8} Z`}
+        fill={skin.mid} opacity={skinTextureOpacity * 0.7} filter={`url(#skinTex-${uid})`} />
 
       {/* Ears */}
       {renderEars(cx, earAttach, headWidth, earSize, skin, uid)}
@@ -247,6 +316,17 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
       {/* Chiaroscuro: warm highlight on lit side */}
       <path d={headPath(cx, headTop, eyeY, chinY, headWidth, jawWidth, cheekWidth, foreheadHeight, jowlSag)}
         fill={`url(#highlight-${uid})`} />
+
+      {/* Skin texture — noise overlay for pores/roughness */}
+      <path d={headPath(cx, headTop, eyeY, chinY, headWidth, jawWidth, cheekWidth, foreheadHeight, jowlSag)}
+        fill={skin.mid} opacity={skinTextureOpacity} filter={`url(#skinTex-${uid})`} />
+
+      {/* Subtle skin displacement for weathered faces (40s+) */}
+      {ageIdx >= 2 && (
+        <path d={headPath(cx, headTop, eyeY, chinY, headWidth, jawWidth, cheekWidth, foreheadHeight, jowlSag)}
+          fill="none" stroke={skin.dark} strokeWidth="0.3" opacity={0.15 + ageIdx * 0.05}
+          filter={`url(#skinDisp-${uid})`} />
+      )}
 
       {/* Cheek shading — deeper on shadow side */}
       <ellipse cx={cx - lightSide * headWidth + (lightSide > 0 ? 5 : -5)} cy={eyeY + 18}
@@ -290,8 +370,8 @@ function renderPortrait(config: PortraitConfig, showBg: boolean): React.ReactNod
         fill={`rgba(0,0,0,${lightSide > 0 ? 0.03 : 0.08 * lightIntensity})`} />
 
       {/* Eyes with proper eyelids */}
-      {renderEyeWithLid(cx - eyeSpacing, eyeY, eyeWidth, eyeHeight, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL, browOuterL, hairColor, config, underEyeBags, true, uid)}
-      {renderEyeWithLid(cx + eyeSpacing, eyeY, eyeWidth, eyeHeight, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR, browOuterR, hairColor, config, underEyeBags, false, uid)}
+      {renderEyeWithLid(cx - eyeSpacing, eyeY, eyeWidth, eyeHeight, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL, browOuterL, hairColor, config, underEyeBags, true, uid, gazeOffsetX, gazeOffsetY, eyeShape)}
+      {renderEyeWithLid(cx + eyeSpacing, eyeY, eyeWidth, eyeHeight, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR, browOuterR, hairColor, config, underEyeBags, false, uid, gazeOffsetX, gazeOffsetY, eyeShape)}
 
       {/* Mouth */}
       {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin)}
@@ -455,7 +535,7 @@ function renderNose(
   );
 }
 
-// ── Eyes with proper eyelids ─────────────────────────────
+// ── Eyes with shape variation ────────────────────────────
 
 function renderEyeWithLid(
   ex: number, ey: number, ew: number, eh: number,
@@ -465,6 +545,8 @@ function renderEyeWithLid(
   hairColor: string, config: PortraitConfig,
   underEyeBags: number,
   isLeft: boolean, uid: string,
+  gazeX: number = 0, gazeY: number = 0,
+  eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' = 'almond',
 ): React.ReactNode {
   const hw = ew / 2;
   const dir = isLeft ? -1 : 1;
@@ -473,74 +555,138 @@ function renderEyeWithLid(
   const innerX = ex - hw * dir;
   const outerX = ex + hw * dir;
 
-  // Eye shape control points
-  const topInner = ey - eh + slant;
-  const topOuter = ey - eh - slant;
-  const botInner = ey + eh * 0.55 + slant * 0.2 - epicanthic * 0.3;
-  const botOuter = ey + eh * 0.55 - slant * 0.2;
+  // ── Shape-dependent parameters ──
+  // topSpread: how far the bezier curves bow outward (higher = rounder top)
+  // botSpread: same for bottom curve
+  // botOpen: how far down the bottom of the eye extends (fraction of eh)
+  // topPeak: where the highest point of the upper curve sits (0=inner, 1=outer)
+  //          controls whether the arc peaks toward the nose or toward the temple
+  let topSpread: number, botSpread: number, botOpen: number, topPeak: number, droopOuter: number;
 
-  // Socket shadow
+  switch (eyeShape) {
+    case 'round':
+      topSpread = 0.45; botSpread = 0.45; botOpen = 0.6; topPeak = 0.5; droopOuter = 0;
+      break;
+    case 'almond':
+      topSpread = 0.3; botSpread = 0.3; botOpen = 0.4; topPeak = 0.45; droopOuter = 0;
+      break;
+    case 'wide':
+      topSpread = 0.35; botSpread = 0.3; botOpen = 0.45; topPeak = 0.55; droopOuter = 0;
+      break;
+    case 'hooded':
+      topSpread = 0.3; botSpread = 0.3; botOpen = 0.4; topPeak = 0.4; droopOuter = 0;
+      break;
+    case 'droopy':
+      topSpread = 0.3; botSpread = 0.35; botOpen = 0.45; topPeak = 0.35; droopOuter = 2;
+      break;
+  }
+
+  // The visible eye opening — lid covers the top portion
+  // effEh is the height of the actual visible opening (sclera)
+  const effEh = eh * (1 - lidWeight * 0.5); // lid eats into the top
+
+  // Upper curve control points — the peak shifts based on topPeak
+  // Instead of always bowing up symmetrically, the peak can sit
+  // toward the inner corner (topPeak<0.5) or outer corner (topPeak>0.5)
+  const peakX = innerX + (outerX - innerX) * topPeak;
+  const topY = ey - effEh;           // highest point of visible eye opening
+  const topInnerY = ey - effEh * (1 - Math.abs(topPeak - 0.5) * 0.6) + slant * 0.3;
+  const topOuterY = ey - effEh * (1 - Math.abs(topPeak - 0.5) * 0.6) - slant * 0.3 + droopOuter * 0.4;
+
+  // Bottom of eye
+  const botInnerY = ey + effEh * botOpen + slant * 0.1 - epicanthic * 0.2;
+  const botOuterY = ey + effEh * botOpen - slant * 0.1 + droopOuter * 0.4;
+
+  // Corner positions
+  const innerCornerY = ey + epicanthic * 0.2;
+  const outerCornerY = ey + droopOuter;
+
+  // Socket shadow — subtle
   const socket = (
-    <ellipse key={`${key}-sock`} cx={ex} cy={ey + 1} rx={hw + 3} ry={eh + 3} fill="rgba(0,0,0,0.04)" />
+    <ellipse key={`${key}-sock`} cx={ex} cy={ey + 1} rx={hw + 2} ry={effEh + 2} fill="rgba(0,0,0,0.04)" />
   );
 
-  // Sclera (white of eye) — almond shape
-  const scleraPath = `M ${innerX} ${ey + epicanthic * 0.2}
-    C ${innerX + hw * 0.35 * dir} ${topInner - epicanthic * 0.2}, ${outerX - hw * 0.35 * dir} ${topOuter}, ${outerX} ${ey}
-    C ${outerX - hw * 0.35 * dir} ${botOuter}, ${innerX + hw * 0.35 * dir} ${botInner}, ${innerX} ${ey + epicanthic * 0.2} Z`;
+  // Sclera — the visible white of the eye
+  // Upper curve peaks based on topPeak position, not always at center
+  const cp1x = innerX + hw * topSpread * 2 * dir;  // first control point
+  const cp2x = outerX - hw * topSpread * 2 * dir;  // second control point
+  const scleraPath = `M ${innerX} ${innerCornerY}
+    C ${cp1x} ${topInnerY - epicanthic * 0.15}, ${cp2x} ${topOuterY}, ${outerX} ${outerCornerY}
+    C ${cp2x} ${botOuterY}, ${cp1x} ${botInnerY}, ${innerX} ${innerCornerY} Z`;
 
   const sclera = <path key={`${key}-scl`} d={scleraPath} fill="#eeeae2" />;
 
-  // Iris — sized to be partially cut by lids (more natural)
-  const irisR = Math.min(eh * 0.65, hw * 0.48);
+  // Iris — proportioned to the visible opening
+  const irisR = Math.min(effEh * 0.72, hw * 0.45);
   const pupilR = irisR * 0.4;
+  const irisX = ex + gazeX;
+  const irisY = ey + gazeY * 0.5 + droopOuter * 0.15;
   const iris = (
-    <g key={`${key}-iris`}>
-      <circle cx={ex} cy={ey} r={irisR + 0.5} fill="#1a1a1a" opacity={0.15} /> {/* iris outline */}
-      <circle cx={ex} cy={ey} r={irisR} fill={irisColor} />
-      {/* Iris detail ring */}
-      <circle cx={ex} cy={ey} r={irisR * 0.7} fill="none" stroke={irisColor} strokeWidth="0.5" opacity={0.5} />
-      <circle cx={ex} cy={ey} r={pupilR} fill="#0a0a0a" />
-      {/* Catchlight — two for more life */}
-      <circle cx={ex + irisR * 0.3} cy={ey - irisR * 0.3} r={irisR * 0.2} fill="rgba(255,255,255,0.75)" />
-      <circle cx={ex - irisR * 0.15} cy={ey + irisR * 0.15} r={irisR * 0.08} fill="rgba(255,255,255,0.4)" />
+    <g key={`${key}-iris`} clipPath={`url(#${key}-clip-${uid})`}>
+      <circle cx={irisX} cy={irisY} r={irisR + 0.5} fill="#1a1a1a" opacity={0.12} />
+      <circle cx={irisX} cy={irisY} r={irisR} fill={irisColor} />
+      <circle cx={irisX} cy={irisY} r={irisR * 0.65} fill="none" stroke={irisColor} strokeWidth="0.5" opacity={0.35} />
+      <circle cx={irisX} cy={irisY} r={pupilR} fill="#0a0a0a" />
+      {/* Catchlights */}
+      <circle cx={irisX + irisR * 0.25} cy={irisY - irisR * 0.25} r={irisR * 0.22} fill="rgba(255,255,255,0.8)" />
+      <circle cx={irisX - irisR * 0.15} cy={irisY + irisR * 0.18} r={irisR * 0.1} fill="rgba(255,255,255,0.45)" />
     </g>
   );
 
-  // Upper eyelid — skin-colored shape that covers the top portion of the eye
-  const lidDropInner = eh * lidWeight + slant * 0.3;
-  const lidDropOuter = eh * lidWeight - slant * 0.3;
-  const lidPath = `M ${innerX} ${ey + epicanthic * 0.2}
-    C ${innerX + hw * 0.35 * dir} ${topInner - epicanthic * 0.2}, ${outerX - hw * 0.35 * dir} ${topOuter}, ${outerX} ${ey}
-    C ${outerX - hw * 0.3 * dir} ${topOuter + lidDropOuter + 1}, ${innerX + hw * 0.3 * dir} ${topInner + lidDropInner + 1 - epicanthic * 0.15}, ${innerX} ${ey + epicanthic * 0.2} Z`;
+  // Clip path so iris doesn't overflow the sclera
+  const irisClip = (
+    <defs key={`${key}-clip-def-${uid}`}>
+      <clipPath id={`${key}-clip-${uid}`}>
+        <path d={scleraPath} />
+      </clipPath>
+    </defs>
+  );
+
+  // Upper eyelid — skin-colored, sits above the visible opening
+  // For hooded eyes, the lid is thick and opaque; for others it's subtler
+  const lidOpacity = eyeShape === 'hooded' ? 0.85 : 0.65;
+  // The lid covers from the top of the full eye socket down to the visible opening
+  const fullTopY = ey - eh; // top of the full socket (before lid cuts in)
+  const lidPath = `M ${innerX} ${innerCornerY}
+    C ${cp1x} ${fullTopY - epicanthic * 0.15}, ${cp2x} ${fullTopY - slant * 0.3}, ${outerX} ${outerCornerY}
+    C ${cp2x} ${topOuterY + 1}, ${cp1x} ${topInnerY + 1 - epicanthic * 0.1}, ${innerX} ${innerCornerY} Z`;
 
   const lid = (
-    <path key={`${key}-lid`} d={lidPath} fill={skin.mid} opacity={0.7} />
+    <path key={`${key}-lid`} d={lidPath} fill={skin.mid} opacity={lidOpacity} />
   );
 
-  // Eyelid crease line (above the lid)
-  const creasePath = `M ${innerX + dir * 2} ${topInner - 2 - epicanthic * 0.1}
-    C ${innerX + hw * 0.4 * dir} ${Math.min(topInner, topOuter) - 3}, ${outerX - hw * 0.4 * dir} ${topOuter - 2}, ${outerX - dir * 1} ${ey - 1}`;
-  const crease = (
+  // Eyelid crease — above the lid
+  const creaseY = fullTopY - 2;
+  const creasePath = `M ${innerX + dir * 2} ${creaseY + slant * 0.2 - epicanthic * 0.1}
+    C ${cp1x} ${creaseY - 1}, ${cp2x} ${creaseY - slant * 0.2 + droopOuter * 0.2}, ${outerX - dir * 1} ${outerCornerY - 1.5}`;
+  const crease = eyeShape !== 'hooded' ? (
     <path key={`${key}-crease`} d={creasePath}
-      stroke="rgba(0,0,0,0.15)" strokeWidth="0.7" fill="none" />
-  );
+      stroke="rgba(0,0,0,0.12)" strokeWidth="0.7" fill="none" />
+  ) : null;
+
+  // For hooded eyes, a heavier fold line closer to the lash line
+  const hoodFold = eyeShape === 'hooded' ? (
+    <path key={`${key}-hood`}
+      d={`M ${innerX + dir * 1} ${innerCornerY - 0.5}
+          C ${cp1x} ${topInnerY - 0.5}, ${cp2x} ${topOuterY - 0.5 + droopOuter * 0.2}, ${outerX - dir * 1} ${outerCornerY - 0.5}`}
+      stroke="rgba(0,0,0,0.18)" strokeWidth="0.9" fill="none" />
+  ) : null;
 
   // Lower lid line
   const lowerLid = (
     <path key={`${key}-lower`}
-      d={`M ${innerX + dir * 1} ${ey + epicanthic * 0.15}
-          C ${innerX + hw * 0.3 * dir} ${botInner + 0.5}, ${outerX - hw * 0.3 * dir} ${botOuter + 0.5}, ${outerX - dir * 1} ${ey + 0.5}`}
-      stroke="rgba(0,0,0,0.12)" strokeWidth="0.6" fill="none"
+      d={`M ${innerX + dir * 1} ${innerCornerY + 0.3}
+          C ${cp1x} ${botInnerY + 0.5}, ${cp2x} ${botOuterY + 0.5}, ${outerX - dir * 1} ${outerCornerY + 0.5}`}
+      stroke="rgba(0,0,0,0.10)" strokeWidth="0.5" fill="none"
     />
   );
 
-  // Lash line (darker along upper lid edge)
+  // Lash line — follows the visible upper lid edge
   const lashLine = (
     <path key={`${key}-lash`}
-      d={`M ${innerX} ${ey + epicanthic * 0.2}
-          C ${innerX + hw * 0.35 * dir} ${topInner + lidDropInner - epicanthic * 0.15}, ${outerX - hw * 0.35 * dir} ${topOuter + lidDropOuter}, ${outerX} ${ey}`}
-      stroke="rgba(0,0,0,0.4)" strokeWidth={config.gender === 'Female' ? 1.2 : 0.8} fill="none"
+      d={`M ${innerX} ${innerCornerY}
+          C ${cp1x} ${topInnerY}, ${cp2x} ${topOuterY + droopOuter * 0.2}, ${outerX} ${outerCornerY}`}
+      stroke="rgba(0,0,0,0.4)" strokeWidth={config.gender === 'Female' ? 1.2 : 0.7} fill="none"
     />
   );
 
@@ -554,26 +700,26 @@ function renderEyeWithLid(
   // Under-eye bags / dark circles
   const bags = underEyeBags > 0 ? (
     <path key={`${key}-bags`}
-      d={`M ${innerX + dir * 3} ${ey + eh * 0.5}
-          C ${ex - dir * 2} ${ey + eh * 0.7 + 2}, ${ex + dir * 2} ${ey + eh * 0.7 + 2}, ${outerX - dir * 3} ${ey + eh * 0.5}`}
+      d={`M ${innerX + dir * 3} ${ey + effEh * botOpen}
+          C ${ex - dir * 2} ${ey + effEh * botOpen + 2.5}, ${ex + dir * 2} ${ey + effEh * botOpen + 2.5}, ${outerX - dir * 3} ${ey + effEh * botOpen}`}
       stroke="rgba(0,0,0,0.18)" strokeWidth="0.6" fill="none" opacity={underEyeBags / 0.08 * 0.3}
     />
   ) : null;
 
-  // Eyebrow — thicker, more expressive
+  // Eyebrow
   const browThick = config.gender === 'Male' ? 2.5 : 1.6;
   const browInnerX = ex - hw * 0.9 * dir;
   const browOuterX = ex + hw * 1.15 * dir;
-  const browBaseY = ey - eh - 5;
+  const browBaseY = fullTopY - 4;
   const brow = (
     <path key={`${key}-brow`}
       d={`M ${browInnerX} ${browBaseY + browInner}
-          Q ${ex} ${browBaseY + Math.min(browInner, browOuter) - 3.5}, ${browOuterX} ${browBaseY + browOuter}`}
+          Q ${ex} ${browBaseY + Math.min(browInner, browOuter) - 3}, ${browOuterX} ${browBaseY + browOuter + droopOuter * 0.3}`}
       stroke={hairColor} strokeWidth={browThick} fill="none" strokeLinecap="round"
     />
   );
 
-  return <g key={key}>{socket}{sclera}{iris}{lid}{crease}{lashLine}{lowerLid}{fold}{bags}{brow}</g>;
+  return <g key={key}>{irisClip}{socket}{sclera}{iris}{lid}{crease}{hoodFold}{lashLine}{lowerLid}{fold}{bags}{brow}</g>;
 }
 
 // ── Mouth ────────────────────────────────────────────────
@@ -587,21 +733,26 @@ function renderMouth(
   const rightY = my + curve + asym;
   const lipColor = skin.blush;
 
+  // Lip shape varies with thickness — thin lips have flatter, tighter curves
+  const fullRatio = Math.min(upperLip / 3.5, 1);  // 0 = very thin, 1 = full
+  const bowDepth = 0.5 + fullRatio * 1.5;          // cupid's bow prominence
+  const cornerTuck = 1 + fullRatio * 0.8;          // how much corners tuck in
+
   return (
     <g key="mouth">
-      {/* Upper lip — cupid's bow */}
+      {/* Upper lip — cupid's bow depth scales with fullness */}
       <path
         d={`M ${cx - hw} ${leftY}
-            C ${cx - hw * 0.4} ${my - upperLip - 0.5}, ${cx - 2} ${my - upperLip - 1.5}, ${cx} ${my - upperLip * 0.6}
-            C ${cx + 2} ${my - upperLip - 1.5}, ${cx + hw * 0.4} ${my - upperLip - 0.5}, ${cx + hw} ${rightY}
-            C ${cx + hw * 0.3} ${my + 1.5}, ${cx - hw * 0.3} ${my + 1.5}, ${cx - hw} ${leftY} Z`}
+            C ${cx - hw * 0.4} ${my - upperLip - bowDepth * 0.3}, ${cx - 2} ${my - upperLip - bowDepth}, ${cx} ${my - upperLip * 0.6}
+            C ${cx + 2} ${my - upperLip - bowDepth}, ${cx + hw * 0.4} ${my - upperLip - bowDepth * 0.3}, ${cx + hw} ${rightY}
+            C ${cx + hw * 0.3} ${my + cornerTuck}, ${cx - hw * 0.3} ${my + cornerTuck}, ${cx - hw} ${leftY} Z`}
         fill={lipColor} opacity={0.5}
       />
       {/* Lower lip */}
       <path
         d={`M ${cx - hw} ${leftY}
             C ${cx - hw * 0.35} ${my + lowerLip + curve * 0.3}, ${cx + hw * 0.35} ${my + lowerLip + curve * 0.3}, ${cx + hw} ${rightY}
-            C ${cx + hw * 0.3} ${my + 1.5}, ${cx - hw * 0.3} ${my + 1.5}, ${cx - hw} ${leftY} Z`}
+            C ${cx + hw * 0.3} ${my + cornerTuck}, ${cx - hw * 0.3} ${my + cornerTuck}, ${cx - hw} ${leftY} Z`}
         fill={lipColor} opacity={0.4}
       />
       {/* Lower lip highlight */}
@@ -1342,6 +1493,21 @@ function getRoleBgColor(config: PortraitConfig): string {
     case 'Factor':    return '#182818';
     case 'Surgeon':   return '#201820';
     default:          return '#1a1e22';
+  }
+}
+
+// ── Cultural accent — subtle origin-region tint for the background ──
+
+function getCulturalAccent(group: PortraitConfig['culturalGroup']): { color: string; opacity: number } {
+  switch (group) {
+    case 'ArabPersian':    return { color: '#c89040', opacity: 0.18 };  // warm amber
+    case 'Indian':         return { color: '#d4882c', opacity: 0.16 };  // deep saffron
+    case 'Swahili':        return { color: '#a0603a', opacity: 0.18 };  // warm sienna
+    case 'NorthEuropean':  return { color: '#6888a8', opacity: 0.14 };  // cool steel-blue
+    case 'SouthEuropean':  return { color: '#887050', opacity: 0.15 };  // warm umber
+    case 'EastAsian':      return { color: '#508868', opacity: 0.14 };  // muted jade
+    case 'SoutheastAsian': return { color: '#5a9080', opacity: 0.15 };  // teal-green
+    default:               return { color: '#808080', opacity: 0.10 };
   }
 }
 

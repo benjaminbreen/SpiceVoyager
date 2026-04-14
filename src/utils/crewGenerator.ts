@@ -1,4 +1,4 @@
-import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, HealthFlag } from '../store/gameStore';
+import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, HealthFlag, Language } from '../store/gameStore';
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -226,6 +226,74 @@ const SKILL_RANGE: Record<CrewRole, [number, number]> = {
   Sailor:    [25, 60],
 };
 
+const NATIVE_LANGUAGE: Record<Nationality, Language> = {
+  English: 'English',
+  Portuguese: 'Portuguese',
+  Dutch: 'Dutch',
+  Spanish: 'Spanish',
+  French: 'French',
+  Danish: 'Dutch',
+  Mughal: 'Hindustani',
+  Gujarati: 'Gujarati',
+  Persian: 'Persian',
+  Ottoman: 'Turkish',
+  Omani: 'Arabic',
+  Swahili: 'Swahili',
+  Malay: 'Malay',
+  Acehnese: 'Malay',
+  Javanese: 'Malay',
+  Moluccan: 'Malay',
+  Siamese: 'Malay',
+  Japanese: 'Japanese',
+  Chinese: 'Chinese',
+};
+
+const CONTACT_LANGUAGES: Record<Nationality, Language[]> = {
+  English: ['Portuguese', 'Dutch', 'Gujarati', 'Arabic', 'Malay'],
+  Portuguese: ['Arabic', 'Gujarati', 'Malay', 'Swahili', 'Persian'],
+  Dutch: ['Portuguese', 'Malay', 'Chinese', 'Gujarati', 'English'],
+  Spanish: ['Portuguese', 'Chinese', 'Malay', 'Japanese'],
+  French: ['Portuguese', 'Arabic', 'Gujarati', 'Swahili'],
+  Danish: ['Dutch', 'English', 'Portuguese', 'Malay'],
+  Mughal: ['Persian', 'Gujarati', 'Arabic', 'Portuguese'],
+  Gujarati: ['Hindustani', 'Persian', 'Arabic', 'Portuguese'],
+  Persian: ['Arabic', 'Turkish', 'Gujarati', 'Hindustani'],
+  Ottoman: ['Arabic', 'Persian', 'Portuguese'],
+  Omani: ['Persian', 'Swahili', 'Gujarati', 'Portuguese'],
+  Swahili: ['Arabic', 'Portuguese', 'Persian'],
+  Malay: ['Portuguese', 'Chinese', 'Arabic', 'Japanese'],
+  Acehnese: ['Arabic', 'Portuguese', 'Gujarati'],
+  Javanese: ['Portuguese', 'Chinese', 'Arabic'],
+  Moluccan: ['Portuguese', 'Malay', 'Chinese'],
+  Siamese: ['Malay', 'Chinese', 'Portuguese'],
+  Japanese: ['Chinese', 'Portuguese', 'Malay'],
+  Chinese: ['Malay', 'Portuguese', 'Japanese'],
+};
+
+function rollLanguages(nationality: Nationality, role: CrewRole, stats: CrewStats, quality: CrewQuality): Language[] {
+  const languages = new Set<Language>([NATIVE_LANGUAGE[nationality]]);
+  const contacts = CONTACT_LANGUAGES[nationality] ?? [];
+  const extraChance = role === 'Factor' ? 0.82
+    : role === 'Navigator' ? 0.58
+    : role === 'Captain' ? 0.48
+    : role === 'Surgeon' ? 0.34
+    : 0.22;
+  const charismaBonus = Math.max(0, stats.charisma - 10) * 0.025;
+  const qualityBonus = quality === 'legendary' ? 0.24 : quality === 'rare' ? 0.12 : 0;
+
+  if (contacts.length && Math.random() < extraChance + charismaBonus + qualityBonus) {
+    languages.add(pick(contacts));
+  }
+  if (contacts.length > 1 && Math.random() < extraChance * 0.32 + charismaBonus) {
+    languages.add(pick(contacts));
+  }
+  if (role === 'Factor' && languages.size < 3 && contacts.length) {
+    languages.add(pick(contacts));
+  }
+
+  return [...languages];
+}
+
 // ── Quality tiers ──────────────────────────────────────
 // Based on a composite score of skill + morale (range ~90-200).
 // The percentile thresholds match the loot tier distribution:
@@ -379,6 +447,7 @@ export function generateCrewMember(
     morale,
     age,
     nationality,
+    languages: rollLanguages(nationality, role, stats, quality),
     birthplace,
     health: 'healthy' as HealthFlag,
     quality,

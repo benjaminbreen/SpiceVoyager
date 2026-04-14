@@ -3,13 +3,14 @@ import { useFrame } from '@react-three/fiber';
 import { useGameStore, getRoleBonus, captainHasTrait } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getMeshHalf } from '../utils/terrain';
-import { Text } from '@react-three/drei';
+import { Billboard, Text } from '@react-three/drei';
 import { FACTIONS } from '../constants/factions';
 import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxRiggingCreak, sfxTreasureFind } from '../audio/SoundEffects';
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
 import { swivelAimAngle, broadsideReload } from '../utils/combatState';
+import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
@@ -46,11 +47,12 @@ export function Ship() {
   const shipRightVector = useRef(new THREE.Vector2());
   
   // Input state
-  const keys = useRef({ w: false, a: false, s: false, d: false });
+  const keys = useRef({ w: false, a: false, s: false, d: false, shift: false });
 
   // Visual effects state
   const lastDamageTime = useRef(0);
   const [showExclamation, setShowExclamation] = useState(false);
+  const [showSpeedBoost, setShowSpeedBoost] = useState(false);
   const exclamationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Particles
@@ -59,6 +61,10 @@ export function Ship() {
   const particleCount = 30;
   const sailTrim = useRef({ main: 0, fore: 0 });
   const visualSailSet = useRef(0.4);
+  const windTrimCharge = useRef(0);
+  const windTrimWasActive = useRef(false);
+  const speedBoostVisible = useRef(false);
+  const speedBoostRef = useRef<THREE.Group>(null);
   const storeSyncAccum = useRef(0);
 
   // Anchor animation state
@@ -478,9 +484,27 @@ export function Ship() {
       const store = useGameStore.getState();
       const navBonus = getRoleBonus(store, 'Navigator', 'perception');
       const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
-      const maxSpeed = stats.speed * navBonus * seaLegsBonus;
+      const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus;
+      const windTrim = getWindTrimInfo(store.windDirection, rotation.current);
+      const wantsWindTrim = keys.current.shift && keys.current.w && velocity.current > 0.5;
+      const windTrimActive = wantsWindTrim && windTrim.score > 0;
+      const windTrimLerp = 1 - Math.exp(-delta * (windTrimActive ? 2.4 : 4.2));
+      windTrimCharge.current = THREE.MathUtils.lerp(
+        windTrimCharge.current,
+        windTrimActive ? 1 : 0,
+        windTrimLerp,
+      );
+      const windTrimMultiplier = getWindTrimMultiplier(store.windSpeed, windTrim.score, windTrimCharge.current);
+      const maxSpeed = baseMaxSpeed * windTrimMultiplier;
       const accel = 5 * delta;
       const drag = 2 * delta;
+
+      if (windTrimActive && windTrimCharge.current > 0.35 && !windTrimWasActive.current) {
+        windTrimWasActive.current = true;
+        sfxSailsCatch();
+      } else if (!windTrimActive || windTrimCharge.current < 0.08) {
+        windTrimWasActive.current = false;
+      }
 
       // When anchored, rapidly decelerate to zero and ignore movement input
       if (store.anchored) {
@@ -490,13 +514,24 @@ export function Ship() {
           velocity.current = 0;
         }
       } else if (keys.current.w) {
-        velocity.current = Math.min(velocity.current + accel, maxSpeed);
+        const trimAcceleration = windTrimActive ? 1 + windTrim.score * 0.6 : 1;
+        velocity.current = Math.min(velocity.current + accel * trimAcceleration, maxSpeed);
       } else if (keys.current.s) {
-        velocity.current = Math.max(velocity.current - accel, -maxSpeed / 2);
+        velocity.current = Math.max(velocity.current - accel, -baseMaxSpeed / 2);
       } else {
         // Apply drag
         if (velocity.current > 0) velocity.current = Math.max(0, velocity.current - drag);
         if (velocity.current < 0) velocity.current = Math.min(0, velocity.current + drag);
+      }
+
+      if (velocity.current > maxSpeed) {
+        velocity.current = Math.max(maxSpeed, velocity.current - drag * 2.5);
+      }
+
+      const shouldShowSpeedBoost = windTrimActive && windTrimCharge.current > 0.35;
+      if (shouldShowSpeedBoost !== speedBoostVisible.current) {
+        speedBoostVisible.current = shouldShowSpeedBoost;
+        setShowSpeedBoost(shouldShowSpeedBoost);
       }
 
       // Turning (only turn if moving, or turn slowly if stopped)
@@ -676,6 +711,9 @@ export function Ship() {
         lastCreakTime.current = now;
         sfxRiggingCreak();
       }
+    } else if (speedBoostVisible.current) {
+      speedBoostVisible.current = false;
+      setShowSpeedBoost(false);
     }
 
     let headingDelta = rotation.current - previousHeading.current;
@@ -705,6 +743,12 @@ export function Ship() {
       visualGroup.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 0.15;
       visualGroup.current.rotation.z = heel.current + Math.sin(state.clock.elapsedTime * 1.5) * (0.018 + speedRatio * 0.012);
       visualGroup.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2) * 0.04 - speedRatio * 0.015;
+    }
+
+    if (speedBoostRef.current) {
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 9) * 0.08;
+      speedBoostRef.current.scale.setScalar(pulse);
+      speedBoostRef.current.position.y = 8.9 + Math.sin(state.clock.elapsedTime * 5) * 0.18;
     }
 
     windVector.current
@@ -1263,6 +1307,22 @@ export function Ship() {
             >
               !
             </Text>
+          )}
+
+          {showSpeedBoost && (
+            <Billboard ref={speedBoostRef} position={[0, 8.9, 0]}>
+              <Text
+                fontSize={0.72}
+                color="#86efac"
+                outlineWidth={0.08}
+                outlineColor="#052e16"
+                fontWeight="bold"
+                anchorX="center"
+                anchorY="middle"
+              >
+                SPEED BOOST!
+              </Text>
+            </Billboard>
           )}
 
           {/* Hull */}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import { ALL_COMMODITIES, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
@@ -17,8 +17,10 @@ const BRIGHT    = '#d8ccb0';
 const BG        = '#0c0b08';
 
 // ── Inner width: chars between the ║ borders ─────────────────────────────────
-// Total line width = 2 (║ + space) + IW + 2 (space + ║) = IW + 4 = 52
+// Total line width = 2 (║ + space) + IW + 2 (space + ║) = IW + 4
+// Base width; on wider screens we use IW_WIDE to create room for the port thumbnail
 const IW = 48;
+const IW_WIDE = 62;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function C({ c, children }: { c: string; children: React.ReactNode }) {
@@ -126,8 +128,16 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const ports = useGameStore(s => s.ports);
   const cargo = useGameStore(s => s.cargo);
 
+  const [isWide, setIsWide] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 900);
+  useEffect(() => {
+    const onResize = () => setIsWide(window.innerWidth >= 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const captain = crew.find(c => c.role === 'Captain');
   const startPort = ports[0];
+  const iw = isWide ? IW_WIDE : IW;
 
   // Ornament animation — ref-based to avoid full re-renders
   const ornamentRefs = useRef<(HTMLSpanElement | null)[]>([]);
@@ -183,13 +193,26 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const divChar = '\u2726';
 
   // ── Cartouche geometry ──
-  const cartInner = IW - 8; // inner width of the ╭───╮ box (3 margin + 1 border each side)
+  const cartInner = iw - 8; // inner width of the ╭───╮ box (3 margin + 1 border each side)
+  const titleLen = 37; // 'C O M M I S S I O N  O F  V O Y A G E'
+  const titlePadL = Math.floor((cartInner - titleLen) / 2);
+  const titlePadR = cartInner - titleLen - titlePadL;
+
+  // ── Table column widths (scale with iw) ──
+  const nameW = isWide ? 26 : 19;
+  const roleW = isWide ? 18 : 13;
+  const skillW = 5;
+  const tblW = nameW + roleW + skillW; // divider rule width
+  // Cargo two-column: each col = icon(1)+sp(1)+name(cargoNameW)+sp(1)+qty(4)+tier(1)
+  const cargoNameW = isWide ? 19 : 12;
+  const cargoColW = cargoNameW + 8; // per column char count
+  const cargoGap = iw - 4 - cargoColW * 2; // gap between cols
 
   // ── Godspeed box geometry ──
   const godW = 26; // inner width of the ┌───┐ box
   const godBox = godW + 2; // including │ borders
-  const godPadL = Math.floor((IW - godBox) / 2);
-  const godPadR = IW - godBox - godPadL;
+  const godPadL = Math.floor((iw - godBox) / 2);
+  const godPadR = iw - godBox - godPadL;
 
   const monoFont = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 
@@ -218,8 +241,64 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           willChange: 'opacity, transform',
         }}
       >
+        {/* ═══ Port thumbnail — anchored beside ship description ═══ */}
+        {startPort && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1.0, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              position: 'absolute',
+              top: isWide ? 190 : 150,
+              right: isWide ? 50 : 30,
+              width: isWide ? 120 : 90,
+              height: isWide ? 96 : 72,
+              zIndex: 10,
+              borderRadius: 2,
+              overflow: 'hidden',
+              border: `1px solid ${DIM_GOLD}`,
+              boxShadow: `0 0 16px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.4), 0 0 1px ${DIM_GOLD}`,
+            }}
+          >
+            <img
+              src={`/ports/${startPort.id}.png`}
+              alt={startPort.name}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                filter: 'sepia(0.35) contrast(1.1) brightness(0.8)',
+              }}
+            />
+            {/* Vignette overlay */}
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: `radial-gradient(ellipse at center, transparent 30%, rgba(12,11,8,0.65) 100%)`,
+              pointerEvents: 'none',
+            }} />
+            {/* Bottom label */}
+            <div style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              padding: '2px 4px',
+              background: 'linear-gradient(transparent, rgba(12,11,8,0.9))',
+              fontFamily: monoFont,
+              fontSize: isWide ? 9 : 7.5,
+              color: DIM_GOLD,
+              textAlign: 'center',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+            }}>
+              {startPort.name}
+            </div>
+          </motion.div>
+        )}
+
         <pre
-          className="text-[10.5px] leading-[1.55] whitespace-pre"
+          className={`${isWide ? 'text-[13px]' : 'text-[10.5px]'} leading-[1.55] whitespace-pre`}
           style={{ fontFamily: monoFont, color: TXT }}
         >
           {/* ═══ Floating ornaments above ═══ */}
@@ -229,14 +308,14 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           {'              '}<C c={DIM}>{ornamentSpan(3)}</C>
           {'        '}<C c={DIM}>{ornamentSpan(4)}</C>{'\n'}
 
-          {/* ═══ Top rail — total IW+4 = 52 chars ═══ */}
+          {/* ═══ Top rail ═══ */}
           <C c={GOLD}>{ornamentSpan(5)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(IW)}{'\u2500'}</C>
+          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(iw)}{'\u2500'}</C>
           <C c={GOLD}>{ornamentSpan(6)}</C>{'\n'}
 
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
-          {/* ═══ Title cartouche ═══ */}
+          {/* ═══ Title cartouche (centered) ═══ */}
           <L>
             <C c={BG}>{'   '}</C>
             <C c={DIM_GOLD}>{'\u256d'}{'\u2500'.repeat(cartInner)}{'\u256e'}</C>
@@ -245,9 +324,9 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           <L>
             <C c={BG}>{'   '}</C>
             <C c={DIM_GOLD}>{'\u2502'}</C>
-            <C c={BG}>{' '}</C>
+            <C c={BG}>{sp(titlePadL)}</C>
             <C c={GOLD}>{'C O M M I S S I O N  O F  V O Y A G E'}</C>
-            <C c={BG}>{sp(cartInner - 1 - 37)}</C>
+            <C c={BG}>{sp(titlePadR)}</C>
             <C c={DIM_GOLD}>{'\u2502'}</C>
             <C c={BG}>{'   '}</C>
           </L>
@@ -257,61 +336,65 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={BG}>{'   '}</C>
           </L>
 
-          <L><C c={BG}>{sp(IW)}</C></L>
-          <L><Divider ornChar={divChar} /></L>
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
+          <L><Divider ornChar={divChar} width={iw} /></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
           {/* ═══ Ship & Captain ═══ */}
           <L>
             <C c={BG}>{'    '}</C>
             <C c={TXT}>{shipDesc}</C>
             <C c={TEAL}>{ship.name}</C>
-            <C c={BG}>{sp(IW - 4 - shipDesc.length - ship.name.length)}</C>
+            <C c={BG}>{sp(iw - 4 - shipDesc.length - ship.name.length)}</C>
           </L>
           <L>
             <C c={BG}>{'    '}</C>
             <C c={TXT}>{portLine}</C>
-            <C c={BG}>{sp(IW - 4 - portLine.length)}</C>
+            <C c={BG}>{sp(iw - 4 - portLine.length)}</C>
           </L>
           <L>
             <C c={BG}>{'    '}</C>
             <C c={TXT}>{cmdLine}</C>
             <C c={CRIMSON}>{captainName}</C>
             <C c={TXT}>{'.'}</C>
-            <C c={BG}>{sp(IW - 4 - cmdLine.length - captainName.length - 1)}</C>
+            <C c={BG}>{sp(iw - 4 - cmdLine.length - captainName.length - 1)}</C>
           </L>
 
-          <L><C c={BG}>{sp(IW)}</C></L>
-          <L><Divider ornChar={divChar} /></L>
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
+          <L><Divider ornChar={divChar} width={iw} /></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
           {/* ═══ Crew table ═══ */}
           <L>
             <C c={BG}>{'    '}</C>
-            <C c={WARM}>{pad('NAME', 19)}{pad('ROLE', 13)}{pad('SKILL', 5)}</C>
-            <C c={BG}>{sp(IW - 4 - 19 - 13 - 5)}</C>
+            <C c={WARM}>{pad('NAME', nameW)}{pad('ROLE', roleW)}{pad('SKILL', skillW)}</C>
+            <C c={BG}>{sp(iw - 4 - tblW)}</C>
           </L>
           <L>
             <C c={BG}>{'    '}</C>
-            <C c={RULE}>{'\u2500'.repeat(37)}</C>
-            <C c={BG}>{sp(IW - 4 - 37)}</C>
+            <C c={RULE}>{'\u2500'.repeat(tblW)}</C>
+            <C c={BG}>{sp(iw - 4 - tblW)}</C>
           </L>
 
-          {crewLines.map((m, i) => (
-            <L key={i}>
-              <C c={BG}>{'    '}</C>
-              <C c={m.isCaptain ? CRIMSON : TXT}>{pad(m.name, 19)}</C>
-              <C c={DIM}>{pad(m.role, 13)}</C>
-              {skillBar(m.skill)}
-              <C c={BG}>{sp(IW - 4 - 19 - 13 - 5)}</C>
-            </L>
-          ))}
+          {crewLines.map((m, i) => {
+            let name = m.name;
+            if (name.length > nameW) name = name.slice(0, nameW - 1) + '\u2026';
+            return (
+              <L key={i}>
+                <C c={BG}>{'    '}</C>
+                <C c={m.isCaptain ? CRIMSON : TXT}>{pad(name, nameW)}</C>
+                <C c={DIM}>{pad(m.role, roleW)}</C>
+                {skillBar(m.skill)}
+                <C c={BG}>{sp(iw - 4 - tblW)}</C>
+              </L>
+            );
+          })}
 
-          <L><C c={BG}>{sp(IW)}</C></L>
-          <L><Divider ornChar={divChar} /></L>
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
+          <L><Divider ornChar={divChar} width={iw} /></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
-          {/* ═══ Stats ═══ */}
+          {/* ═══ Stats (single line: Gold + Hull) ═══ */}
           <L>
             <C c={BG}>{'    '}</C>
             <C c={WARM}>{'Gold '}</C>
@@ -320,82 +403,94 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <C c={WARM}>{'Hull '}</C>
             {statBar(stats.hull, stats.maxHull, TEAL)}
             <C c={DIM}>{` ${stats.hull}/${stats.maxHull}`}</C>
-            <C c={BG}>{sp(IW - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.hull}/${stats.maxHull}`.length)}</C>
-          </L>
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={WARM}>{'Crew '}</C>
-            <C c={BRIGHT}>{pad(`${crew.length} souls`, 7)}</C>
-            <C c={BG}>{'  '}</C>
-            <C c={WARM}>{'Sail '}</C>
-            {statBar(stats.sails, stats.maxSails, TEAL)}
-            <C c={DIM}>{` ${stats.sails}/${stats.maxSails}`}</C>
-            <C c={BG}>{sp(IW - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.sails}/${stats.maxSails}`.length)}</C>
+            <C c={BG}>{sp(iw - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.hull}/${stats.maxHull}`.length)}</C>
           </L>
 
-          <L><C c={BG}>{sp(IW)}</C></L>
-          <L><Divider ornChar={divChar} /></L>
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
+          <L><Divider ornChar={divChar} width={iw} /></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
-          {/* ═══ Cargo manifest ═══ */}
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={WARM}>{'CARGO MANIFEST'}</C>
-            <C c={BG}>{sp(IW - 4 - 14)}</C>
-          </L>
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={RULE}>{'\u2500'.repeat(37)}</C>
-            <C c={BG}>{sp(IW - 4 - 37)}</C>
-          </L>
-
-          {ALL_COMMODITIES.filter(c => cargo[c] > 0).map((c, i) => {
-            const def = COMMODITY_DEFS[c];
-            const qty = cargo[c];
-            const qtyStr = String(qty);
-            const nameStr = c.length > 22 ? c.slice(0, 21) + '\u2026' : c;
-            const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
-            // Layout: 4 margin + icon(1) + space(1) + name(22) + space(1) + qty(4) + tier(1) + fill
-            const usedW = 4 + 1 + 1 + 22 + 1 + 4 + 1;
-            return (
-              <L key={c}>
-                <C c={BG}>{'    '}</C>
-                <C c={def.color}>{def.icon}</C>
-                <C c={BG}>{' '}</C>
-                <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, 22)}</C>
-                <C c={BG}>{' '}</C>
-                <C c={BRIGHT}>{pad(qtyStr, 4)}</C>
-                <C c={DIM}>{tierTag}</C>
-                <C c={BG}>{sp(IW - usedW)}</C>
-              </L>
-            );
-          })}
-
-          {/* Cargo weight summary */}
+          {/* ═══ Cargo manifest with inline capacity ═══ */}
           {(() => {
             const totalWeight = Object.entries(cargo).reduce(
               (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
             );
-            const summaryStr = `${totalWeight}/${stats.cargoCapacity} hold capacity`;
+            const capStr = `${totalWeight}/${stats.cargoCapacity}`;
+            const headerUsed = 4 + 14 + capStr.length;
             return (
-              <>
-                <L>
-                  <C c={BG}>{'    '}</C>
-                  <C c={RULE}>{'\u2500'.repeat(37)}</C>
-                  <C c={BG}>{sp(IW - 4 - 37)}</C>
-                </L>
-                <L>
-                  <C c={BG}>{'    '}</C>
-                  <C c={DIM}>{summaryStr}</C>
-                  <C c={BG}>{sp(IW - 4 - summaryStr.length)}</C>
-                </L>
-              </>
+              <L>
+                <C c={BG}>{'    '}</C>
+                <C c={WARM}>{'CARGO MANIFEST'}</C>
+                <C c={BG}>{sp(iw - headerUsed)}</C>
+                <C c={DIM}>{capStr}</C>
+              </L>
             );
           })()}
+          <L>
+            <C c={BG}>{'    '}</C>
+            <C c={RULE}>{'\u2500'.repeat(iw - 8)}</C>
+            <C c={BG}>{sp(4)}</C>
+          </L>
 
-          <L><C c={BG}>{sp(IW)}</C></L>
-          <L><WaveStripAnimated /></L>
-          <L><C c={BG}>{sp(IW)}</C></L>
+          {(() => {
+            const items = ALL_COMMODITIES.filter(c => cargo[c] > 0);
+            if (isWide) {
+              // Two-column layout using dynamic column widths
+              const pairs: [string, string | null][] = [];
+              for (let i = 0; i < items.length; i += 2) {
+                pairs.push([items[i], items[i + 1] ?? null]);
+              }
+              const renderCol = (c: string) => {
+                const def = COMMODITY_DEFS[c as Commodity];
+                const qty = cargo[c as Commodity];
+                const nameStr = c.length > cargoNameW ? c.slice(0, cargoNameW - 1) + '\u2026' : c;
+                const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+                return (
+                  <>
+                    <C c={def.color}>{def.icon}</C>
+                    <C c={BG}>{' '}</C>
+                    <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, cargoNameW)}</C>
+                    <C c={BG}>{' '}</C>
+                    <C c={BRIGHT}>{pad(String(qty), 4)}</C>
+                    <C c={DIM}>{tierTag}</C>
+                  </>
+                );
+              };
+              return pairs.map(([left, right], i) => (
+                <L key={i}>
+                  <C c={BG}>{'    '}</C>
+                  {renderCol(left)}
+                  <C c={BG}>{sp(cargoGap)}</C>
+                  {right ? renderCol(right) : <C c={BG}>{sp(cargoColW)}</C>}
+                  <C c={BG}>{sp(iw - 4 - cargoColW - cargoGap - cargoColW)}</C>
+                </L>
+              ));
+            } else {
+              return items.map((c) => {
+                const def = COMMODITY_DEFS[c];
+                const qty = cargo[c];
+                const nameStr = c.length > 22 ? c.slice(0, 21) + '\u2026' : c;
+                const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+                const usedW = 4 + 1 + 1 + 22 + 1 + 4 + 1;
+                return (
+                  <L key={c}>
+                    <C c={BG}>{'    '}</C>
+                    <C c={def.color}>{def.icon}</C>
+                    <C c={BG}>{' '}</C>
+                    <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, 22)}</C>
+                    <C c={BG}>{' '}</C>
+                    <C c={BRIGHT}>{pad(String(qty), 4)}</C>
+                    <C c={DIM}>{tierTag}</C>
+                    <C c={BG}>{sp(iw - usedW)}</C>
+                  </L>
+                );
+              });
+            }
+          })()}
+
+          <L><C c={BG}>{sp(iw)}</C></L>
+          <L><WaveStripAnimated width={iw} /></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
           {/* ═══ Godspeed button ═══ */}
           <span
@@ -426,11 +521,11 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             </L>
           </span>
 
-          <L><C c={BG}>{sp(IW)}</C></L>
+          <L><C c={BG}>{sp(iw)}</C></L>
 
-          {/* ═══ Bottom rail — total IW+4 = 52 chars ═══ */}
+          {/* ═══ Bottom rail ═══ */}
           <C c={GOLD}>{ornamentSpan(7)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(IW)}{'\u2500'}</C>
+          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(iw)}{'\u2500'}</C>
           <C c={GOLD}>{ornamentSpan(8)}</C>{'\n'}
 
           {/* ═══ Floating ornaments below ═══ */}

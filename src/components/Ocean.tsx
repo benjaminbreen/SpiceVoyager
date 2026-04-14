@@ -18,6 +18,7 @@ const SHALLOW_TINT_OFFSET = 0.012;
 const WAKE_SURFACE_OFFSET = 0.045;
 const FOAM_SURFACE_OFFSET = 0.055;
 const ALGAE_SURFACE_OFFSET = 0.035;
+const CAUSTIC_SURFACE_OFFSET = 0.005;
 const WATER_SURFACE_ALPHA = 0.88;
 
 function ShallowWaterTint() {
@@ -697,6 +698,120 @@ function PhosphorescentAlgae() {
   );
 }
 
+function WaterCaustics() {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  const shaderArgs = useMemo(() => ({
+    uniforms: {
+      uTime: { value: 0 },
+      uDaylight: { value: 1.0 },
+      uPlayerPos: { value: new THREE.Vector3() },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vWorldXZ;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldXZ = wp.xz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uDaylight;
+      uniform vec3 uPlayerPos;
+      varying vec2 vWorldXZ;
+
+      // Smooth value noise
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hash(i), hash(i + vec2(1, 0)), f.x),
+          mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x),
+          f.y
+        );
+      }
+
+      void main() {
+        if (uDaylight < 0.1) discard;
+
+        // Distance fade — only render near the player
+        float dist = length(vWorldXZ - uPlayerPos.xz);
+        float distFade = 1.0 - smoothstep(60.0, 120.0, dist);
+        if (distFade < 0.01) discard;
+
+        // Large drifting caustic pattern
+        float t = uTime;
+        vec2 uv1 = vWorldXZ * 0.08 + vec2(t * 0.24, t * 0.16);
+        vec2 uv2 = vWorldXZ * 0.08 + vec2(-t * 0.18, t * 0.28);
+        float n1 = noise(uv1);
+        float n2 = noise(uv2);
+        // Intersect two noise fields — creates bright caustic lines where both are high
+        float caustic = n1 * n2;
+        caustic = smoothstep(0.18, 0.38, caustic);
+
+        // Smaller, faster detail layer
+        vec2 uv3 = vWorldXZ * 0.18 + vec2(t * 0.4, -t * 0.3);
+        vec2 uv4 = vWorldXZ * 0.18 + vec2(-t * 0.28, -t * 0.44);
+        float n3 = noise(uv3);
+        float n4 = noise(uv4);
+        float detail = n3 * n4;
+        detail = smoothstep(0.2, 0.4, detail);
+
+        // Blend: large shapes dominate, detail adds sparkle
+        float combined = caustic * 0.7 + detail * 0.3;
+
+        // Warm sunlight tint — golden, not white
+        vec3 causticColor = vec3(0.85, 0.95, 1.0);
+
+        float alpha = combined * 0.15 * uDaylight * distFade;
+        if (alpha < 0.002) discard;
+
+        gl_FragColor = vec4(causticColor, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+    side: THREE.DoubleSide,
+  }), []);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    const mat = meshRef.current.material as THREE.ShaderMaterial;
+    mat.uniforms.uTime.value = state.clock.elapsedTime;
+
+    const shipTransform = getLiveShipTransform();
+    mat.uniforms.uPlayerPos.value.set(
+      shipTransform.pos[0], shipTransform.pos[1], shipTransform.pos[2],
+    );
+    meshRef.current.position.x = shipTransform.pos[0];
+    meshRef.current.position.z = shipTransform.pos[2];
+
+    const time = useGameStore.getState().timeOfDay;
+    const theta = ((time - 6) / 24) * Math.PI * 2;
+    const sunH = Math.sin(theta);
+    mat.uniforms.uDaylight.value = smoothstep(-0.15, 0.25, sunH);
+  });
+
+  return (
+    <mesh
+      ref={meshRef}
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, SEA_LEVEL + CAUSTIC_SURFACE_OFFSET, 0]}
+      renderOrder={2}
+    >
+      <planeGeometry args={[250, 250, 1, 1]} />
+      <shaderMaterial args={[shaderArgs]} />
+    </mesh>
+  );
+}
+
 export function Ocean() {
   const waterRef = useRef<Water | null>(null);
   const advancedWaterEnabled = useGameStore((state) => state.renderDebug.advancedWater);
@@ -810,6 +925,7 @@ export function Ocean() {
           />
         </mesh>
       )}
+      {showAdvancedWater && <WaterCaustics />}
       {algaeEnabled && <PhosphorescentAlgae />}
       {shipWakeEnabled && <ShipWake />}
       {bowFoamEnabled && <BowFoam />}

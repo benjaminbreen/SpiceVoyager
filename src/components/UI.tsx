@@ -1,5 +1,7 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, Port } from '../store/gameStore';
+import type { CrewMember, Language } from '../store/gameStore';
+import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
@@ -24,6 +26,7 @@ import {
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
 import { getDefaultPortImageCandidates } from '../utils/portAssets';
+import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 // import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
 
 const PORT_RADIUS_SQ = 20 * 20;
@@ -285,6 +288,7 @@ export function UI() {
   const setActivePort = useGameStore((state) => state.setActivePort);
   const dismissedPortRef = useRef<string | null>(null);
   const approachedPortsRef = useRef<Set<string>>(new Set());
+  const openedFromToastPortRef = useRef<string | null>(null);
   const interactionPrompt = useGameStore((state) => state.interactionPrompt);
   const timeOfDay = useGameStore((state) => state.timeOfDay);
   const crew = useGameStore((state) => state.crew);
@@ -318,11 +322,13 @@ export function UI() {
   const [showJournal, setShowJournal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWind, setShowWind] = useState(false);
+  const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
   const [showCommission, setShowCommission] = useState(false);
   const [loadingReady, setLoadingReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hailWasPausedRef = useRef(false);
   const startupOverlayActive = showInstructions || showCommission;
 
   // Collision warning banner state
@@ -432,9 +438,22 @@ export function UI() {
       const nearest = findNearbyPort(playerMode, playerPos, walkingPos, ports);
 
       if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
+        openedFromToastPortRef.current = null;
         setActivePort(nearest);
       } else if (!nearest && currentActivePort) {
-        setActivePort(null);
+        const openedFromToastPort = openedFromToastPortRef.current
+          ? ports.find(port => port.id === openedFromToastPortRef.current)
+          : null;
+        const keepToastPortOpen = openedFromToastPort && currentActivePort.id === openedFromToastPort.id && (() => {
+          const dx = playerPos[0] - openedFromToastPort.position[0];
+          const dz = playerPos[2] - openedFromToastPort.position[2];
+          return dx * dx + dz * dz < PORT_APPROACH_RADIUS_SQ;
+        })();
+
+        if (!keepToastPortOpen) {
+          openedFromToastPortRef.current = null;
+          setActivePort(null);
+        }
       }
       // Clear dismissed port when player leaves the area
       if (!nearest) {
@@ -456,6 +475,7 @@ export function UI() {
                 size: 'grand',
                 subtitle: `${port.scale} port \u00b7 ${port.culture}`,
                 imageCandidates: getDefaultPortImageCandidates(port.id),
+                openPortId: port.id,
               },
             );
           }
@@ -470,11 +490,19 @@ export function UI() {
     return () => clearInterval(checkPorts);
   }, [setActivePort, startupOverlayActive]);
 
+  const closeHail = useCallback(() => {
+    setHailNpc(null);
+    if (!hailWasPausedRef.current) {
+      setPaused(false);
+    }
+  }, [setPaused]);
+
   // Escape key closes modals
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showDashboard) { sfxClose(); setShowDashboard(false); }
+        if (hailNpc) { sfxClose(); closeHail(); }
+        else if (showDashboard) { sfxClose(); setShowDashboard(false); }
         else if (showLocalMap) { sfxClose(); setShowLocalMap(false); }
         else if (showWorldMap) { sfxClose(); setShowWorldMap(false); }
         else if (activePort) {
@@ -486,7 +514,40 @@ export function UI() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showLocalMap, showWorldMap, showDashboard, activePort, setActivePort]);
+  }, [showLocalMap, showWorldMap, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
+
+  useEffect(() => {
+    const handleHailKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 't') return;
+      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const state = useGameStore.getState();
+      if (state.interactionPrompt !== 'Press T to Hail') return;
+      e.preventDefault();
+
+      const npc = state.nearestHailableNpc;
+      if (!npc) {
+        state.addNotification('They signal back but keep their distance.', 'info');
+        return;
+      }
+
+      hailWasPausedRef.current = state.paused;
+      state.setPaused(true);
+      setHailNpc(npc);
+      sfxOpen();
+    };
+
+    window.addEventListener('keydown', handleHailKey);
+    return () => window.removeEventListener('keydown', handleHailKey);
+  }, [showInstructions, showSettings, showDashboard, showLocalMap, showWorldMap, activePort]);
+
+  const nearestHailableNpc = useGameStore((state) => state.nearestHailableNpc);
+  useEffect(() => {
+    if (hailNpc && nearestHailableNpc?.id !== hailNpc.id) {
+      closeHail();
+    }
+  }, [hailNpc, nearestHailableNpc, closeHail]);
 
   // Auto-dismiss notifications — grand toasts last longer
   useEffect(() => {
@@ -505,7 +566,7 @@ export function UI() {
   useEffect(() => {
     const handleHotkey = (e: KeyboardEvent) => {
       // Don't fire hotkeys when a modal is open or typing in an input
-      if (showInstructions || showSettings || activePort) return;
+      if (showInstructions || showSettings || activePort || hailNpc) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch (e.key) {
@@ -537,7 +598,7 @@ export function UI() {
     };
     window.addEventListener('keydown', handleHotkey);
     return () => window.removeEventListener('keydown', handleHotkey);
-  }, [showInstructions, showSettings, activePort, paused, setPaused, cycleViewMode, toggleWorldMap]);
+  }, [showInstructions, showSettings, activePort, hailNpc, paused, setPaused, cycleViewMode, toggleWorldMap]);
 
   return (
     <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none">
@@ -615,20 +676,23 @@ export function UI() {
 
           {/* Wind button + collapsible panel */}
           <div className="flex flex-col items-end gap-2">
-            <button
-              onClick={() => { sfxClick(); setShowWind(!showWind); }}
-              className={`group relative w-11 h-11 rounded-full flex items-center justify-center
-                bg-[#1a1e2e] border-2
-                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
-                transition-all active:scale-95
-                ${showWind
-                  ? 'border-[#34d399]/50 text-[#34d399] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(52,211,153,0.2)]'
-                  : 'border-[#4a4535]/60 text-[#8a8060] hover:text-[#34d399] hover:border-[#34d399]/40'
-                }`}
-              title="Wind & Navigation"
-            >
-              <Wind size={15} />
-            </button>
+            <div className="flex items-center gap-2">
+              <WindQuickMeter />
+              <button
+                onClick={() => { sfxClick(); setShowWind(!showWind); }}
+                className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+                  bg-[#1a1e2e] border-2
+                  shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+                  transition-all active:scale-95
+                  ${showWind
+                    ? 'border-[#34d399]/50 text-[#34d399] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(52,211,153,0.2)]'
+                    : 'border-[#4a4535]/60 text-[#8a8060] hover:text-[#34d399] hover:border-[#34d399]/40'
+                  }`}
+                title="Wind & Navigation"
+              >
+                <Wind size={15} />
+              </button>
+            </div>
             <AnimatePresence>
               {showWind && (
                 <motion.div
@@ -699,6 +763,7 @@ export function UI() {
       {/* Port Trading Modal */}
       {!startupOverlayActive && (
         <PortModal onDismiss={() => {
+          openedFromToastPortRef.current = null;
           if (activePort) dismissedPortRef.current = activePort.id;
           setActivePort(null);
         }} />
@@ -709,6 +774,18 @@ export function UI() {
         <ASCIIDashboard open={showDashboard} onClose={() => setShowDashboard(false)} />
       </AnimatePresence>
 
+      <AnimatePresence>
+        {hailNpc && (
+          <HailPanel
+            npc={hailNpc}
+            onClose={() => {
+              sfxClose();
+              closeHail();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Notifications */}
       <div className="absolute bottom-20 right-4 flex flex-col gap-2 items-end">
         <AnimatePresence>
@@ -717,6 +794,15 @@ export function UI() {
               key={n.id}
               notification={n}
               onDismiss={() => removeNotification(n.id)}
+              onClick={n.openPortId ? () => {
+                const port = useGameStore.getState().ports.find(p => p.id === n.openPortId);
+                if (port) {
+                  openedFromToastPortRef.current = port.id;
+                  dismissedPortRef.current = null;
+                  setActivePort(port);
+                }
+                removeNotification(n.id);
+              } : undefined}
             />
           ))}
         </AnimatePresence>
@@ -1264,6 +1350,361 @@ function StatBar({ icon, label, value, max, color }: { icon: React.ReactNode; la
   );
 }
 
+type HailMood = 'HOSTILE' | 'COLD' | 'WARY' | 'CORDIAL' | 'WARM';
+type HailAction = 'news' | 'trade' | 'bearing' | 'leave';
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function pickStable<T>(items: T[], key: string): T {
+  return items[hashString(key) % items.length];
+}
+
+function getHailMood(rep: number): HailMood {
+  if (rep <= -60) return 'HOSTILE';
+  if (rep <= -25) return 'COLD';
+  if (rep >= 60) return 'WARM';
+  if (rep >= 25) return 'CORDIAL';
+  return 'WARY';
+}
+
+function getHailMoodColor(mood: HailMood): string {
+  if (mood === 'HOSTILE') return '#f87171';
+  if (mood === 'COLD') return '#f59e0b';
+  if (mood === 'CORDIAL') return '#86efac';
+  if (mood === 'WARM') return '#34d399';
+  return '#cbd5e1';
+}
+
+function getHailGreeting(npc: NPCShipIdentity, mood: HailMood): string {
+  const name = npc.captainName.split(' ')[0] || npc.captainName;
+  const lines: Record<HailMood, string[]> = {
+    HOSTILE: [
+      `"Keep off. One more cable and we fire."`,
+      `"We know your flag. Hold your course away from us."`,
+      `"No talk. No trade. Stand clear."`,
+    ],
+    COLD: [
+      `"State your business and keep your guns quiet."`,
+      `"We will answer once. Make it useful."`,
+      `"Speak plainly. We have no wish to linger."`,
+    ],
+    WARY: [
+      `"Fair water. What do you need?"`,
+      `"We hear you. Keep a respectful distance."`,
+      `"Captain ${name} answers. Be quick about it."`,
+    ],
+    CORDIAL: [
+      `"Fair winds. We have news if you need it."`,
+      `"Good sailing to you. What word do you seek?"`,
+      `"Come no closer, friend, but speak freely."`,
+    ],
+    WARM: [
+      `"Well met. We will help where we can."`,
+      `"A welcome sail. Ask what you need."`,
+      `"Good fortune to you. Our deck has news and spare stores."`,
+    ],
+  };
+  return pickStable(lines[mood], npc.id + mood);
+}
+
+function bearingFromTo(from: [number, number, number], to: [number, number, number]): string {
+  const dx = to[0] - from[0];
+  const dz = to[2] - from[2];
+  const angle = (Math.atan2(dx, dz) + Math.PI * 2) % (Math.PI * 2);
+  const points = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+  return points[Math.round(angle / (Math.PI / 4)) % points.length];
+}
+
+const UNTRANSLATED_HAIL: Record<Language, string> = {
+  Arabic: 'لا أفهمك. سأمضي في طريقي.',
+  Persian: 'سخنت را نمی‌فهمم. راه خود را می‌روم.',
+  Gujarati: 'હું તમને સમજતો નથી. હું મારા રસ્તે જાઉં છું.',
+  Hindustani: 'मैं तुम्हारी बात नहीं समझता। मैं अपने रास्ते जाऊँगा।',
+  Portuguese: 'Não vos entendo. Sigo o meu caminho.',
+  Dutch: 'Ik versta u niet. Ik vaar verder.',
+  English: "I cannot understand you. I'll be on my way.",
+  Spanish: 'No os entiendo. Seguiré mi rumbo.',
+  French: 'Je ne vous comprends pas. Je poursuis ma route.',
+  Turkish: 'Sizi anlamıyorum. Yoluma devam edeceğim.',
+  Malay: 'Aku tidak faham. Aku akan meneruskan pelayaran.',
+  Swahili: 'Sikuelewi. Nitaendelea na safari yangu.',
+  Chinese: '我听不懂你。我继续走我的航路。',
+  Japanese: '何を言っているかわからぬ。このまま進む。',
+};
+
+function getCrewLanguages(member: CrewMember): Language[] {
+  return member.languages ?? [];
+}
+
+function pickTranslator(crew: CrewMember[], language: Language): CrewMember | null {
+  const roleRank: Record<string, number> = {
+    Factor: 5,
+    Navigator: 4,
+    Captain: 3,
+    Surgeon: 2,
+    Sailor: 1,
+    Gunner: 1,
+  };
+  return crew
+    .filter((member) => getCrewLanguages(member).includes(language))
+    .sort((a, b) =>
+      (roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0) ||
+      b.stats.charisma - a.stats.charisma ||
+      b.skill - a.skill
+    )[0] ?? null;
+}
+
+function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void }) {
+  const rep = useGameStore((state) => state.getReputation(npc.flag));
+  const gold = useGameStore((state) => state.gold);
+  const crew = useGameStore((state) => state.crew);
+  const hailLanguage = npc.hailLanguage ?? 'Portuguese';
+  const translator = useMemo(() => pickTranslator(crew, hailLanguage), [crew, hailLanguage]);
+  const canUnderstand = Boolean(translator);
+  const mood = getHailMood(rep);
+  const moodColor = getHailMoodColor(mood);
+  const greeting = useMemo(() => getHailGreeting(npc, mood), [npc, mood]);
+  const tradeOffer = useMemo(() => {
+    const seed = hashString(npc.id + npc.shipName);
+    const amount = 4 + (seed % 5);
+    const cost = amount * (mood === 'WARM' ? 2 : mood === 'CORDIAL' ? 3 : 4);
+    return { amount, cost };
+  }, [npc.id, npc.shipName, mood]);
+  const [used, setUsed] = useState<Record<string, boolean>>({});
+  const [result, setResult] = useState<{ tone: 'good' | 'warn' | 'neutral'; text: string; impact?: string } | null>(null);
+  const awardedTranslationRef = useRef(false);
+
+  useEffect(() => {
+    if (!translator || awardedTranslationRef.current) return;
+    awardedTranslationRef.current = true;
+    useGameStore.getState().adjustReputation(npc.flag, 1);
+    useGameStore.setState((state) => ({
+      crew: state.crew.map((member) => member.id === translator.id
+        ? {
+            ...member,
+            xp: member.xp + 1,
+            history: [
+              ...member.history,
+              { day: state.dayCount, event: `Translated ${hailLanguage} during a hail with a ${npc.flag} ${npc.shipType}` },
+            ],
+          }
+        : member
+      ),
+    }));
+  }, [hailLanguage, npc.flag, npc.shipType, translator]);
+
+  const canTrade = canUnderstand && mood !== 'HOSTILE' && mood !== 'COLD';
+  const availableActions = useMemo(() => [
+    canUnderstand && !used.news ? { id: 'news' as HailAction, label: 'News' } : null,
+    canTrade && !used.trade ? { id: 'trade' as HailAction, label: 'Trade' } : null,
+    canUnderstand && !used.bearing ? { id: 'bearing' as HailAction, label: 'Bearing' } : null,
+    { id: 'leave' as HailAction, label: 'Leave' },
+  ].filter(Boolean) as { id: HailAction; label: string }[], [canTrade, canUnderstand, used]);
+
+  const resolveAction = useCallback((action: HailAction) => {
+    sfxClick();
+    const state = useGameStore.getState();
+
+    if (action === 'leave') {
+      onClose();
+      return;
+    }
+
+    if (!canUnderstand) return;
+
+    if (action === 'news') {
+      const news = pickStable([
+        `${npc.flag} captains report patrols searching holds near the next busy anchorage.`,
+        `A damaged trader was seen drifting downwind before dawn. Gulls marked the water behind her.`,
+        `Fresh water is dear along this coast. Captains are paying hard coin for sound casks.`,
+        `Two armed sails were seen shadowing merchantmen beyond the headland.`,
+        `The monsoon has been holding steady. Fast passages favor captains who trim their canvas cleanly.`,
+      ], npc.id + state.dayCount + 'news');
+      state.addJournalEntry('encounter', `Hailed the ${npc.shipName}: ${news}`);
+      setUsed((prev) => ({ ...prev, news: true }));
+      setResult({ tone: 'good', text: `"${news}"`, impact: '+ journal updated' });
+      return;
+    }
+
+    if (action === 'bearing') {
+      const shipPos = getLiveShipTransform().pos;
+      const byDistance = (a: Port, b: Port) => {
+        const adx = a.position[0] - shipPos[0];
+        const adz = a.position[2] - shipPos[2];
+        const bdx = b.position[0] - shipPos[0];
+        const bdz = b.position[2] - shipPos[2];
+        return adx * adx + adz * adz - (bdx * bdx + bdz * bdz);
+      };
+      const target = state.ports
+        .filter((port) => !state.discoveredPorts.includes(port.id))
+        .sort(byDistance)[0] ?? state.ports
+        .filter((port) => port.id !== state.currentWorldPortId)
+        .sort(byDistance)[0];
+
+      if (!target) {
+        setResult({ tone: 'neutral', text: `"No useful bearing. Only open water from here."` });
+        return;
+      }
+
+      const bearing = bearingFromTo(shipPos, target.position);
+      const line = `They mark ${target.name} ${bearing} by their reckoning.`;
+      state.addJournalEntry('navigation', `Bearing from the ${npc.shipName}: ${target.name} lies ${bearing}.`, target.name);
+      setUsed((prev) => ({ ...prev, bearing: true }));
+      setResult({ tone: 'good', text: `"${line}"`, impact: '+ bearing noted' });
+      return;
+    }
+
+    if (action === 'trade') {
+      if (!canTrade) {
+        setResult({ tone: 'warn', text: `"No trade. Keep clear."` });
+        return;
+      }
+      if (gold < tradeOffer.cost) {
+        setResult({ tone: 'warn', text: `"Dried fish and water, ${tradeOffer.cost} gold. You lack the coin."` });
+        return;
+      }
+
+      useGameStore.setState((prev) => ({
+        gold: prev.gold - tradeOffer.cost,
+        provisions: prev.provisions + tradeOffer.amount,
+      }));
+      state.addJournalEntry('commerce', `Bought ${tradeOffer.amount} provisions from the ${npc.shipName} for ${tradeOffer.cost} gold.`);
+      setUsed((prev) => ({ ...prev, trade: true }));
+      setResult({
+        tone: 'good',
+        text: `"We can spare dried fish and water casks."`,
+        impact: `+${tradeOffer.amount} provisions · -${tradeOffer.cost} gold`,
+      });
+    }
+  }, [canTrade, canUnderstand, gold, npc, onClose, tradeOffer]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      const idx = Number(e.key) - 1;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= availableActions.length) return;
+      e.preventDefault();
+      resolveAction(availableActions[idx].id);
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [availableActions, onClose, resolveAction]);
+
+  const resultColor = result?.tone === 'warn' ? '#f59e0b' : result?.tone === 'good' ? '#86efac' : '#cbd5e1';
+  const displayText = canUnderstand
+    ? (result ? result.text : greeting)
+    : `"${UNTRANSLATED_HAIL[hailLanguage]}"`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      transition={{ duration: 0.16 }}
+      className="absolute bottom-24 left-1/2 z-40 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto"
+    >
+      <div className="bg-[#050812]/78 backdrop-blur-md border border-[#2a2d3a]/45 rounded-xl px-4 py-3 shadow-[0_10px_34px_rgba(0,0,0,0.45)]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#8a8060]">
+              HAIL // {npc.flag} {npc.shipType}{canUnderstand && <> // <span style={{ color: moodColor }}>{mood}</span></>}
+            </div>
+            <div className="mt-1 truncate text-sm font-semibold text-slate-100">
+              {canUnderstand
+                ? <>{npc.shipName} <span className="text-slate-500">·</span> <span className="text-slate-300">Capt. {npc.captainName}</span></>
+                : <span className="text-slate-300">Unknown vessel</span>}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500 hover:text-slate-200 transition-colors"
+          >
+            Esc
+          </button>
+        </div>
+
+        <div className="my-3 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
+
+        <div className="text-[13px] leading-relaxed text-slate-200">
+          {displayText}
+        </div>
+        {canUnderstand && translator && !result && (
+          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-emerald-300/80">
+            {translator.name} translates from {hailLanguage}. +1 xp
+          </div>
+        )}
+        {!canUnderstand && (
+          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-300/85">
+            No one aboard understands {hailLanguage}.
+          </div>
+        )}
+        {result?.impact && (
+          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: resultColor }}>
+            {result.impact}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+          {availableActions.map((action, index) => (
+            <button
+              key={action.id}
+              onClick={() => resolveAction(action.id)}
+              className="font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400 hover:text-amber-300 transition-colors"
+            >
+              <span className="text-[#8a8060]">[{index + 1}]</span> {action.label}
+              {action.id === 'trade' && <span className="text-slate-600"> {tradeOffer.cost}g</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function getTrimCueColor(grade: ReturnType<typeof getWindTrimInfo>['grade']): string {
+  if (grade === 'full') return '#22c55e';
+  if (grade === 'good') return '#86efac';
+  if (grade === 'reach') return '#bbf7d0';
+  return '#64748b';
+}
+
+function WindQuickMeter() {
+  const windDirection = useGameStore((state) => state.windDirection);
+  const windSpeed = useGameStore((state) => state.windSpeed);
+  const playerRot = useGameStore((state) => state.playerRot);
+  const trimInfo = getWindTrimInfo(windDirection, playerRot);
+  const cueColor = getTrimCueColor(trimInfo.grade);
+  const speedKnots = Math.round(windSpeed * 20);
+  const hasShiftCue = trimInfo.score > 0;
+
+  return (
+    <div
+      className="h-11 min-w-[42px] flex items-center justify-center"
+      title="Wind direction, speed, and sail trim cue"
+    >
+      <span
+        className="font-mono text-[11px] font-semibold tabular-nums transition-colors"
+        style={{
+          color: hasShiftCue ? cueColor : '#cbd5e1',
+          textShadow: hasShiftCue ? `0 0 8px ${cueColor}55` : 'none',
+        }}
+      >
+        {speedKnots} kn
+      </span>
+    </div>
+  );
+}
+
 function WindPanel() {
   const windDirection = useGameStore((state) => state.windDirection);
   const windSpeed = useGameStore((state) => state.windSpeed);
@@ -1294,6 +1735,13 @@ function WindPanel() {
   const windDeg = windDirection * 180 / Math.PI;
   const speedKnots = Math.round(windSpeed * 20);
   const shipSpeed = Math.abs(Math.round(playerVelocity * 10) / 10);
+  const trimInfo = getWindTrimInfo(windDirection, playerRot);
+  const trimPotential = getWindTrimMultiplier(windSpeed, trimInfo.score, 1);
+  const trimBonus = Math.round((trimPotential - 1) * 100);
+  const trimColor = getTrimCueColor(trimInfo.grade);
+  const trimHint = trimInfo.score > 0
+    ? `Hold Shift: +${trimBonus}%`
+    : 'Turn with wind';
 
   return (
     <div className="space-y-3" style={{ fontFamily: '"DM Sans", sans-serif' }}>
@@ -1329,6 +1777,23 @@ function WindPanel() {
       <div className="flex items-center justify-between text-[10px]">
         <span className="text-slate-500">Speed</span>
         <span className="text-slate-300 font-bold">{shipSpeed} kn</span>
+      </div>
+
+      <div className="rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-1.5">
+        <div className="flex items-center justify-between gap-3 text-[10px]">
+          <span className="font-bold" style={{ color: trimColor }}>{trimInfo.label}</span>
+          <span className="text-slate-400">{trimHint}</span>
+        </div>
+        <div className="mt-1.5 h-[4px] w-full bg-white/[0.06] rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${Math.round(trimInfo.score * 100)}%`,
+              backgroundColor: trimColor,
+              boxShadow: `0 0 6px ${trimColor}40`,
+            }}
+          />
+        </div>
       </div>
 
       {/* Wind strength bar */}
