@@ -2,11 +2,11 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Sky } from '@react-three/drei';
 import { NPCShip } from './NPCShip';
 import { getTerrainData, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from '../utils/terrain';
 import { useFrame } from '@react-three/fiber';
 import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '../utils/mapGenerator';
+import { setLandCharacterBuildings } from '../utils/landCharacter';
 import { registerTerrainMapCanvas, terrainChartColor } from './WorldMap';
 import { SEA_LEVEL } from '../constants/world';
 import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
@@ -20,6 +20,106 @@ import { pickFishType, randomShoalSize, type FishType } from '../utils/fishTypes
 import { generateEncounter, type OceanEncounterDef } from '../utils/oceanEncounters';
 import { OceanEncounter } from './OceanEncounter';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
+
+const SKY_DOME_VS = `
+  varying vec3 vDir;
+  void main() {
+    vDir = normalize(position);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const SKY_DOME_FS = `
+  uniform vec3 uZenithColor;
+  uniform vec3 uHorizonColor;
+  uniform vec3 uLowerColor;
+  varying vec3 vDir;
+  void main() {
+    float skyT = smoothstep(-0.04, 0.82, vDir.y);
+    float lowerT = smoothstep(-0.36, 0.04, vDir.y);
+    vec3 sky = mix(uHorizonColor, uZenithColor, skyT);
+    vec3 col = mix(uLowerColor, sky, lowerT);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function lerpColorHex(a: string, b: string, t: number): THREE.Color {
+  return new THREE.Color(a).lerp(new THREE.Color(b), THREE.MathUtils.clamp(t, 0, 1));
+}
+
+function ClearSkyDome() {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const uniforms = useMemo(() => ({
+    uZenithColor: { value: new THREE.Color('#0794f2') },
+    uHorizonColor: { value: new THREE.Color('#55c6ff') },
+    uLowerColor: { value: new THREE.Color('#7fcff4') },
+  }), []);
+
+  useFrame(({ camera }) => {
+    if (!meshRef.current) return;
+    meshRef.current.position.copy(camera.position);
+
+    const state = useGameStore.getState();
+    const waterPaletteId = resolveWaterPaletteId(state);
+    const angle = ((state.timeOfDay - 6) / 24) * Math.PI * 2;
+    const sunH = Math.sin(angle);
+
+    let zenith: THREE.Color;
+    let horizon: THREE.Color;
+    let lower: THREE.Color;
+
+    if (sunH > 0.3) {
+      if (waterPaletteId === 'monsoon') {
+        zenith = new THREE.Color('#0693e3');
+        horizon = new THREE.Color('#4ec2ee');
+        lower = new THREE.Color('#78cfe8');
+      } else if (waterPaletteId === 'tropical') {
+        zenith = new THREE.Color('#0289e8');
+        horizon = new THREE.Color('#50c7ff');
+        lower = new THREE.Color('#7ed5ff');
+      } else {
+        zenith = new THREE.Color('#158bd8');
+        horizon = new THREE.Color('#68c4f2');
+        lower = new THREE.Color('#94d6f4');
+      }
+    } else if (sunH > 0.0) {
+      const t = sunH / 0.3;
+      const dayZenith = waterPaletteId === 'tropical' ? '#0289e8' : '#0693e3';
+      const dayHorizon = waterPaletteId === 'tropical' ? '#50c7ff' : '#4ec2ee';
+      zenith = lerpColorHex('#223a68', dayZenith, t);
+      horizon = lerpColorHex('#f0a36b', dayHorizon, t);
+      lower = lerpColorHex('#d4a06f', '#7ed5ff', t);
+    } else if (sunH > -0.15) {
+      const t = (sunH + 0.15) / 0.15;
+      zenith = lerpColorHex('#101f42', '#223a68', t);
+      horizon = lerpColorHex('#172747', '#f0a36b', t);
+      lower = lerpColorHex('#10192f', '#d4a06f', t);
+    } else {
+      zenith = new THREE.Color('#081833');
+      horizon = new THREE.Color('#102241');
+      lower = new THREE.Color('#0a1224');
+    }
+
+    uniforms.uZenithColor.value.copy(zenith);
+    uniforms.uHorizonColor.value.copy(horizon);
+    uniforms.uLowerColor.value.copy(lower);
+  });
+
+  return (
+    <mesh ref={meshRef} raycast={() => null} renderOrder={-1000}>
+      <sphereGeometry args={[5000, 48, 24]} />
+      <shaderMaterial
+        side={THREE.BackSide}
+        depthWrite={false}
+        depthTest={false}
+        fog={false}
+        uniforms={uniforms}
+        vertexShader={SKY_DOME_VS}
+        fragmentShader={SKY_DOME_FS}
+      />
+    </mesh>
+  );
+}
 
 // ── Shared crab state (readable by Player.tsx for collection) ─────────────────
 export type CrabEntry = { position: [number, number, number]; rotation: number };
@@ -41,6 +141,100 @@ type PalmEntry = { position: [number, number, number], scale: number, lean: numb
 
 const FISH_SWIM_DEPTH = 0.85;
 const TURTLE_SWIM_DEPTH = 0.65;
+const NPC_SPAWN_TARGET_COUNT = 8;
+const NPC_SPAWN_MIN_SEPARATION = 38;
+const NPC_SPAWN_EDGE_MARGIN = 0.82;
+const NPC_SPAWN_MAX_ATTEMPTS = 900;
+const NPC_SPAWN_WATER_HEIGHT = SEA_LEVEL - 2.2;
+
+type NpcSpawnCandidate = {
+  position: [number, number, number];
+  score: number;
+};
+
+function isClearNpcSpawnWater(x: number, z: number, halfSize: number): boolean {
+  const edgeLimit = halfSize * NPC_SPAWN_EDGE_MARGIN;
+  if (Math.abs(x) > edgeLimit || Math.abs(z) > edgeLimit) return false;
+
+  const centerHeight = getTerrainData(x, z).height;
+  if (centerHeight > NPC_SPAWN_WATER_HEIGHT) return false;
+
+  for (const radius of [8, 18]) {
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const cx = x + Math.cos(angle) * radius;
+      const cz = z + Math.sin(angle) * radius;
+      if (Math.abs(cx) > edgeLimit || Math.abs(cz) > edgeLimit) return false;
+      if (getTerrainData(cx, cz).height > SEA_LEVEL - 1.0) return false;
+    }
+  }
+
+  return true;
+}
+
+function addNpcSpawnCandidate(
+  candidates: NpcSpawnCandidate[],
+  x: number,
+  z: number,
+  halfSize: number,
+  score: number,
+) {
+  if (!isClearNpcSpawnWater(x, z, halfSize)) return;
+  candidates.push({ position: [x, SEA_LEVEL, z], score });
+}
+
+function generateNpcSpawnPositions(
+  ports: { position: [number, number, number] }[],
+  halfSize: number,
+): [number, number, number][] {
+  const candidates: NpcSpawnCandidate[] = [];
+  const anchors = ports.length ? ports.map(port => port.position) : [[0, SEA_LEVEL, 0] as [number, number, number]];
+  const maxLocalRadius = Math.min(halfSize * 0.72, 320);
+
+  for (const anchor of anchors) {
+    for (let radius = 55; radius <= maxLocalRadius; radius += 18) {
+      for (let i = 0; i < 18; i++) {
+        if (candidates.length > NPC_SPAWN_MAX_ATTEMPTS) break;
+        const angle = (i / 18) * Math.PI * 2 + (Math.random() - 0.5) * 0.24;
+        const jitteredRadius = radius + (Math.random() - 0.5) * 14;
+        const x = anchor[0] + Math.cos(angle) * jitteredRadius;
+        const z = anchor[2] + Math.sin(angle) * jitteredRadius;
+        const routeBand = 1 - Math.min(1, Math.abs(jitteredRadius - 155) / 180);
+        addNpcSpawnCandidate(candidates, x, z, halfSize, 20 + routeBand * 30 + Math.random() * 8);
+      }
+    }
+  }
+
+  // Fallback for ports whose nearby coast is too shallow or landlocked: scan the
+  // playable center, still excluding the foggy edge band.
+  for (let x = -halfSize * 0.74; x <= halfSize * 0.74 && candidates.length < NPC_SPAWN_MAX_ATTEMPTS; x += 28) {
+    for (let z = -halfSize * 0.74; z <= halfSize * 0.74 && candidates.length < NPC_SPAWN_MAX_ATTEMPTS; z += 28) {
+      addNpcSpawnCandidate(
+        candidates,
+        x + (Math.random() - 0.5) * 12,
+        z + (Math.random() - 0.5) * 12,
+        halfSize,
+        8 + Math.random() * 12,
+      );
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const positions: [number, number, number][] = [];
+
+  for (const candidate of candidates) {
+    const tooClose = positions.some(pos => {
+      const dx = pos[0] - candidate.position[0];
+      const dz = pos[2] - candidate.position[2];
+      return dx * dx + dz * dz < NPC_SPAWN_MIN_SEPARATION * NPC_SPAWN_MIN_SEPARATION;
+    });
+    if (tooClose) continue;
+    positions.push(candidate.position);
+    if (positions.length >= NPC_SPAWN_TARGET_COUNT) break;
+  }
+
+  return positions;
+}
 
 // ── Edge fog overlay ──────────────────────────────────────────────────────────
 // A massive flat plane that's transparent in the playable center and fades to
@@ -56,43 +250,67 @@ const EDGE_FOG_VS = `
 const EDGE_FOG_FS = `
   uniform float uHalfSize;
   uniform vec3 uFogColor;
+  uniform float uMaxAlpha;
   varying vec2 vWorldXZ;
   void main() {
     float edgeDist = max(abs(vWorldXZ.x), abs(vWorldXZ.y));
     float fogStart = uHalfSize * 0.88;
     float fogFull = uHalfSize * 1.0;
     float t = clamp((edgeDist - fogStart) / (fogFull - fogStart), 0.0, 1.0);
-    float alpha = t * t * 0.92;
+    float alpha = t * t * uMaxAlpha;
     gl_FragColor = vec4(uFogColor, alpha);
   }
 `;
 
 function EdgeFogPlane({ halfSize }: { halfSize: number }) {
   const matRef = useRef<THREE.ShaderMaterial>(null);
-  const timeOfDay = useGameStore((s) => s.timeOfDay);
 
   // Update fog color each frame to match atmosphere
   useFrame(() => {
     if (!matRef.current) return;
+    const { timeOfDay } = useGameStore.getState();
+    const waterPaletteId = resolveWaterPaletteId(useGameStore.getState());
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(angle);
     let r: number, g: number, b: number;
     if (sunH > 0.3) {
-      // Day — light blue-gray haze
-      r = 0.70; g = 0.76; b = 0.80;
+      // Day — light edge haze only. The clear sky should remain visible.
+      if (waterPaletteId === 'monsoon') {
+        r = 0.45; g = 0.78; b = 0.88;
+      } else if (waterPaletteId === 'tropical') {
+        r = 0.40; g = 0.74; b = 0.96;
+      } else {
+        r = 0.58; g = 0.76; b = 0.90;
+      }
     } else if (sunH > 0.0) {
-      // Golden hour — warm mist
+      // Golden hour — theatrical amber mist.
       const t = sunH / 0.3;
-      r = 0.70 + (1 - t) * 0.12; g = 0.68 + t * 0.08; b = 0.65 + t * 0.15;
+      if (waterPaletteId === 'monsoon') {
+        r = 0.72 + t * -0.15; g = 0.60 + t * 0.14; b = 0.48 + t * 0.22;
+      } else {
+        r = 0.84 + t * -0.06; g = 0.64 + t * 0.20; b = 0.52 + t * 0.29;
+      }
     } else if (sunH > -0.15) {
-      // Dusk/dawn — muted blue
+      // Dusk/dawn — readable blue with a little retained warmth.
       const t = (sunH + 0.15) / 0.15;
-      r = 0.25 + t * 0.57; g = 0.28 + t * 0.40; b = 0.38 + t * 0.27;
+      r = 0.18 + t * 0.66; g = 0.24 + t * 0.40; b = 0.34 + t * 0.18;
     } else {
-      // Night — dark blue-gray
-      r = 0.12; g = 0.15; b = 0.22;
+      // Night — blue but not grim.
+      r = 0.10; g = 0.15; b = 0.25;
     }
     matRef.current.uniforms.uFogColor.value.set(r, g, b);
+    const clearDayPalette = waterPaletteId === 'tropical'
+      || waterPaletteId === 'monsoon'
+      || waterPaletteId === 'arid'
+      || waterPaletteId === 'mediterranean';
+    const maxAlpha = sunH > 0.3
+      ? clearDayPalette ? 0.04 : 0.18
+      : sunH > 0.0
+      ? 0.48
+      : sunH > -0.15
+      ? 0.68
+      : 0.92;
+    matRef.current.uniforms.uMaxAlpha.value = maxAlpha;
   });
 
   // Plane is 5x mesh size so it extends well past the horizon
@@ -108,6 +326,7 @@ function EdgeFogPlane({ halfSize }: { halfSize: number }) {
         uniforms={{
           uHalfSize: { value: halfSize },
           uFogColor: { value: new THREE.Vector3(0.70, 0.76, 0.80) },
+          uMaxAlpha: { value: 0.34 },
         }}
         vertexShader={EDGE_FOG_VS}
         fragmentShader={EDGE_FOG_FS}
@@ -280,7 +499,11 @@ export function World() {
           worldSize
         );
     const portsData = generateMap(mapConfig);
-    
+
+    // Register all buildings for the land character overlay
+    const allBuildings = portsData.flatMap(p => p.buildings);
+    setLandCharacterBuildings(allBuildings);
+
     const npcs: [number, number, number][] = [];
     const trees: { position: [number, number, number], scale: number }[] = [];
     const deadTrees: { position: [number, number, number], scale: number }[] = [];
@@ -528,8 +751,8 @@ export function World() {
         // Coral reef 3D instances — in reef zones, capped for performance
         if ((reefFactor > 0.15 || biome === 'lagoon') && rand > (biome === 'lagoon' ? 0.985 : 0.96) && corals.length < 400) {
           corals.push({
-            position: [x, height + 0.1, worldZ],
-            scale: 0.3 + Math.random() * 0.7,
+            position: [x, Math.max(height + 0.1, SEA_LEVEL - 0.25), worldZ],
+            scale: 0.5 + Math.random() * 0.8,
             rotation: Math.random() * Math.PI * 2,
             type: Math.floor(Math.random() * 3), // 0=brain, 1=staghorn, 2=fan
           });
@@ -560,15 +783,13 @@ export function World() {
         }
       }
 
-      // Spawn NPCs in deep water
-      if (height < -10 && rand > 0.9995 && npcs.length < 20) {
-        npcs.push([x, SEA_LEVEL, worldZ]);
-      }
       // Rare ocean encounters — whales, turtles, wreckage
       if (height < -5 && rand > 0.99997 && encounters.length < 5) {
         encounters.push(generateEncounter([x, SEA_LEVEL, worldZ]));
       }
     }
+
+    npcs.push(...generateNpcSpawnPositions(portsData, size / 2));
     
     // Smooth biome color transitions — only for land-adjacent vertices
     const stride = segments + 1;
@@ -647,7 +868,8 @@ export function World() {
     initWorld(generatedPorts);
     setNpcPositions(generatedNpcs);
     // Generate rich NPC ship identities
-    const ships = generatedNpcs.map(pos => generateNPCShip(pos));
+    const localPortId = generatedPorts[0]?.id;
+    const ships = generatedNpcs.map(pos => generateNPCShip(pos, { portId: localPortId }));
     setNpcShips(ships);
     setOceanEncounters(encounterData);
     setFishShoals(fishShoalData);
@@ -659,10 +881,18 @@ export function World() {
   }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos, terrainMapCanvas, terrainMapWorldHalf, waterPaletteId]);
 
   // Calculate sun position and all time-of-day lighting parameters
-  const { sunPosition, ambientColor, groundColor, ambientIntensity, sunColor, sunIntensity, moonPosition, moonIntensity, skyTurbidity, skyRayleigh } = useMemo(() => {
+  const {
+    sunPosition,
+    ambientColor,
+    groundColor,
+    ambientIntensity,
+    sunColor,
+    sunIntensity,
+    moonPosition,
+    moonIntensity,
+  } = useMemo(() => {
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2; // 6 AM is sunrise
     const sunH = Math.sin(angle); // -1 to 1, how high the sun is
-    const horizonFactor = Math.exp(-sunH * sunH * 10); // peaks when sun is near horizon
 
     // Tropical sun path — arcs from east, very high overhead at midday, to west.
     // Height uses a flattened curve so the sun stays near-overhead for hours (short shadows).
@@ -679,39 +909,49 @@ export function World() {
     // Strong blue ambient fills shadows with realistic sky-bounce light
     let ambInt: number, ambCol: THREE.Color, groundCol: THREE.Color;
     if (sunH > 0.35) {
-      ambInt = 0.35 + sunH * 0.15;
-      ambCol = new THREE.Color(0.58, 0.68, 0.92); // blue sky fill — tints shadows blue
-      groundCol = new THREE.Color(0.32, 0.26, 0.18); // warm brown earth bounce
+      ambInt = 0.42 + sunH * 0.12;
+      if (waterPaletteId === 'monsoon') {
+        ambCol = new THREE.Color(0.42, 0.80, 0.76); // saturated humid sky fill
+        groundCol = new THREE.Color(0.28, 0.44, 0.20); // wet green-brown bounce
+      } else if (waterPaletteId === 'tropical') {
+        ambCol = new THREE.Color(0.42, 0.72, 0.96);
+        groundCol = new THREE.Color(0.30, 0.44, 0.24);
+      } else {
+        ambCol = new THREE.Color(0.72, 0.78, 0.95); // soft sky fill keeps shadows friendly
+        groundCol = new THREE.Color(0.45, 0.34, 0.20); // warm sand/earth bounce
+      }
     } else if (sunH > -0.15) {
       const t = (sunH + 0.15) / 0.5;
-      ambInt = 0.18 + t * 0.12;
+      ambInt = 0.22 + t * 0.16;
       ambCol = new THREE.Color().lerpColors(
-        new THREE.Color(0.15, 0.18, 0.38),
-        new THREE.Color(0.95, 0.6, 0.35),
+        new THREE.Color(0.18, 0.22, 0.42),
+        new THREE.Color(1.0, 0.70, 0.44),
         t
       );
       groundCol = new THREE.Color().lerpColors(
-        new THREE.Color(0.08, 0.06, 0.12),
-        new THREE.Color(0.4, 0.25, 0.12),
+        new THREE.Color(0.08, 0.07, 0.14),
+        new THREE.Color(0.50, 0.31, 0.14),
         t
       );
     } else {
-      ambInt = 0.2;
-      ambCol = new THREE.Color(0.15, 0.18, 0.38);
-      groundCol = new THREE.Color(0.06, 0.05, 0.1);
+      ambInt = 0.24;
+      ambCol = new THREE.Color(0.18, 0.23, 0.43);
+      groundCol = new THREE.Color(0.07, 0.07, 0.13);
     }
 
     // Directional sun light — warm but not overpowering; ambient fills the shadows
     let sInt: number, sCol: THREE.Color;
     if (sunH > 0.35) {
-      sInt = sunH * 1.8; // softer direct light — less harsh shadow contrast
-      sCol = new THREE.Color(1.0, 0.95, 0.85); // warm tropical sun
+      sInt = 1.15 + sunH * 0.85;
+      sCol = waterPaletteId === 'monsoon'
+        ? new THREE.Color(0.92, 0.96, 0.76) // filtered humid sun
+        : new THREE.Color(1.0, 0.92, 0.72); // warm tropical sun
     } else if (sunH > -0.05) {
       const t = (sunH + 0.05) / 0.4;
-      sInt = t * 1.0;
+      sInt = t * 1.15;
       sCol = new THREE.Color().lerpColors(
-        new THREE.Color(1.0, 0.35, 0.08),
-        new THREE.Color(1.0, 0.82, 0.6),
+        new THREE.Color(1.0, 0.42, 0.12),
+        new THREE.Color(1.0, 0.80, 0.48),
         t
       );
     } else {
@@ -726,10 +966,6 @@ export function World() {
     const moonPos = new THREE.Vector3(-Math.cos(angle) * 80, Math.max(10, -Math.sin(angle) * 80), 30);
     const moonInt = sunH < 0.1 ? Math.max(0, Math.min(0.4, (0.1 - sunH) * 1.5)) : 0;
 
-    // Sky — tropical haze: slightly higher Mie for sun halo, more turbidity at sunset
-    const turbid = sunH > 0 ? 0.3 + horizonFactor * 8 : 0.5;
-    const rayl = sunH > 0 ? 0.6 + horizonFactor * 2.5 : 0.3;
-
     return {
       sunPosition: sunPos,
       ambientColor: ambCol,
@@ -739,10 +975,8 @@ export function World() {
       sunIntensity: sInt,
       moonPosition: moonPos,
       moonIntensity: moonInt,
-      skyTurbidity: turbid,
-      skyRayleigh: rayl,
     };
-  }, [timeOfDay]);
+  }, [timeOfDay, waterPaletteId]);
 
   // ── Terrain material with procedural detail noise ──────────────────────────
   const terrainMaterial = useMemo(() => {
@@ -1148,7 +1382,7 @@ export function World() {
     return geo;
   }, []);
   const brainCoralMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#c46478', roughness: 0.8, metalness: 0.0,
+    color: '#c46478', emissive: '#c46478', emissiveIntensity: 0.3, roughness: 0.8, metalness: 0.0,
   }), []);
 
   const stagCoralGeo = useMemo(() => {
@@ -1164,7 +1398,7 @@ export function World() {
     return merged ?? new THREE.CylinderGeometry(0.05, 0.08, 0.7, 4);
   }, []);
   const stagCoralMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#d8854a', roughness: 0.7, metalness: 0.0,
+    color: '#d8854a', emissive: '#d8854a', emissiveIntensity: 0.3, roughness: 0.7, metalness: 0.0,
   }), []);
 
   const fanCoralGeo = useMemo(() => {
@@ -1177,7 +1411,7 @@ export function World() {
     return geo;
   }, []);
   const fanCoralMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#7b52a0', roughness: 0.6, metalness: 0.0, side: THREE.DoubleSide,
+    color: '#7b52a0', emissive: '#7b52a0', emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.0, side: THREE.DoubleSide,
   }), []);
 
   // Seagull — simple bird shape: body + two angled wings
@@ -1730,7 +1964,7 @@ export function World() {
 
   return (
     <group>
-      <Sky sunPosition={sunPosition} turbidity={skyTurbidity} rayleigh={skyRayleigh} mieCoefficient={0.012} mieDirectionalG={0.85} />
+      <ClearSkyDome />
 
       <hemisphereLight intensity={ambientIntensity} color={ambientColor} groundColor={groundColor} />
       <directionalLight
@@ -1771,48 +2005,48 @@ export function World() {
       {/* Instanced Flora & Fauna */}
       {treeData.length > 0 && (
         <>
-          <instancedMesh ref={trunkMeshRef} args={[treeTrunkGeometry, treeTrunkMaterial, treeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
-          <instancedMesh ref={leavesMeshRef} args={[treeLeavesGeometry, treeLeavesMaterial, treeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+          <instancedMesh ref={trunkMeshRef} args={[treeTrunkGeometry, treeTrunkMaterial, treeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={leavesMeshRef} args={[treeLeavesGeometry, treeLeavesMaterial, treeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {deadTreeData.length > 0 && (
-        <instancedMesh ref={deadTreeMeshRef} args={[treeTrunkGeometry, deadTreeMaterial, deadTreeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        <instancedMesh ref={deadTreeMeshRef} args={[treeTrunkGeometry, deadTreeMaterial, deadTreeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {palmData.length > 0 && (
         <>
-          <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
-          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+          <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {mangroveData.length > 0 && (
         <>
-          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
-          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {reedBedData.length > 0 && (
-        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {siltPatchData.length > 0 && (
-        <instancedMesh ref={siltPatchMeshRef} args={[siltPatchGeometry, siltPatchMaterial, siltPatchData.length]} renderOrder={2} />
+        <instancedMesh ref={siltPatchMeshRef} args={[siltPatchGeometry, siltPatchMaterial, siltPatchData.length]} renderOrder={2} frustumCulled={false} />
       )}
       {saltStainData.length > 0 && (
-        <instancedMesh ref={saltStainMeshRef} args={[saltStainGeometry, saltStainMaterial, saltStainData.length]} renderOrder={2} />
+        <instancedMesh ref={saltStainMeshRef} args={[saltStainGeometry, saltStainMaterial, saltStainData.length]} renderOrder={2} frustumCulled={false} />
       )}
       {cactusData.length > 0 && (
-        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {thornbushData.length > 0 && (
-        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {riceShootData.length > 0 && (
-        <instancedMesh ref={riceShootMeshRef} args={[riceShootGeometry, riceShootMaterial, riceShootData.length]} />
+        <instancedMesh ref={riceShootMeshRef} args={[riceShootGeometry, riceShootMaterial, riceShootData.length]} frustumCulled={false} />
       )}
       {driftwoodData.length > 0 && (
-        <instancedMesh ref={driftwoodMeshRef} args={[driftwoodGeometry, driftwoodMaterial, driftwoodData.length]} receiveShadow={shadowsActive} />
+        <instancedMesh ref={driftwoodMeshRef} args={[driftwoodGeometry, driftwoodMaterial, driftwoodData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {beachRockData.length > 0 && (
-        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} />
+        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
 
       {crabData.length > 0 && (
@@ -1821,6 +2055,7 @@ export function World() {
           args={[crabGeometry, crabMaterial, crabData.length]}
           castShadow={shadowsActive}
           receiveShadow={shadowsActive}
+          frustumCulled={false}
           onPointerDown={(e) => {
             e.stopPropagation();
             const { addNotification } = useGameStore.getState();
@@ -1836,6 +2071,7 @@ export function World() {
           ref={fishMeshRef}
           args={[fishGeometry, fishMaterial, fishData.length]}
           castShadow={false}
+          frustumCulled={false}
           onPointerDown={(e) => {
             e.stopPropagation();
             const idx = e.instanceId;
@@ -1861,6 +2097,7 @@ export function World() {
           ref={turtleMeshRef}
           args={[turtleGeometry, turtleMaterial, turtleData.length]}
           castShadow={false}
+          frustumCulled={false}
           onPointerDown={(e) => {
             e.stopPropagation();
             const idx = e.instanceId;
@@ -1882,7 +2119,7 @@ export function World() {
         />
       )}
       {gullData.length > 0 && (
-        <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} />
+        <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} frustumCulled={false} />
       )}
 
       {/* Coral Reefs — 3 instanced mesh types rendered below water surface */}
@@ -1891,9 +2128,9 @@ export function World() {
         for (const c of coralData) counts[c.type]++;
         return (
           <>
-            {counts[0] > 0 && <instancedMesh ref={coralBrainRef} args={[brainCoralGeo, brainCoralMat, counts[0]]} />}
-            {counts[1] > 0 && <instancedMesh ref={coralStagRef} args={[stagCoralGeo, stagCoralMat, counts[1]]} />}
-            {counts[2] > 0 && <instancedMesh ref={coralFanRef} args={[fanCoralGeo, fanCoralMat, counts[2]]} />}
+            {counts[0] > 0 && <instancedMesh ref={coralBrainRef} args={[brainCoralGeo, brainCoralMat, counts[0]]} frustumCulled={false} />}
+            {counts[1] > 0 && <instancedMesh ref={coralStagRef} args={[stagCoralGeo, stagCoralMat, counts[1]]} frustumCulled={false} />}
+            {counts[2] > 0 && <instancedMesh ref={coralFanRef} args={[fanCoralGeo, fanCoralMat, counts[2]]} frustumCulled={false} />}
           </>
         );
       })()}

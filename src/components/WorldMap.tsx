@@ -19,7 +19,7 @@ type IdleDeadlineLike = {
 
 function scheduleBackgroundRender(cb: (deadline?: IdleDeadlineLike) => void) {
   if ('requestIdleCallback' in window) {
-    window.requestIdleCallback(cb, { timeout: 1000 });
+    window.requestIdleCallback(cb);
     return;
   }
   (setTimeout as typeof globalThis.setTimeout)(() => cb(), 16);
@@ -53,9 +53,11 @@ function _preRenderTerrain(waterPalette: WaterPalette) {
     let rowsProcessed = 0;
 
     const hasBudget = () => {
+      if (deadline) {
+        return rowsProcessed < PRE_RENDER_MAX_ROWS_PER_SLICE && deadline.timeRemaining() > 1;
+      }
       if (rowsProcessed < PRE_RENDER_MIN_ROWS_PER_SLICE) return true;
       if (rowsProcessed >= PRE_RENDER_MAX_ROWS_PER_SLICE) return false;
-      if (deadline) return deadline.timeRemaining() > 1;
       return performance.now() - startedAt < PRE_RENDER_IDLE_BUDGET_MS;
     };
 

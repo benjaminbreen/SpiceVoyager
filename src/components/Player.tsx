@@ -35,6 +35,8 @@ export function Player() {
   const waterWarningStage = useRef(0); // 0=none, 1=entered, 2=urgent, 3=final
   const lastFootstepSign = useRef(1); // tracks walk cycle for footstep sounds
   const storeSyncAccum = useRef(0);
+  const _camForward = useRef(new THREE.Vector3());
+  const _camRight = useRef(new THREE.Vector3());
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -84,11 +86,11 @@ export function Player() {
     const GRAVITY = 30;
 
     // Get camera forward/right projected onto XZ plane
-    const camForward = new THREE.Vector3();
+    const camForward = _camForward.current;
     camera.getWorldDirection(camForward);
     camForward.y = 0;
     camForward.normalize();
-    const camRight = new THREE.Vector3(-camForward.z, 0, camForward.x);
+    const camRight = _camRight.current.set(-camForward.z, 0, camForward.x);
 
     // Build input vector
     let inputX = 0;

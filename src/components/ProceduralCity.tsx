@@ -630,6 +630,7 @@ const PUFF_CYCLE = 4.0; // seconds for one puff to rise and fade
 
 function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
 
   const puffGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
   const puffMat = useMemo(() => new THREE.MeshStandardMaterial({
@@ -645,7 +646,7 @@ function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
   useFrame(({ clock }) => {
     if (!meshRef.current || totalPuffs === 0) return;
     const t = clock.elapsedTime;
-    const dummy = new THREE.Object3D();
+    const dummy = dummyRef.current;
 
     for (let si = 0; si < spots.length; si++) {
       const spot = spots[si];

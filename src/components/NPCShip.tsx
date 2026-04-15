@@ -2,7 +2,7 @@ import { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type Nationality, type Commodity } from '../store/gameStore';
-import type { NPCShipIdentity } from '../utils/npcShipGenerator';
+import type { NPCShipIdentity, NPCShipVisual } from '../utils/npcShipGenerator';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 import { npcLivePositions } from '../utils/combatState';
 import { getMeshHalf, getTerrainHeight } from '../utils/terrain';
@@ -11,6 +11,8 @@ import { sfxShipSink } from '../audio/SoundEffects';
 const APPROACH_RADIUS = 40;  // show "approaching" toast
 const HAIL_RADIUS = 12;     // show "Press T to Talk" prompt
 const COLLISION_RADIUS = 4;
+const NPC_NPC_COLLISION_RADIUS = 6;
+const NPC_NPC_COLLISION_PUSH = 1.6;
 const NPC_DRAFT_BLOCK_HEIGHT = -0.8;
 const NPC_COLLISION_DAMAGE = 10;
 const NPC_TARGET_RADIUS = 100;
@@ -58,6 +60,229 @@ function canNpcMoveTo(x: number, z: number, rotation: number) {
   return true;
 }
 
+function CannonPorts({ visual, zPositions }: { visual: NPCShipVisual; zPositions: number[] }) {
+  if (!visual.hasCannonPorts) return null;
+  return (
+    <>
+      {zPositions.map((z) => (
+        <group key={z}>
+          <mesh position={[-1.22, 0.7, z]}>
+            <boxGeometry args={[0.06, 0.16, 0.28]} />
+            <meshStandardMaterial color="#101010" roughness={0.8} />
+          </mesh>
+          <mesh position={[1.22, 0.7, z]}>
+            <boxGeometry args={[0.06, 0.16, 0.28]} />
+            <meshStandardMaterial color="#101010" roughness={0.8} />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
+}
+
+function SternFlag({ visual }: { visual: NPCShipVisual }) {
+  return (
+    <group position={[0, 2.9, -2.45]}>
+      <mesh position={[0, 0.35, 0]} rotation={[0, 0, 0.18]}>
+        <boxGeometry args={[0.05, 0.9, 0.05]} />
+        <meshStandardMaterial color="#3e2723" />
+      </mesh>
+      <mesh position={[0.28, 0.65, 0]} rotation={[0, 0, 0.08]}>
+        <boxGeometry args={[0.55, 0.34, 0.035]} />
+        <meshStandardMaterial color={visual.flagColor} roughness={0.8} />
+      </mesh>
+      <mesh position={[0.28, 0.65, 0.025]} rotation={[0, 0, 0.08]}>
+        <boxGeometry args={[0.3, 0.06, 0.04]} />
+        <meshStandardMaterial color={visual.flagAccentColor} roughness={0.8} />
+      </mesh>
+    </group>
+  );
+}
+
+function LateenSail({ visual, position, scale = 1, angle = -0.46 }: { visual: NPCShipVisual; position: [number, number, number]; scale?: number; angle?: number }) {
+  return (
+    <group position={position} rotation={[0, 0, angle]}>
+      <mesh>
+        <boxGeometry args={[2.7 * scale, 1.55 * scale, 0.08]} />
+        <meshStandardMaterial color={visual.sailColor} roughness={1} />
+      </mesh>
+      <mesh position={[0, 0.82 * scale, 0.03]}>
+        <boxGeometry args={[2.85 * scale, 0.08, 0.09]} />
+        <meshStandardMaterial color={visual.sailTrimColor} roughness={1} />
+      </mesh>
+    </group>
+  );
+}
+
+function DhowLikeModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
+  const large = shipType === 'Baghla' || shipType === 'Ghurab';
+  return (
+    <group scale={visual.scale}>
+      <mesh position={[0, 0.45, 0]} castShadow receiveShadow>
+        <boxGeometry args={[large ? 1.95 : 1.6, 0.8, large ? 5.2 : 4.4]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.55, 2.55]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
+        <boxGeometry args={[large ? 1.35 : 1.1, 0.75, large ? 1.35 : 1.1]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.95, -1.8]} castShadow receiveShadow>
+        <boxGeometry args={[large ? 1.8 : 1.45, 0.28, 0.22]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
+      </mesh>
+      <mesh position={[0, 2.4, 0.4]} castShadow>
+        <cylinderGeometry args={[0.08, 0.1, 3.7, 7]} />
+        <meshStandardMaterial color="#3e2723" />
+      </mesh>
+      <LateenSail visual={visual} position={[0.45, 2.85, 0.65]} scale={large ? 1.1 : 0.95} />
+      {visual.mastCount > 1 && (
+        <>
+          <mesh position={[0, 2.0, -1.25]} castShadow>
+            <cylinderGeometry args={[0.06, 0.08, 2.7, 7]} />
+            <meshStandardMaterial color="#3e2723" />
+          </mesh>
+          <LateenSail visual={visual} position={[-0.35, 2.25, -1.1]} scale={0.7} angle={0.42} />
+        </>
+      )}
+      <CannonPorts visual={visual} zPositions={[-1.3, -0.35, 0.6]} />
+      <SternFlag visual={visual} />
+    </group>
+  );
+}
+
+function JunkModel({ visual }: { visual: NPCShipVisual }) {
+  return (
+    <group scale={visual.scale}>
+      <mesh position={[0, 0.55, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.35, 1.0, 5.0]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 1.1, -2.0]} castShadow receiveShadow>
+        <boxGeometry args={[2.15, 0.9, 0.9]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.92, 2.35]} castShadow receiveShadow>
+        <boxGeometry args={[1.9, 0.35, 0.42]} />
+        <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
+      </mesh>
+      {[-0.85, 0.95].map((z, mastIdx) => (
+        <group key={z} position={[0, 0, z]}>
+          <mesh position={[0, 2.35, 0]} castShadow>
+            <cylinderGeometry args={[0.08, 0.1, 3.5 - mastIdx * 0.25, 7]} />
+            <meshStandardMaterial color="#3e2723" />
+          </mesh>
+          {[-0.55, 0, 0.55].map((y, panelIdx) => (
+            <mesh key={y} position={[0.05, 2.6 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
+              <boxGeometry args={[2.15 - panelIdx * 0.18, 0.42, 0.08]} />
+              <meshStandardMaterial color={panelIdx === 1 ? visual.sailColor : visual.sailTrimColor} roughness={1} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+      <CannonPorts visual={visual} zPositions={[-1.2, 0, 1.2]} />
+      <SternFlag visual={visual} />
+    </group>
+  );
+}
+
+function PrauModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
+  const jong = shipType === 'Jong';
+  return (
+    <group scale={visual.scale}>
+      <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
+        <boxGeometry args={[jong ? 2.15 : 1.2, 0.72, jong ? 5.2 : 4.6]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.62, 2.35]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
+        <boxGeometry args={[jong ? 1.25 : 0.9, 0.58, jong ? 1.25 : 0.9]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      {visual.hasOutrigger && (
+        <>
+          {[-1.45, 1.45].map((x) => (
+            <mesh key={x} position={[x, 0.22, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+              <cylinderGeometry args={[0.08, 0.08, 4.1, 8]} />
+              <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
+            </mesh>
+          ))}
+          {[-1.2, 0.6].map((z) => (
+            <mesh key={z} position={[0, 0.48, z]} rotation={[0, 0, Math.PI / 2]} castShadow>
+              <cylinderGeometry args={[0.035, 0.035, 3.1, 6]} />
+              <meshStandardMaterial color="#3e2723" roughness={0.9} />
+            </mesh>
+          ))}
+        </>
+      )}
+      <mesh position={[0, 2.15, 0.35]} castShadow>
+        <cylinderGeometry args={[0.07, 0.09, 3.2, 7]} />
+        <meshStandardMaterial color="#3e2723" />
+      </mesh>
+      <mesh position={[0.35, 2.7, 0.45]} rotation={[0, 0, -0.25]}>
+        <boxGeometry args={[2.05, 1.45, 0.08]} />
+        <meshStandardMaterial color={visual.sailColor} roughness={1} />
+      </mesh>
+      {jong && (
+        <LateenSail visual={visual} position={[-0.35, 2.25, -1.25]} scale={0.72} angle={0.36} />
+      )}
+      <SternFlag visual={visual} />
+    </group>
+  );
+}
+
+function EuropeanModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
+  const galleon = shipType === 'Galleon' || shipType === 'Carrack' || shipType === 'Armed Merchantman';
+  return (
+    <group scale={visual.scale}>
+      <mesh position={[0, 0.58, 0]} castShadow receiveShadow>
+        <boxGeometry args={[galleon ? 2.35 : 1.85, 1.05, galleon ? 5.9 : 4.9]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 1.15, 2.45]} castShadow receiveShadow>
+        <boxGeometry args={[galleon ? 1.75 : 1.25, 0.75, 0.75]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
+      </mesh>
+      {visual.hasSternCastle && (
+        <mesh position={[0, 1.4, -2.35]} castShadow receiveShadow>
+          <boxGeometry args={[galleon ? 2.2 : 1.65, 1.15, 0.9]} />
+          <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
+        </mesh>
+      )}
+      {[-1.45, 0.2, 1.55].slice(0, visual.mastCount).map((z, idx) => (
+        <group key={z} position={[0, 0, z]}>
+          <mesh position={[0, 2.45, 0]} castShadow>
+            <cylinderGeometry args={[0.08, 0.11, idx === 1 ? 4.3 : 3.7, 8]} />
+            <meshStandardMaterial color="#3e2723" />
+          </mesh>
+          <mesh position={[0, 3.0, 0]} rotation={[0, 0, idx === 2 ? 0.18 : 0]}>
+            <boxGeometry args={[idx === 1 ? 2.35 : 1.9, idx === 2 ? 1.05 : 1.25, 0.08]} />
+            <meshStandardMaterial color={visual.sailColor} roughness={1} />
+          </mesh>
+          <mesh position={[0, 3.68, 0]}>
+            <boxGeometry args={[idx === 1 ? 2.5 : 2.05, 0.08, 0.1]} />
+            <meshStandardMaterial color={visual.sailTrimColor} roughness={1} />
+          </mesh>
+        </group>
+      ))}
+      <CannonPorts visual={visual} zPositions={[-1.8, -0.8, 0.2, 1.2]} />
+      <SternFlag visual={visual} />
+    </group>
+  );
+}
+
+function NPCShipModel({ identity }: { identity: NPCShipIdentity }) {
+  switch (identity.visual.family) {
+    case 'junk':
+      return <JunkModel visual={identity.visual} />;
+    case 'prau':
+      return <PrauModel visual={identity.visual} shipType={identity.shipType} />;
+    case 'european':
+      return <EuropeanModel visual={identity.visual} shipType={identity.shipType} />;
+    case 'dhow':
+    default:
+      return <DhowLikeModel visual={identity.visual} shipType={identity.shipType} />;
+  }
+}
+
 export function NPCShip({
   identity,
   initialPosition,
@@ -77,6 +302,8 @@ export function NPCShip({
     0,
     initialPosition[2] + (Math.random() - 0.5) * 50
   ));
+  const _tmpVec = useRef(new THREE.Vector3());
+  const _avoidVec = useRef(new THREE.Vector3());
 
   // Hull state
   const hullRef = useRef(identity.maxHull);
@@ -128,7 +355,7 @@ export function NPCShip({
     }
 
     const currentPos = group.current.position;
-    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, setNearestHailableNpc, defeatedNpc } = useGameStore.getState();
+    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, setNearestHailableNpc, defeatedNpc, nearestHailableNpc } = useGameStore.getState();
     const playerPos = getLiveShipTransform().pos;
 
     // ── Check for hull damage from projectile hits ──
@@ -164,8 +391,7 @@ export function NPCShip({
 
       // Hail prompt — only claim the slot if no other NPC already holds it
       if (distToPlayer < HAIL_RADIUS && !inHailRange.current) {
-        const currentHailable = useGameStore.getState().nearestHailableNpc;
-        if (!currentHailable) {
+        if (!nearestHailableNpc) {
           inHailRange.current = true;
           setInteractionPrompt('Press T to Hail');
           setNearestHailableNpc(identity);
@@ -174,8 +400,7 @@ export function NPCShip({
       if (distToPlayer > HAIL_RADIUS * 1.2 && inHailRange.current) {
         inHailRange.current = false;
         // Only clear if we're the ones who set it
-        const currentHailable = useGameStore.getState().nearestHailableNpc;
-        if (currentHailable?.id === identity.id) {
+        if (nearestHailableNpc?.id === identity.id) {
           setInteractionPrompt(null);
           setNearestHailableNpc(null);
         }
@@ -185,7 +410,7 @@ export function NPCShip({
     // ── Collision ──
     if (distToPlayer < COLLISION_RADIUS) {
       const now = Date.now();
-      const bounceDir = new THREE.Vector3(
+      const bounceDir = _tmpVec.current.set(
         currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
       ).normalize();
       currentPos.addScaledVector(bounceDir, 2);
@@ -231,7 +456,7 @@ export function NPCShip({
     // ── Movement AI ──
     if (isAlerted) {
       // While alerted, keep fleeing away from the player
-      const fleeDir = new THREE.Vector3(
+      const fleeDir = _tmpVec.current.set(
         currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
       ).normalize();
       if (now >= nextTargetSearchAt.current) {
@@ -256,7 +481,7 @@ export function NPCShip({
 
     const currentSpeed = isAlerted ? speed * 2.5 : speed; // flee faster when alerted
 
-    const direction = new THREE.Vector3().subVectors(targetRef.current, currentPos).normalize();
+    const direction = _tmpVec.current.subVectors(targetRef.current, currentPos).normalize();
     const targetRotation = Math.atan2(direction.x, direction.z);
 
     let rotDiff = targetRotation - group.current.rotation.y;
@@ -266,8 +491,45 @@ export function NPCShip({
 
     const moveX = Math.sin(group.current.rotation.y) * currentSpeed * delta;
     const moveZ = Math.cos(group.current.rotation.y) * currentSpeed * delta;
-    const nextX = currentPos.x + moveX;
-    const nextZ = currentPos.z + moveZ;
+    let nextX = currentPos.x + moveX;
+    let nextZ = currentPos.z + moveZ;
+
+    // ── NPC-to-NPC collision/separation ──
+    // Use the live position map as a lightweight broad phase. Ships steer/push
+    // apart instead of passing through each other.
+    const avoid = _avoidVec.current.set(0, 0, 0);
+    let avoidCount = 0;
+    for (const [otherId, other] of npcLivePositions) {
+      if (otherId === identity.id || other.sunk) continue;
+      const dx = currentPos.x - other.x;
+      const dz = currentPos.z - other.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq >= NPC_NPC_COLLISION_RADIUS * NPC_NPC_COLLISION_RADIUS) continue;
+
+      const dist = Math.max(Math.sqrt(distSq), 0.001);
+      const overlap = (NPC_NPC_COLLISION_RADIUS - dist) / NPC_NPC_COLLISION_RADIUS;
+      avoid.x += (dx / dist) * overlap;
+      avoid.z += (dz / dist) * overlap;
+      avoidCount++;
+    }
+
+    if (avoidCount > 0) {
+      avoid.normalize();
+      currentPos.x += avoid.x * NPC_NPC_COLLISION_PUSH * delta * 8;
+      currentPos.z += avoid.z * NPC_NPC_COLLISION_PUSH * delta * 8;
+      nextX = currentPos.x + avoid.x * NPC_NPC_COLLISION_PUSH;
+      nextZ = currentPos.z + avoid.z * NPC_NPC_COLLISION_PUSH;
+      if (now >= nextTargetSearchAt.current) {
+        const avoidAngle = Math.atan2(avoid.x, avoid.z);
+        const waterTarget = findWaterTarget(currentPos.x, currentPos.z, 36, avoidAngle);
+        if (waterTarget) {
+          targetRef.current.set(waterTarget[0], 0, waterTarget[1]);
+        } else {
+          targetRef.current.set(currentPos.x + avoid.x * 24, 0, currentPos.z + avoid.z * 24);
+        }
+        nextTargetSearchAt.current = now + 500;
+      }
+    }
 
     if (canNpcMoveTo(nextX, nextZ, group.current.rotation.y)) {
       group.current.position.x = nextX;
@@ -405,26 +667,7 @@ export function NPCShip({
           <meshBasicMaterial color="#00ff00" />
         </mesh>
       </group>
-      {/* Hull */}
-      <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.8, 1, 4]} />
-        <meshStandardMaterial color="#4a3b32" roughness={0.9} />
-      </mesh>
-      {/* Bow */}
-      <mesh position={[0, 0.5, 2.5]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.27, 1, 1.27]} />
-        <meshStandardMaterial color="#4a3b32" roughness={0.9} />
-      </mesh>
-      {/* Mast */}
-      <mesh position={[0, 2.5, 0.5]} castShadow>
-        <cylinderGeometry args={[0.1, 0.1, 4]} />
-        <meshStandardMaterial color="#3e2723" />
-      </mesh>
-      {/* Sail */}
-      <mesh position={[0, 3, 0.6]} castShadow>
-        <boxGeometry args={[2.5, 3, 0.1]} />
-        <meshStandardMaterial color="#d2b48c" roughness={1} />
-      </mesh>
+      <NPCShipModel identity={identity} />
       {/* Night torch */}
       <group position={[0.5, 2.2, -1]}>
         <pointLight

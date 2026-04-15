@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { motion, AnimatePresence } from 'framer-motion';
-import { sfxSail, sfxClose } from '../audio/SoundEffects';
+import { sfxSail, sfxClose, sfxClick, sfxHover } from '../audio/SoundEffects';
 import { X, Navigation, Anchor, Clock, AlertTriangle } from 'lucide-react';
 import * as d3 from 'd3';
 import { feature } from 'topojson-client';
@@ -336,7 +336,8 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                 return (
                   <button
                     key={port.id}
-                    onClick={() => setSelectedPort(isSelected ? null : port.id)}
+                    onMouseEnter={() => sfxHover()}
+                    onClick={() => { sfxClick(); setSelectedPort(isSelected ? null : port.id); }}
                     className={`w-full text-left px-4 py-2.5 transition-all ${
                       isSelected
                         ? 'bg-amber-500/10 border-l-2 border-amber-500'

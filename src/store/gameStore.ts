@@ -140,6 +140,146 @@ export function getPortArmory(portId: string): WeaponType[] {
   return PORT_ARMORY[portId] ?? DEFAULT_PORT_ARMORY;
 }
 
+// ── Human-readable weapon descriptions ──
+export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabel: string; reloadLabel: string; weightLabel: string }> = {
+  swivelGun:    { flavor: 'Light anti-personnel gun, aimed by hand',     rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
+  minion:       { flavor: 'Small iron cannon, cheap and reliable',        rangeLabel: 'Medium',  reloadLabel: 'Moderate',  weightLabel: 'Light' },
+  saker:        { flavor: 'Fast-loading bronze gun favored by the Portuguese', rangeLabel: 'Long',    reloadLabel: 'Moderate',  weightLabel: 'Light' },
+  demiCulverin: { flavor: 'Versatile medium cannon with good range',     rangeLabel: 'Long',    reloadLabel: 'Slow',      weightLabel: 'Medium' },
+  demiCannon:   { flavor: 'Heavy siege gun — devastating at close range', rangeLabel: 'Medium',  reloadLabel: 'Very slow', weightLabel: 'Heavy' },
+  basilisk:     { flavor: 'Rare bronze long gun with extreme reach',      rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Medium' },
+};
+
+// ── Ship Upgrades ──
+export type ShipUpgradeType =
+  | 'copperSheathing'
+  | 'reinforcedPlanking'
+  | 'newCanvas'
+  | 'lateenRigging'
+  | 'expandedHold'
+  | 'surgeonsChest'
+  | 'ironKnees'
+  | 'betterProvisions';
+
+export interface ShipUpgrade {
+  type: ShipUpgradeType;
+  name: string;
+  description: string;
+  effect: string;          // human-readable effect description
+  price: number;
+  apply: (stats: ShipStats) => Partial<ShipStats>;
+}
+
+export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
+  copperSheathing: {
+    type: 'copperSheathing',
+    name: 'Copper Sheathing',
+    description: 'Thin copper plates nailed to the hull below the waterline to ward off shipworm and barnacles.',
+    effect: '+20 max hull',
+    price: 200,
+    apply: (s) => ({ maxHull: s.maxHull + 20 }),
+  },
+  reinforcedPlanking: {
+    type: 'reinforcedPlanking',
+    name: 'Reinforced Planking',
+    description: 'Extra layer of teak or oak planking along the waterline for added protection.',
+    effect: '+30 max hull',
+    price: 350,
+    apply: (s) => ({ maxHull: s.maxHull + 30 }),
+  },
+  newCanvas: {
+    type: 'newCanvas',
+    name: 'New Canvas Sails',
+    description: 'Fresh sailcloth from local weavers replaces worn and patched canvas.',
+    effect: '+2 sailing speed',
+    price: 150,
+    apply: (s) => ({ speed: s.speed + 2 }),
+  },
+  lateenRigging: {
+    type: 'lateenRigging',
+    name: 'Lateen Rigging',
+    description: 'Triangular fore-and-aft sails for tacking against the wind.',
+    effect: '+0.4 maneuverability',
+    price: 220,
+    apply: (s) => ({ turnSpeed: s.turnSpeed + 0.4 }),
+  },
+  expandedHold: {
+    type: 'expandedHold',
+    name: 'Expanded Hold',
+    description: 'Carpenters reconfigure the lower deck to fit more cargo.',
+    effect: '+12 cargo capacity',
+    price: 280,
+    apply: (s) => ({ cargoCapacity: s.cargoCapacity + 12 }),
+  },
+  surgeonsChest: {
+    type: 'surgeonsChest',
+    name: "Surgeon's Chest",
+    description: 'A locked chest of medicines: theriac, mercury salve, laudanum, and surgical tools.',
+    effect: 'Crew heal faster at sea',
+    price: 160,
+    apply: () => ({}), // effect handled by crew health system
+  },
+  ironKnees: {
+    type: 'ironKnees',
+    name: 'Iron Knee Braces',
+    description: 'Wrought-iron brackets reinforcing the joints between ribs and deck beams.',
+    effect: '+15 max hull, +4 cargo capacity',
+    price: 300,
+    apply: (s) => ({ maxHull: s.maxHull + 15, cargoCapacity: s.cargoCapacity + 4 }),
+  },
+  betterProvisions: {
+    type: 'betterProvisions',
+    name: 'Improved Provisions',
+    description: 'Sealed casks, dried fruits, and salted fish — better stores mean longer voyages.',
+    effect: '+25 provisions',
+    price: 100,
+    apply: () => ({}), // handled specially — adds provisions
+  },
+};
+
+// Which upgrades each port might offer (pool to randomize from)
+const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
+  goa:      ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
+  cochin:   ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
+  diu:      ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'ironKnees', 'expandedHold', 'betterProvisions'],
+  surat:    ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
+  malacca:  ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
+  macau:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  hormuz:   ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
+  aden:     ['newCanvas', 'lateenRigging', 'betterProvisions'],
+  bantam:   ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
+  mombasa:  ['newCanvas', 'lateenRigging', 'betterProvisions'],
+  aceh:     ['newCanvas', 'expandedHold', 'betterProvisions'],
+  muscat:   ['newCanvas', 'lateenRigging', 'betterProvisions'],
+  calicut:  ['newCanvas', 'lateenRigging', 'surgeonsChest', 'betterProvisions'],
+  zanzibar: ['newCanvas', 'betterProvisions'],
+  socotra:  ['betterProvisions'],
+};
+const DEFAULT_UPGRADE_POOL: ShipUpgradeType[] = ['newCanvas', 'betterProvisions'];
+
+// Deterministic shuffle based on port id + world seed
+function seededShuffle<T>(arr: T[], seed: number): T[] {
+  const result = [...arr];
+  let s = seed;
+  for (let i = result.length - 1; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const j = s % (i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+export function getPortUpgrades(portId: string, worldSeed: number): ShipUpgradeType[] {
+  const pool = PORT_UPGRADE_POOLS[portId] ?? DEFAULT_UPGRADE_POOL;
+  // Hash portId into a number for seeding
+  let portHash = 0;
+  for (let i = 0; i < portId.length; i++) portHash = ((portHash << 5) - portHash + portId.charCodeAt(i)) | 0;
+  const shuffled = seededShuffle(pool, worldSeed + portHash);
+  // Offer 2-4 upgrades depending on port size, always include betterProvisions if in pool
+  const maxCount = pool.length <= 3 ? pool.length : Math.min(4, Math.max(2, Math.floor(pool.length * 0.6)));
+  return shuffled.slice(0, maxCount);
+}
+
 // Max broadside cannons based on ship type
 const MAX_CANNONS: Record<string, number> = {
   Pinnace: 4,
@@ -233,6 +373,8 @@ export type CaptainAbility =
   | 'Crew Whisperer'     // morale decay halved
   | 'Chart Reader';      // reveals hidden ports
 
+// Captain portrait expression (mirrors portraitConfig.Personality)
+export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce';
 
 export interface Notification {
   id: string;
@@ -356,6 +498,10 @@ interface GameState {
   requestWorldMap: boolean;
   setRequestWorldMap: (v: boolean) => void;
 
+  // Captain expression override — temporary expression for game events
+  captainExpression: Personality | null;
+  setCaptainExpression: (expr: Personality | null, durationMs?: number) => void;
+
   setPlayerPos: (pos: [number, number, number]) => void;
   setPlayerRot: (rot: number) => void;
   setPlayerVelocity: (vel: number) => void;
@@ -408,6 +554,8 @@ interface GameState {
   setPaused: (paused: boolean) => void;
   setAnchored: (anchored: boolean) => void;
   setCombatMode: (combatMode: boolean) => void;
+  shipUpgrades: ShipUpgradeType[];
+  buyUpgrade: (upgradeType: ShipUpgradeType) => void;
   buyWeapon: (weaponType: WeaponType) => void;
   sellWeapon: (weaponType: WeaponType) => void;
   defeatedNpc: (npcId: string, shipName: string, flag: Nationality, cargo: Partial<Record<Commodity, number>>) => void;
@@ -515,6 +663,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   oceanEncounters: [],
   fishShoals: [],
   fishNetCooldown: 0,
+  shipUpgrades: [],
   journalEntries: [],
   dayCount: 1,
   windDirection: Math.PI * 0.75, // start SW
@@ -531,6 +680,16 @@ export const useGameStore = create<GameState>((set, get) => ({
   combatMode: false,
   requestWorldMap: false,
   setRequestWorldMap: (v) => set({ requestWorldMap: v }),
+  captainExpression: null,
+  setCaptainExpression: (expr, durationMs = 4000) => {
+    set({ captainExpression: expr });
+    if (expr !== null) {
+      setTimeout(() => {
+        // Only clear if still the same expression (avoid clobbering a newer one)
+        if (get().captainExpression === expr) set({ captainExpression: null });
+      }, durationMs);
+    }
+  },
   deadCrew: null,
   gameOver: false,
   gameOverCause: '',
@@ -642,6 +801,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       const witness = state.crew[Math.floor(Math.random() * state.crew.length)];
       get().addCrewHistory(witness.id, `Ship took ${amount} hull damage in an engagement`);
     }
+    // Captain reacts to damage
+    get().setCaptainExpression(newHull < 30 ? 'Stern' : 'Fierce', 3000);
     if (newHull <= 0) {
       get().triggerGameOver('The ship has been destroyed and sank beneath the waves.');
     }
@@ -695,6 +856,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (port) {
         get().addNotification(`Discovered ${port.name}!`, 'success');
         get().addJournalEntry('navigation', portDiscoverTemplate(port.name), port.name);
+        get().setCaptainExpression('Curious', 4000);
         sfxDiscovery();
       }
     }
@@ -831,6 +993,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (faction) get().adjustReputation(faction, 2);
       const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
       if (factor) get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
+      // Captain reacts to profitable sale
+      get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
     }
   },
   
@@ -1025,6 +1189,32 @@ export const useGameStore = create<GameState>((set, get) => ({
   setPaused: (paused) => set({ paused }),
   setAnchored: (anchored) => set({ anchored }),
   setCombatMode: (combatMode) => set({ combatMode }),
+  buyUpgrade: (upgradeType) => {
+    const state = get();
+    const upgrade = SHIP_UPGRADES[upgradeType];
+    if (state.gold < upgrade.price) {
+      get().addNotification('Not enough gold!', 'warning');
+      return;
+    }
+    if (state.shipUpgrades.includes(upgradeType)) {
+      get().addNotification('Already installed!', 'warning');
+      return;
+    }
+    // Apply stat changes
+    const statChanges = upgrade.apply(state.stats);
+    const newStats = { ...state.stats, ...statChanges };
+    // Special case: betterProvisions adds provisions directly
+    const provBonus = upgradeType === 'betterProvisions' ? 25 : 0;
+    set({
+      gold: state.gold - upgrade.price,
+      stats: newStats,
+      shipUpgrades: [...state.shipUpgrades, upgradeType],
+      provisions: state.provisions + provBonus,
+    });
+    get().addNotification(`Installed ${upgrade.name}. ${upgrade.effect}.`, 'success');
+    const portName = state.activePort?.name ?? 'port';
+    get().addJournalEntry('ship', `Purchased ${upgrade.name} at ${portName} for ${upgrade.price} gold. ${upgrade.description}`, portName);
+  },
   buyWeapon: (weaponType) => {
     const state = get();
     const price = WEAPON_PRICES[weaponType];
@@ -1117,6 +1307,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     const salvagedStr = salvaged.length > 0 ? ` Salvaged: ${salvaged.join(', ')}.` : '';
     get().addNotification(`Sank the ${shipName}! +${goldReward} gold.${salvagedStr}`, 'success', { size: 'grand', subtitle: 'SHIP DEFEATED' });
     if (levelUpLevel) get().addNotification(`Captain leveled up to level ${levelUpLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+    // Captain savors victory
+    get().setCaptainExpression('Smug', 5000);
     // Journal
     get().addJournalEntry('encounter',
       `After a fierce exchange, the ${flag} vessel ${shipName} slipped beneath the waves. We recovered ${goldReward} gold${salvagedStr ? ' and' + salvagedStr.toLowerCase() : ''}.`);
@@ -1141,6 +1333,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       morale: Math.max(0, c.morale - moraleHit),
     }));
     set({ crew: updatedCrew, deadCrew: snapshot, paused: true });
+    // Captain mourns the loss
+    get().setCaptainExpression('Melancholy', 6000);
     get().addJournalEntry('crew',
       `${member.name}, our ${member.role.toLowerCase()}, has perished. ${cause} The crew is shaken.`,
     );

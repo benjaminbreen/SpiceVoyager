@@ -426,7 +426,7 @@ export function Ship() {
       const key = e.key.toLowerCase();
       if (key in keys.current) keys.current[key as keyof typeof keys.current] = true;
       // Auto-weigh anchor when pressing movement keys
-      if ((key === 'w' || key === 's') && playerMode === 'ship' && !paused) {
+      if ((key === 'w' || key === 's') && playerMode === 'ship' && !paused && !useGameStore.getState().activePort) {
         const store = useGameStore.getState();
         if (store.anchored) {
           store.setAnchored(false);
@@ -434,7 +434,7 @@ export function Ship() {
           store.addNotification('Weighing anchor.', 'info');
         }
       }
-      if (key === 'c' && playerMode === 'ship' && !paused) {
+      if (key === 'c' && playerMode === 'ship' && !paused && !useGameStore.getState().activePort) {
         if (netState.current === 'idle' && netCooldown.current <= 0) {
           // Manual cast in open water
           pendingManualCast.current = true;
@@ -479,9 +479,8 @@ export function Ship() {
       initialized.current = true;
     }
 
-    if (playerMode === 'ship' && !paused) {
+    if (playerMode === 'ship' && !paused && !store.activePort) {
       // Acceleration and Inertia
-      const store = useGameStore.getState();
       const navBonus = getRoleBonus(store, 'Navigator', 'perception');
       const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
       const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus;

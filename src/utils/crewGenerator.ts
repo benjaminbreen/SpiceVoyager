@@ -432,7 +432,7 @@ export function generateCrewMember(
   const last = pick(pool.last);
   const [minSkill, maxSkill] = SKILL_RANGE[role];
   const skill = randInt(minSkill, maxSkill);
-  const morale = randInt(65, 100);
+  const morale = randInt(45, 85);
   const age = randInt(role === 'Captain' ? 32 : 18, role === 'Captain' ? 55 : 50);
   const birthplace = pick(pool.birthplaces);
   const quality = rollCrewQuality(skill, morale);

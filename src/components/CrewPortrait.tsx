@@ -32,13 +32,15 @@ interface CrewPortraitProps {
   size?: number;
   className?: string;
   showBackground?: boolean;
+  expressionOverride?: Personality | null;
 }
 
-export function CrewPortrait({ member, size = 64, className = '', showBackground = true }: CrewPortraitProps) {
+export function CrewPortrait({ member, size = 64, className = '', showBackground = true, expressionOverride }: CrewPortraitProps) {
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
+    if (expressionOverride) config.personality = expressionOverride;
     return renderPortrait(config, showBackground, member.morale);
-  }, [member.id, member.name, member.role, member.quality, member.morale, showBackground]);
+  }, [member.id, member.name, member.role, member.quality, member.morale, showBackground, expressionOverride]);
 
   return (
     <svg
@@ -55,11 +57,13 @@ export function CrewPortrait({ member, size = 64, className = '', showBackground
 }
 
 // Compact square version for crew rows — zoomed into head
-export function CrewPortraitSquare({ member, size = 32, className = '' }: Omit<CrewPortraitProps, 'showBackground'>) {
+export function CrewPortraitSquare({ member, size = 32, className = '', expressionOverride }: Omit<CrewPortraitProps, 'showBackground'>) {
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
-    return renderPortrait(config, false, member.morale);
-  }, [member.id, member.name, member.role, member.quality, member.morale]);
+    if (expressionOverride) config.personality = expressionOverride;
+    const showBg = config.role === 'Captain'; // captains get flag background even in compact view
+    return renderPortrait(config, showBg, member.morale);
+  }, [member.id, member.name, member.role, member.quality, member.morale, expressionOverride]);
 
   return (
     <svg
@@ -83,20 +87,30 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const eyeColor = getEyeColor(config);
   const hairColor = getHairColor(config);
 
-  // ── Head proportions ──
-  const headWidth = 38 + (rng() - 0.5) * 10;
-  const jawWidth = headWidth - 3 - rng() * 8;
-  const jawLength = 58 + (rng() - 0.5) * 10;
-  const foreheadHeight = 8 + rng() * 5;
-  const cheekWidth = headWidth + rng() * 4;
+  // ── Face shape archetype → head proportions ──
+  // Each archetype sets baseline ratios, then individual RNG adds small variation
+  let baseHeadWidth: number, baseJawRatio: number, baseJawLength: number, baseForeheadH: number, baseCheekExtra: number;
+  switch (config.faceShape) {
+    case 'round':   baseHeadWidth = 44; baseJawRatio = 0.88; baseJawLength = 52; baseForeheadH = 10; baseCheekExtra = 5; break;
+    case 'oval':    baseHeadWidth = 40; baseJawRatio = 0.78; baseJawLength = 58; baseForeheadH = 10; baseCheekExtra = 3; break;
+    case 'long':    baseHeadWidth = 35; baseJawRatio = 0.72; baseJawLength = 66; baseForeheadH = 13; baseCheekExtra = 1; break;
+    case 'square':  baseHeadWidth = 44; baseJawRatio = 0.92; baseJawLength = 56; baseForeheadH = 8;  baseCheekExtra = 2; break;
+    case 'heart':   baseHeadWidth = 42; baseJawRatio = 0.62; baseJawLength = 58; baseForeheadH = 11; baseCheekExtra = 5; break;
+    case 'diamond': baseHeadWidth = 38; baseJawRatio = 0.68; baseJawLength = 60; baseForeheadH = 12; baseCheekExtra = 7; break;
+  }
+  const headWidth = baseHeadWidth + (rng() - 0.5) * 6;
+  const jawWidth = headWidth * baseJawRatio + (rng() - 0.5) * 3;
+  const jawLength = baseJawLength + (rng() - 0.5) * 6;
+  const foreheadHeight = baseForeheadH + (rng() - 0.5) * 3;
+  const cheekWidth = headWidth + baseCheekExtra + rng() * 2;
 
-  // ── Eyes ──
-  const eyeSpacing = 16 + rng() * 6;                 // 16–22, allows wide-set and close-set
+  // ── Eyes (large, expressive — Stardew-style) ──
+  const eyeSpacing = 17 + rng() * 5;                 // 17–22, allows wide-set and close-set
   const eyeY = 100 + (rng() - 0.5) * 3;
-  const eyeHeight = 3.5 + rng() * 5;                 // 3.5–8.5, narrow slits to open eyes
-  const eyeWidth = 14 + rng() * 6;                   // 14–20, always wider than tall
+  const eyeHeight = 6 + rng() * 8;                   // 6–14, substantially bigger
+  const eyeWidth = 18 + rng() * 10;                  // 18–28, wider range
   const eyeSlant = (rng() - 0.5) * 5;                // -2.5 to +2.5
-  const eyeLidWeight = 0.15 + rng() * 0.6;            // 0.15–0.75, always some lid visible
+  const eyeLidWeight = 0.1 + rng() * 0.5;             // 0.1–0.6, less lid coverage to show more eye
   // Eye shape type — controls how round vs almond vs droopy the eye is
   const eyeShapeRoll = rng();
   const eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' =
@@ -123,11 +137,11 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
                     config.culturalGroup === 'SoutheastAsian' ? rng() * 2 : 0;
   const effNoseWidth = noseWidth + noseWiden;
 
-  // ── Mouth ──
-  const mouthWidth = 12 + rng() * 10;                // 12–22, tight to wide
+  // ── Mouth (bolder, more readable at small sizes) ──
+  const mouthWidth = 14 + rng() * 12;                // 14–26, wider range
   const mouthY = eyeY + noseLength + 16 + (rng() - 0.5) * 3;
-  const upperLip = 2 + rng() * 4;                    // 2–6
-  const lowerLip = 2.5 + rng() * 6;                  // 2.5–8.5
+  const upperLip = 2.5 + rng() * 5;                  // 2.5–7.5
+  const lowerLip = 3 + rng() * 7;                    // 3–10
 
   const lipBoost = config.culturalGroup === 'Swahili' ? 2 + rng() * 2 :
                    config.culturalGroup === 'Indian' ? rng() * 1.2 :
@@ -144,9 +158,9 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const chinCleft = rng() > 0.7 ? 1 + rng() * 1.5 : 0;
   const philtrumDepth = 0.5 + rng() * 1;
 
-  // ── Expression ──
-  let mouthCurve = (rng() - 0.5) * 2;
-  let mouthAsym = (rng() - 0.5) * 1;
+  // ── Expression (wider range for readability) ──
+  let mouthCurve = (rng() - 0.5) * 3;
+  let mouthAsym = (rng() - 0.5) * 1.5;
   let browInnerL = 0, browOuterL = 0, browInnerR = 0, browOuterR = 0;
 
   applyPersonality(config.personality, rng, {
@@ -158,21 +172,21 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
 
   // Morale-based expression nudges — only at extremes, blends with base personality
   if (morale !== undefined) {
-    if (morale < 20) {
+    if (morale <= 15) {
       // Miserable: angry frown, furrowed brows
       mouthCurve = Math.max(mouthCurve, 2.5);
       browInnerL += 3; browInnerR += 3;
       browOuterL -= 2; browOuterR -= 2;
-    } else if (morale < 40) {
+    } else if (morale < 25) {
       // Unhappy: slight downturn, tenser brows
       mouthCurve += 1.2;
       browInnerL += 1.5; browInnerR += 1.5;
-    } else if (morale > 85) {
+    } else if (morale >= 95) {
       // Elated: broad smile, relaxed lifted brows
       mouthCurve = Math.min(mouthCurve, -3);
       browInnerL -= 2; browInnerR -= 2;
       browOuterL += 1.5; browOuterR += 1.5;
-    } else if (morale > 70) {
+    } else if (morale >= 85) {
       // Content: gentle upturn, slightly relaxed brows
       mouthCurve -= 1.2;
       browInnerL -= 1; browInnerR -= 1;
@@ -277,10 +291,23 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
               xChannelSelector="R" yChannelSelector="G" />
           </filter>
         )}
+        {/* Blink animation */}
+        <style>{`
+          @keyframes blink-${uid} {
+            0%, 92%, 100% { transform: scaleY(0); }
+            95%, 97% { transform: scaleY(1); }
+          }
+        `}</style>
       </defs>
 
-      {/* Background with vignette + cultural accent */}
-      {showBg && (
+      {/* Background — captains get their nationality flag, others get gradient */}
+      {showBg && config.role === 'Captain' && (
+        <g key="bg">
+          <rect x="-20" y="-20" width="240" height="290" fill="#000" />
+          {renderCaptainFlag(config.nationality, uid)}
+        </g>
+      )}
+      {showBg && config.role !== 'Captain' && (
         <g key="bg">
           <rect width="200" height="250" fill={`url(#bg-${uid})`} />
           <rect width="200" height="250" fill={`url(#culture-${uid})`} />
@@ -369,9 +396,15 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
         rx={eyeWidth * 0.55} ry={eyeHeight + 2}
         fill={`rgba(0,0,0,${lightSide > 0 ? 0.03 : 0.08 * lightIntensity})`} />
 
-      {/* Eyes with proper eyelids */}
-      {renderEyeWithLid(cx - eyeSpacing, eyeY, eyeWidth, eyeHeight, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL, browOuterL, hairColor, config, underEyeBags, true, uid, gazeOffsetX, gazeOffsetY, eyeShape)}
-      {renderEyeWithLid(cx + eyeSpacing, eyeY, eyeWidth, eyeHeight, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR, browOuterR, hairColor, config, underEyeBags, false, uid, gazeOffsetX, gazeOffsetY, eyeShape)}
+      {/* Eyes with proper eyelids — blink timing staggered by seed */}
+      {(() => {
+        const blinkDur = 3.5 + (Math.abs(config.seed) % 500) / 500 * 2.5; // 3.5–6s
+        const blinkDel = (Math.abs(config.seed) % 1000) / 1000 * 3; // 0–3s offset
+        return (<>
+          {renderEyeWithLid(cx - eyeSpacing, eyeY, eyeWidth, eyeHeight, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL, browOuterL, hairColor, config, underEyeBags, true, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel)}
+          {renderEyeWithLid(cx + eyeSpacing, eyeY, eyeWidth, eyeHeight, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR, browOuterR, hairColor, config, underEyeBags, false, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel)}
+        </>);
+      })()}
 
       {/* Mouth */}
       {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin)}
@@ -547,6 +580,7 @@ function renderEyeWithLid(
   isLeft: boolean, uid: string,
   gazeX: number = 0, gazeY: number = 0,
   eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' = 'almond',
+  blinkDuration: number = 4, blinkDelay: number = 0,
 ): React.ReactNode {
   const hw = ew / 2;
   const dir = isLeft ? -1 : 1;
@@ -616,20 +650,27 @@ function renderEyeWithLid(
 
   const sclera = <path key={`${key}-scl`} d={scleraPath} fill="#eeeae2" />;
 
-  // Iris — proportioned to the visible opening
-  const irisR = Math.min(effEh * 0.72, hw * 0.45);
-  const pupilR = irisR * 0.4;
+  // Iris — large and expressive, fills more of the eye opening
+  const irisR = Math.min(effEh * 0.85, hw * 0.52);
+  const pupilR = irisR * 0.38;
   const irisX = ex + gazeX;
   const irisY = ey + gazeY * 0.5 + droopOuter * 0.15;
   const iris = (
     <g key={`${key}-iris`} clipPath={`url(#${key}-clip-${uid})`}>
-      <circle cx={irisX} cy={irisY} r={irisR + 0.5} fill="#1a1a1a" opacity={0.12} />
+      {/* Iris outline for definition */}
+      <circle cx={irisX} cy={irisY} r={irisR + 0.8} fill="#1a1a1a" opacity={0.18} />
+      {/* Main iris */}
       <circle cx={irisX} cy={irisY} r={irisR} fill={irisColor} />
-      <circle cx={irisX} cy={irisY} r={irisR * 0.65} fill="none" stroke={irisColor} strokeWidth="0.5" opacity={0.35} />
-      <circle cx={irisX} cy={irisY} r={pupilR} fill="#0a0a0a" />
-      {/* Catchlights */}
-      <circle cx={irisX + irisR * 0.25} cy={irisY - irisR * 0.25} r={irisR * 0.22} fill="rgba(255,255,255,0.8)" />
-      <circle cx={irisX - irisR * 0.15} cy={irisY + irisR * 0.18} r={irisR * 0.1} fill="rgba(255,255,255,0.45)" />
+      {/* Inner iris ring for depth */}
+      <circle cx={irisX} cy={irisY} r={irisR * 0.7} fill="none" stroke={irisColor} strokeWidth="0.8" opacity={0.4} />
+      {/* Iris gradient — darker at edges */}
+      <circle cx={irisX} cy={irisY} r={irisR} fill="none" stroke="rgba(0,0,0,0.15)" strokeWidth={irisR * 0.3} />
+      {/* Pupil */}
+      <circle cx={irisX} cy={irisY} r={pupilR} fill="#080808" />
+      {/* Primary catchlight — large, warm-tinted */}
+      <ellipse cx={irisX + irisR * 0.22} cy={irisY - irisR * 0.22} rx={irisR * 0.28} ry={irisR * 0.24} fill="rgba(255,252,240,0.9)" />
+      {/* Secondary catchlight */}
+      <circle cx={irisX - irisR * 0.18} cy={irisY + irisR * 0.2} r={irisR * 0.12} fill="rgba(255,255,255,0.5)" />
     </g>
   );
 
@@ -640,6 +681,20 @@ function renderEyeWithLid(
         <path d={scleraPath} />
       </clipPath>
     </defs>
+  );
+
+  // Blink lid — skin-colored overlay that briefly covers the eye
+  const blinkLid = (
+    <path
+      key={`${key}-blink-lid`}
+      d={scleraPath}
+      fill={skin.mid}
+      style={{
+        transformBox: 'fill-box' as any,
+        transformOrigin: '50% 0%',
+        animation: `blink-${uid} ${blinkDuration}s ease-in-out ${blinkDelay}s infinite`,
+      }}
+    />
   );
 
   // Upper eyelid — skin-colored, sits above the visible opening
@@ -719,7 +774,7 @@ function renderEyeWithLid(
     />
   );
 
-  return <g key={key}>{irisClip}{socket}{sclera}{iris}{lid}{crease}{hoodFold}{lashLine}{lowerLid}{fold}{bags}{brow}</g>;
+  return <g key={key}>{irisClip}{socket}{sclera}{iris}{blinkLid}{lid}{crease}{hoodFold}{lashLine}{lowerLid}{fold}{bags}{brow}</g>;
 }
 
 // ── Mouth ────────────────────────────────────────────────
@@ -746,28 +801,28 @@ function renderMouth(
             C ${cx - hw * 0.4} ${my - upperLip - bowDepth * 0.3}, ${cx - 2} ${my - upperLip - bowDepth}, ${cx} ${my - upperLip * 0.6}
             C ${cx + 2} ${my - upperLip - bowDepth}, ${cx + hw * 0.4} ${my - upperLip - bowDepth * 0.3}, ${cx + hw} ${rightY}
             C ${cx + hw * 0.3} ${my + cornerTuck}, ${cx - hw * 0.3} ${my + cornerTuck}, ${cx - hw} ${leftY} Z`}
-        fill={lipColor} opacity={0.5}
+        fill={lipColor} opacity={0.7}
       />
       {/* Lower lip */}
       <path
         d={`M ${cx - hw} ${leftY}
             C ${cx - hw * 0.35} ${my + lowerLip + curve * 0.3}, ${cx + hw * 0.35} ${my + lowerLip + curve * 0.3}, ${cx + hw} ${rightY}
             C ${cx + hw * 0.3} ${my + cornerTuck}, ${cx - hw * 0.3} ${my + cornerTuck}, ${cx - hw} ${leftY} Z`}
-        fill={lipColor} opacity={0.4}
+        fill={lipColor} opacity={0.6}
       />
       {/* Lower lip highlight */}
       <ellipse cx={cx} cy={my + lowerLip * 0.4 + 1} rx={hw * 0.5} ry={lowerLip * 0.3}
-        fill="rgba(255,255,255,0.06)" />
-      {/* Lip line */}
+        fill="rgba(255,255,255,0.1)" />
+      {/* Lip line — thicker for readability */}
       <path
         d={`M ${cx - hw} ${leftY} C ${cx - hw * 0.3} ${my + 1}, ${cx + hw * 0.3} ${my + 1}, ${cx + hw} ${rightY}`}
-        stroke="rgba(0,0,0,0.4)" strokeWidth="0.9" fill="none"
+        stroke="rgba(0,0,0,0.5)" strokeWidth="1.2" fill="none"
       />
       {/* Lower lip shadow */}
       <path
         d={`M ${cx - hw + 3} ${my + lowerLip + curve * 0.3 + 1}
             C ${cx - hw * 0.2} ${my + lowerLip + curve * 0.3 + 2.5}, ${cx + hw * 0.2} ${my + lowerLip + curve * 0.3 + 2.5}, ${cx + hw - 3} ${my + lowerLip + curve * 0.3 + 1}`}
-        stroke="rgba(0,0,0,0.1)" strokeWidth="0.6" fill="none"
+        stroke="rgba(0,0,0,0.14)" strokeWidth="0.8" fill="none"
       />
     </g>
   );
@@ -1508,6 +1563,216 @@ function getCulturalAccent(group: PortraitConfig['culturalGroup']): { color: str
     case 'EastAsian':      return { color: '#508868', opacity: 0.14 };  // muted jade
     case 'SoutheastAsian': return { color: '#5a9080', opacity: 0.15 };  // teal-green
     default:               return { color: '#808080', opacity: 0.10 };
+  }
+}
+
+// ── Captain flag backgrounds — period-appropriate c.1612 flag designs ──
+
+function renderCaptainFlag(nationality: PortraitConfig['nationality'], uid: string): React.ReactNode {
+  const w = 200, h = 250;
+  switch (nationality) {
+    // Portuguese: blue and white with central shield (Quinas)
+    case 'Portuguese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#003399" />
+        <rect x={0} y={0} width={w * 0.4} height={h} fill="#006600" />
+        <circle cx={w * 0.4} cy={h * 0.42} r={28} fill="#ff0" />
+        <circle cx={w * 0.4} cy={h * 0.42} r={20} fill="#003399" />
+        {/* Five quinas (simplified) */}
+        {[-8, 8, 0, -6, 6].map((dx, i) => (
+          <circle key={i} cx={w * 0.4 + dx} cy={h * 0.42 + (i < 2 ? -6 : i === 2 ? 0 : 6)} r={3} fill="#fff" />
+        ))}
+      </g>);
+
+    // Dutch: Prince's Flag (orange-white-blue, pre-1648)
+    case 'Dutch':
+      return (<g key="flag">
+        <rect width={w} height={h / 3} fill="#c84b20" />
+        <rect y={h / 3} width={w} height={h / 3} fill="#fff" />
+        <rect y={h * 2 / 3} width={w} height={h / 3} fill="#1e3a7a" />
+      </g>);
+
+    // English: St George's Cross
+    case 'English':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#fff" />
+        <rect x={w * 0.44} y={0} width={w * 0.12} height={h} fill="#c8102e" />
+        <rect x={0} y={h * 0.44} width={w} height={h * 0.12} fill="#c8102e" />
+      </g>);
+
+    // Danish: Dannebrog
+    case 'Danish':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#c8102e" />
+        <rect x={w * 0.3} y={0} width={w * 0.1} height={h} fill="#fff" />
+        <rect x={0} y={h * 0.44} width={w} height={h * 0.1} fill="#fff" />
+      </g>);
+
+    // French: Royal blue with gold fleur-de-lis
+    case 'French':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a2a6c" />
+        {/* Three fleur-de-lis arrangement */}
+        {[[100, 80], [70, 140], [130, 140]].map(([fx, fy], i) => (
+          <g key={i} transform={`translate(${fx},${fy}) scale(0.7)`}>
+            <path d="M0,-12 C-4,-8 -6,-2 -8,4 C-4,2 -1,0 0,4 C1,0 4,2 8,4 C6,-2 4,-8 0,-12Z" fill="#d4a017" />
+            <circle cx={0} cy={6} r={2} fill="#d4a017" />
+          </g>
+        ))}
+      </g>);
+
+    // Spanish: Cross of Burgundy (Aspas de Borgoña) — red ragged cross on white
+    case 'Spanish':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#f5e6c8" />
+        <path d={`M 20,10 L ${w - 20},${h - 10} M ${w - 20},10 L 20,${h - 10}`}
+          stroke="#8b1a1a" strokeWidth={18} fill="none" strokeLinecap="round"
+          strokeDasharray="4,0" />
+        {/* Ragged edges on the cross — small bumps */}
+        <path d={`M 20,10 L ${w - 20},${h - 10}`}
+          stroke="#721515" strokeWidth={6} fill="none" strokeDasharray="3,5" />
+        <path d={`M ${w - 20},10 L 20,${h - 10}`}
+          stroke="#721515" strokeWidth={6} fill="none" strokeDasharray="3,5" />
+      </g>);
+
+    // Ottoman: red with white crescent and star
+    case 'Ottoman':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#c8102e" />
+        <circle cx={95} cy={h * 0.42} r={22} fill="#fff" />
+        <circle cx={103} cy={h * 0.42} r={18} fill="#c8102e" />
+        <polygon points="128,95 132,107 124,107" fill="#fff" />
+      </g>);
+
+    // Persian: lion and sun on white (Safavid era)
+    case 'Persian':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a5e1a" />
+        <rect x={20} y={30} width={w - 40} height={h - 60} fill="#f5f0e0" rx={4} />
+        <circle cx={100} cy={h * 0.42} r={18} fill="#d4a017" />
+        {/* Sun rays */}
+        {Array.from({ length: 12 }).map((_, i) => {
+          const angle = (i * 30) * Math.PI / 180;
+          return <line key={i} x1={100 + Math.cos(angle) * 18} y1={h * 0.42 + Math.sin(angle) * 18}
+            x2={100 + Math.cos(angle) * 26} y2={h * 0.42 + Math.sin(angle) * 26}
+            stroke="#d4a017" strokeWidth={2} />;
+        })}
+      </g>);
+
+    // Omani: red (Ya'arubi dynasty)
+    case 'Omani':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#c8102e" />
+        <rect x={0} y={0} width={w * 0.25} height={h} fill="#fff" />
+        {/* Khanjar (dagger) silhouette */}
+        <path d={`M ${w * 0.5} ${h * 0.3} L ${w * 0.5} ${h * 0.55} M ${w * 0.44} ${h * 0.32} C ${w * 0.47} ${h * 0.28} ${w * 0.53} ${h * 0.28} ${w * 0.56} ${h * 0.32}`}
+          stroke="#fff" strokeWidth={3} fill="none" strokeLinecap="round" />
+      </g>);
+
+    // Mughal: green with gold ornamentation
+    case 'Mughal':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a5e1a" />
+        {/* Central medallion */}
+        <circle cx={100} cy={h * 0.42} r={30} fill="none" stroke="#d4a017" strokeWidth={2} />
+        <circle cx={100} cy={h * 0.42} r={22} fill="none" stroke="#d4a017" strokeWidth={1.5} />
+        <circle cx={100} cy={h * 0.42} r={6} fill="#d4a017" />
+        {/* Corner ornaments */}
+        {[[30, 40], [170, 40], [30, 210], [170, 210]].map(([ox, oy], i) => (
+          <circle key={i} cx={ox} cy={oy} r={8} fill="none" stroke="#d4a017" strokeWidth={1} />
+        ))}
+      </g>);
+
+    // Gujarati: saffron/maroon trade banner
+    case 'Gujarati':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#8b4513" />
+        <rect x={15} y={20} width={w - 30} height={h - 40} fill="none" stroke="#d4a017" strokeWidth={2} rx={3} />
+        <circle cx={100} cy={h * 0.42} r={20} fill="#d4a017" opacity={0.6} />
+        <path d="M 90,95 L 100,80 L 110,95 L 105,95 L 105,115 L 95,115 L 95,95 Z" fill="#d4a017" opacity={0.8} />
+      </g>);
+
+    // Swahili: coastal trade banner — blue/white/gold
+    case 'Swahili':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a3a5a" />
+        <rect y={h * 0.3} width={w} height={h * 0.4} fill="#2a5a3a" />
+        {/* Dhow sail silhouette */}
+        <path d={`M 100,${h * 0.3} L 120,${h * 0.6} L 80,${h * 0.6} Z`} fill="#d4a017" opacity={0.5} />
+        <line x1={100} y1={h * 0.28} x2={100} y2={h * 0.62} stroke="#d4a017" strokeWidth={2} />
+      </g>);
+
+    // Malay: red and gold
+    case 'Malay':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#8b0000" />
+        <rect y={h * 0.45} width={w} height={h * 0.1} fill="#d4a017" />
+        <circle cx={100} cy={h * 0.25} r={16} fill="#d4a017" />
+        <circle cx={106} cy={h * 0.25} r={13} fill="#8b0000" />
+      </g>);
+
+    // Acehnese: green with gold crescent (Sultanate of Aceh)
+    case 'Acehnese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a5e1a" />
+        <circle cx={95} cy={h * 0.42} r={20} fill="#d4a017" />
+        <circle cx={102} cy={h * 0.42} r={16} fill="#1a5e1a" />
+        <polygon points="125,100 128,110 122,110" fill="#d4a017" />
+      </g>);
+
+    // Javanese: deep red/brown batik-inspired
+    case 'Javanese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#5a1a0a" />
+        {/* Diamond pattern (batik kawung inspired) */}
+        {[0, 1, 2, 3, 4].map(row =>
+          [0, 1, 2, 3].map(col => (
+            <circle key={`${row}-${col}`} cx={30 + col * 45} cy={30 + row * 50}
+              r={12} fill="none" stroke="#d4a017" strokeWidth={1} opacity={0.5} />
+          ))
+        )}
+      </g>);
+
+    // Moluccan: spice islands — blue sea with gold
+    case 'Moluccan':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#1a3a6a" />
+        <rect y={h * 0.6} width={w} height={h * 0.4} fill="#2a6a3a" />
+        {/* Clove/nutmeg star */}
+        <polygon points="100,70 106,90 126,90 110,102 116,122 100,110 84,122 90,102 74,90 94,90"
+          fill="#d4a017" opacity={0.7} />
+      </g>);
+
+    // Siamese: red with white elephant (Ayutthaya)
+    case 'Siamese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#8b0000" />
+        {/* Simplified elephant silhouette */}
+        <ellipse cx={100} cy={h * 0.42} rx={22} ry={18} fill="#fff" opacity={0.8} />
+        <ellipse cx={82} cy={h * 0.38} rx={8} ry={10} fill="#fff" opacity={0.8} />
+        <path d="M 78,98 Q 75,115 80,120" stroke="#fff" strokeWidth={3} fill="none" strokeLinecap="round" opacity={0.8} />
+      </g>);
+
+    // Chinese: Ming dynasty — yellow/dragon red
+    case 'Chinese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#d4a017" />
+        <rect x={10} y={10} width={w - 20} height={h - 20} fill="none" stroke="#8b0000" strokeWidth={4} />
+        {/* Simplified dragon circle */}
+        <circle cx={100} cy={h * 0.42} r={28} fill="none" stroke="#8b0000" strokeWidth={3} />
+        <circle cx={100} cy={h * 0.42} r={18} fill="none" stroke="#8b0000" strokeWidth={2} />
+        <circle cx={100} cy={h * 0.42} r={5} fill="#8b0000" />
+      </g>);
+
+    // Japanese: Hinomaru-style (Tokugawa era)
+    case 'Japanese':
+      return (<g key="flag">
+        <rect width={w} height={h} fill="#f5f0e0" />
+        <circle cx={100} cy={h * 0.42} r={35} fill="#bc002d" />
+      </g>);
+
+    default:
+      return (<g key="flag"><rect width={w} height={h} fill="#1a1e22" /></g>);
   }
 }
 

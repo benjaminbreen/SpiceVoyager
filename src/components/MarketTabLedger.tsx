@@ -10,7 +10,7 @@ import {
   getTradeRole,
   type CommodityTier,
 } from '../utils/commodities';
-import { sfxCoin } from '../audio/SoundEffects';
+import { sfxCoin, sfxClick, sfxHover } from '../audio/SoundEffects';
 
 export interface MarketTabLedgerProps {
   port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
@@ -265,7 +265,9 @@ export function MarketTabLedger({
                       <button
                         key={row.commodity}
                         type="button"
+                        onMouseEnter={() => sfxHover()}
                         onClick={() => {
+                          sfxClick();
                           setSelectedCommodity(row.commodity);
                           setQuantity(Math.min(Math.max(quantity, 1), Math.max(row.maxBuy, row.maxSell, 1)));
                         }}
@@ -373,7 +375,7 @@ export function MarketTabLedger({
             type="button"
             aria-label="Decrease quantity"
             disabled={clampedQuantity <= 1}
-            onClick={() => setQuantity(q => clamp(q - 1, 1, maxSelectedQuantity))}
+            onClick={() => { sfxClick(); setQuantity(q => clamp(q - 1, 1, maxSelectedQuantity)); }}
             className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
           >
             -
@@ -385,7 +387,7 @@ export function MarketTabLedger({
             type="button"
             aria-label="Increase quantity"
             disabled={clampedQuantity >= maxSelectedQuantity}
-            onClick={() => setQuantity(q => clamp(q + 1, 1, maxSelectedQuantity))}
+            onClick={() => { sfxClick(); setQuantity(q => clamp(q + 1, 1, maxSelectedQuantity)); }}
             className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
           >
             +
@@ -393,7 +395,7 @@ export function MarketTabLedger({
           <button
             type="button"
             disabled={clampedQuantity >= maxSelectedQuantity}
-            onClick={() => setQuantity(maxSelectedQuantity)}
+            onClick={() => { sfxClick(); setQuantity(maxSelectedQuantity); }}
             className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
             style={{ fontFamily: '"DM Sans", sans-serif' }}
           >

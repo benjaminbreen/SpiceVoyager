@@ -106,20 +106,19 @@ function startMarketAmbient(ac: AudioContext, master: GainNode) {
   const oscillators: OscillatorNode[] = [];
   const t = ac.currentTime;
 
-  // Crowd murmur — bandpass-filtered noise with slow amplitude modulation
+  // Crowd murmur — the body of voices, warm and present
   const crowd = createLoopingNoise(ac, 2);
   const crowdFilt = ac.createBiquadFilter();
   crowdFilt.type = 'bandpass';
-  crowdFilt.frequency.value = 500;
-  crowdFilt.Q.value = 0.8;
+  crowdFilt.frequency.value = 400;
+  crowdFilt.Q.value = 2;
   const crowdGain = ac.createGain();
-  crowdGain.gain.value = 0.3;
-  // LFO for crowd swell
+  crowdGain.gain.value = 0.45;
   const crowdLfo = ac.createOscillator();
   crowdLfo.type = 'sine';
-  crowdLfo.frequency.value = 0.15;
+  crowdLfo.frequency.value = 0.12;
   const crowdLfoGain = ac.createGain();
-  crowdLfoGain.gain.value = 0.1;
+  crowdLfoGain.gain.value = 0.15;
   crowdLfo.connect(crowdLfoGain).connect(crowdGain.gain);
   crowdLfo.start(t);
   crowd.connect(crowdFilt).connect(crowdGain).connect(master);
@@ -127,26 +126,45 @@ function startMarketAmbient(ac: AudioContext, master: GainNode) {
   sources.push(crowd);
   oscillators.push(crowdLfo);
 
-  // Clanking/metallic — higher filtered noise, intermittent
-  const clank = createLoopingNoise(ac, 0.5);
-  const clankFilt = ac.createBiquadFilter();
-  clankFilt.type = 'bandpass';
-  clankFilt.frequency.value = 2800;
-  clankFilt.Q.value = 5;
-  const clankGain = ac.createGain();
-  clankGain.gain.value = 0.06;
-  // LFO makes it come and go
-  const clankLfo = ac.createOscillator();
-  clankLfo.type = 'sine';
-  clankLfo.frequency.value = 0.3;
-  const clankLfoGain = ac.createGain();
-  clankLfoGain.gain.value = 0.05;
-  clankLfo.connect(clankLfoGain).connect(clankGain.gain);
-  clankLfo.start(t);
-  clank.connect(clankFilt).connect(clankGain).connect(master);
-  clank.start(t);
-  sources.push(clank);
-  oscillators.push(clankLfo);
+  // Chatter — brighter speech-like layer above the murmur
+  const chatter = createLoopingNoise(ac, 1.5);
+  const chatterFilt = ac.createBiquadFilter();
+  chatterFilt.type = 'bandpass';
+  chatterFilt.frequency.value = 850;
+  chatterFilt.Q.value = 2.5;
+  const chatterGain = ac.createGain();
+  chatterGain.gain.value = 0.15;
+  const chatterLfo = ac.createOscillator();
+  chatterLfo.type = 'sine';
+  chatterLfo.frequency.value = 0.22;
+  const chatterLfoGain = ac.createGain();
+  chatterLfoGain.gain.value = 0.08;
+  chatterLfo.connect(chatterLfoGain).connect(chatterGain.gain);
+  chatterLfo.start(t);
+  chatter.connect(chatterFilt).connect(chatterGain).connect(master);
+  chatter.start(t);
+  sources.push(chatter);
+  oscillators.push(chatterLfo);
+
+  // Foot traffic — low rumble of movement, carts, shuffling
+  const shuffle = createLoopingNoise(ac, 1);
+  const shuffleFilt = ac.createBiquadFilter();
+  shuffleFilt.type = 'lowpass';
+  shuffleFilt.frequency.value = 220;
+  const shuffleGain = ac.createGain();
+  shuffleGain.gain.value = 0.12;
+  // Slow pulsing so it feels like waves of foot traffic
+  const shuffleLfo = ac.createOscillator();
+  shuffleLfo.type = 'sine';
+  shuffleLfo.frequency.value = 0.18;
+  const shuffleLfoGain = ac.createGain();
+  shuffleLfoGain.gain.value = 0.06;
+  shuffleLfo.connect(shuffleLfoGain).connect(shuffleGain.gain);
+  shuffleLfo.start(t);
+  shuffle.connect(shuffleFilt).connect(shuffleGain).connect(master);
+  shuffle.start(t);
+  sources.push(shuffle);
+  oscillators.push(shuffleLfo);
 
   return { sources, oscillators };
 }
@@ -156,26 +174,62 @@ function startShipyardAmbient(ac: AudioContext, master: GainNode) {
   const oscillators: OscillatorNode[] = [];
   const t = ac.currentTime;
 
-  // Hammering rhythm — bandpassed noise pulsed by a square-ish LFO
-  const hammer = createLoopingNoise(ac, 1);
+  // Hammering — sharp percussive hits, loud and rhythmic
+  const hammer = createLoopingNoise(ac, 0.8);
   const hammerFilt = ac.createBiquadFilter();
   hammerFilt.type = 'bandpass';
-  hammerFilt.frequency.value = 1200;
-  hammerFilt.Q.value = 2;
+  hammerFilt.frequency.value = 1400;
+  hammerFilt.Q.value = 5;
   const hammerGain = ac.createGain();
   hammerGain.gain.value = 0.0;
-  // Pulsing LFO ~2.5 Hz = rhythmic tapping
+  // Square LFO at ~2.3 Hz for a steady knock-knock-knock
   const hammerLfo = ac.createOscillator();
   hammerLfo.type = 'square';
-  hammerLfo.frequency.value = 2.5;
+  hammerLfo.frequency.value = 2.3;
   const hammerLfoGain = ac.createGain();
-  hammerLfoGain.gain.value = 0.12;
+  hammerLfoGain.gain.value = 0.40;
   hammerLfo.connect(hammerLfoGain).connect(hammerGain.gain);
   hammerLfo.start(t);
   hammer.connect(hammerFilt).connect(hammerGain).connect(master);
   hammer.start(t);
   sources.push(hammer);
   oscillators.push(hammerLfo);
+
+  // Sawing — back-and-forth raspy noise, the signature shipyard sound
+  // Highpass noise with a sine LFO sweeping the filter frequency up and down
+  const saw = createLoopingNoise(ac, 1.5);
+  const sawFilt = ac.createBiquadFilter();
+  sawFilt.type = 'bandpass';
+  sawFilt.frequency.value = 2200;
+  sawFilt.Q.value = 3;
+  const sawGain = ac.createGain();
+  sawGain.gain.value = 0.0;
+  // Sine AM at ~1.4Hz — the back-and-forth stroke rhythm
+  const sawLfo = ac.createOscillator();
+  sawLfo.type = 'sine';
+  sawLfo.frequency.value = 1.4;
+  const sawLfoGain = ac.createGain();
+  sawLfoGain.gain.value = 0.25;
+  sawLfo.connect(sawLfoGain).connect(sawGain.gain);
+  // Sweep the filter frequency with each stroke for the "bite" of the saw
+  const sawSweep = ac.createOscillator();
+  sawSweep.type = 'sine';
+  sawSweep.frequency.value = 1.4;  // same rate as stroke
+  const sawSweepGain = ac.createGain();
+  sawSweepGain.gain.value = 600;   // sweeps ±600Hz around 2200
+  sawSweep.connect(sawSweepGain).connect(sawFilt.frequency);
+  // Slow gate so sawing comes and goes (not constant)
+  const sawGate = ac.createOscillator();
+  sawGate.type = 'sine';
+  sawGate.frequency.value = 0.06;
+  const sawGateGain = ac.createGain();
+  sawGateGain.gain.value = 0.15;
+  sawGate.connect(sawGateGain).connect(sawGain.gain);
+  sawLfo.start(t); sawSweep.start(t); sawGate.start(t);
+  saw.connect(sawFilt).connect(sawGain).connect(master);
+  saw.start(t);
+  sources.push(saw);
+  oscillators.push(sawLfo, sawSweep, sawGate);
 
   // Water lapping — low filtered noise, slow swell
   const water = createLoopingNoise(ac, 3);
@@ -196,19 +250,19 @@ function startShipyardAmbient(ac: AudioContext, master: GainNode) {
   sources.push(water);
   oscillators.push(waterLfo);
 
-  // Wood creaking — very narrow bandpass, slow
+  // Wood creaking — narrow resonant groan
   const creak = createLoopingNoise(ac, 2);
   const creakFilt = ac.createBiquadFilter();
   creakFilt.type = 'bandpass';
   creakFilt.frequency.value = 300;
-  creakFilt.Q.value = 8;
+  creakFilt.Q.value = 10;
   const creakGain = ac.createGain();
-  creakGain.gain.value = 0.04;
+  creakGain.gain.value = 0.10;
   const creakLfo = ac.createOscillator();
   creakLfo.type = 'sine';
   creakLfo.frequency.value = 0.08;
   const creakLfoGain = ac.createGain();
-  creakLfoGain.gain.value = 0.04;
+  creakLfoGain.gain.value = 0.05;
   creakLfo.connect(creakLfoGain).connect(creakGain.gain);
   creakLfo.start(t);
   creak.connect(creakFilt).connect(creakGain).connect(master);
@@ -290,8 +344,140 @@ function startGovernorAmbient(ac: AudioContext, master: GainNode) {
   return { sources, oscillators };
 }
 
-/** Start ambient loop for a port modal tab. Stops any currently playing tab ambient. */
-export function startTabAmbient(tab: string) {
+// ── Regional climate ambient layers ─────────────────────────
+
+const PORT_CLIMATE: Record<string, string> = {
+  goa: 'tropical', hormuz: 'arid', malacca: 'tropical', aden: 'arid',
+  zanzibar: 'tropical', macau: 'temperate', mombasa: 'monsoon',
+  calicut: 'monsoon', surat: 'monsoon', muscat: 'arid',
+  mocha: 'arid', bantam: 'tropical', socotra: 'arid', diu: 'arid',
+};
+
+type AmbientNodes = { sources: AudioBufferSourceNode[]; oscillators: OscillatorNode[] };
+
+function createTropicalLayer(ac: AudioContext, master: GainNode): AmbientNodes {
+  const sources: AudioBufferSourceNode[] = [];
+  const oscillators: OscillatorNode[] = [];
+  const t = ac.currentTime;
+
+  // Humid air — warm low-frequency noise bed
+  const humid = createLoopingNoise(ac, 2);
+  const humidFilt = ac.createBiquadFilter();
+  humidFilt.type = 'bandpass';
+  humidFilt.frequency.value = 250;
+  humidFilt.Q.value = 0.6;
+  const humidGain = ac.createGain();
+  humidGain.gain.value = 0.035;
+  humid.connect(humidFilt).connect(humidGain).connect(master);
+  humid.start(t);
+  sources.push(humid);
+
+  return { sources, oscillators };
+}
+
+function createAridLayer(ac: AudioContext, master: GainNode): AmbientNodes {
+  const sources: AudioBufferSourceNode[] = [];
+  const oscillators: OscillatorNode[] = [];
+  const t = ac.currentTime;
+
+  // Dry wind gusts — highpass noise with slow swell
+  const wind = createLoopingNoise(ac, 3);
+  const windFilt = ac.createBiquadFilter();
+  windFilt.type = 'highpass';
+  windFilt.frequency.value = 1500;
+  const windGain = ac.createGain();
+  windGain.gain.value = 0.03;
+  const windLfo = ac.createOscillator();
+  windLfo.type = 'sine';
+  windLfo.frequency.value = 0.06;
+  const windLfoGain = ac.createGain();
+  windLfoGain.gain.value = 0.025;
+  windLfo.connect(windLfoGain).connect(windGain.gain);
+  windLfo.start(t);
+  wind.connect(windFilt).connect(windGain).connect(master);
+  wind.start(t);
+  sources.push(wind);
+  oscillators.push(windLfo);
+
+  return { sources, oscillators };
+}
+
+function createMonsoonLayer(ac: AudioContext, master: GainNode): AmbientNodes {
+  const sources: AudioBufferSourceNode[] = [];
+  const oscillators: OscillatorNode[] = [];
+  const t = ac.currentTime;
+
+  // Rain — gentle highpass noise, subtle enough to not sound like static
+  const rain = createLoopingNoise(ac, 2);
+  const rainFilt = ac.createBiquadFilter();
+  rainFilt.type = 'highpass';
+  rainFilt.frequency.value = 6000;
+  const rainGain = ac.createGain();
+  rainGain.gain.value = 0.018;
+  const rainLfo = ac.createOscillator();
+  rainLfo.type = 'sine';
+  rainLfo.frequency.value = 0.04;
+  const rainLfoGain = ac.createGain();
+  rainLfoGain.gain.value = 0.01;
+  rainLfo.connect(rainLfoGain).connect(rainGain.gain);
+  rainLfo.start(t);
+  rain.connect(rainFilt).connect(rainGain).connect(master);
+  rain.start(t);
+  sources.push(rain);
+  oscillators.push(rainLfo);
+
+  // Water runoff — lower bandpass texture, gentle dripping feel
+  const runoff = createLoopingNoise(ac, 3);
+  const runoffFilt = ac.createBiquadFilter();
+  runoffFilt.type = 'bandpass';
+  runoffFilt.frequency.value = 500;
+  runoffFilt.Q.value = 1.5;
+  const runoffGain = ac.createGain();
+  runoffGain.gain.value = 0.012;
+  runoff.connect(runoffFilt).connect(runoffGain).connect(master);
+  runoff.start(t);
+  sources.push(runoff);
+
+  return { sources, oscillators };
+}
+
+function createTemperateLayer(ac: AudioContext, master: GainNode): AmbientNodes {
+  const sources: AudioBufferSourceNode[] = [];
+  const oscillators: OscillatorNode[] = [];
+  const t = ac.currentTime;
+
+  // Light breeze — gentle lowpass noise
+  const breeze = createLoopingNoise(ac, 3);
+  const breezeFilt = ac.createBiquadFilter();
+  breezeFilt.type = 'lowpass';
+  breezeFilt.frequency.value = 800;
+  const breezeGain = ac.createGain();
+  breezeGain.gain.value = 0.025;
+  const breezeLfo = ac.createOscillator();
+  breezeLfo.type = 'sine';
+  breezeLfo.frequency.value = 0.08;
+  const breezeLfoGain = ac.createGain();
+  breezeLfoGain.gain.value = 0.015;
+  breezeLfo.connect(breezeLfoGain).connect(breezeGain.gain);
+  breezeLfo.start(t);
+  breeze.connect(breezeFilt).connect(breezeGain).connect(master);
+  breeze.start(t);
+  sources.push(breeze);
+  oscillators.push(breezeLfo);
+
+  return { sources, oscillators };
+}
+
+function mergeAmbientNodes(a: AmbientNodes, b: AmbientNodes): AmbientNodes {
+  return {
+    sources: [...a.sources, ...b.sources],
+    oscillators: [...a.oscillators, ...b.oscillators],
+  };
+}
+
+/** Start ambient loop for a port modal tab. Stops any currently playing tab ambient.
+ *  If portId is provided, a subtle regional climate layer is mixed in. */
+export function startTabAmbient(tab: string, portId?: string) {
   if (tab === activeTabType) return; // already playing
   stopTabAmbient(0.3);
 
@@ -302,13 +488,26 @@ export function startTabAmbient(tab: string) {
   master.gain.linearRampToValueAtTime(v, ac.currentTime + 0.5);
   master.connect(ac.destination);
 
-  let nodes: { sources: AudioBufferSourceNode[]; oscillators: OscillatorNode[] };
+  let nodes: AmbientNodes;
   switch (tab) {
     case 'market':   nodes = startMarketAmbient(ac, master); break;
     case 'shipyard': nodes = startShipyardAmbient(ac, master); break;
     case 'tavern':   nodes = startTavernAmbient(ac, master); break;
     case 'governor': nodes = startGovernorAmbient(ac, master); break;
     default:         nodes = { sources: [], oscillators: [] }; break;
+  }
+
+  // Mix in regional climate undertone
+  if (portId) {
+    const climate = PORT_CLIMATE[portId];
+    let climateNodes: AmbientNodes = { sources: [], oscillators: [] };
+    switch (climate) {
+      case 'tropical':  climateNodes = createTropicalLayer(ac, master); break;
+      case 'arid':      climateNodes = createAridLayer(ac, master); break;
+      case 'monsoon':   climateNodes = createMonsoonLayer(ac, master); break;
+      case 'temperate': climateNodes = createTemperateLayer(ac, master); break;
+    }
+    nodes = mergeAmbientNodes(nodes, climateNodes);
   }
 
   activeTabAmbient = { ...nodes, masterGain: master };
@@ -1405,4 +1604,181 @@ export function sfxAnchorWeigh() {
   osc.connect(g).connect(ac.destination);
   osc.start(t + 0.1);
   osc.stop(t + 0.6);
+}
+
+/** Warm harbor bell — plays when the player reaches a port. */
+export function sfxPortArrival() {
+  const ac = getCtx();
+  const v = masterVolume * 0.25;
+  const t = ac.currentTime;
+
+  // Warm bell tone — two harmonics for a rich, welcoming chime
+  const bell1 = ac.createOscillator();
+  bell1.type = 'sine';
+  bell1.frequency.value = 523; // C5
+  const g1 = ac.createGain();
+  g1.gain.setValueAtTime(v * 0.4, t);
+  g1.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+  bell1.connect(g1).connect(ac.destination);
+  bell1.start(t);
+  bell1.stop(t + 0.85);
+
+  // Second partial — minor third above for warmth
+  const bell2 = ac.createOscillator();
+  bell2.type = 'sine';
+  bell2.frequency.value = 659; // E5
+  const g2 = ac.createGain();
+  g2.gain.setValueAtTime(v * 0.2, t + 0.05);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+  bell2.connect(g2).connect(ac.destination);
+  bell2.start(t + 0.05);
+  bell2.stop(t + 0.65);
+
+  // Subtle splash of noise — harbor ambiance texture
+  noise(ac, 0.15, v * 0.12, 1200, 1);
+}
+
+/** Very soft puff for dismissing toasts — lighter than a click. */
+export function sfxDismiss() {
+  const ac = getCtx();
+  const v = masterVolume * 0.12;
+  noise(ac, 0.04, v, 3000, 1.5);
+}
+
+// ── Ship hailing: bell + language-flavored babble ───────────
+
+type BabbleFamily = 'european' | 'arabic' | 'southasian' | 'swahili' | 'malay' | 'eastasian';
+
+const LANGUAGE_TO_FAMILY: Record<string, BabbleFamily> = {
+  Portuguese: 'european', Dutch: 'european', English: 'european',
+  Spanish: 'european', French: 'european',
+  Arabic: 'arabic', Persian: 'arabic', Turkish: 'arabic',
+  Gujarati: 'southasian', Hindustani: 'southasian',
+  Swahili: 'swahili',
+  Malay: 'malay',
+  Chinese: 'eastasian', Japanese: 'eastasian',
+};
+
+interface BabbleParams {
+  formant1: number;     // first vowel-color frequency
+  formant2: number;     // second vowel-color frequency
+  syllableRate: number; // AM speed — perceived "pace" of speech
+  intonation: number;   // how much formant freqs waver (pitch movement)
+  duration: number;     // total babble length in seconds
+}
+
+const BABBLE: Record<BabbleFamily, BabbleParams> = {
+  //                     f1    f2   rate  inton  dur
+  european:   { formant1: 500, formant2: 1500, syllableRate: 4.0,  intonation: 0.12, duration: 1.5 },
+  arabic:     { formant1: 400, formant2:  900, syllableRate: 3.0,  intonation: 0.20, duration: 1.8 },
+  southasian: { formant1: 520, formant2: 1400, syllableRate: 4.5,  intonation: 0.30, duration: 1.5 },
+  swahili:    { formant1: 600, formant2: 1800, syllableRate: 5.0,  intonation: 0.22, duration: 1.4 },
+  malay:      { formant1: 550, formant2: 1600, syllableRate: 5.5,  intonation: 0.12, duration: 1.2 },
+  eastasian:  { formant1: 450, formant2: 1200, syllableRate: 3.5,  intonation: 0.45, duration: 1.3 },
+};
+
+/** Ship hail — metallic bell clang followed by distant language-flavored babble.
+ *  Pass the NPC's hailLanguage (e.g. "Portuguese", "Arabic"). */
+export function sfxShipHail(language: string) {
+  const ac = getCtx();
+  const v = masterVolume * 0.35;
+  const t = ac.currentTime;
+
+  // ── Bell clang ──────────────────────────────────────────
+  const bell = ac.createOscillator();
+  bell.type = 'sine';
+  bell.frequency.value = 880;
+  const bellG = ac.createGain();
+  bellG.gain.setValueAtTime(v * 0.5, t);
+  bellG.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  bell.connect(bellG).connect(ac.destination);
+  bell.start(t);
+  bell.stop(t + 0.55);
+
+  // Inharmonic partial — gives metallic quality
+  const bell2 = ac.createOscillator();
+  bell2.type = 'sine';
+  bell2.frequency.value = 2200;
+  const bell2G = ac.createGain();
+  bell2G.gain.setValueAtTime(v * 0.18, t);
+  bell2G.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  bell2.connect(bell2G).connect(ac.destination);
+  bell2.start(t);
+  bell2.stop(t + 0.35);
+
+  // Sharp attack transient
+  noise(ac, 0.025, v * 0.3, 4000, 2);
+
+  // ── Babble ──────────────────────────────────────────────
+  const family = LANGUAGE_TO_FAMILY[language] ?? 'european';
+  const p = BABBLE[family];
+  const bv = masterVolume * 0.15;        // babble is quieter than bell
+  const bStart = t + 0.4;                // begins after bell rings
+
+  // Noise source — raw material for "speech"
+  const len = ac.sampleRate * p.duration;
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+
+  // Two formant bandpass filters — give the noise vowel-like color
+  const f1 = ac.createBiquadFilter();
+  f1.type = 'bandpass'; f1.frequency.value = p.formant1; f1.Q.value = 4;
+  const f2 = ac.createBiquadFilter();
+  f2.type = 'bandpass'; f2.frequency.value = p.formant2; f2.Q.value = 3;
+
+  const f1G = ac.createGain(); f1G.gain.value = 0.55;
+  const f2G = ac.createGain(); f2G.gain.value = 0.4;
+
+  // Master babble gain — envelope + AM target
+  const babbleGain = ac.createGain();
+
+  // Envelope: fade in, sustain, fade out
+  babbleGain.gain.setValueAtTime(0, bStart);
+  babbleGain.gain.linearRampToValueAtTime(bv, bStart + 0.06);
+  babbleGain.gain.setValueAtTime(bv, bStart + p.duration - 0.3);
+  babbleGain.gain.linearRampToValueAtTime(0, bStart + p.duration);
+
+  // Syllable rhythm — two LFOs at non-harmonic ratio for aperiodic pattern
+  const lfo1 = ac.createOscillator();
+  lfo1.type = 'sine';
+  lfo1.frequency.value = p.syllableRate;
+  const lfo1G = ac.createGain();
+  lfo1G.gain.value = bv * 0.55;
+  lfo1.connect(lfo1G).connect(babbleGain.gain);
+
+  const lfo2 = ac.createOscillator();
+  lfo2.type = 'sine';
+  lfo2.frequency.value = p.syllableRate * 0.73; // irrational ratio → no repeating pattern
+  const lfo2G = ac.createGain();
+  lfo2G.gain.value = bv * 0.35;
+  lfo2.connect(lfo2G).connect(babbleGain.gain);
+
+  // Intonation — slow waver on formant frequencies (pitch contour)
+  const intonLfo = ac.createOscillator();
+  intonLfo.type = 'sine';
+  intonLfo.frequency.value = 0.4;
+  const inton1 = ac.createGain();
+  inton1.gain.value = p.formant1 * p.intonation;
+  const inton2 = ac.createGain();
+  inton2.gain.value = p.formant2 * p.intonation;
+  intonLfo.connect(inton1).connect(f1.frequency);
+  intonLfo.connect(inton2).connect(f2.frequency);
+
+  // Distance filter — lowpass so it sounds like it's across water
+  const dist = ac.createBiquadFilter();
+  dist.type = 'lowpass';
+  dist.frequency.value = 2500;
+
+  // Wire: src → f1/f2 → gains → babbleGain → distance → output
+  src.connect(f1).connect(f1G).connect(babbleGain);
+  src.connect(f2).connect(f2G).connect(babbleGain);
+  babbleGain.connect(dist).connect(ac.destination);
+
+  // Schedule
+  lfo1.start(bStart); lfo2.start(bStart); intonLfo.start(bStart); src.start(bStart);
+  const bEnd = bStart + p.duration + 0.05;
+  lfo1.stop(bEnd); lfo2.stop(bEnd); intonLfo.stop(bEnd); src.stop(bEnd);
 }

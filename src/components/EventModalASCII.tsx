@@ -241,61 +241,100 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           willChange: 'opacity, transform',
         }}
       >
-        {/* ═══ Port thumbnail — anchored beside ship description ═══ */}
-        {startPort && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1.0, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        {/* ═══ Header with port image background ═══ */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 1.0, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            position: 'relative',
+            width: 'calc(100% + 32px)',
+            margin: '-12px -16px 0 -16px',
+            height: isWide ? 140 : 110,
+            overflow: 'hidden',
+            borderRadius: '4px 4px 0 0',
+          }}
+        >
+          <img
+            src={`/ports/${startPort?.id ?? 'bantam'}.png`}
+            alt={startPort?.name ?? ''}
             style={{
               position: 'absolute',
-              top: isWide ? 190 : 150,
-              right: isWide ? 50 : 30,
-              width: isWide ? 120 : 90,
-              height: isWide ? 96 : 72,
-              zIndex: 10,
-              borderRadius: 2,
-              overflow: 'hidden',
-              border: `1px solid ${DIM_GOLD}`,
-              boxShadow: `0 0 16px rgba(0,0,0,0.8), inset 0 0 20px rgba(0,0,0,0.4), 0 0 1px ${DIM_GOLD}`,
-            }}
-          >
-            <img
-              src={`/ports/${startPort.id}.png`}
-              alt={startPort.name}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                filter: 'sepia(0.35) contrast(1.1) brightness(0.8)',
-              }}
-            />
-            {/* Vignette overlay */}
-            <div style={{
-              position: 'absolute',
               inset: 0,
-              background: `radial-gradient(ellipse at center, transparent 30%, rgba(12,11,8,0.65) 100%)`,
-              pointerEvents: 'none',
-            }} />
-            {/* Bottom label */}
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              filter: 'sepia(0.3) contrast(1.15) brightness(0.5)',
+            }}
+          />
+          {/* Vignette + bottom fade */}
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: `
+              radial-gradient(ellipse at center, transparent 25%, rgba(8,7,5,0.8) 100%),
+              linear-gradient(to bottom, rgba(8,7,5,0.2) 0%, transparent 25%, transparent 60%, rgba(8,7,5,0.95) 100%)
+            `,
+            pointerEvents: 'none',
+          }} />
+          {/* Dark banner for title */}
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -60%)',
+            background: 'rgba(8,7,5,0.72)',
+            padding: isWide ? '10px 36px' : '8px 24px',
+            borderTop: `1px solid ${DIM_GOLD}`,
+            borderBottom: `1px solid ${DIM_GOLD}`,
+            backdropFilter: 'blur(4px)',
+          }}>
             <div style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              padding: '2px 4px',
-              background: 'linear-gradient(transparent, rgba(12,11,8,0.9))',
               fontFamily: monoFont,
-              fontSize: isWide ? 9 : 7.5,
-              color: DIM_GOLD,
-              textAlign: 'center',
+              fontSize: isWide ? 13.5 : 10.5,
+              color: GOLD,
               letterSpacing: '0.15em',
-              textTransform: 'uppercase',
+              textAlign: 'center',
+              whiteSpace: 'pre',
             }}>
-              {startPort.name}
+              {'COMMISSION  OF  VOYAGE'}
             </div>
-          </motion.div>
-        )}
+          </div>
+          {/* Port name */}
+          <div style={{
+            position: 'absolute',
+            bottom: isWide ? 12 : 8,
+            left: 0,
+            right: 0,
+            textAlign: 'center',
+            fontFamily: monoFont,
+            fontSize: isWide ? 9 : 7.5,
+            color: DIM_GOLD,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+          }}>
+            {startPort?.name ?? ''}
+          </div>
+        </motion.div>
+
+        {/* ═══ Ship description — centered ═══ */}
+        <div style={{
+          textAlign: 'center',
+          fontFamily: monoFont,
+          fontSize: isWide ? 14.5 : 12,
+          lineHeight: 1.7,
+          color: TXT,
+          padding: isWide ? '14px 24px 10px' : '10px 16px 6px',
+        }}>
+          <span>The {ship.type.toLowerCase()} </span>
+          <span style={{ color: TEAL }}>{ship.name}</span>
+          <br />
+          <span>{startPort ? `departs ${startPort.name} under the` : 'sets sail under the'}</span>
+          <br />
+          <span>command of </span>
+          <span style={{ color: CRIMSON }}>{captainName}</span>
+          <span>.</span>
+        </div>
 
         <pre
           className={`${isWide ? 'text-[13px]' : 'text-[10.5px]'} leading-[1.55] whitespace-pre`}
@@ -313,55 +352,6 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(iw)}{'\u2500'}</C>
           <C c={GOLD}>{ornamentSpan(6)}</C>{'\n'}
 
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Title cartouche (centered) ═══ */}
-          <L>
-            <C c={BG}>{'   '}</C>
-            <C c={DIM_GOLD}>{'\u256d'}{'\u2500'.repeat(cartInner)}{'\u256e'}</C>
-            <C c={BG}>{'   '}</C>
-          </L>
-          <L>
-            <C c={BG}>{'   '}</C>
-            <C c={DIM_GOLD}>{'\u2502'}</C>
-            <C c={BG}>{sp(titlePadL)}</C>
-            <C c={GOLD}>{'C O M M I S S I O N  O F  V O Y A G E'}</C>
-            <C c={BG}>{sp(titlePadR)}</C>
-            <C c={DIM_GOLD}>{'\u2502'}</C>
-            <C c={BG}>{'   '}</C>
-          </L>
-          <L>
-            <C c={BG}>{'   '}</C>
-            <C c={DIM_GOLD}>{'\u2570'}{'\u2500'.repeat(cartInner)}{'\u256f'}</C>
-            <C c={BG}>{'   '}</C>
-          </L>
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-          <L><Divider ornChar={divChar} width={iw} /></L>
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Ship & Captain ═══ */}
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={TXT}>{shipDesc}</C>
-            <C c={TEAL}>{ship.name}</C>
-            <C c={BG}>{sp(iw - 4 - shipDesc.length - ship.name.length)}</C>
-          </L>
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={TXT}>{portLine}</C>
-            <C c={BG}>{sp(iw - 4 - portLine.length)}</C>
-          </L>
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={TXT}>{cmdLine}</C>
-            <C c={CRIMSON}>{captainName}</C>
-            <C c={TXT}>{'.'}</C>
-            <C c={BG}>{sp(iw - 4 - cmdLine.length - captainName.length - 1)}</C>
-          </L>
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-          <L><Divider ornChar={divChar} width={iw} /></L>
           <L><C c={BG}>{sp(iw)}</C></L>
 
           {/* ═══ Crew table ═══ */}

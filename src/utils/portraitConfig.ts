@@ -61,30 +61,45 @@ export const SKIN_PALETTES: SkinPalette[] = [
   { light: '#f0d4a8', mid: '#e0c090', dark: '#c09c68', blush: '#c88c68' },
   // 10 - Southeast Asian warm
   { light: '#deb87c', mid: '#c8a068', dark: '#a47c48', blush: '#b07050' },
+  // 11 - Ruddy/pinkish fair (sunburned redhead, flushed Northern European)
+  { light: '#f5d4c0', mid: '#e8bca0', dark: '#cc967a', blush: '#d88070' },
+  // 12 - Golden olive (lighter South Indian, Sri Lankan, coastal Arab)
+  { light: '#d4a870', mid: '#c09058', dark: '#987040', blush: '#a06848' },
+  // 13 - Warm reddish-brown (East African, some Malay)
+  { light: '#a06838', mid: '#8c5830', dark: '#6c4020', blush: '#884428' },
+  // 14 - Tanned/weathered fair (deeply sun-darkened European sailor)
+  { light: '#e0c09a', mid: '#cca878', dark: '#a88058', blush: '#b87860' },
 ];
 
 // Nationality → weighted skin tone distribution
 // Each entry: [paletteIndex, weight]. Higher weight = more common for that nationality.
 const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
-  English:    [[0, 60], [1, 35], [2, 5]],
-  Dutch:      [[0, 65], [1, 30], [2, 5]],
-  Danish:     [[0, 70], [1, 25], [2, 5]],
-  French:     [[0, 30], [1, 50], [2, 20]],
-  Spanish:    [[1, 40], [2, 45], [3, 15]],
-  Portuguese: [[1, 35], [2, 45], [3, 20]],
-  Ottoman:    [[2, 35], [3, 45], [4, 20]],
-  Persian:    [[2, 40], [3, 40], [4, 20]],
-  Omani:      [[3, 40], [4, 40], [5, 20]],
-  Mughal:     [[3, 30], [4, 45], [5, 25]],
-  Gujarati:   [[3, 25], [4, 40], [5, 25], [6, 10]],
-  Swahili:    [[5, 15], [6, 30], [7, 35], [8, 20]],
-  Malay:      [[4, 30], [5, 35], [10, 35]],
-  Acehnese:   [[4, 30], [5, 35], [10, 35]],
-  Javanese:   [[4, 20], [5, 40], [10, 30], [6, 10]],
-  Moluccan:   [[4, 25], [5, 35], [10, 30], [6, 10]],
-  Siamese:    [[9, 20], [10, 40], [4, 30], [5, 10]],
-  Chinese:    [[9, 55], [10, 30], [4, 15]],
-  Japanese:   [[0, 15], [9, 55], [10, 25], [4, 5]],
+  // Northern Europeans: mostly fair, but sailors tan deeply; rare olive ("Black Irish")
+  English:    [[0, 40], [1, 25], [11, 12], [14, 15], [2, 5], [3, 3]],
+  Dutch:      [[0, 45], [1, 25], [11, 10], [14, 12], [2, 5], [3, 3]],
+  Danish:     [[0, 50], [1, 22], [11, 12], [14, 10], [2, 4], [3, 2]],
+  // Southern Europeans: wider range, Mediterranean olive common
+  French:     [[0, 20], [1, 35], [2, 25], [14, 10], [3, 7], [11, 3]],
+  Spanish:    [[1, 25], [2, 35], [3, 20], [14, 8], [4, 7], [0, 5]],
+  Portuguese: [[1, 22], [2, 32], [3, 22], [14, 10], [4, 8], [0, 6]],
+  // Middle Eastern: wide range from fair-skinned urbanites to dark-skinned traders
+  Ottoman:    [[1, 8], [2, 30], [3, 35], [4, 15], [12, 8], [5, 4]],
+  Persian:    [[1, 12], [2, 30], [3, 30], [4, 15], [12, 8], [5, 5]],
+  Omani:      [[3, 25], [4, 30], [12, 15], [5, 15], [2, 8], [6, 7]],
+  // South Asian: broad range reflecting enormous internal diversity
+  Mughal:     [[2, 8], [3, 22], [4, 30], [12, 15], [5, 18], [6, 7]],
+  Gujarati:   [[3, 15], [4, 28], [12, 15], [5, 22], [6, 12], [2, 5], [7, 3]],
+  // East African: wide range — coastal Swahili had Arab/Persian admixture
+  Swahili:    [[4, 5], [5, 12], [13, 15], [6, 25], [7, 28], [8, 15]],
+  // Southeast Asian: warm tones with more range
+  Malay:      [[10, 30], [4, 25], [5, 25], [12, 10], [6, 7], [3, 3]],
+  Acehnese:   [[10, 28], [4, 25], [5, 25], [12, 12], [3, 5], [6, 5]],
+  Javanese:   [[10, 25], [4, 18], [5, 30], [12, 10], [6, 12], [3, 5]],
+  Moluccan:   [[10, 22], [4, 20], [5, 28], [13, 10], [6, 14], [3, 6]],
+  // East/mainland SE Asian
+  Siamese:    [[9, 15], [10, 32], [4, 25], [12, 12], [5, 10], [3, 6]],
+  Chinese:    [[9, 42], [10, 28], [4, 15], [0, 5], [12, 5], [5, 5]],
+  Japanese:   [[0, 10], [9, 42], [10, 22], [4, 8], [1, 10], [12, 5], [5, 3]],
 };
 
 // ── Eye colors ───────────────────────────────────────────
@@ -102,25 +117,27 @@ export const EYE_COLORS = [
 ];
 
 const EYE_DISTRIBUTION: Record<Nationality, [number, number][]> = {
-  English:    [[1, 15], [2, 20], [3, 10], [5, 25], [6, 20], [7, 10]],
-  Dutch:      [[1, 10], [2, 15], [5, 25], [6, 30], [7, 20]],
-  Danish:     [[2, 10], [5, 20], [6, 35], [7, 35]],
-  French:     [[1, 20], [2, 25], [3, 15], [5, 20], [6, 15], [4, 5]],
-  Spanish:    [[0, 20], [1, 35], [2, 25], [3, 10], [8, 10]],
-  Portuguese: [[0, 20], [1, 35], [2, 25], [3, 10], [8, 10]],
-  Ottoman:    [[0, 30], [1, 35], [2, 20], [3, 10], [8, 5]],
-  Persian:    [[0, 20], [1, 30], [2, 20], [3, 15], [4, 5], [8, 10]],
-  Omani:      [[0, 35], [1, 40], [2, 15], [8, 10]],
-  Mughal:     [[0, 40], [1, 35], [2, 15], [8, 10]],
-  Gujarati:   [[0, 45], [1, 35], [2, 15], [8, 5]],
-  Swahili:    [[0, 60], [1, 30], [2, 10]],
-  Malay:      [[0, 50], [1, 35], [2, 15]],
-  Acehnese:   [[0, 50], [1, 35], [2, 15]],
-  Javanese:   [[0, 55], [1, 30], [2, 15]],
-  Moluccan:   [[0, 55], [1, 30], [2, 15]],
-  Siamese:    [[0, 50], [1, 35], [2, 15]],
-  Chinese:    [[0, 55], [1, 30], [2, 15]],
-  Japanese:   [[0, 55], [1, 30], [2, 15]],
+  English:    [[1, 12], [2, 18], [3, 12], [4, 5], [5, 22], [6, 18], [7, 8], [8, 5]],
+  Dutch:      [[1, 8], [2, 12], [3, 5], [5, 25], [6, 28], [7, 18], [8, 4]],
+  Danish:     [[2, 8], [3, 5], [5, 18], [6, 32], [7, 30], [4, 4], [8, 3]],
+  French:     [[1, 15], [2, 22], [3, 15], [4, 8], [5, 18], [6, 12], [8, 5], [7, 5]],
+  Spanish:    [[0, 18], [1, 30], [2, 22], [3, 12], [8, 10], [4, 5], [5, 3]],
+  Portuguese: [[0, 18], [1, 28], [2, 22], [3, 14], [8, 10], [4, 5], [5, 3]],
+  Ottoman:    [[0, 25], [1, 28], [2, 20], [3, 12], [8, 8], [4, 4], [5, 3]],
+  Persian:    [[0, 15], [1, 25], [2, 20], [3, 18], [4, 8], [8, 10], [5, 4]],
+  Omani:      [[0, 30], [1, 35], [2, 15], [8, 12], [3, 5], [4, 3]],
+  Mughal:     [[0, 35], [1, 30], [2, 15], [8, 12], [3, 5], [4, 3]],
+  Gujarati:   [[0, 38], [1, 30], [2, 15], [8, 8], [3, 5], [4, 4]],
+  // Swahili: mostly dark, but amber eyes occur in East Africa
+  Swahili:    [[0, 48], [1, 25], [2, 10], [8, 12], [3, 5]],
+  // SE Asian: dark dominant but amber/warm brown more common than previously modeled
+  Malay:      [[0, 40], [1, 30], [2, 15], [8, 10], [3, 5]],
+  Acehnese:   [[0, 40], [1, 30], [2, 15], [8, 10], [3, 5]],
+  Javanese:   [[0, 42], [1, 28], [2, 15], [8, 10], [3, 5]],
+  Moluccan:   [[0, 42], [1, 28], [2, 15], [8, 10], [3, 5]],
+  Siamese:    [[0, 40], [1, 30], [2, 15], [8, 10], [3, 5]],
+  Chinese:    [[0, 42], [1, 28], [2, 18], [8, 8], [3, 4]],
+  Japanese:   [[0, 42], [1, 28], [2, 18], [8, 8], [3, 4]],
 };
 
 // ── Hair colors ──────────────────────────────────────────
@@ -140,25 +157,36 @@ export const HAIR_COLORS = [
 ];
 
 const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
-  English:    [[1, 10], [2, 20], [3, 25], [4, 20], [5, 5], [6, 5], [7, 10], [8, 5]],
-  Dutch:      [[2, 10], [3, 15], [4, 20], [7, 25], [8, 25], [6, 5]],
-  Danish:     [[3, 10], [4, 15], [7, 25], [8, 35], [6, 10], [5, 5]],
-  French:     [[1, 15], [2, 25], [3, 25], [4, 20], [7, 10], [5, 5]],
-  Spanish:    [[0, 30], [1, 35], [2, 25], [3, 10]],
-  Portuguese: [[0, 25], [1, 35], [2, 30], [3, 10]],
-  Ottoman:    [[0, 50], [1, 35], [2, 15]],
-  Persian:    [[0, 45], [1, 35], [2, 15], [3, 5]],
-  Omani:      [[0, 55], [1, 35], [2, 10]],
-  Mughal:     [[0, 55], [1, 35], [2, 10]],
-  Gujarati:   [[0, 60], [1, 30], [2, 10]],
-  Swahili:    [[0, 80], [1, 15], [2, 5]],
-  Malay:      [[0, 70], [1, 25], [2, 5]],
-  Acehnese:   [[0, 70], [1, 25], [2, 5]],
-  Javanese:   [[0, 70], [1, 25], [2, 5]],
-  Moluccan:   [[0, 70], [1, 25], [2, 5]],
-  Siamese:    [[0, 75], [1, 20], [2, 5]],
-  Chinese:    [[0, 80], [1, 15], [2, 5]],
-  Japanese:   [[0, 80], [1, 15], [2, 5]],
+  // English: full Celtic/Anglo-Saxon range — black "Black Irish" to ginger to blond
+  English:    [[0, 5], [1, 10], [2, 18], [3, 22], [4, 18], [5, 8], [6, 8], [7, 7], [8, 4]],
+  // Dutch: famously blond, but brown is common too
+  Dutch:      [[1, 5], [2, 10], [3, 14], [4, 18], [6, 5], [7, 22], [8, 22], [5, 4]],
+  // Danish/Scandinavian: lightest range, but dark hair exists (Sami influence)
+  Danish:     [[1, 3], [2, 5], [3, 10], [4, 12], [5, 5], [6, 12], [7, 22], [8, 28], [0, 3]],
+  // French: brown-dominated but full range
+  French:     [[0, 5], [1, 12], [2, 22], [3, 22], [4, 18], [5, 8], [6, 3], [7, 7], [8, 3]],
+  // Spanish: dark-dominated, but lighter browns and rare auburn (Visigothic heritage)
+  Spanish:    [[0, 25], [1, 30], [2, 22], [3, 12], [5, 5], [4, 4], [7, 2]],
+  // Portuguese: similar to Spanish
+  Portuguese: [[0, 22], [1, 30], [2, 25], [3, 12], [5, 5], [4, 4], [7, 2]],
+  // Ottoman: mostly dark, but auburn/brown exists in Anatolia
+  Ottoman:    [[0, 40], [1, 30], [2, 15], [3, 8], [5, 4], [6, 3]],
+  // Persian: dark with occasional lighter brown, rare auburn
+  Persian:    [[0, 35], [1, 30], [2, 18], [3, 8], [5, 5], [6, 4]],
+  Omani:      [[0, 48], [1, 30], [2, 12], [3, 5], [5, 5]],
+  Mughal:     [[0, 48], [1, 30], [2, 12], [3, 5], [5, 5]],
+  Gujarati:   [[0, 52], [1, 28], [2, 12], [3, 5], [5, 3]],
+  // Swahili: mostly black, but dark reddish-brown exists
+  Swahili:    [[0, 65], [1, 20], [2, 8], [5, 4], [3, 3]],
+  // SE Asian: black-dominant with dark brown
+  Malay:      [[0, 60], [1, 25], [2, 10], [3, 5]],
+  Acehnese:   [[0, 60], [1, 25], [2, 10], [3, 5]],
+  Javanese:   [[0, 62], [1, 23], [2, 10], [3, 5]],
+  Moluccan:   [[0, 62], [1, 23], [2, 10], [3, 5]],
+  Siamese:    [[0, 65], [1, 22], [2, 8], [3, 5]],
+  // East Asian: overwhelmingly dark, but dark brown is real
+  Chinese:    [[0, 70], [1, 18], [2, 8], [3, 4]],
+  Japanese:   [[0, 68], [1, 18], [2, 8], [3, 4], [5, 2]],
 };
 
 // ── Portrait config type ─────────────────────────────────
@@ -167,6 +195,7 @@ export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melanchol
 export type AgeRange = '20s' | '30s' | '40s' | '50s' | '60s';
 export type Gender = 'Male' | 'Female';
 export type SocialClass = 'Working' | 'Merchant' | 'Noble';
+export type FaceShape = 'round' | 'oval' | 'long' | 'square' | 'heart' | 'diamond';
 
 // Cultural clothing/headwear group — more granular than just nationality
 export type CulturalGroup =
@@ -209,6 +238,7 @@ export interface PortraitConfig {
   kerchiefColor: string;
   hasTattoo: boolean;         // cultural markings
   tattooType: 'forehead' | 'cheek' | 'chin' | 'arm';
+  faceShape: FaceShape;       // overall face archetype
 }
 
 // ── Distribution picker ──────────────────────────────────
@@ -308,13 +338,52 @@ export function crewToPortraitConfig(member: CrewMember): PortraitConfig {
   const rng = mulberry32(seed);
 
   // Consume a few RNG values for consistent ordering
-  const skinIndex = pickFromDistribution(rng, SKIN_DISTRIBUTION[member.nationality]);
-  const eyeColorIndex = pickFromDistribution(rng, EYE_DISTRIBUTION[member.nationality]);
-  const hairColorIndex = pickFromDistribution(rng, HAIR_DISTRIBUTION[member.nationality]);
+  let skinIndex = pickFromDistribution(rng, SKIN_DISTRIBUTION[member.nationality]);
+  let eyeColorIndex = pickFromDistribution(rng, EYE_DISTRIBUTION[member.nationality]);
+  let hairColorIndex = pickFromDistribution(rng, HAIR_DISTRIBUTION[member.nationality]);
+
+  // ── Phenotype correlation — nudge unlikely combinations toward realism ──
+  const corrRng = rng(); // single roll for all corrections to keep determinism clean
+  const isEuropean = ['English', 'Dutch', 'Danish', 'French', 'Spanish', 'Portuguese'].includes(member.nationality);
+  const isNorthEuropean = ['English', 'Dutch', 'Danish'].includes(member.nationality);
+
+  // Ginger/red hair (6) + dark skin is very rare — nudge skin fairer
+  if (hairColorIndex === 6 && skinIndex > 2) {
+    skinIndex = corrRng > 0.5 ? 0 : 11; // very fair or ruddy
+  }
+  // Blond hair (7,8) + dark skin — nudge fairer
+  if ((hairColorIndex === 7 || hairColorIndex === 8) && skinIndex > 2) {
+    skinIndex = corrRng > 0.6 ? 0 : 1;
+  }
+  // Very fair skin (0,11) on European + dark hair (0,1) = "Black Irish" type — boost green/hazel eyes
+  if (isEuropean && skinIndex <= 1 && hairColorIndex <= 1 && corrRng > 0.5) {
+    eyeColorIndex = corrRng > 0.75 ? 4 : 3; // green or hazel
+  }
+  // Ruddy skin (11) correlates with ginger/auburn hair in N. Europe
+  if (isNorthEuropean && skinIndex === 11 && corrRng > 0.4) {
+    hairColorIndex = corrRng > 0.7 ? 6 : 5; // ginger or auburn
+  }
+  // Weathered/tanned skin (14) on Europeans — they're outdoor sailors, boost older hair fading
+  if (isEuropean && skinIndex === 14 && member.age > 40 && corrRng > 0.5) {
+    // Sun-bleached streaking effect — shift hair one step lighter
+    hairColorIndex = Math.min(hairColorIndex + 1, 8);
+  }
+  // Very fair Europeans occasionally get light eyes even if not initially rolled
+  if (isNorthEuropean && skinIndex === 0 && eyeColorIndex <= 2 && corrRng > 0.7) {
+    eyeColorIndex = corrRng > 0.85 ? 7 : 5; // deep blue or gray-blue
+  }
+  // Age → gray/white hair override for older crew
+  if (member.age >= 55 && corrRng > 0.4) {
+    hairColorIndex = corrRng > 0.7 ? 10 : 9; // white or gray
+  } else if (member.age >= 45 && corrRng > 0.7) {
+    hairColorIndex = 9; // gray
+  }
 
   const personality = derivePersonality(rng, member.role, member.quality, member.stats);
   const age = ageToRange(member.age);
   const socialClass = deriveSocialClass(member.role, member.quality);
+  const faceShapes: FaceShape[] = ['round', 'oval', 'long', 'square', 'heart', 'diamond'];
+  const faceShape = faceShapes[Math.floor(rng() * faceShapes.length)];
   const culturalGroup = CULTURAL_GROUP_MAP[member.nationality];
 
   // Gender: ~90% male for historical accuracy (women did serve on some vessels but rarely)
@@ -416,6 +485,7 @@ export function crewToPortraitConfig(member: CrewMember): PortraitConfig {
     kerchiefColor,
     hasTattoo,
     tattooType,
+    faceShape,
   };
 }
 

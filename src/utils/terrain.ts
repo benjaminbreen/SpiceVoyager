@@ -6,6 +6,7 @@ import {
 } from './portArchetypes';
 import { SEA_LEVEL } from '../constants/world';
 import { getResolvedWaterPalette } from './waterPalettes';
+import { reseedLandCharacter } from './landCharacter';
 
 // Seeded random number generator (Mulberry32)
 function mulberry32(a: number) {
@@ -34,6 +35,7 @@ export function reseedTerrain(seed: number) {
   _patchNoise = createNoise2D(mulberry32(seed * 23 + 6161));
   _climateCache.clear();
   reseedArchetypeNoise(seed);
+  reseedLandCharacter(seed);
 }
 
 // Proxy so existing consumers keep working

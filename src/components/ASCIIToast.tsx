@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { Notification } from '../store/gameStore';
+import { sfxDismiss } from '../audio/SoundEffects';
 
 // ── Type-specific accent colors ──────────────────────────────────────────────
 const ACCENT = {
@@ -323,7 +324,8 @@ export function ASCIIToast({
   onDismiss: () => void;
   onClick?: () => void;
 }) {
-  const handleClick = onClick ?? onDismiss;
+  const rawClick = onClick ?? onDismiss;
+  const handleClick = () => { sfxDismiss(); rawClick(); };
 
   if (notification.size === 'grand') {
     return <GrandToast notification={notification} onClick={handleClick} />;

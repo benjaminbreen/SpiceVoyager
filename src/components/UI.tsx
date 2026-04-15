@@ -8,7 +8,7 @@ import {
   Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight
 } from 'lucide-react';
 import { audioManager } from '../audio/AudioManager';
-import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail } from '../audio/SoundEffects';
+import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { PortModal } from './PortModal';
 import { ASCIIDashboard } from './ASCIIDashboard';
@@ -17,6 +17,7 @@ import { SettingsModal } from './SettingsModal';
 import { WorldMap, startTerrainPreRender } from './WorldMap';
 import { WorldMapModal } from './WorldMapModal';
 import { FactionFlag } from './FactionFlag';
+import { CrewPortraitSquare } from './CrewPortrait';
 import { OpeningASCII } from './OpeningASCII';
 import { EventModalASCII } from './EventModalASCII';
 import { ASCIIToast } from './ASCIIToast';
@@ -302,6 +303,7 @@ export function UI() {
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const captainExpression = useGameStore((state) => state.captainExpression);
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -439,6 +441,7 @@ export function UI() {
 
       if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
         openedFromToastPortRef.current = null;
+        sfxPortArrival();
         setActivePort(nearest);
       } else if (!nearest && currentActivePort) {
         const openedFromToastPort = openedFromToastPortRef.current
@@ -535,7 +538,7 @@ export function UI() {
       hailWasPausedRef.current = state.paused;
       state.setPaused(true);
       setHailNpc(npc);
-      sfxOpen();
+      sfxShipHail(npc.hailLanguage);
     };
 
     window.addEventListener('keydown', handleHailKey);
@@ -608,15 +611,39 @@ export function UI() {
         <div className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
           {/* Top row: captain, gold, time, crew */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
-            <button
-              onClick={() => { sfxOpen(); setShowDashboard(true); }}
-              className="w-11 h-11 rounded-full bg-[#1a1e2e] border-2 border-[#3a3530]/50 flex items-center justify-center shrink-0
-                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05)]
-                hover:border-amber-600/50 hover:shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),0_0_10px_rgba(245,158,11,0.2)] transition-all active:scale-95"
-              title={captain ? `${captain.name} — Ship Dashboard` : 'Ship Dashboard'}
-            >
-              <Users size={16} className="text-amber-400/80" />
-            </button>
+            {(() => {
+              // Ring color reflects captain's current expression/mood
+              const ringColor = captainExpression === 'Friendly' ? '#22c55e'
+                : captainExpression === 'Smug' ? '#eab308'
+                : captainExpression === 'Fierce' ? '#ef4444'
+                : captainExpression === 'Stern' ? '#f97316'
+                : captainExpression === 'Melancholy' ? '#6366f1'
+                : captainExpression === 'Curious' ? '#06b6d4'
+                : captain && captain.morale >= 85 ? '#22c55e'
+                : captain && captain.morale <= 25 ? '#ef4444'
+                : '#8b7a5e';
+              const glowColor = captainExpression
+                ? ringColor + '60'
+                : 'transparent';
+              return (
+                <button
+                  onClick={() => { sfxOpen(); setShowDashboard(true); }}
+                  className="w-[72px] h-[72px] rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
+                    transition-all duration-500 active:scale-95"
+                  style={{
+                    border: `3px solid ${ringColor}`,
+                    boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`,
+                  }}
+                  title={captain ? `${captain.name} — Ship Dashboard` : 'Ship Dashboard'}
+                >
+                  {captain ? (
+                    <CrewPortraitSquare member={captain} size={64} expressionOverride={captainExpression} />
+                  ) : (
+                    <Users size={22} className="text-amber-400/80" />
+                  )}
+                </button>
+              );
+            })()}
 
             <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
               <div className="flex items-center gap-1.5 text-amber-400 font-bold text-lg">

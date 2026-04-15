@@ -2,7 +2,7 @@ import { useGameStore } from '../store/gameStore';
 import { CORE_PORTS } from './portArchetypes';
 import { resolveCampaignPortId } from './worldPorts';
 
-export type WaterPaletteId = 'tropical' | 'mediterranean' | 'temperate';
+export type WaterPaletteId = 'tropical' | 'monsoon' | 'arid' | 'temperate' | 'mediterranean';
 export type WaterPaletteSetting = 'auto' | WaterPaletteId;
 export type WaterColor = [number, number, number];
 
@@ -45,7 +45,57 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
   tropical: {
     id: 'tropical',
     label: 'Tropical',
-    description: 'Electric cyan-turquoise water with bright lagoon shallows.',
+    description: 'Electric cyan-turquoise water with vivid white-sand-beach lagoon shallows.',
+    terrain: {
+      deep: [0.00, 0.42, 0.72],
+      shallow: [0.08, 0.82, 0.85],
+      surf: [0.75, 0.97, 0.95],
+    },
+    oceanOverlay: {
+      base: [0.00, 0.80, 0.88],
+      outerShallow: [0.00, 0.62, 0.78],
+      paleSurf: [0.62, 0.96, 0.95],
+    },
+    surface: {
+      day: [0.00, 0.52, 0.82],
+      dusk: [0.01, 0.32, 0.54],
+      night: [0.00, 0.03, 0.10],
+      fallbackHex: 0x0085d1,
+    },
+    map: {
+      deep: [0.00, 0.40, 0.68],
+      shallow: [0.06, 0.72, 0.82],
+    },
+  },
+  monsoon: {
+    id: 'monsoon',
+    label: 'Monsoon',
+    description: 'Saturated teal and ocean-green water deepening to rich blue offshore.',
+    terrain: {
+      deep: [0.00, 0.30, 0.42],
+      shallow: [0.04, 0.68, 0.62],
+      surf: [0.64, 0.92, 0.80],
+    },
+    oceanOverlay: {
+      base: [0.02, 0.64, 0.60],
+      outerShallow: [0.00, 0.48, 0.50],
+      paleSurf: [0.58, 0.90, 0.78],
+    },
+    surface: {
+      day: [0.00, 0.42, 0.54],
+      dusk: [0.00, 0.28, 0.38],
+      night: [0.00, 0.03, 0.07],
+      fallbackHex: 0x006b8a,
+    },
+    map: {
+      deep: [0.00, 0.28, 0.40],
+      shallow: [0.04, 0.58, 0.56],
+    },
+  },
+  arid: {
+    id: 'arid',
+    label: 'Arid',
+    description: 'Bright electric cobalt water for dry Red Sea and Arabian Sea ports.',
     terrain: {
       deep: [0.0, 0.52, 0.68],
       shallow: [0.18, 0.78, 0.82],
@@ -65,31 +115,6 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
     map: {
       deep: [0.0, 0.48, 0.68],
       shallow: [0.15, 0.72, 0.82],
-    },
-  },
-  mediterranean: {
-    id: 'mediterranean',
-    label: 'Mediterranean',
-    description: 'Cleaner mid-blue water between tropical and temperate.',
-    terrain: {
-      deep: [0.09, 0.24, 0.36],
-      shallow: [0.28, 0.56, 0.60],
-      surf: [0.82, 0.84, 0.74],
-    },
-    oceanOverlay: {
-      base: [0.42, 0.78, 0.76],
-      outerShallow: [0.22, 0.56, 0.60],
-      paleSurf: [0.78, 0.88, 0.82],
-    },
-    surface: {
-      day: [0.02, 0.20, 0.52],
-      dusk: [0.01, 0.13, 0.38],
-      night: [0.00, 0.01, 0.07],
-      fallbackHex: 0x08388a,
-    },
-    map: {
-      deep: [0.10, 0.26, 0.44],
-      shallow: [0.16, 0.35, 0.56],
     },
   },
   temperate: {
@@ -117,6 +142,31 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
       shallow: [0.12, 0.28, 0.48],
     },
   },
+  mediterranean: {
+    id: 'mediterranean',
+    label: 'Mediterranean',
+    description: 'Clear warm blue water, close to arid seas but darker and less electric.',
+    terrain: {
+      deep: [0.02, 0.44, 0.70],
+      shallow: [0.14, 0.72, 0.82],
+      surf: [0.70, 0.94, 0.94],
+    },
+    oceanOverlay: {
+      base: [0.08, 0.74, 0.86],
+      outerShallow: [0.04, 0.58, 0.76],
+      paleSurf: [0.66, 0.94, 0.96],
+    },
+    surface: {
+      day: [0.00, 0.46, 0.78],
+      dusk: [0.02, 0.30, 0.54],
+      night: [0.00, 0.03, 0.09],
+      fallbackHex: 0x0075c7,
+    },
+    map: {
+      deep: [0.02, 0.40, 0.68],
+      shallow: [0.12, 0.66, 0.80],
+    },
+  },
 };
 
 export function getWaterPalette(id: WaterPaletteId): WaterPalette {
@@ -126,9 +176,11 @@ export function getWaterPalette(id: WaterPaletteId): WaterPalette {
 export function getDefaultWaterPaletteForClimate(climate: ClimateLike): WaterPaletteId {
   switch (climate) {
     case 'tropical':
-    case 'monsoon':
-    case 'arid':
       return 'tropical';
+    case 'monsoon':
+      return 'monsoon';
+    case 'arid':
+      return 'arid';
     case 'temperate':
       return 'temperate';
   }

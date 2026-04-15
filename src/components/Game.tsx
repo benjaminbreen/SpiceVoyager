@@ -1,11 +1,11 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { ContactShadows } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO } from '@react-three/postprocessing';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
 import { World } from './World';
 import { UI } from './UI';
 import { Player } from './Player';
+import { Pedestrians } from './Pedestrians';
 import { GameOverScreen } from './GameOverScreen';
 import { CrewDeathModal } from './CrewDeathModal';
 import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus } from '../store/gameStore';
@@ -34,6 +34,7 @@ import {
   broadsideReload,
 } from '../utils/combatState';
 import { WEAPON_DEFS, type WeaponType } from '../store/gameStore';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -118,6 +119,7 @@ function CameraController() {
   const raycaster = useRef(new THREE.Raycaster());
   const mouseNDC = useRef(new THREE.Vector2());
   const waterPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+  const hitVec = useRef(new THREE.Vector3());
 
   useEffect(() => {
     const el = gl.domElement;
@@ -254,14 +256,13 @@ function CameraController() {
 
     // Raycast mouse onto water plane — always active so aiming is ready when combat starts
     raycaster.current.setFromCamera(mouseNDC.current, camera);
-    const hit = new THREE.Vector3();
-    if (raycaster.current.ray.intersectPlane(waterPlane.current, hit)) {
-      mouseWorldPos.x = hit.x;
-      mouseWorldPos.z = hit.z;
+    if (raycaster.current.ray.intersectPlane(waterPlane.current, hitVec.current)) {
+      mouseWorldPos.x = hitVec.current.x;
+      mouseWorldPos.z = hitVec.current.z;
       mouseWorldPos.valid = true;
       if (useGameStore.getState().combatMode) {
         const shipPos = getLiveShipTransform().pos;
-        setSwivelAimAngle(Math.atan2(hit.x - shipPos[0], hit.z - shipPos[2]));
+        setSwivelAimAngle(Math.atan2(hitVec.current.x - shipPos[0], hitVec.current.z - shipPos[2]));
       }
     }
   });
@@ -690,55 +691,75 @@ function TimeController() {
 // Syncs fog color, background color, and computes postprocessing params from timeOfDay
 function useAtmosphere() {
   const timeOfDay = useGameStore((state) => state.timeOfDay);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   return useMemo(() => {
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(angle);
     const horizonFactor = Math.exp(-sunH * sunH * 10);
 
-    // Sky and fog are related, but fog should be less saturated than the sky
-    // or distant views turn uniformly blue when zoomed out.
+    // The Sky dome handles most visible sky color. These colors primarily
+    // drive fallback background and distant atmospheric fog.
     let skyColor: THREE.Color;
     let fogColor: THREE.Color;
+    const climateSky = {
+      daySky: waterPaletteId === 'monsoon' ? '#22aee8' : waterPaletteId === 'tropical' ? '#119df2' : '#58b7ec',
+      dayFog: waterPaletteId === 'monsoon' ? '#8bd6e6' : waterPaletteId === 'tropical' ? '#92d8ff' : '#a7d8ef',
+      duskSky: waterPaletteId === 'monsoon' ? '#24445a' : '#1d3158',
+      duskFog: waterPaletteId === 'monsoon' ? '#263b46' : '#202b42',
+      warmSky: waterPaletteId === 'monsoon' ? '#e6a06c' : '#f2a15f',
+      warmFog: waterPaletteId === 'monsoon' ? '#bca887' : '#d9b59a',
+      nightSky: waterPaletteId === 'monsoon' ? '#122b3d' : '#14284a',
+      nightFog: waterPaletteId === 'monsoon' ? '#142633' : '#18243a',
+    };
     if (sunH > 0.3) {
-      // Full day
-      skyColor = new THREE.Color('#87CEEB');
-      fogColor = new THREE.Color('#b2c3c9');
+      // Full day — cheerful tropical blue with a little humid warmth.
+      skyColor = new THREE.Color(climateSky.daySky);
+      fogColor = new THREE.Color(climateSky.dayFog);
     } else if (sunH > 0.05) {
-      // Golden hour — warm sky
+      // Golden hour — more theatrical warmth, less realistic gray.
       const t = (sunH - 0.05) / 0.25;
       skyColor = new THREE.Color().lerpColors(
-        new THREE.Color('#d4845a'),
-        new THREE.Color('#87CEEB'),
+        new THREE.Color(climateSky.warmSky),
+        new THREE.Color(climateSky.daySky),
         t
       );
       fogColor = new THREE.Color().lerpColors(
-        new THREE.Color('#c5a48f'),
-        new THREE.Color('#b2c3c9'),
+        new THREE.Color(climateSky.warmFog),
+        new THREE.Color(climateSky.dayFog),
         t
       );
     } else if (sunH > -0.15) {
-      // Sunset/sunrise — warm to midnight blue
+      // Sunset/sunrise — warm amber into a readable blue night.
       const t = (sunH + 0.15) / 0.2;
       skyColor = new THREE.Color().lerpColors(
-        new THREE.Color('#1a2a52'),
-        new THREE.Color('#d4845a'),
+        new THREE.Color(climateSky.duskSky),
+        new THREE.Color(climateSky.warmSky),
         t
       );
       fogColor = new THREE.Color().lerpColors(
-        new THREE.Color('#1a2338'),
-        new THREE.Color('#c5a48f'),
+        new THREE.Color(climateSky.duskFog),
+        new THREE.Color(climateSky.warmFog),
         t
       );
     } else {
-      // Night — lush midnight blue
-      skyColor = new THREE.Color('#0f1f42');
-      fogColor = new THREE.Color('#121b2f');
+      // Night — still blue, but not grim.
+      skyColor = new THREE.Color(climateSky.nightSky);
+      fogColor = new THREE.Color(climateSky.nightFog);
     }
 
-    // Daytime haze should sit farther out so wide ocean views stay clearer.
-    const fogNear = sunH > 0 ? 340 : 120 + Math.max(0, sunH + 0.3) * 420;
-    const fogFar = sunH > 0 ? 1100 : 360 + Math.max(0, sunH + 0.3) * 1100;
+    // Daytime fog should not turn open tropical water into a gray horizon.
+    // Keep sunset/night haze closer, but push clear-day fog well beyond the map.
+    const clearDayPalette = waterPaletteId === 'tropical'
+      || waterPaletteId === 'monsoon'
+      || waterPaletteId === 'arid'
+      || waterPaletteId === 'mediterranean';
+    const fogNear = sunH > 0
+      ? clearDayPalette ? 850 : 650
+      : 120 + Math.max(0, sunH + 0.3) * 420;
+    const fogFar = sunH > 0
+      ? clearDayPalette ? 3200 : 2400
+      : 360 + Math.max(0, sunH + 0.3) * 1100;
 
     // Postprocessing — golden hour warm, night cool/desaturated
     let brightness = 0;
@@ -747,28 +768,28 @@ function useAtmosphere() {
     let saturation = 0;
 
     if (sunH > 0.3) {
-      // Day — neutral
-      brightness = 0;
-      contrast = 0;
-      saturation = 0.05;
+      // Day — gently saturated and bright, closer to a Sid Meier's Pirates tone.
+      brightness = 0.01;
+      contrast = 0.02;
+      saturation = 0.08;
     } else if (sunH > -0.05) {
       // Golden hour — warm, slightly saturated
       const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
-      brightness = -0.02 * t;
-      contrast = 0.05 * t;
+      brightness = -0.005 * t;
+      contrast = 0.04 * t;
       hue = 0.05 * t;
-      saturation = 0.15 * t;
+      saturation = 0.18 * t;
     } else {
       // Night — blue-shifted, slightly saturated for lush midnight feel
       const t = Math.max(0, Math.min(1, (-0.05 - sunH) / 0.3));
-      brightness = -0.03 * t;
+      brightness = -0.02 * t;
       contrast = 0;
       hue = -0.12 * t;
-      saturation = 0.1 * t;
+      saturation = 0.06 * t;
     }
 
     return { skyColor, fogColor, fogNear, fogFar, brightness, contrast, hue, saturation };
-  }, [timeOfDay]);
+  }, [timeOfDay, waterPaletteId]);
 }
 
 // Syncs Three.js fog and background with computed atmosphere colors
@@ -811,7 +832,7 @@ export function Game() {
           <Ocean />
           <Ship />
           <Player />
-          <GroundContactShadows />
+          <Pedestrians />
 
           <CameraController />
           <InteractionController />
@@ -832,37 +853,6 @@ export function Game() {
   );
 }
 
-/** Soft pooled shadows at object bases — follows the player, only active during daytime */
-function GroundContactShadows() {
-  const groupRef = useRef<THREE.Group>(null);
-  const shadowsActive = useGameStore((state) => {
-    if (!state.renderDebug.shadows) return false;
-    const angle = ((state.timeOfDay - 6) / 24) * Math.PI * 2;
-    return Math.sin(angle) > 0.13;
-  });
-
-  useFrame(() => {
-    if (!groupRef.current) return;
-    const pos = getLiveShipTransform().pos;
-    groupRef.current.position.set(pos[0], 0.05, pos[2]);
-  });
-
-  if (!shadowsActive) return null;
-
-  return (
-    <group ref={groupRef}>
-      <ContactShadows
-        resolution={512}
-        frames={1}
-        scale={80}
-        blur={2.5}
-        opacity={0.35}
-        far={15}
-        color="#2a3a5c"
-      />
-    </group>
-  );
-}
 
 function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boolean; vignetteEnabled: boolean }) {
   const { brightness, contrast, hue, saturation } = useAtmosphere();

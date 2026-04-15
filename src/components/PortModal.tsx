@@ -1,18 +1,20 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, getPortArmory } from '../store/gameStore';
+import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, WEAPON_DESCRIPTIONS, SHIP_UPGRADES, getPortArmory, getPortUpgrades } from '../store/gameStore';
+import type { ShipUpgradeType } from '../store/gameStore';
 import type { Commodity } from '../utils/commodities';
 import {
   COMMODITY_DEFS,
 } from '../utils/commodities';
 import { tavernTemplate } from '../utils/journalTemplates';
 import { audioManager } from '../audio/AudioManager';
-import { sfxTab, sfxCoin, sfxClose, startTabAmbient, stopTabAmbientLoop } from '../audio/SoundEffects';
+import { sfxTab, sfxCoin, sfxClose, sfxHover, startTabAmbient, stopTabAmbientLoop } from '../audio/SoundEffects';
 import { getPortBannerCandidates, getPortIconCandidates } from '../utils/portAssets';
 import { MarketTabLedger } from './MarketTabLedger';
 import {
   X, Coins, Shield, Anchor, ShoppingBag,
   Wrench, Beer, Building, Sailboat,
+  Package, Wind, Heart, Hammer, Check,
 } from 'lucide-react';
 
 type PlaceTab = 'market' | 'shipyard' | 'tavern' | 'governor';
@@ -404,7 +406,8 @@ function getPortMusicTrack(portId: string) {
 export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
   const {
     activePort, setActivePort, gold, cargo, stats, ship,
-    buyCommodity, sellCommodity, repairShip, buyWeapon, sellWeapon, ports, dayCount
+    buyCommodity, sellCommodity, repairShip, buyWeapon, sellWeapon, buyUpgrade,
+    shipUpgrades, worldSeed, ports, dayCount
   } = useGameStore();
 
   const handleClose = () => { stopTabAmbientLoop(); sfxClose(); (onDismiss ?? (() => setActivePort(null)))(); };
@@ -413,9 +416,9 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
   const [imageError, setImageError] = useState<Record<string, boolean>>({});
   const [showSources, setShowSources] = useState(false);
 
-  // Start/stop tab ambient soundscape
+  // Start/stop tab ambient soundscape (with regional climate layer)
   useEffect(() => {
-    if (activePort) startTabAmbient(activeTab);
+    if (activePort) startTabAmbient(activeTab, activePort.id);
     return () => { stopTabAmbientLoop(); };
   }, [activeTab, activePort]);
 
@@ -554,6 +557,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                   } as React.CSSProperties}
                   onMouseEnter={(e) => {
                     if (isActive) return;
+                    sfxHover();
                     const btn = e.currentTarget;
                     btn.style.color = tab.accent;
                     btn.style.borderColor = tab.accent + '66';
@@ -649,7 +653,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
               )}
 
               {/* Bottom of banner: tab title + description */}
-              <div className={`${activeTab === 'overview' ? 'max-w-4xl' : 'max-w-3xl'} mt-auto`}>
+              <div className={`${activeTab === 'overview' ? 'max-w-4xl' : activeTab === 'shipyard' ? 'max-w-5xl' : 'max-w-3xl'} mt-auto`}>
                 {/* Mobile: port name */}
                 <div className="md:hidden text-[9px] font-bold tracking-[0.15em] uppercase text-white/40 mb-0.5"
                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
@@ -748,6 +752,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                         return (
                           <button
                             key={place.id}
+                            onMouseEnter={() => sfxHover()}
                             onClick={() => { sfxTab(); setActiveTab(place.id); }}
                             className="group min-h-[126px] rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-3 text-left transition-all hover:bg-white/[0.055] hover:border-white/[0.11] active:scale-[0.99]"
                           >
@@ -855,14 +860,17 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
               {/* ── Shipyard ── */}
               {activeTab === 'shipyard' && (
-                <motion.div key="shipyard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                <motion.div key="shipyard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
+                  className="space-y-3">
+
+                  {/* ── Hull Status & Repair ── */}
                   <div className="px-3 py-3 rounded-lg border border-white/[0.04] bg-white/[0.02]">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2.5">
-                        <Shield size={14} className={stats.hull < stats.maxHull * 0.3 ? 'text-red-400' : stats.hull < stats.maxHull * 0.6 ? 'text-amber-400' : 'text-blue-400'} />
+                        <Shield size={16} className={stats.hull < stats.maxHull * 0.3 ? 'text-red-400' : stats.hull < stats.maxHull * 0.6 ? 'text-amber-400' : 'text-blue-400'} />
                         <div>
-                          <div className="text-[9px] font-bold tracking-[0.12em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>Hull</div>
-                          <div className="text-sm font-mono font-bold text-slate-300">
+                          <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>Hull Integrity</div>
+                          <div className="text-base font-mono font-bold text-slate-300">
                             {stats.hull}<span className="text-slate-600">/{stats.maxHull}</span>
                           </div>
                         </div>
@@ -870,18 +878,18 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                       <button
                         onClick={() => { sfxCoin(15); repairShip(10, 15); }}
                         disabled={stats.hull >= stats.maxHull || gold < 15}
-                        className="px-3 py-1.5 rounded-lg text-[10px] font-bold
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold
                           bg-white/[0.04] border border-white/[0.06] text-slate-300
                           hover:bg-white/[0.08] hover:text-white
                           disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95
                           flex items-center gap-1.5"
                         style={{ fontFamily: '"DM Sans", sans-serif' }}
                       >
-                        <Wrench size={10} /> Repair 10 — 15g
+                        <Wrench size={11} /> Repair 10 hull — 15g
                       </button>
                     </div>
 
-                    <div className="h-[4px] bg-white/[0.06] rounded-full overflow-hidden relative">
+                    <div className="h-[5px] bg-white/[0.06] rounded-full overflow-hidden relative">
                       {stats.hull < stats.maxHull && (
                         <div
                           className="absolute top-0 h-full bg-blue-400/10"
@@ -902,82 +910,174 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                         }`}
                       />
                     </div>
+
+                    {/* Ship stats summary */}
+                    <div className="flex gap-4 mt-2.5 text-[11px] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                      <span className="flex items-center gap-1"><Wind size={10} /> Speed {stats.speed}</span>
+                      <span className="flex items-center gap-1"><Anchor size={10} /> Turn {stats.turnSpeed.toFixed(1)}</span>
+                      <span className="flex items-center gap-1"><Package size={10} /> Cargo {stats.cargoCapacity}</span>
+                    </div>
                   </div>
 
-                  {/* ── Armory ── */}
-                  <div className="mt-4 px-3 py-3 rounded-lg border border-white/[0.04] bg-white/[0.02]">
-                    <div className="text-[9px] font-bold tracking-[0.12em] uppercase text-slate-500 mb-2"
-                      style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                      Armory — {ship.type} ({stats.armament.filter(w => !WEAPON_DEFS[w].aimable).length} broadside guns)
-                    </div>
+                  {/* ── Two-column grid: Armory | Ship Upgrades ── */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 
-                    {/* Currently mounted */}
-                    {stats.armament.length > 0 && (
-                      <div className="mb-3">
-                        <div className="text-[8px] uppercase tracking-widest text-slate-600 mb-1">Mounted</div>
-                        <div className="flex flex-wrap gap-1">
-                          {stats.armament.map((wt, i) => {
+                    {/* ── Armory (left column) ── */}
+                    <div className="px-3 py-3 rounded-lg border border-white/[0.04] bg-white/[0.02]">
+                      <div className="text-[11px] font-bold tracking-[0.1em] uppercase text-slate-400 mb-2.5"
+                        style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                        Armory — {ship.type} ({stats.armament.filter(w => !WEAPON_DEFS[w].aimable).length} broadside guns)
+                      </div>
+
+                      {/* Currently mounted */}
+                      {stats.armament.length > 0 && (
+                        <div className="mb-3">
+                          <div className="text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">Mounted</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {stats.armament.map((wt, i) => {
+                              const def = WEAPON_DEFS[wt];
+                              return (
+                                <div key={`${wt}-${i}`}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/[0.04] border border-white/[0.06]">
+                                  <span className="text-[12px] font-semibold text-slate-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    {def.name}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">{def.damage} dmg</span>
+                                  {wt !== 'swivelGun' && (
+                                    <button
+                                      onClick={() => { sfxCoin(WEAPON_PRICES[wt] / 2); sellWeapon(wt); }}
+                                      className="ml-0.5 text-[10px] text-red-400/60 hover:text-red-400 transition-colors"
+                                      title={`Sell for ${Math.floor(WEAPON_PRICES[wt] * 0.5)}g`}
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Available for purchase */}
+                      <div className="text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">Available</div>
+                      <div className="space-y-1.5">
+                        {(activePort ? getPortArmory(activePort.id) : [])
+                          .filter(wt => wt !== 'swivelGun')
+                          .map(wt => {
                             const def = WEAPON_DEFS[wt];
+                            const desc = WEAPON_DESCRIPTIONS[wt];
+                            const price = WEAPON_PRICES[wt];
+                            const canAfford = gold >= price;
                             return (
-                              <div key={`${wt}-${i}`}
-                                className="flex items-center gap-1 px-2 py-1 rounded bg-white/[0.04] border border-white/[0.06]">
-                                <span className="text-[10px] text-slate-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                                  {def.name}
-                                </span>
-                                <span className="text-[8px] text-slate-600">dmg:{def.damage}</span>
-                                {wt !== 'swivelGun' && (
-                                  <button
-                                    onClick={() => { sfxCoin(WEAPON_PRICES[wt] / 2); sellWeapon(wt); }}
-                                    className="ml-1 text-[8px] text-red-400/60 hover:text-red-400 transition-colors"
-                                    title={`Sell for ${Math.floor(WEAPON_PRICES[wt] * 0.5)}g`}
-                                  >
-                                    ✕
-                                  </button>
-                                )}
+                              <div key={wt} className="flex items-center justify-between py-2 px-3 rounded-md bg-white/[0.03] border border-white/[0.05]">
+                                <div className="flex-1 mr-3">
+                                  <div className="text-[13px] font-bold text-slate-200" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    {def.name}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 italic mb-1" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    {desc.flavor}
+                                  </div>
+                                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    <span><strong className="text-slate-300">{def.damage}</strong> damage</span>
+                                    <span>{desc.rangeLabel} range</span>
+                                    <span>Fires every {def.reloadTime}s</span>
+                                    <span>{desc.weightLabel}</span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => { sfxCoin(price); buyWeapon(wt); }}
+                                  disabled={!canAfford}
+                                  className="px-3 py-1.5 rounded-md text-[11px] font-bold whitespace-nowrap
+                                    bg-blue-500/10 border border-blue-400/20 text-blue-300
+                                    hover:bg-blue-500/20 hover:text-blue-200
+                                    disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95"
+                                  style={{ fontFamily: '"DM Sans", sans-serif' }}
+                                >
+                                  {price}g
+                                </button>
                               </div>
                             );
                           })}
-                        </div>
                       </div>
-                    )}
-
-                    {/* Available for purchase */}
-                    <div className="text-[8px] uppercase tracking-widest text-slate-600 mb-1">Available</div>
-                    <div className="space-y-1">
-                      {(activePort ? getPortArmory(activePort.id) : [])
-                        .filter(wt => wt !== 'swivelGun') // swivel gun comes free, no need to buy
-                        .map(wt => {
-                          const def = WEAPON_DEFS[wt];
-                          const price = WEAPON_PRICES[wt];
-                          const canAfford = gold >= price;
-                          return (
-                            <div key={wt} className="flex items-center justify-between py-1 px-2 rounded bg-white/[0.03] border border-white/[0.04]">
-                              <div className="flex-1">
-                                <div className="text-[10px] font-bold text-slate-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                                  {def.name}
-                                </div>
-                                <div className="text-[8px] text-slate-500 flex gap-2">
-                                  <span>dmg:{def.damage}</span>
-                                  <span>rng:{def.range}</span>
-                                  <span>reload:{def.reloadTime}s</span>
-                                  <span>wt:{def.weight}</span>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => { sfxCoin(price); buyWeapon(wt); }}
-                                disabled={!canAfford}
-                                className="px-2.5 py-1 rounded text-[9px] font-bold
-                                  bg-white/[0.04] border border-white/[0.06] text-slate-300
-                                  hover:bg-white/[0.08] hover:text-white
-                                  disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95"
-                                style={{ fontFamily: '"DM Sans", sans-serif' }}
-                              >
-                                {price}g
-                              </button>
-                            </div>
-                          );
-                        })}
                     </div>
+
+                    {/* ── Ship Upgrades (right column) ── */}
+                    <div className="px-3 py-3 rounded-lg border border-white/[0.04] bg-white/[0.02]">
+                      <div className="text-[11px] font-bold tracking-[0.1em] uppercase text-slate-400 mb-2.5"
+                        style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                        Ship Upgrades
+                      </div>
+
+                      {/* Already installed */}
+                      {shipUpgrades.length > 0 && (
+                        <div className="mb-3">
+                          <div className="text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">Installed</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {shipUpgrades.map(ut => {
+                              const upg = SHIP_UPGRADES[ut];
+                              return (
+                                <div key={ut}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-500/5 border border-emerald-400/15">
+                                  <Check size={10} className="text-emerald-400" />
+                                  <span className="text-[12px] font-semibold text-slate-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    {upg.name}
+                                  </span>
+                                  <span className="text-[10px] text-emerald-400/70">{upg.effect}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Available upgrades */}
+                      {(() => {
+                        const available = activePort ? getPortUpgrades(activePort.id, worldSeed).filter(ut => !shipUpgrades.includes(ut)) : [];
+                        if (available.length === 0) return (
+                          <div className="text-[11px] text-slate-600 italic py-2" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                            No upgrades available at this port.
+                          </div>
+                        );
+                        return (
+                          <div className="space-y-1.5">
+                            {available.map(ut => {
+                              const upg = SHIP_UPGRADES[ut];
+                              const canAfford = gold >= upg.price;
+                              return (
+                                <div key={ut} className="py-2 px-3 rounded-md bg-white/[0.03] border border-white/[0.05]">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1">
+                                      <div className="text-[13px] font-bold text-slate-200" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                        {upg.name}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 italic mb-1" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                        {upg.description}
+                                      </div>
+                                      <div className="text-[11px] font-semibold text-amber-400/80" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                        {upg.effect}
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => { sfxCoin(upg.price); buyUpgrade(ut); }}
+                                      disabled={!canAfford}
+                                      className="px-3 py-1.5 rounded-md text-[11px] font-bold whitespace-nowrap
+                                        bg-emerald-500/10 border border-emerald-400/20 text-emerald-300
+                                        hover:bg-emerald-500/20 hover:text-emerald-200
+                                        disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95 shrink-0"
+                                      style={{ fontFamily: '"DM Sans", sans-serif' }}
+                                    >
+                                      {upg.price}g
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                   </div>
                 </motion.div>
               )}
