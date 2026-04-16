@@ -196,8 +196,10 @@ export function Cartouche({
 
 // ── Status color helpers ─────────────────────────────────────────────────
 
+// Semantic stat colors at full health mirror src/theme/tokens.ts `stat.*`.
+// Under distress they fall through yellow → red, same as any HUD bar.
 export function hullColor(pct: number) {
-  if (pct > 60) return ASCII_COLORS.green;
+  if (pct > 60) return ASCII_COLORS.cyan;
   if (pct > 30) return ASCII_COLORS.yellow;
   return ASCII_COLORS.red;
 }
@@ -210,8 +212,8 @@ export function moraleColor(pct: number) {
 
 export function cargoColor(pct: number) {
   if (pct >= 95) return ASCII_COLORS.red;
-  if (pct > 70) return ASCII_COLORS.yellow;
-  return ASCII_COLORS.teal;
+  if (pct > 70) return ASCII_COLORS.orange;
+  return ASCII_COLORS.yellow; // amber — wealth in hold
 }
 
 // ── Baroque border SVG components (enhanced from OpeningASCII) ───────────

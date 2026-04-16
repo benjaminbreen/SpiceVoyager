@@ -13,17 +13,19 @@ import type { CrewMember } from '../store/gameStore';
 import {
   mulberry32,
   crewToPortraitConfig,
+  tavernNpcToPortraitConfig,
   getSkin,
   getEyeColor,
   getHairColor,
   type PortraitConfig,
   type SkinPalette,
   type Personality,
+  type TavernNpcPortraitInput,
 } from '../utils/portraitConfig';
 
 // Re-export for modal use
-export { crewToPortraitConfig, getSkin, getEyeColor, getHairColor } from '../utils/portraitConfig';
-export type { PortraitConfig } from '../utils/portraitConfig';
+export { crewToPortraitConfig, tavernNpcToPortraitConfig, getSkin, getEyeColor, getHairColor } from '../utils/portraitConfig';
+export type { PortraitConfig, TavernNpcPortraitInput } from '../utils/portraitConfig';
 
 // ── Public component ─────────────────────────────────────
 
@@ -70,6 +72,33 @@ export function CrewPortraitSquare({ member, size = 32, className = '', expressi
       viewBox="25 20 150 150"
       width={size}
       height={size}
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: 'block' }}
+    >
+      {portrait}
+    </svg>
+  );
+}
+
+// ── Config-based portrait (for tavern NPCs etc.) ────────
+
+interface ConfigPortraitProps {
+  config: PortraitConfig;
+  size?: number;
+  className?: string;
+  showBackground?: boolean;
+  square?: boolean;
+}
+
+export function ConfigPortrait({ config, size = 64, className = '', showBackground = false, square = false }: ConfigPortraitProps) {
+  const portrait = useMemo(() => renderPortrait(config, showBackground), [config.seed, showBackground]);
+
+  return (
+    <svg
+      viewBox={square ? '25 20 150 150' : '0 0 200 250'}
+      width={size}
+      height={square ? size : size * 1.25}
       className={className}
       xmlns="http://www.w3.org/2000/svg"
       style={{ display: 'block' }}

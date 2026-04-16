@@ -28,6 +28,7 @@ import {
 } from '../utils/livePlayerTransform';
 import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
+import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 // import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
 
 const PORT_RADIUS_SQ = 20 * 20;
@@ -382,22 +383,18 @@ export function UI() {
 
     let i = 0;
     setLoadingMessage(LOADING_MESSAGES[0]);
-    setLoadingProgress(10);
+    setLoadingProgress(12);
     const interval = setInterval(() => {
       i = (i + 1) % LOADING_MESSAGES.length;
       setLoadingMessage(LOADING_MESSAGES[i]);
-      setLoadingProgress((current) => current >= 100 ? 100 : Math.min(current + 7, 88));
-    }, 1800);
+      setLoadingProgress((current) => Math.min(current + 11, 94));
+    }, 850);
     return () => clearInterval(interval);
   }, [showInstructions]);
 
-  // Ready when ports have actually loaded
+  // Ready the moment ports exist — no artificial delay
   useEffect(() => {
-    if (portCount > 0 && !loadingReady) {
-      // Small delay so the last message doesn't cut off abruptly
-      const timer = setTimeout(() => setLoadingReady(true), 800);
-      return () => clearTimeout(timer);
-    }
+    if (portCount > 0 && !loadingReady) setLoadingReady(true);
   }, [portCount, loadingReady]);
 
   useEffect(() => {
@@ -545,12 +542,9 @@ export function UI() {
     return () => window.removeEventListener('keydown', handleHailKey);
   }, [showInstructions, showSettings, showDashboard, showLocalMap, showWorldMap, activePort]);
 
-  const nearestHailableNpc = useGameStore((state) => state.nearestHailableNpc);
-  useEffect(() => {
-    if (hailNpc && nearestHailableNpc?.id !== hailNpc.id) {
-      closeHail();
-    }
-  }, [hailNpc, nearestHailableNpc, closeHail]);
+  // Keep nearestHailableNpc subscribed so it stays reactive, but don't auto-close
+  // the hail panel when the NPC drifts out of range — player closes it manually.
+  useGameStore((state) => state.nearestHailableNpc);
 
   // Auto-dismiss notifications — grand toasts last longer
   useEffect(() => {
@@ -608,7 +602,7 @@ export function UI() {
 
       {/* Top Bar */}
       <div className="flex justify-between items-start">
-        <div className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
+        <div className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto shadow-card">
           {/* Top row: captain, gold, time, crew */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
             {(() => {
@@ -648,7 +642,7 @@ export function UI() {
             })()}
 
             <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <div className="flex items-center gap-1.5 text-amber-400 font-bold text-lg">
+              <div className="flex items-center gap-1.5 text-amber-400 font-bold text-lg tabular-nums">
                 <Coins size={18} className="text-amber-500" /> {gold.toLocaleString()}
               </div>
               <div className="flex items-center gap-1 text-[10px] text-emerald-400/70 -mt-0.5">
@@ -686,9 +680,9 @@ export function UI() {
 
           {/* Bottom row: stat bars */}
           <div className="flex items-center gap-5 px-4 py-2.5">
-            <StatBar icon={<Shield size={15} />} label="Hull" value={stats.hull} max={stats.maxHull} color="#60a5fa" />
-            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color="#a78bfa" />
-            <StatBar icon={<Anchor size={15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color="#fbbf24" />
+            <StatBar icon={<Shield size={15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull} />
+            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale} />
+            <StatBar icon={<Anchor size={15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo} />
           </div>
         </div>
 
@@ -709,6 +703,7 @@ export function UI() {
               <WindQuickMeter />
               <button
                 onClick={() => { sfxClick(); setShowWind(!showWind); }}
+                aria-pressed={showWind}
                 className={`group relative w-11 h-11 rounded-full flex items-center justify-center
                   bg-[#1a1e2e] border-2
                   shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
@@ -730,7 +725,7 @@ export function UI() {
                   exit={{ opacity: 0, y: -8, scale: 0.95 }}
                   transition={{ duration: 0.2 }}
                   className="bg-[#0a0e18]/70 backdrop-blur-xl border border-[#2a2d3a]/50 rounded-xl
-                    shadow-[0_8px_32px_rgba(0,0,0,0.4)] p-3 min-w-[180px]"
+                    shadow-card p-3 min-w-[180px]"
                 >
                   <WindPanel />
                 </motion.div>
@@ -852,6 +847,7 @@ export function UI() {
       <div className="absolute bottom-4 left-4 pointer-events-auto">
         <button
           onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
+          aria-pressed={showJournal}
           className={`group relative w-11 h-11 rounded-full flex items-center justify-center
             bg-[#1a1e2e] border-2
             shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
@@ -883,6 +879,7 @@ export function UI() {
             {/* Center — pause/play, bigger */}
             <button
               onClick={() => { sfxClick(); setPaused(!paused); }}
+              aria-pressed={paused}
               className={`group relative w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95
                 ${paused
                   ? 'bg-[#1a1e2e] border-2 border-amber-600/70 text-amber-400 shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.08),0_0_14px_rgba(217,169,56,0.3)] hover:border-amber-500/90 hover:shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.1),0_0_20px_rgba(217,169,56,0.45)]'
@@ -1159,7 +1156,6 @@ function RenderTestPanel() {
             vignette: false,
             advancedWater: false,
             shipWake: false,
-            bowFoam: false,
             algae: false,
             wildlifeMotion: false,
           })}
@@ -1214,11 +1210,6 @@ function RenderTestPanel() {
           onToggle={() => updateRenderDebug({ shipWake: !renderDebug.shipWake })}
         />
         <RenderToggleRow
-          label="Bow Foam"
-          enabled={renderDebug.bowFoam}
-          onToggle={() => updateRenderDebug({ bowFoam: !renderDebug.bowFoam })}
-        />
-        <RenderToggleRow
           label="Algae"
           enabled={renderDebug.algae}
           onToggle={() => updateRenderDebug({ algae: !renderDebug.algae })}
@@ -1248,6 +1239,7 @@ function RenderToggleRow({
     <button
       onClick={onToggle}
       disabled={disabled}
+      aria-pressed={enabled}
       className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition-all ${
         disabled
           ? 'cursor-not-allowed border-white/[0.05] bg-white/[0.02] text-slate-600'
@@ -1286,6 +1278,7 @@ function ViewModeButton() {
   return (
     <button
       onClick={cycleViewMode}
+      aria-pressed={viewMode !== 'default'}
       className="group relative w-8 h-8 rounded-full flex items-center justify-center
         bg-[#1a1e2e] border-2 border-[#3a3530]/50
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_1px_4px_rgba(0,0,0,0.4)]
@@ -1356,9 +1349,10 @@ function ActionBarButton({ icon, label, hotkey, accentColor = '#b0a880', glowCol
 function StatBar({ icon, label, value, max, color }: { icon: React.ReactNode; label: string; value: number; max: number; color: string }) {
   const pct = Math.min(100, Math.round((value / max) * 100));
   const low = pct < 30;
+  const barColor = low ? statColors.danger : color;
   return (
     <div className="flex items-center gap-2.5 min-w-0">
-      <div className="shrink-0" style={{ color: low ? '#f87171' : color }}>{icon}</div>
+      <div className="shrink-0" style={{ color: barColor }}>{icon}</div>
       <div className="flex flex-col gap-0.5 min-w-[88px]">
         <div className="flex items-center justify-between gap-3">
           <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>{label}</span>
@@ -1369,8 +1363,8 @@ function StatBar({ icon, label, value, max, color }: { icon: React.ReactNode; la
             className="h-full rounded-full transition-all duration-500"
             style={{
               width: `${pct}%`,
-              backgroundColor: low ? '#f87171' : color,
-              boxShadow: `0 0 6px ${low ? 'rgba(248,113,113,0.4)' : color + '40'}`,
+              backgroundColor: barColor,
+              boxShadow: `0 0 6px ${barColor}40`,
             }}
           />
         </div>
@@ -1533,7 +1527,6 @@ function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void
     canUnderstand && !used.news ? { id: 'news' as HailAction, label: 'News' } : null,
     canTrade && !used.trade ? { id: 'trade' as HailAction, label: 'Trade' } : null,
     canUnderstand && !used.bearing ? { id: 'bearing' as HailAction, label: 'Bearing' } : null,
-    { id: 'leave' as HailAction, label: 'Leave' },
   ].filter(Boolean) as { id: HailAction; label: string }[], [canTrade, canUnderstand, used]);
 
   const resolveAction = useCallback((action: HailAction) => {
@@ -1654,12 +1647,9 @@ function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void
                 : <span className="text-slate-300">Unknown vessel</span>}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500 hover:text-slate-200 transition-colors"
-          >
-            Esc
-          </button>
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-600">
+            PAUSED
+          </span>
         </div>
 
         <div className="my-3 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
@@ -1683,17 +1673,28 @@ function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-          {availableActions.map((action, index) => (
-            <button
-              key={action.id}
-              onClick={() => resolveAction(action.id)}
-              className="font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400 hover:text-amber-300 transition-colors"
-            >
-              <span className="text-[#8a8060]">[{index + 1}]</span> {action.label}
-              {action.id === 'trade' && <span className="text-slate-600"> {tradeOffer.cost}g</span>}
-            </button>
-          ))}
+        {availableActions.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+            {availableActions.map((action, index) => (
+              <button
+                key={action.id}
+                onClick={() => resolveAction(action.id)}
+                className="font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400 hover:text-amber-300 transition-colors"
+              >
+                <span className="text-[#8a8060]">[{index + 1}]</span> {action.label}
+                {action.id === 'trade' && <span className="text-slate-600"> {tradeOffer.cost}g</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={onClose}
+            className="font-mono text-[11px] uppercase tracking-[0.16em] px-6 py-2 rounded border border-slate-600/50 text-slate-300 hover:text-amber-300 hover:border-amber-500/50 transition-colors bg-white/[0.04]"
+          >
+            Sail On <span className="text-slate-500 ml-1">[Esc]</span>
+          </button>
         </div>
       </div>
     </motion.div>

@@ -4,22 +4,22 @@
 // networks of the early modern Estado da India and its competitors.
 
 export type Commodity =
-  // Tier 1: Bulk staples
-  | 'Rice' | 'Timber' | 'Iron' | 'Cotton Textiles'
-  // Tier 2: Common spices & stimulants
+  // Tier 1: Spices & Stimulants (shown first)
   | 'Black Pepper' | 'Cinnamon' | 'Cardamom' | 'Coffee' | 'Tea'
-  | 'Ginger' | 'Sugar' | 'Tamarind' | 'Cassia Fistula' | 'Tobacco'
-  // Tier 3: Luxury trade goods
-  | 'Cloves' | 'Nutmeg' | 'Indigo' | 'Chinese Porcelain' | 'Musk'
-  | 'Pearls' | 'Ivory' | 'Aloes'
-  | 'Frankincense' | 'Myrrh' | 'Saffron' | 'Camphor' | 'Benzoin'
-  | 'Red Coral' | 'Rose Water' | 'Rhubarb' | 'China Root' | 'Quicksilver'
-  // Tier 4: Precious rarities
-  | 'Ambergris' | 'Bezoar Stones' | 'Opium' | 'Bhang' | "Dragon's Blood"
+  | 'Ginger' | 'Cloves' | 'Nutmeg' | 'Saffron' | 'Tobacco'
+  // Tier 2: Exotic Drugs & Medicines
+  | 'Opium' | 'Camphor' | 'Benzoin' | 'Frankincense' | 'Myrrh'
+  | 'Rhubarb' | 'China Root' | 'Cassia Fistula' | 'Aloes'
+  | 'Musk' | 'Quicksilver' | 'Tamarind'
+  // Tier 3: Staples & Trade Goods
+  | 'Cotton Textiles' | 'Indigo' | 'Iron' | 'Timber' | 'Sugar'
+  | 'Ivory' | 'Chinese Porcelain' | 'Pearls' | 'Red Coral' | 'Rose Water'
+  // Tier 4: Precious Rarities
+  | 'Ambergris' | 'Bezoar Stones' | 'Bhang' | "Dragon's Blood"
   // Tier 5: Extraordinary
   | 'Mumia' | 'Lapis de Goa'
-  // Practical
-  | 'Munitions';
+  // Non-tradable (provisions/supplies, not shown in market)
+  | 'Rice' | 'Munitions';
 
 export type CommodityTier = 1 | 2 | 3 | 4 | 5;
 
@@ -32,6 +32,7 @@ export interface CommodityDef {
   breakable: boolean;          // can break in storms
   fraudRisk: number;           // 0-1, chance goods are counterfeit at purchase
   description: string;         // short flavor text
+  physicalDescription: string; // Level 0 (unknown) display — what you see before identification
   color: string;               // UI display color
   icon: string;                // unicode icon for compact display
   iconImage?: string;          // path to icon image in /public/wares/
@@ -40,221 +41,277 @@ export interface CommodityDef {
 // ── Full commodity catalog ──
 
 export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
-  // ── Tier 1: Bulk Staples ──
-  'Rice': {
-    id: 'Rice', tier: 1,
-    basePrice: [2, 6], weight: 1,
-    spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'Staple grain. Also consumed as ship provisions.',
-    color: '#d4c090', icon: '⁂',
-  },
-  'Timber': {
-    id: 'Timber', tier: 1,
-    basePrice: [3, 8], weight: 2,
-    spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Teak and hardwoods from Malabar. Essential for ship repair.',
-    color: '#8B6914', icon: '≡',
-  },
-  'Iron': {
-    id: 'Iron', tier: 1,
-    basePrice: [4, 10], weight: 2,
-    spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Bar iron and steel. High demand in East Africa and Southeast Asia.',
-    color: '#7a8a9a', icon: '⚒',
-  },
-  'Cotton Textiles': {
-    id: 'Cotton Textiles', tier: 1,
-    basePrice: [5, 12], weight: 1,
-    spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'Gujarati calicoes and chintzes. Functions as currency in East Africa.',
-    color: '#e8dcc8', icon: '⚑',
-  },
-
-  // ── Tier 2: Common Spices & Stimulants ──
+  // ── Tier 1: Spices & Stimulants ──
   'Black Pepper': {
-    id: 'Black Pepper', tier: 2,
+    id: 'Black Pepper', tier: 1,
     basePrice: [8, 25], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'The king of spices. Malabar Coast monopoly.',
+    physicalDescription: 'Small, hard, wrinkled black drupes with a sharp bite',
     color: '#4a4a4a', icon: '✦',
     iconImage: '/wares/black_pepper_icon.png',
   },
   'Cinnamon': {
-    id: 'Cinnamon', tier: 2,
+    id: 'Cinnamon', tier: 1,
     basePrice: [12, 30], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.06,
     description: 'Ceylon bark. Often adulterated with cassia.',
+    physicalDescription: 'Rolled quills of fragrant reddish bark',
     color: '#c47a3a', icon: '⌇',
     iconImage: '/wares/cinnamon_icon.png',
   },
   'Cardamom': {
-    id: 'Cardamom', tier: 2,
+    id: 'Cardamom', tier: 1,
     basePrice: [10, 28], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'From the hills of Malabar. Traded alongside pepper.',
+    physicalDescription: 'Small green pods containing aromatic seeds',
     color: '#7cb342', icon: '❧',
     iconImage: '/wares/cardamom_icon.png',
   },
   'Coffee': {
-    id: 'Coffee', tier: 2,
+    id: 'Coffee', tier: 1,
     basePrice: [10, 25], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Mocha monopoly. Demand rising rapidly across the Indian Ocean world.',
+    physicalDescription: 'Dark roasted berries with a bitter, stimulating smell',
     color: '#5d4037', icon: '♨',
   },
   'Tea': {
-    id: 'Tea', tier: 2,
+    id: 'Tea', tier: 1,
     basePrice: [8, 20], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Chinese leaf, funneled through Macau.',
+    physicalDescription: 'Dried, tightly rolled leaves with a grassy scent',
     color: '#66bb6a', icon: '♣',
   },
   'Ginger': {
-    id: 'Ginger', tier: 2,
+    id: 'Ginger', tier: 1,
     basePrice: [8, 20], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Malabar and Southeast Asian rhizome. Ubiquitous in the spice trade.',
+    physicalDescription: 'Knobby pale rhizomes with a fiery, warming taste',
     color: '#e6a830', icon: '⌁',
     iconImage: '/wares/ginger_icon.png',
   },
-  'Sugar': {
-    id: 'Sugar', tier: 2,
-    basePrice: [6, 15], weight: 1,
-    spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'Increasingly important commodity. Bengal and Southeast Asian production.',
-    color: '#f5f0e0', icon: '⬡',
-    iconImage: '/wares/sugar_icon.png',
+  'Cloves': {
+    id: 'Cloves', tier: 1,
+    basePrice: [25, 70], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.05,
+    description: 'From the Maluku Islands. Available only through Bantam and Malacca.',
+    physicalDescription: 'Tiny dried flower buds, dark brown, intensely aromatic',
+    color: '#8b4513', icon: '✿',
+    iconImage: '/wares/clove_icon.png',
   },
-  'Tamarind': {
-    id: 'Tamarind', tier: 2,
-    basePrice: [5, 12], weight: 1,
+  'Nutmeg': {
+    id: 'Nutmeg', tier: 1,
+    basePrice: [20, 55], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.06,
+    description: 'Banda Islands product. Astronomical markup far from source.',
+    physicalDescription: 'Hard brown ovoid seeds with a warm, sweet fragrance',
+    color: '#d4a574', icon: '◉',
+    iconImage: '/wares/nutmeg_icon.png',
+  },
+  'Saffron': {
+    id: 'Saffron', tier: 1,
+    basePrice: [30, 75], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.12,
+    description: 'Persian and Kashmiri crocus stamens. Worth more than gold by weight. Often adulterated.',
+    physicalDescription: 'Tiny crimson threads that stain water brilliant yellow',
+    color: '#ff8f00', icon: '❈',
+    iconImage: '/wares/saffron_icon.png',
+  },
+  'Tobacco': {
+    id: 'Tobacco', tier: 1,
+    basePrice: [10, 25], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'Sour fruit used as food preservative and medicine across the Indian Ocean.',
-    color: '#8d6e4c', icon: '⌓',
-    iconImage: '/wares/tamarind_icon.png',
+    description: 'New World plant just arriving in the Indian Ocean. Demand spreading fast.',
+    physicalDescription: 'Bundles of large dried leaves with an acrid smell',
+    color: '#7c6b4f', icon: '⌘',
+    iconImage: '/wares/tobacco_icon.png',
+  },
+
+  // ── Tier 2: Exotic Drugs & Medicines ──
+  'Opium': {
+    id: 'Opium', tier: 2,
+    basePrice: [40, 100], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Cambay product. Portuguese carry it eastward. Some factions disapprove.',
+    physicalDescription: 'Dark, sticky paste scraped from seed pods, with a heavy smell',
+    color: '#880e4f', icon: '❀',
+    iconImage: '/wares/opium_icon.png',
+  },
+  'Camphor': {
+    id: 'Camphor', tier: 2,
+    basePrice: [18, 45], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.05,
+    description: 'Bornean camphor, far superior to the Chinese variety. Medicine and ritual.',
+    physicalDescription: 'Waxy white crystals with a sharp, penetrating smell',
+    color: '#b0c4de', icon: '◇',
+    iconImage: '/wares/camphor_icon.png',
+  },
+  'Benzoin': {
+    id: 'Benzoin', tier: 2,
+    basePrice: [15, 40], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Sumatran aromatic resin. Burned as incense and used in medicine.',
+    physicalDescription: 'Brittle chunks of amber-colored resin with a vanilla scent',
+    color: '#9e7c5c', icon: '◐',
+    iconImage: '/wares/benzoin_icon.png',
+  },
+  'Frankincense': {
+    id: 'Frankincense', tier: 2,
+    basePrice: [20, 50], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.04,
+    description: 'Arabian olibanum. Sacred incense burned from Lisbon to Kyoto.',
+    physicalDescription: 'Pale, translucent tears of hardened tree resin',
+    color: '#c9b87a', icon: '△',
+    iconImage: '/wares/frankincense_icon.png',
+  },
+  'Myrrh': {
+    id: 'Myrrh', tier: 2,
+    basePrice: [22, 55], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.04,
+    description: 'Resinous gum from Arabia and the Horn of Africa. Medicine and incense.',
+    physicalDescription: 'Rough, reddish-brown nuggets of bitter aromatic gum',
+    color: '#a07040', icon: '▽',
+    iconImage: '/wares/myrrh_icon.png',
+  },
+  'Rhubarb': {
+    id: 'Rhubarb', tier: 2,
+    basePrice: [25, 60], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.08,
+    description: '"China rhubarb" — one of the most valued materia medica in European pharmacies.',
+    physicalDescription: 'Thick dried root slices, yellow inside, with a bitter purgative taste',
+    color: '#c62828', icon: '⌠',
+    iconImage: '/wares/rhubarb_root_icon.png',
+  },
+  'China Root': {
+    id: 'China Root', tier: 2,
+    basePrice: [20, 50], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.06,
+    description: 'Smilax china. Prized as a cure for the French disease. Major Chinese export.',
+    physicalDescription: 'Knotty tubers with reddish skin, sold as a medicinal cure',
+    color: '#8d6e63', icon: '⌡',
+    iconImage: '/wares/china_root_icon.png',
   },
   'Cassia Fistula': {
     id: 'Cassia Fistula', tier: 2,
     basePrice: [8, 18], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Indian purgative. Black pods prized in European and Islamic medicine.',
+    physicalDescription: 'Long, dark, cylindrical pods with a sweet-smelling pulp',
     color: '#6d5c3a', icon: '⌐',
     iconImage: '/wares/cassia_fistula_icon.png',
   },
-  'Tobacco': {
-    id: 'Tobacco', tier: 2,
-    basePrice: [10, 25], weight: 1,
+  'Aloes': {
+    id: 'Aloes', tier: 2,
+    basePrice: [22, 55], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Aloeswood and agarwood. Precious aromatic resin.',
+    physicalDescription: 'Dark, dense, resinous wood that smells sweet when heated',
+    color: '#795548', icon: '❦',
+    iconImage: '/wares/aloes_icon.png',
+  },
+  'Musk': {
+    id: 'Musk', tier: 2,
+    basePrice: [30, 80], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.10,
+    description: 'Tibetan musk deer pods. Perfumery and medicine. Often faked.',
+    physicalDescription: 'Leathery dried pods containing a dark, powerfully scented paste',
+    color: '#9c27b0', icon: '❋',
+  },
+  'Quicksilver': {
+    id: 'Quicksilver', tier: 2,
+    basePrice: [25, 55], weight: 2,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Mercury. Essential for amalgamation, medicine, and alchemy. Heavy and dangerous.',
+    physicalDescription: 'A heavy sealed flask of shimmering liquid metal',
+    color: '#b0bec5', icon: '☿',
+    iconImage: '/wares/quicksilver_icon.png',
+  },
+  'Tamarind': {
+    id: 'Tamarind', tier: 2,
+    basePrice: [5, 12], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'New World plant just arriving in the Indian Ocean. Demand spreading fast.',
-    color: '#7c6b4f', icon: '⌘',
-    iconImage: '/wares/tobacco_icon.png',
+    description: 'Sour fruit used as food preservative and medicine across the Indian Ocean.',
+    physicalDescription: 'Sticky brown pulp in brittle pods, powerfully sour',
+    color: '#8d6e4c', icon: '⌓',
+    iconImage: '/wares/tamarind_icon.png',
   },
 
-  // ── Tier 3: Luxury Trade Goods ──
-  'Cloves': {
-    id: 'Cloves', tier: 3,
-    basePrice: [25, 70], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.05,
-    description: 'From the Maluku Islands. Available only through Bantam and Malacca.',
-    color: '#8b4513', icon: '✿',
-    iconImage: '/wares/clove_icon.png',
-  },
-  'Nutmeg': {
-    id: 'Nutmeg', tier: 3,
-    basePrice: [20, 55], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.06,
-    description: 'Banda Islands product. Astronomical markup far from source.',
-    color: '#d4a574', icon: '◉',
-    iconImage: '/wares/nutmeg_icon.png',
+  // ── Tier 3: Staples & Trade Goods ──
+  'Cotton Textiles': {
+    id: 'Cotton Textiles', tier: 3,
+    basePrice: [5, 12], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0,
+    description: 'Gujarati calicoes and chintzes. Functions as currency in East Africa.',
+    physicalDescription: 'Bolts of printed cloth with intricate patterns',
+    color: '#e8dcc8', icon: '⚑',
   },
   'Indigo': {
     id: 'Indigo', tier: 3,
     basePrice: [18, 45], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Gujarat dye. Insatiable European demand.',
+    physicalDescription: 'Dense cakes of deep blue dye that stain the fingers',
     color: '#3f51b5', icon: '◆',
   },
-  'Chinese Porcelain': {
-    id: 'Chinese Porcelain', tier: 3,
-    basePrice: [20, 60], weight: 2,
-    spoilable: false, breakable: true, fraudRisk: 0,
-    description: 'Blue-and-white kraak ware from Jingdezhen. Fragile cargo.',
-    color: '#4fc3f7', icon: '⚱',
-  },
-  'Musk': {
-    id: 'Musk', tier: 3,
-    basePrice: [30, 80], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.10,
-    description: 'Tibetan musk deer pods. Perfumery and medicine. Often faked.',
-    color: '#9c27b0', icon: '❋',
-  },
-  'Pearls': {
-    id: 'Pearls', tier: 3,
-    basePrice: [25, 65], weight: 1,
+  'Iron': {
+    id: 'Iron', tier: 3,
+    basePrice: [4, 10], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Persian Gulf pearls. Hormuz and Muscat specialties.',
-    color: '#e0d6cc', icon: '○',
+    description: 'Bar iron and steel. High demand in East Africa and Southeast Asia.',
+    physicalDescription: 'Rough bars of grey metal',
+    color: '#7a8a9a', icon: '⚒',
+  },
+  'Timber': {
+    id: 'Timber', tier: 3,
+    basePrice: [3, 8], weight: 2,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Teak and hardwoods from Malabar. Essential for ship repair.',
+    physicalDescription: 'Heavy planks of dark, close-grained wood',
+    color: '#8B6914', icon: '≡',
+  },
+  'Sugar': {
+    id: 'Sugar', tier: 3,
+    basePrice: [6, 15], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0,
+    description: 'Increasingly important commodity. Bengal and Southeast Asian production.',
+    physicalDescription: 'Coarse brown crystals with an intensely sweet taste',
+    color: '#f5f0e0', icon: '⬡',
+    iconImage: '/wares/sugar_icon.png',
   },
   'Ivory': {
     id: 'Ivory', tier: 3,
     basePrice: [20, 50], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'East African elephant tusks. Heavy but always in demand.',
+    physicalDescription: 'Heavy curved tusks of creamy white bone-like material',
     color: '#faf0e6', icon: '⌒',
   },
-  'Aloes': {
-    id: 'Aloes', tier: 3,
-    basePrice: [22, 55], weight: 1,
+  'Chinese Porcelain': {
+    id: 'Chinese Porcelain', tier: 3,
+    basePrice: [20, 60], weight: 2,
+    spoilable: false, breakable: true, fraudRisk: 0,
+    description: 'Blue-and-white kraak ware from Jingdezhen. Fragile cargo.',
+    physicalDescription: 'Delicate vessels of thin white ceramic painted in blue',
+    color: '#4fc3f7', icon: '⚱',
+  },
+  'Pearls': {
+    id: 'Pearls', tier: 3,
+    basePrice: [25, 65], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Aloeswood and agarwood. Precious aromatic resin.',
-    color: '#795548', icon: '❦',
-    iconImage: '/wares/aloes_icon.png',
-  },
-  'Frankincense': {
-    id: 'Frankincense', tier: 3,
-    basePrice: [20, 50], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.04,
-    description: 'Arabian olibanum. Sacred incense burned from Lisbon to Kyoto.',
-    color: '#c9b87a', icon: '△',
-    iconImage: '/wares/frankincense_icon.png',
-  },
-  'Myrrh': {
-    id: 'Myrrh', tier: 3,
-    basePrice: [22, 55], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.04,
-    description: 'Resinous gum from Arabia and the Horn of Africa. Medicine and incense.',
-    color: '#a07040', icon: '▽',
-    iconImage: '/wares/myrrh_icon.png',
-  },
-  'Saffron': {
-    id: 'Saffron', tier: 3,
-    basePrice: [30, 75], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.12,
-    description: 'Persian and Kashmiri crocus stamens. Worth more than gold by weight. Often adulterated.',
-    color: '#ff8f00', icon: '❈',
-    iconImage: '/wares/saffron_icon.png',
-  },
-  'Camphor': {
-    id: 'Camphor', tier: 3,
-    basePrice: [18, 45], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.05,
-    description: 'Bornean camphor, far superior to the Chinese variety. Medicine and ritual.',
-    color: '#b0c4de', icon: '◇',
-    iconImage: '/wares/camphor_icon.png',
-  },
-  'Benzoin': {
-    id: 'Benzoin', tier: 3,
-    basePrice: [15, 40], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Sumatran aromatic resin. Burned as incense and used in medicine.',
-    color: '#9e7c5c', icon: '◐',
-    iconImage: '/wares/benzoin_icon.png',
+    description: 'Persian Gulf pearls. Hormuz and Muscat specialties.',
+    physicalDescription: 'Lustrous white spheres harvested from oyster shells',
+    color: '#e0d6cc', icon: '○',
   },
   'Red Coral': {
     id: 'Red Coral', tier: 3,
     basePrice: [25, 60], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0,
     description: 'Mediterranean coral, traded into India for jewelry and medicine. Fragile.',
+    physicalDescription: 'Branching formations of vivid red marine growth',
     color: '#e53935', icon: '⌗',
     iconImage: '/wares/red_coral_icon.png',
   },
@@ -263,32 +320,9 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [12, 30], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0,
     description: 'Persian distillation. Perfumery, cooking, and medicine. Bottles break easily.',
+    physicalDescription: 'Stoppered glass bottles of clear, floral-scented liquid',
     color: '#f48fb1', icon: '✾',
     iconImage: '/wares/rose_water_icon.png',
-  },
-  'Rhubarb': {
-    id: 'Rhubarb', tier: 3,
-    basePrice: [25, 60], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.08,
-    description: '"China rhubarb" — one of the most valued materia medica in European pharmacies.',
-    color: '#c62828', icon: '⌠',
-    iconImage: '/wares/rhubarb_root_icon.png',
-  },
-  'China Root': {
-    id: 'China Root', tier: 3,
-    basePrice: [20, 50], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0.06,
-    description: 'Smilax china. Prized as a cure for the French disease. Major Chinese export.',
-    color: '#8d6e63', icon: '⌡',
-    iconImage: '/wares/china_root_icon.png',
-  },
-  'Quicksilver': {
-    id: 'Quicksilver', tier: 3,
-    basePrice: [25, 55], weight: 2,
-    spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Mercury. Essential for amalgamation, medicine, and alchemy. Heavy and dangerous.',
-    color: '#b0bec5', icon: '☿',
-    iconImage: '/wares/quicksilver_icon.png',
   },
 
   // ── Tier 4: Precious Rarities ──
@@ -297,6 +331,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [50, 150], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.10,
     description: 'Whale secretion. Perfume fixative and medicine. Often counterfeited.',
+    physicalDescription: 'A waxy grey-black lump with a strange, sweet marine odor',
     color: '#b8860b', icon: '◈',
     iconImage: '/wares/amber_icon.png',
   },
@@ -305,22 +340,16 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [80, 200], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.20,
     description: 'Calcified stomach stones. Believed to be universal antidote. Frequently faked.',
+    physicalDescription: 'Smooth, layered stones found inside animal stomachs',
     color: '#a1887f', icon: '◎',
     iconImage: '/wares/bezoar_stone_icon.png',
-  },
-  'Opium': {
-    id: 'Opium', tier: 4,
-    basePrice: [40, 100], weight: 1,
-    spoilable: false, breakable: false, fraudRisk: 0,
-    description: 'Cambay product. Portuguese carry it eastward. Some factions disapprove.',
-    color: '#880e4f', icon: '❀',
-    iconImage: '/wares/opium_icon.png',
   },
   'Bhang': {
     id: 'Bhang', tier: 4,
     basePrice: [35, 80], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Cannabis preparation. Appears unpredictably at market.',
+    physicalDescription: 'A pungent green paste made from crushed leaves and flowers',
     color: '#558b2f', icon: '✽',
   },
   "Dragon's Blood": {
@@ -328,6 +357,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [40, 90], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.08,
     description: "Deep red resin from Socotra's dragon trees. Dye, varnish, and medicine.",
+    physicalDescription: 'Deep crimson resin that shatters like glass when struck',
     color: '#b71c1c', icon: '⬥',
     iconImage: '/wares/dragons_blood_icon.png',
   },
@@ -338,6 +368,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [120, 300], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.35,
     description: '"Egyptian mummy" — prized drug in European and Islamic medicine. Most is fake bitumen.',
+    physicalDescription: 'Dark, tarry substance sold as ancient embalming material',
     color: '#4e342e', icon: '☥',
   },
   'Lapis de Goa': {
@@ -345,43 +376,57 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     basePrice: [150, 400], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Artificial bezoar made by Jesuits. Gold leaf, gemstone dust, and secret ingredients.',
+    physicalDescription: 'A gilded ball stamped with a cross, said to cure any poison',
     color: '#ffd700', icon: '✧',
   },
 
-  // ── Practical ──
+  // ── Non-tradable (provisions/supplies, not shown in market) ──
+  'Rice': {
+    id: 'Rice', tier: 3,
+    basePrice: [2, 6], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0,
+    description: 'Staple grain. Also consumed as ship provisions.',
+    physicalDescription: 'Sacks of pale grain',
+    color: '#d4c090', icon: '⁂',
+  },
   'Munitions': {
-    id: 'Munitions', tier: 1,
+    id: 'Munitions', tier: 3,
     basePrice: [5, 18], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Gunpowder, shot, and small arms. Some ports restrict trade.',
+    physicalDescription: 'Barrels of powder and crates of iron shot',
     color: '#78909c', icon: '●',
   },
 };
 
-// ── Ordered list for UI display ──
+// ── Ordered list for market/UI display (excludes non-tradable Rice & Munitions) ──
 export const ALL_COMMODITIES: Commodity[] = [
-  // Tier 1
-  'Rice', 'Timber', 'Iron', 'Cotton Textiles',
-  // Tier 2
+  // Tier 1: Spices & Stimulants
   'Black Pepper', 'Cinnamon', 'Cardamom', 'Ginger', 'Coffee', 'Tea',
-  'Sugar', 'Tamarind', 'Cassia Fistula', 'Tobacco',
-  // Tier 3
-  'Cloves', 'Nutmeg', 'Indigo', 'Chinese Porcelain', 'Musk',
-  'Pearls', 'Ivory', 'Aloes',
-  'Frankincense', 'Myrrh', 'Saffron', 'Camphor', 'Benzoin',
-  'Red Coral', 'Rose Water', 'Rhubarb', 'China Root', 'Quicksilver',
-  // Tier 4
-  'Ambergris', 'Bezoar Stones', 'Opium', 'Bhang', "Dragon's Blood",
-  // Tier 5
+  'Cloves', 'Nutmeg', 'Saffron', 'Tobacco',
+  // Tier 2: Exotic Drugs & Medicines
+  'Opium', 'Camphor', 'Benzoin', 'Frankincense', 'Myrrh',
+  'Rhubarb', 'China Root', 'Cassia Fistula', 'Aloes',
+  'Musk', 'Quicksilver', 'Tamarind',
+  // Tier 3: Staples & Trade Goods
+  'Cotton Textiles', 'Indigo', 'Iron', 'Timber', 'Sugar',
+  'Ivory', 'Chinese Porcelain', 'Pearls', 'Red Coral', 'Rose Water',
+  // Tier 4: Precious Rarities
+  'Ambergris', 'Bezoar Stones', 'Bhang', "Dragon's Blood",
+  // Tier 5: Extraordinary
   'Mumia', 'Lapis de Goa',
-  // Practical
-  'Munitions',
+];
+
+// Full list including non-tradable items (for cargo tracking, NPC loot, etc.)
+export const ALL_COMMODITIES_FULL: Commodity[] = [
+  ...ALL_COMMODITIES,
+  'Rice', 'Munitions',
 ];
 
 export const TIER_LABELS: Record<CommodityTier, string> = {
-  1: 'Staples & Materials',
-  2: 'Spices & Stimulants',
-  3: 'Luxury Goods',
+  1: 'Spices & Stimulants',
+  2: 'Exotic Drugs & Medicines',
+  3: 'Staples & Trade Goods',
   4: 'Precious Rarities',
   5: 'Extraordinary',
 };
@@ -516,15 +561,20 @@ function roleMultiplier(role: PortTradeRole, prng: () => number): number {
   }
 }
 
-/** Inventory amount based on role */
+/** Inventory amount based on role — adjusted for new tier layout */
 function roleInventory(role: PortTradeRole, tier: CommodityTier, prng: () => number): number {
-  const base = tier <= 2 ? 80 : tier <= 3 ? 40 : tier <= 4 ? 12 : 4;
+  // Tier 1 (spices): moderate stock. Tier 2 (drugs): lower stock.
+  // Tier 3 (staples): bulk. Tier 4 (rarities): scarce. Tier 5: almost none.
+  const base = tier === 3 ? 80 : tier === 1 ? 50 : tier === 2 ? 30 : tier === 4 ? 6 : 2;
   switch (role) {
     case 'produces': return Math.floor(base * (0.6 + prng() * 0.6));   // 60-120% of base
     case 'trades':   return Math.floor(base * (0.2 + prng() * 0.4));   // 20-60% of base
     case 'demands':  return Math.floor(base * prng() * 0.15);          // 0-15% of base (often 0)
   }
 }
+
+/** Max tradable goods shown at a port. Ports feel curated, not overwhelming. */
+const MAX_PORT_GOODS = 10;
 
 /** Get the trade role for a commodity at a given port */
 export function getTradeRole(portId: string, commodity: Commodity): PortTradeRole | null {
@@ -536,25 +586,52 @@ export function getTradeRole(portId: string, commodity: Commodity): PortTradeRol
   return null; // not available at this port
 }
 
-/** Generate prices for a port based on its trade profile */
+/** Generate prices for a port based on its trade profile.
+ *  Caps the number of available goods at MAX_PORT_GOODS.
+ *  Tier 4/5 rarities only appear ~30% / ~15% of the time. */
 export function generatePortPrices(
   portId: string,
   prng: () => number,
 ): Record<Commodity, number> {
   const prices = {} as Record<Commodity, number>;
 
-  for (const commodity of ALL_COMMODITIES) {
+  // First pass: determine which goods *could* be available
+  const candidates: { commodity: Commodity; price: number; tier: CommodityTier }[] = [];
+
+  for (const commodity of ALL_COMMODITIES_FULL) {
     const def = COMMODITY_DEFS[commodity];
     const role = getTradeRole(portId, commodity);
     if (!role) {
-      // Not available at this port — set price to 0 as sentinel
       prices[commodity] = 0;
       continue;
     }
+
+    // Rarities have a chance of not appearing
+    if (def.tier === 4 && prng() > 0.30) { prices[commodity] = 0; continue; }
+    if (def.tier === 5 && prng() > 0.15) { prices[commodity] = 0; continue; }
+
     const [minP, maxP] = def.basePrice;
     const midPrice = (minP + maxP) / 2;
     const mult = roleMultiplier(role, prng);
-    prices[commodity] = Math.max(1, Math.round(midPrice * mult));
+    const price = Math.max(1, Math.round(midPrice * mult));
+
+    candidates.push({ commodity, price, tier: def.tier });
+  }
+
+  // Cap at MAX_PORT_GOODS: prioritize lower tiers (more interesting goods first)
+  // Sort by tier (spices/drugs first), then randomly within tier
+  candidates.sort((a, b) => a.tier - b.tier || prng() - 0.5);
+  const selected = candidates.slice(0, MAX_PORT_GOODS);
+  const selectedSet = new Set(selected.map(s => s.commodity));
+
+  // Write prices: selected goods get their price, rest get 0
+  for (const commodity of ALL_COMMODITIES_FULL) {
+    if (!selectedSet.has(commodity)) {
+      prices[commodity] = prices[commodity] ?? 0;
+    }
+  }
+  for (const s of selected) {
+    prices[s.commodity] = s.price;
   }
 
   return prices;
@@ -567,7 +644,7 @@ export function generatePortInventory(
 ): Record<Commodity, number> {
   const inventory = {} as Record<Commodity, number>;
 
-  for (const commodity of ALL_COMMODITIES) {
+  for (const commodity of ALL_COMMODITIES_FULL) {
     const def = COMMODITY_DEFS[commodity];
     const role = getTradeRole(portId, commodity);
     if (!role) {
@@ -699,13 +776,13 @@ const DEFAULT_CARGO_POOL: Commodity[] = [
   'Black Pepper', 'Cinnamon', 'Sugar',
 ];
 
-// Draw weight by tier — lower tiers far more likely to appear in starting cargo
+// Draw weight by tier — spices & drugs most likely in starting cargo
 const TIER_DRAW_WEIGHT: Record<CommodityTier, number> = {
-  1: 10,
-  2: 7,
-  3: 3,
-  4: 1,
-  5: 0, // never start with tier 5
+  1: 10,  // spices — common
+  2: 7,   // drugs — moderate
+  3: 5,   // staples — moderate (bulk trade goods)
+  4: 1,   // rarities — very unlikely
+  5: 0,   // never start with tier 5
 };
 
 /**
@@ -718,7 +795,7 @@ export function generateStartingCargo(
   captainLuck: number, // 1-20
 ): Record<Commodity, number> {
   const cargo = Object.fromEntries(
-    ALL_COMMODITIES.map(c => [c, 0])
+    ALL_COMMODITIES_FULL.map(c => [c, 0])
   ) as Record<Commodity, number>;
 
   const targetWeight = Math.floor(cargoCapacity * 0.5);
@@ -780,26 +857,26 @@ export function generateStartingCargo(
     draws++;
   }
 
-  // Lucky captain bonus: guaranteed tier 3 item
+  // Lucky captain bonus: guaranteed exotic drug (tier 2)
   if (captainLuck >= 11 && currentWeight < targetWeight + 4) {
-    const tier3pool = pool.filter(c => {
+    const drugPool = pool.filter(c => {
       const d = COMMODITY_DEFS[c];
-      return d && d.tier === 3 && cargo[c] === 0;
+      return d && d.tier === 2 && cargo[c] === 0;
     }) as Commodity[];
-    if (tier3pool.length > 0) {
-      const pick = tier3pool[Math.floor(Math.random() * tier3pool.length)];
+    if (drugPool.length > 0) {
+      const pick = drugPool[Math.floor(Math.random() * drugPool.length)];
       cargo[pick] = Math.max(1, Math.ceil(Math.random() * 2));
     }
   }
 
-  // Very lucky captain: chance of a tier 4 item
+  // Very lucky captain: chance of a rarity (tier 4)
   if (captainLuck >= 16) {
-    const tier4pool = pool.filter(c => {
+    const rarityPool = pool.filter(c => {
       const d = COMMODITY_DEFS[c];
       return d && d.tier === 4 && cargo[c] === 0;
     }) as Commodity[];
-    if (tier4pool.length > 0 && Math.random() < 0.4 + (captainLuck - 16) * 0.1) {
-      const pick = tier4pool[Math.floor(Math.random() * tier4pool.length)];
+    if (rarityPool.length > 0 && Math.random() < 0.4 + (captainLuck - 16) * 0.1) {
+      const pick = rarityPool[Math.floor(Math.random() * rarityPool.length)];
       cargo[pick] = 1;
     }
   }

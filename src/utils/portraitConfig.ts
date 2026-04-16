@@ -507,3 +507,177 @@ export function getHairColor(config: PortraitConfig): string {
   if (config.age === '50s') return rng() > 0.5 ? HAIR_COLORS[9] : base;
   return base;
 }
+
+// ── Tavern NPC portrait generation ──────────────────────
+
+/** Tavern role → closest CrewRole equivalent for portrait rendering */
+const TAVERN_ROLE_TO_CREW_ROLE: Record<string, CrewRole> = {
+  'spice merchant': 'Factor',
+  'apothecary': 'Surgeon',
+  'incense trader': 'Factor',
+  'factor': 'Factor',
+  'sailor': 'Sailor',
+  'naturalist': 'Navigator',
+  'pearl diver': 'Sailor',
+  'coffee trader': 'Factor',
+  'ivory trader': 'Factor',
+  'soldier': 'Gunner',
+};
+
+/** Tavern role → social class */
+const TAVERN_ROLE_TO_CLASS: Record<string, SocialClass> = {
+  'spice merchant': 'Merchant',
+  'apothecary': 'Merchant',
+  'incense trader': 'Merchant',
+  'factor': 'Merchant',
+  'sailor': 'Working',
+  'naturalist': 'Noble',
+  'pearl diver': 'Working',
+  'coffee trader': 'Merchant',
+  'ivory trader': 'Merchant',
+  'soldier': 'Working',
+};
+
+/** Personality weights by tavern role */
+const TAVERN_ROLE_PERSONALITIES: Record<string, Personality[]> = {
+  'spice merchant': ['Friendly', 'Smug', 'Curious', 'Stern'],
+  'apothecary': ['Curious', 'Melancholy', 'Stern', 'Neutral'],
+  'incense trader': ['Friendly', 'Neutral', 'Smug'],
+  'factor': ['Stern', 'Smug', 'Friendly', 'Neutral'],
+  'sailor': ['Weathered', 'Friendly', 'Fierce', 'Melancholy'],
+  'naturalist': ['Curious', 'Curious', 'Friendly', 'Neutral'],
+  'pearl diver': ['Weathered', 'Fierce', 'Neutral', 'Stern'],
+  'coffee trader': ['Friendly', 'Smug', 'Curious'],
+  'ivory trader': ['Stern', 'Fierce', 'Smug', 'Neutral'],
+  'soldier': ['Stern', 'Fierce', 'Weathered', 'Melancholy'],
+};
+
+export interface TavernNpcPortraitInput {
+  id: string;
+  name: string;
+  nationality: Nationality;
+  isFemale: boolean;
+  roleTitle: string;
+}
+
+/**
+ * Convert tavern NPC data into a deterministic PortraitConfig.
+ * Same NPC always renders the same face.
+ */
+export function tavernNpcToPortraitConfig(npc: TavernNpcPortraitInput): PortraitConfig {
+  const seed = hashString(npc.id + npc.name);
+  const rng = mulberry32(seed);
+
+  let skinIndex = pickFromDistribution(rng, SKIN_DISTRIBUTION[npc.nationality]);
+  let eyeColorIndex = pickFromDistribution(rng, EYE_DISTRIBUTION[npc.nationality]);
+  let hairColorIndex = pickFromDistribution(rng, HAIR_DISTRIBUTION[npc.nationality]);
+
+  // Phenotype correlation (same logic as crew portraits)
+  const corrRng = rng();
+  const isEuropean = ['English', 'Portuguese', 'Dutch', 'Spanish', 'French', 'Danish'].includes(npc.nationality);
+  const isNorthEuropean = ['English', 'Dutch', 'Danish'].includes(npc.nationality);
+
+  if (hairColorIndex === 6 && skinIndex > 2) skinIndex = corrRng > 0.5 ? 0 : 11;
+  if ((hairColorIndex === 7 || hairColorIndex === 8) && skinIndex > 2) skinIndex = corrRng > 0.6 ? 0 : 1;
+  if (isEuropean && skinIndex <= 1 && hairColorIndex <= 1 && corrRng > 0.5) eyeColorIndex = corrRng > 0.75 ? 4 : 3;
+  if (isNorthEuropean && skinIndex === 11 && corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 6 : 5;
+
+  const crewRole = TAVERN_ROLE_TO_CREW_ROLE[npc.roleTitle] ?? 'Sailor';
+  const socialClass = TAVERN_ROLE_TO_CLASS[npc.roleTitle] ?? 'Working';
+  const culturalGroup = CULTURAL_GROUP_MAP[npc.nationality];
+  const gender: Gender = npc.isFemale ? 'Female' : 'Male';
+
+  // Age — tavern NPCs span a wider range than crew
+  const ageRoll = rng();
+  const age: AgeRange = ageRoll < 0.15 ? '20s' : ageRoll < 0.45 ? '30s' : ageRoll < 0.70 ? '40s' : ageRoll < 0.88 ? '50s' : '60s';
+
+  // Age → gray hair
+  if (age === '60s' && corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 10 : 9;
+  else if (age === '50s' && corrRng > 0.7) hairColorIndex = 9;
+
+  // Personality from role
+  const personalityPool = TAVERN_ROLE_PERSONALITIES[npc.roleTitle] ?? ['Neutral', 'Friendly', 'Stern'];
+  const personality = personalityPool[Math.floor(rng() * personalityPool.length)];
+
+  const faceShapes: FaceShape[] = ['round', 'oval', 'long', 'square', 'heart', 'diamond'];
+  const faceShape = faceShapes[Math.floor(rng() * faceShapes.length)];
+
+  const isSailor = crewRole === 'Sailor' || crewRole === 'Gunner';
+  const isScarred = (crewRole === 'Gunner' && rng() > 0.4) ||
+                    (isSailor && age >= '40s' && rng() > 0.5);
+  const hasEarring = (isSailor && rng() > 0.5) || rng() > 0.85;
+
+  const hasPipe = isSailor && gender === 'Male' &&
+    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean' || rng() > 0.7) &&
+    rng() > 0.65;
+
+  const hasEyePatch = isScarred && rng() > 0.85;
+
+  const hasGoldTooth = (personality === 'Friendly' || personality === 'Smug') && rng() > 0.7;
+
+  const hasFacialMark = rng() > 0.72;
+  const facialMarkSide = rng() > 0.5 ? 1 : -1;
+  const facialMarkY = 0.2 + rng() * 0.6;
+
+  const jewelryRoll = rng();
+  const hasNeckJewelry = (socialClass !== 'Working' && jewelryRoll > 0.6) ||
+    (culturalGroup === 'Swahili' && jewelryRoll > 0.4) ||
+    (culturalGroup === 'Indian' && jewelryRoll > 0.5) ||
+    jewelryRoll > 0.85;
+  const neckJewelryType: 'cross' | 'beads' | 'coins' | 'pendant' =
+    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') ? (rng() > 0.3 ? 'cross' : 'pendant') :
+    culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'beads' : 'coins') :
+    culturalGroup === 'Indian' ? 'beads' :
+    culturalGroup === 'ArabPersian' ? (rng() > 0.5 ? 'pendant' : 'coins') :
+    rng() > 0.5 ? 'coins' : 'pendant';
+
+  const hasBrokenNose = isSailor && rng() > 0.8;
+  const hasFreckles = skinIndex <= 2 && rng() > 0.55;
+
+  const hasNeckKerchief = isSailor && rng() > 0.55;
+  const kerchiefColors = ['#8b2020', '#1a3a5a', '#2a4a2a', '#5a3a1a', '#4a2a4a', '#1a4a4a'];
+  const kerchiefColor = kerchiefColors[Math.floor(rng() * kerchiefColors.length)];
+
+  const tattooRoll = rng();
+  const hasTattoo = (culturalGroup === 'SoutheastAsian' && tattooRoll > 0.6) ||
+    (culturalGroup === 'Swahili' && tattooRoll > 0.55) ||
+    (npc.nationality === 'Japanese' && tattooRoll > 0.5) ||
+    (isSailor && tattooRoll > 0.85);
+  const tattooTypes: Array<'forehead' | 'cheek' | 'chin' | 'arm'> = ['forehead', 'cheek', 'chin', 'arm'];
+  const tattooType = culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'cheek' : 'forehead') :
+    culturalGroup === 'SoutheastAsian' ? (rng() > 0.5 ? 'arm' : 'chin') :
+    tattooTypes[Math.floor(rng() * tattooTypes.length)];
+
+  return {
+    seed,
+    nationality: npc.nationality,
+    culturalGroup,
+    gender,
+    age,
+    personality,
+    socialClass,
+    skinIndex,
+    eyeColorIndex,
+    hairColorIndex,
+    role: crewRole,
+    quality: 'normal',
+    isScarred,
+    hasEarring,
+    isSailor,
+    hasPipe,
+    hasEyePatch,
+    hasGoldTooth,
+    hasFacialMark,
+    facialMarkSide,
+    facialMarkY,
+    hasNeckJewelry,
+    neckJewelryType,
+    hasBrokenNose,
+    hasFreckles,
+    hasNeckKerchief,
+    kerchiefColor,
+    hasTattoo,
+    tattooType,
+    faceShape,
+  };
+}

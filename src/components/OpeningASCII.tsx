@@ -34,24 +34,35 @@ function Twinkle({ char, delay = 0, color = '#ffffff' }: { char: string; delay?:
   );
 }
 
-// Animated water waves beneath the ship — uses innerHTML for performance
-function ShipWater() {
+// Masthead pennant — streams in the wind, always 3 chars wide to preserve kerning
+function Pennant({ color = '#c9a84c' }: { color?: string }) {
+  const frames = ['\u25b8\u25b8\u25b8', '\u25b8\u25b8\u00b7', '\u25b8\u00b7 ', '\u00b7  '];
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setI(x => (x + 1) % frames.length), 260);
+    return () => clearInterval(id);
+  }, []);
+  return <span style={{ color }}>{frames[i]}</span>;
+}
+
+// Animated water waves beneath the ship — uses innerHTML for performance.
+// Paused until `active` so it doesn't compete with world-gen on the main thread.
+function ShipWater({ active }: { active: boolean }) {
   const ref = useRef<HTMLPreElement>(null);
   useEffect(() => {
+    if (!active || !ref.current) return;
     let phase = 0;
     const COLS = ['#1a3a4a', '#2a5a6a', '#3a6a7a', '#4a7a8a', '#5a8a9a', '#4a7a8a', '#3a6a7a', '#2a5a6a'];
     const tick = () => {
       if (!ref.current) return;
       phase++;
       let h = '  ';
-      // Line 1: continuous waves
       for (let i = 0; i < 30; i++) {
         const col = COLS[(i + phase) % COLS.length];
         const ch = (i + phase) % 5 < 2 ? '\u2248' : '\u223c';
         h += `<span style="color:${col}">${ch}</span>`;
       }
       h += '\n        ';
-      // Line 2: scattered wake
       for (let i = 0; i < 7; i++) {
         const col = COLS[(i + phase + 3) % COLS.length];
         h += `<span style="color:${col}">\u223c</span>`;
@@ -64,9 +75,9 @@ function ShipWater() {
       ref.current.innerHTML = h;
     };
     tick();
-    const id = setInterval(tick, 550);
+    const id = setInterval(tick, 750);
     return () => clearInterval(id);
-  }, []);
+  }, [active]);
   return <pre ref={ref} className="text-[10px] leading-[1.4] whitespace-pre" style={{ contain: 'content' }} />;
 }
 
@@ -80,26 +91,44 @@ const WAVE_COLORS = [
   '#0d1a22', '#142830', '#1a3a4a', '#2a4a5a',
   '#3a6a7a', '#4a7a8a', '#5a8a9a', '#6a9aaa',
 ];
-// Ship shape: 3 wide, 3 tall — a tiny caravel
+
+// Period sailing ship seen from directly above — compact, solid-hulled caravel.
+// Bow (row 0) leads; stern (row 8) trails. Each row is exactly 5 chars.
+// Ship sails "forward" upward through the frame; wake trails below the stern.
 const SHIP_SHAPE = [
-  [' ', '\u2551', ' '],   //  ║  (mast)
-  ['\u2572', '\u2588', '\u2571'],  //  \█/  (hull)
-  [' ', '\u2550', ' '],   //  ═  (keel/wake)
+  '  ^  ',        // bow tip (canvas/bowsprit)
+  ' /\u2588\\ ',  // bow shoulders wrapping hull
+  ' \u2588o\u2588 ', // foremast set into solid hull
+  ' \u2588\u2593\u2588 ', // planked deck
+  ' \u2588O\u2588 ', // mainmast — widest gilding
+  ' \u2588\u2593\u2588 ', // planked deck
+  ' \u2588o\u2588 ', // mizzen
+  ' \\\u2588/ ',  // stern shoulders
+  '  v  ',        // rudder tip
 ];
-const SHIP_COLOR = '#b89a6a';
+const SHIP_H = SHIP_SHAPE.length;       // 9
+const SHIP_W = 5;
+const SHIP_COLORS: Record<string, string> = {
+  '^': '#d4c8a8', 'v': '#d4c8a8',         // canvas-pale highlights
+  '/': '#8b6940', '\\': '#8b6940',        // hull edges
+  '\u2588': '#6b4f30',                    // solid oak hull (█)
+  '\u2593': '#8a6b3f',                    // deck planking between masts (▓)
+  'o': '#c9a84c', 'O': '#e0bc56',         // gilded mast caps
+};
 const WAKE_CHAR = '\u2248';
 const WAKE_COLOR = '#4a7a8a';
 
-function WavePanel({ side }: { side: 'left' | 'right' }) {
+function WavePanel({ side, withShip, active }: { side: 'left' | 'right'; withShip: boolean; active: boolean }) {
   const preRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
+    if (!active) return;  // paused until world is ready — no competition with world-gen
     const el = preRef.current;
     if (!el) return;
 
     // ── Cache dimensions — only recalculate on resize ──
-    const charW = 6.6;  // approximate monospace char width at 10px
-    const charH = 13;   // line-height
+    const charW = 6.6;
+    const charH = 13;
     let cols = 0, rows = 0;
     const measure = () => {
       const rect = el.getBoundingClientRect();
@@ -110,44 +139,34 @@ function WavePanel({ side }: { side: 'left' | 'right' }) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
 
-    let frame = 0;
-    let shipY = Math.random() * 20;
-    let shipXf = 0; // will init on first frame when cols is known
-    let shipVelX = (Math.random() - 0.5) * 0.08;
-    let shipVelY = 0.06 + Math.random() * 0.05;
+    // Ship drifts upward (forward) through the frame with smooth sinusoidal sway
+    let shipYf = 0;         // initialized on first valid tick
+    let initialized = false;
     let lastTime = 0;
-    let animId: number;
+    let animId = 0;
 
     function tick(time: number) {
       animId = requestAnimationFrame(tick);
-      // Throttle to ~12fps
-      if (time - lastTime < 80) return;
+      if (time - lastTime < 180) return;  // ~5.5fps — calm, painterly pace
       lastTime = time;
 
-      if (cols < 4 || rows < 8) { el.innerHTML = ''; return; }
+      if (cols < 8 || rows < 12) { el.innerHTML = ''; return; }
 
-      frame++;
-      const t = frame * 0.06;
+      if (!initialized) {
+        shipYf = rows + 6;
+        initialized = true;
+      }
 
-      // Ship position — random walk with gentle downward drift
-      if (shipXf === 0) shipXf = cols * 0.25 + Math.random() * cols * 0.5;
-      if (frame % 12 === 0) {
-        shipVelX += (Math.random() - 0.5) * 0.06;
-        shipVelY += (Math.random() - 0.35) * 0.01;
-      }
-      shipVelX *= 0.998;
-      shipVelY = Math.max(0.04, Math.min(0.14, shipVelY));
-      shipXf += shipVelX;
-      if (shipXf < 3) { shipXf = 3; shipVelX = Math.abs(shipVelX) * 0.5; }
-      if (shipXf > cols - 5) { shipXf = cols - 5; shipVelX = -Math.abs(shipVelX) * 0.5; }
-      shipY += shipVelY;
-      if (shipY > rows + 5) {
-        shipY = -4;
-        shipXf = cols * 0.2 + Math.random() * cols * 0.6;
-        shipVelX = (Math.random() - 0.5) * 0.06;
-      }
-      const shipX = Math.floor(shipXf);
-      const shipRow = Math.floor(shipY);
+      const t = time * 0.0005;
+
+      // Smooth fluid motion: slow forward drift + gentle sinusoidal sway
+      const amp = Math.min(cols * 0.12, (cols - SHIP_W) / 2 - 1);
+      const baseCol = cols * 0.5;
+      const shipCenterX = baseCol + Math.sin(t * 0.6) * amp;
+      const shipX = Math.floor(shipCenterX - SHIP_W / 2);  // left edge
+      shipYf -= 0.18;
+      if (shipYf < -SHIP_H - 4) shipYf = rows + 6;
+      const shipRow = Math.floor(shipYf);
 
       let html = '';
       for (let y = 0; y < rows; y++) {
@@ -155,36 +174,39 @@ function WavePanel({ side }: { side: 'left' | 'right' }) {
           // Mirror x for right panel so waves flow inward
           const wx = side === 'right' ? cols - 1 - x : x;
 
-          // Check ship overlay
-          const sr = y - shipRow;
-          const sc = wx - shipX;
-          if (sr >= 0 && sr < 3 && sc >= -1 && sc <= 1) {
-            const ch = SHIP_SHAPE[sr][sc + 1];
-            if (ch !== ' ') {
-              html += `<span style="color:${SHIP_COLOR}">${ch}</span>`;
-              continue;
+          if (withShip) {
+            // Ship overlay (in un-mirrored coords)
+            const sr = y - shipRow;
+            const sc = x - shipX;
+            if (sr >= 0 && sr < SHIP_H && sc >= 0 && sc < SHIP_W) {
+              const ch = SHIP_SHAPE[sr].charAt(sc);
+              if (ch !== ' ') {
+                const color = SHIP_COLORS[ch] ?? '#8b6940';
+                const safe = ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '&' ? '&amp;' : ch;
+                html += `<span style="color:${color}">${safe}</span>`;
+                continue;
+              }
+            }
+
+            // Wake — fades below the stern; trails widen with distance
+            const wakeOffset = y - (shipRow + SHIP_H);
+            if (wakeOffset >= 0 && wakeOffset < 9) {
+              const wakeCenterDist = Math.abs(x - (shipX + Math.floor(SHIP_W / 2)));
+              const wakeWidth = Math.floor(wakeOffset * 0.55) + 1;
+              if (wakeCenterDist <= wakeWidth && wakeCenterDist > 0) {
+                const wakeAlpha = 1 - wakeOffset / 9;
+                html += `<span style="color:${WAKE_COLOR};opacity:${(wakeAlpha * 0.65).toFixed(2)}">${WAKE_CHAR}</span>`;
+                continue;
+              }
             }
           }
 
-          // Wake — V-shape trailing behind ship (below it)
-          const wakeOffset = y - (shipRow + 3);
-          if (wakeOffset >= 0 && wakeOffset < 6) {
-            const wakeCenterDist = Math.abs(wx - shipX);
-            const wakeWidth = Math.floor(wakeOffset * 0.8) + 1;
-            if (wakeCenterDist <= wakeWidth && wakeCenterDist > 0) {
-              const wakeAlpha = 1 - wakeOffset / 6;
-              html += `<span style="color:${WAKE_COLOR};opacity:${(wakeAlpha * 0.7).toFixed(2)}">${WAKE_CHAR}</span>`;
-              continue;
-            }
-          }
-
-          // Wave field — overlapping sine waves at different scales
-          const n1 = Math.sin(wx * 0.35 + y * 0.12 + t);
-          const n2 = Math.sin(wx * 0.18 - y * 0.25 + t * 0.7);
-          const n3 = Math.sin(y * 0.4 + t * 1.1 + wx * 0.08);
+          // Wave field — overlapping sine waves at different scales (slow swell)
+          const n1 = Math.sin(wx * 0.35 + y * 0.12 + t * 3.2);
+          const n2 = Math.sin(wx * 0.18 - y * 0.25 + t * 2.2);
+          const n3 = Math.sin(y * 0.4 + t * 3.6 + wx * 0.08);
           const wave = n1 * 0.45 + n2 * 0.3 + n3 * 0.25;
 
-          // Distance from edge — fade out near the content center
           const edgeDist = side === 'left' ? (cols - x) / cols : x / cols;
           const fade = Math.min(1, edgeDist * 2.5);
 
@@ -196,8 +218,7 @@ function WavePanel({ side }: { side: 'left' | 'right' }) {
           if (ch === ' ') {
             html += ' ';
           } else {
-            const color = WAVE_COLORS[idx];
-            html += `<span style="color:${color}">${ch}</span>`;
+            html += `<span style="color:${WAVE_COLORS[idx]}">${ch}</span>`;
           }
         }
         html += '\n';
@@ -205,17 +226,13 @@ function WavePanel({ side }: { side: 'left' | 'right' }) {
       el.innerHTML = html;
     }
 
-    // Delay start so wave rendering doesn't compete with entry animations
-    const delay = setTimeout(() => {
-      animId = requestAnimationFrame(tick);
-    }, 500);
+    animId = requestAnimationFrame(tick);
 
     return () => {
-      clearTimeout(delay);
       cancelAnimationFrame(animId);
       ro.disconnect();
     };
-  }, [side]);
+  }, [side, withShip, active]);
 
   return (
     <pre
@@ -392,15 +409,16 @@ export function OpeningASCII({
         <BaroqueBorder />
       </motion.div>
 
-      {/* Animated wave fields — flanking the content */}
+      {/* Animated wave fields — flanking the content. Ship lives on the left panel only;
+          both panels stay dormant until `ready` so nothing competes with world-gen. */}
       <motion.div
         initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 1.5, delay: 0.3 }}
+        animate={{ opacity: ready ? 1 : 0 }}
+        transition={{ duration: 1.4, ease: 'easeOut' }}
         className="absolute inset-0 z-0 pointer-events-none"
       >
-        <WavePanel side="left" />
-        <WavePanel side="right" />
+        <WavePanel side="left" withShip={true} active={ready} />
+        <WavePanel side="right" withShip={false} active={ready} />
       </motion.div>
 
       {/* Main content */}
@@ -437,7 +455,7 @@ export function OpeningASCII({
 
         {/* Subtitle */}
         <div className="text-center mt-4 text-[13px]" style={{ color: txt, fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-          A Game of Oceanic Trade, 1580&ndash;1620
+          A Game of Oceanic Trade, Anno 1612
         </div>
 
         <pre className="text-center text-[11px] mt-4" style={{ color: rule }}>
@@ -448,6 +466,7 @@ export function OpeningASCII({
         <div className="flex justify-center mt-3">
           <div style={{ display: 'inline-block' }}>
             <pre className="text-[10px] leading-[1.4] whitespace-pre">
+              {'               '}<C c={gold}>{'\u00b7'}</C><Pennant color={gold} />{'\n'}
               {'          '}<Twinkle char={'\u00b7'} delay={0} />{'     '}<Twinkle char={'\u2726'} delay={0.8} color={gold} />{'     '}<Twinkle char={'\u00b7'} delay={1.6} />{'\n'}
               <C c={warm}>{'          \u25b5    \u25b5    \u25b5'}</C>{'\n'}
               <C c={mast}>{'          |    |    |'}</C>{'\n'}
@@ -458,7 +477,7 @@ export function OpeningASCII({
               <C c={hullBody}>{'  |'}</C>{'  '}<C c={gold}>{'\u25e6'}</C>{'    '}<C c={gold}>{'\u25e6'}</C>{'    '}<C c={gold}>{'\u25e6'}</C>{'    '}<C c={gold}>{'\u25e6'}</C>{'   '}<C c={hullBody}>{'|'}</C>{'\n'}
               <C c={hullBody}>{'   \\_________________________/'}</C>
             </pre>
-            <ShipWater />
+            <ShipWater active={ready} />
           </div>
         </div>
 

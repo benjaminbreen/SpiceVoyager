@@ -77,6 +77,22 @@ const WALL_PALETTES: Record<string, [number, number, number][]> = {
     [0.42, 0.30, 0.22],  // reddish tropical wood
     [0.52, 0.44, 0.32],  // sun-bleached planks
   ],
+  'West African': [
+    [0.72, 0.55, 0.35],  // banco (sun-dried earth)
+    [0.72, 0.55, 0.35],  // banco (weighted)
+    [0.68, 0.50, 0.30],  // laterite clay
+    [0.80, 0.68, 0.48],  // pale dried mud
+    [0.62, 0.48, 0.32],  // dark rammed earth
+    [0.75, 0.62, 0.42],  // ochre-washed
+  ],
+  'Atlantic': [
+    [0.92, 0.90, 0.84],  // whitewashed colonial
+    [0.92, 0.90, 0.84],  // whitewashed colonial (weighted)
+    [0.88, 0.82, 0.68],  // warm stucco
+    [0.94, 0.86, 0.62],  // golden plaster
+    [0.42, 0.30, 0.22],  // dark tropical wood
+    [0.50, 0.40, 0.28],  // weathered hardwood
+  ],
 };
 
 interface RoofStyle {
@@ -101,6 +117,18 @@ const ROOF_PALETTES: Record<string, RoofStyle[]> = {
   'Caribbean': [
     { color: [0.36, 0.25, 0.20], geo: 'cone', h: 1.5 },  // wood shingle
     { color: [0.36, 0.25, 0.20], geo: 'cone', h: 1.5 },  // wood shingle (weighted)
+    { color: [0.78, 0.70, 0.42], geo: 'cone', h: 1.3 },  // palm thatch
+  ],
+  'West African': [
+    { color: [0.68, 0.55, 0.36], geo: 'box', h: 0.35 },  // flat earthen
+    { color: [0.68, 0.55, 0.36], geo: 'box', h: 0.35 },  // flat earthen (weighted)
+    { color: [0.74, 0.64, 0.38], geo: 'cone', h: 1.4 },  // conical thatch (Sudano-Sahelian)
+    { color: [0.70, 0.58, 0.32], geo: 'cone', h: 1.6 },  // tall thatch
+  ],
+  'Atlantic': [
+    { color: [0.80, 0.36, 0.36], geo: 'cone', h: 1.5 },  // terracotta tile (Iberian influence)
+    { color: [0.80, 0.36, 0.36], geo: 'cone', h: 1.5 },  // terracotta tile (weighted)
+    { color: [0.36, 0.25, 0.20], geo: 'cone', h: 1.5 },  // dark wood shingle
     { color: [0.78, 0.70, 0.42], geo: 'cone', h: 1.3 },  // palm thatch
   ],
 };
@@ -131,6 +159,18 @@ const AWNING_COLORS: Record<string, [number, number, number][]> = {
     [0.78, 0.70, 0.42],  // natural palm
     [0.60, 0.40, 0.22],  // bark cloth
     [0.45, 0.55, 0.30],  // dyed green
+  ],
+  'West African': [
+    [0.20, 0.30, 0.52],  // indigo (kente/adire)
+    [0.75, 0.20, 0.12],  // camwood red
+    [0.82, 0.70, 0.18],  // kola-nut gold
+    [0.55, 0.35, 0.18],  // tanned hide
+  ],
+  'Atlantic': [
+    [0.75, 0.25, 0.20],  // dyed red
+    [0.80, 0.72, 0.45],  // raw canvas
+    [0.22, 0.38, 0.28],  // dark green
+    [0.60, 0.40, 0.22],  // bark cloth
   ],
 };
 
@@ -214,6 +254,8 @@ export function ProceduralCity() {
           addTorch(0, 1.4, d/2 - 0.3);
         }
         else if (b.type === 'fort') {
+          // West African forts (Elmina, Luanda) are Portuguese-built stone;
+          // Indian Ocean forts use mud brick
           const mat = c === 'Indian Ocean' ? 'mud' : 'stone';
           const wallColor = varyColor(BASE_COLORS[mat], rng, 0.06);
           addPart('box', mat, 0, h/2, 0, w, h, d, wallColor);
@@ -234,8 +276,8 @@ export function ProceduralCity() {
           // ── Flags on two front towers ──
           const flagColor: [number, number, number] = c === 'Indian Ocean'
             ? [0.15, 0.55, 0.25]   // green
-            : c === 'European'
-              ? [0.85, 0.15, 0.15] // red (Portuguese)
+            : c === 'European' || c === 'West African' || c === 'Atlantic'
+              ? [0.85, 0.15, 0.15] // red (Portuguese/Spanish)
               : [0.2, 0.2, 0.7];   // blue
           // Right tower flagpole + flag
           addPart('cylinder', 'wood', w/2, h + 3.5, d/2, 0.06, 3, 0.06);
@@ -261,7 +303,7 @@ export function ProceduralCity() {
               addPart('sphere', 'white', w/2 + 4, h/2 + 9.5, -d/2, 0.7, 0.9, 0.7, mColor);
               // Crescent finial (tiny sphere offset)
               addPart('sphere', 'straw', w/2 + 4, h/2 + 10.5, -d/2, 0.2, 0.2, 0.2, [0.85, 0.75, 0.2]);
-            } else if (c === 'European') {
+            } else if (c === 'European' || c === 'Atlantic') {
               // Stone cross on the tallest tower
               addPart('box', 'stone', w/2, h + 5.5, d/2, 0.15, 1.8, 0.15);
               addPart('box', 'stone', w/2, h + 6.0, d/2, 0.8, 0.15, 0.15);
@@ -275,6 +317,16 @@ export function ProceduralCity() {
               // Cross on chapel
               addPart('box', 'stone', -w/2 - 4, h * 0.8 + 5.5, -2.2, 0.1, 0.8, 0.1);
               addPart('box', 'stone', -w/2 - 4, h * 0.8 + 5.8, -2.2, 0.5, 0.1, 0.1);
+            } else if (c === 'West African') {
+              // Palaver tree — large trunk with spreading canopy near the fort
+              // Central gathering place in Akan/coastal settlements
+              const trunkColor = varyColor(BASE_COLORS.wood, rng, 0.08);
+              addPart('cylinder', 'wood', -w/2 - 5, 2.5, 0, 0.6, 5, 0.6, trunkColor);
+              // Broad canopy (flattened sphere)
+              addPart('sphere', 'straw', -w/2 - 5, 6.0, 0, 4.0, 2.5, 4.0, varyColor([0.28, 0.42, 0.18], rng, 0.08));
+              // Low circular seating wall around the tree
+              const seatColor = varyColor([0.65, 0.50, 0.32], rng, 0.06);
+              addPart('cylinder', 'mud', -w/2 - 5, 0.2, 0, 2.8, 0.4, 2.8, seatColor);
             }
           }
         }
@@ -289,6 +341,9 @@ export function ProceduralCity() {
             addPart('sphere', 'mud', 0, h, 0, w/2, w/2, d/2);
           } else if (c === 'European') {
             addPart('cone', 'terracotta', 0, h+1, 0, w/1.5, 2, d/1.5);
+          } else if (c === 'West African') {
+            // Broad conical thatch canopy — open-air market shelter
+            addPart('cone', 'straw', 0, h+0.8, 0, w/1.2, 2.2, d/1.2, varyColor(BASE_COLORS.straw, rng, 0.10));
           } else {
             addPart('cone', 'wood', 0, h+1, 0, w/1.5, 2, d/1.5);
           }
@@ -313,10 +368,19 @@ export function ProceduralCity() {
           // Shacks use rougher, more varied materials
           const shackWallPalette: [number,number,number][] = c === 'Indian Ocean'
             ? [[0.55, 0.40, 0.28], [0.62, 0.48, 0.32], [0.70, 0.58, 0.42], [0.48, 0.38, 0.25]]
+            : c === 'West African'
+            ? [[0.68, 0.50, 0.30], [0.72, 0.55, 0.35], [0.60, 0.45, 0.28], [0.65, 0.52, 0.33]]
             : [[0.36, 0.25, 0.20], [0.42, 0.30, 0.22], [0.50, 0.38, 0.26], [0.38, 0.28, 0.18]];
           const wallColor = varyColor(shackWallPalette[Math.floor(rng() * shackWallPalette.length)], rng, 0.08);
           const roofColor = varyColor(BASE_COLORS.straw, rng, 0.12);
-          if (c === 'Indian Ocean') {
+          if (c === 'West African') {
+            // Round mud hut with conical thatch roof
+            const radius = Math.min(w, d) / 2;
+            addPart('cylinder', 'mud', 0, h/2, 0, radius, h, radius, wallColor);
+            addPart('cone', 'straw', 0, h + 0.8, 0, radius * 1.3, 1.6, radius * 1.3, roofColor);
+            // Doorway
+            addPart('box', 'dark', 0, h*0.3, radius+0.05, 0.5, h*0.55, 0.1);
+          } else if (c === 'Indian Ocean') {
             // Stilted shack
             addPart('cylinder', 'wood', w/2-0.2, 0.5, d/2-0.2, 0.1, 1, 0.1);
             addPart('cylinder', 'wood', -w/2+0.2, 0.5, d/2-0.2, 0.1, 1, 0.1);
@@ -340,7 +404,8 @@ export function ProceduralCity() {
           const wallColor = varyColor(wallBase, rng, 0.05);
 
           // Material determines roughness; color comes from instance override
-          const wallMat: Part['mat'] = c === 'Indian Ocean' ? 'mud' : c === 'European' ? 'white' : 'wood';
+          const wallMat: Part['mat'] = c === 'Indian Ocean' || c === 'West African' ? 'mud'
+            : c === 'European' || c === 'Atlantic' ? 'white' : 'wood';
 
           // Per-building roof style from culture palette
           let roofGeo: Part['geo'];
@@ -361,52 +426,74 @@ export function ProceduralCity() {
 
           const roofMat: Part['mat'] = roofGeo === 'box' ? 'mud' : 'terracotta';
 
-          // ── Foundation / plinth ──
-          if (c === 'Indian Ocean' && (b.type === 'house' || b.type === 'estate')) {
-            addPart('box', 'stone', 0, 0.12, 0, w + 0.3, 0.25, d + 0.3, varyColor(BASE_COLORS.stone, rng, 0.06));
-          } else if (c === 'European' && b.type !== 'farmhouse') {
-            addPart('box', 'stone', 0, 0.08, 0, w + 0.15, 0.16, d + 0.15, varyColor([0.58, 0.55, 0.52], rng, 0.04));
-          }
-
-          // ── Main walls ──
-          addPart('box', wallMat, 0, h/2, 0, w, h, d, wallColor);
-
-          // ── Roof ──
-          if (roofGeo === 'box') {
-            addPart('box', roofMat, 0, h + roofH/2, 0, w + 0.4, roofH, d + 0.4, roofColor);
+          // ── West African round house/farmhouse ──
+          // Cylindrical mud walls + conical thatch — distinct from rectangular forms
+          if (c === 'West African' && (b.type === 'house' || b.type === 'farmhouse')) {
+            const radius = Math.min(w, d) / 2;
+            // Round mud walls
+            addPart('cylinder', 'mud', 0, h/2, 0, radius, h, radius, wallColor);
+            // Overhanging conical thatch roof
+            addPart('cone', 'straw', 0, h + roofH/2 + 0.1, 0, radius * 1.4, roofH * 1.3, radius * 1.4, roofColor);
+            // Doorway
+            addPart('box', 'dark', 0, h*0.3, radius+0.05, 0.5, h*0.55, 0.1);
+            // Low compound wall (partial enclosure)
+            const cwColor = varyColor(wallBase, rng, 0.08);
+            addPart('box', 'mud', radius+0.8, 0.35, 0, 0.25, 0.7, d*0.8, cwColor);
+            addPart('box', 'mud', 0, 0.35, -radius-0.8, w*0.8, 0.7, 0.25, cwColor);
+            if (b.type === 'farmhouse') {
+              // Small grain storage bin beside the house
+              const binColor = varyColor(wallBase, rng, 0.1);
+              addPart('cylinder', 'mud', -radius-1.2, 0.5, 0.5, 0.5, 1.0, 0.5, binColor);
+              addPart('cone', 'straw', -radius-1.2, 1.3, 0.5, 0.65, 0.8, 0.65, roofColor);
+            }
           } else {
-            addPart('cone', roofMat, 0, h + roofH/2, 0, w/1.2, roofH, d/1.2, roofColor);
-          }
+            // ── Foundation / plinth ──
+            if (c === 'Indian Ocean' && (b.type === 'house' || b.type === 'estate')) {
+              addPart('box', 'stone', 0, 0.12, 0, w + 0.3, 0.25, d + 0.3, varyColor(BASE_COLORS.stone, rng, 0.06));
+            } else if ((c === 'European' || c === 'Atlantic') && b.type !== 'farmhouse') {
+              addPart('box', 'stone', 0, 0.08, 0, w + 0.15, 0.16, d + 0.15, varyColor([0.58, 0.55, 0.52], rng, 0.04));
+            }
 
-          // ── Door with lintel and step ──
-          addPart('box', 'dark', 0, h*0.3, d/2+0.05, 0.55, h*0.55, 0.1);
-          // Lintel above door
-          addPart('box', wallMat, 0, h*0.6, d/2+0.06, 0.75, 0.1, 0.08, varyColor(wallBase, rng, 0.03));
-          // Door step
-          addPart('box', 'stone', 0, 0.06, d/2+0.35, 0.7, 0.12, 0.3);
+            // ── Main walls ──
+            addPart('box', wallMat, 0, h/2, 0, w, h, d, wallColor);
 
-          // ── Windows with culture-specific details ──
-          if (b.type === 'house' || b.type === 'farmhouse') {
-            // Side windows
-            addPart('box', 'dark', w/2+0.05, h*0.55, 0, 0.1, 0.45, 0.55);
-            addPart('box', 'dark', -w/2-0.05, h*0.55, 0, 0.1, 0.45, 0.55);
+            // ── Roof ──
+            if (roofGeo === 'box') {
+              addPart('box', roofMat, 0, h + roofH/2, 0, w + 0.4, roofH, d + 0.4, roofColor);
+            } else {
+              addPart('cone', roofMat, 0, h + roofH/2, 0, w/1.2, roofH, d/1.2, roofColor);
+            }
 
-            if (c === 'European') {
-              // Painted shutters — the iconic Goa/Macau look
-              const shutterBase = EU_SHUTTER_COLORS[Math.floor(rng() * EU_SHUTTER_COLORS.length)];
-              const sc = varyColor(shutterBase, rng, 0.06);
-              addPart('box', 'wood', w/2+0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
-              addPart('box', 'wood', w/2+0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
-              addPart('box', 'wood', -w/2-0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
-              addPart('box', 'wood', -w/2-0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
-              // Window sills
-              addPart('box', 'stone', w/2+0.06, h*0.31, 0, 0.08, 0.06, 0.65);
-              addPart('box', 'stone', -w/2-0.06, h*0.31, 0, 0.08, 0.06, 0.65);
-            } else if (c === 'Indian Ocean') {
-              // Wooden window frames (jali-style implied by thick frame)
-              const frameColor = varyColor(BASE_COLORS.wood, rng, 0.08);
-              addPart('box', 'wood', w/2+0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
-              addPart('box', 'wood', -w/2-0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
+            // ── Door with lintel and step ──
+            addPart('box', 'dark', 0, h*0.3, d/2+0.05, 0.55, h*0.55, 0.1);
+            // Lintel above door
+            addPart('box', wallMat, 0, h*0.6, d/2+0.06, 0.75, 0.1, 0.08, varyColor(wallBase, rng, 0.03));
+            // Door step
+            addPart('box', 'stone', 0, 0.06, d/2+0.35, 0.7, 0.12, 0.3);
+
+            // ── Windows with culture-specific details ──
+            if (b.type === 'house' || b.type === 'farmhouse') {
+              // Side windows
+              addPart('box', 'dark', w/2+0.05, h*0.55, 0, 0.1, 0.45, 0.55);
+              addPart('box', 'dark', -w/2-0.05, h*0.55, 0, 0.1, 0.45, 0.55);
+
+              if (c === 'European' || c === 'Atlantic') {
+                // Painted shutters — the iconic Goa/Macau look
+                const shutterBase = EU_SHUTTER_COLORS[Math.floor(rng() * EU_SHUTTER_COLORS.length)];
+                const sc = varyColor(shutterBase, rng, 0.06);
+                addPart('box', 'wood', w/2+0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
+                addPart('box', 'wood', w/2+0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
+                addPart('box', 'wood', -w/2-0.06, h*0.55, 0.35, 0.06, 0.48, 0.12, sc);
+                addPart('box', 'wood', -w/2-0.06, h*0.55, -0.35, 0.06, 0.48, 0.12, sc);
+                // Window sills
+                addPart('box', 'stone', w/2+0.06, h*0.31, 0, 0.08, 0.06, 0.65);
+                addPart('box', 'stone', -w/2-0.06, h*0.31, 0, 0.08, 0.06, 0.65);
+              } else if (c === 'Indian Ocean') {
+                // Wooden window frames (jali-style implied by thick frame)
+                const frameColor = varyColor(BASE_COLORS.wood, rng, 0.08);
+                addPart('box', 'wood', w/2+0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
+                addPart('box', 'wood', -w/2-0.06, h*0.55, 0, 0.04, 0.52, 0.04, frameColor);
+              }
             }
           }
 
@@ -425,8 +512,8 @@ export function ProceduralCity() {
             addPart('cylinder', 'wood', w/2+1.5, 0.3, -0.4, 0.3, 0.6, 0.3, varyColor(BASE_COLORS.wood, rng, 0.12));
           }
 
-          // Chimney (non-Indian Ocean, non-warehouse, ~50% of buildings)
-          if (b.type !== 'warehouse' && c !== 'Indian Ocean' && rng() < 0.5) {
+          // Chimney (European/Atlantic/Caribbean, non-warehouse, ~50% of buildings)
+          if (b.type !== 'warehouse' && c !== 'Indian Ocean' && c !== 'West African' && rng() < 0.5) {
             addPart('box', 'stone', w/4, h + roofH + 0.3, d/4, 0.4, 0.8, 0.4);
             // ~40% of chimneys are actively smoking
             if (rng() < 0.4) {
@@ -448,7 +535,23 @@ export function ProceduralCity() {
               addPart('cylinder', 'wood', -w/2-0.8, h*0.35, d/2+0.8, 0.12, h*0.6, 0.12);
               addPart('cylinder', 'wood', w/2+0.8, h*0.35, -d/2-0.8, 0.12, h*0.6, 0.12);
               addPart('cylinder', 'wood', -w/2-0.8, h*0.35, -d/2-0.8, 0.12, h*0.6, 0.12);
-            } else if (c === 'European') {
+            } else if (c === 'West African') {
+              // Compound — multiple round rooms around a shared courtyard
+              // The main building (already placed above as rectangular) serves as the
+              // chief's hall; add round outbuildings and a compound wall
+              const cColor = varyColor(wallBase, rng, 0.06);
+              // Round outbuilding — kitchen/women's quarters
+              addPart('cylinder', 'mud', w/2+2.5, h*0.4, -d/4, 1.2, h*0.8, 1.2, cColor);
+              addPart('cone', 'straw', w/2+2.5, h*0.8+0.6, -d/4, 1.5, 1.4, 1.5, roofColor);
+              // Round outbuilding — storage
+              addPart('cylinder', 'mud', -w/2-2.0, h*0.35, d/4, 1.0, h*0.7, 1.0, varyColor(wallBase, rng, 0.08));
+              addPart('cone', 'straw', -w/2-2.0, h*0.7+0.5, d/4, 1.3, 1.2, 1.3, roofColor);
+              // Compound wall connecting buildings
+              addPart('box', 'mud', w/2+1.5, 0.5, d/2+1.0, 0.3, 1.0, d+2, cColor);
+              addPart('box', 'mud', 0, 0.5, -d/2-1.5, w+3, 1.0, 0.3, cColor);
+              // Compound gateway
+              addPart('box', 'dark', 0, 0.35, d/2+1.05, 1.0, 0.7, 0.35);
+            } else if (c === 'European' || c === 'Atlantic') {
               // Second floor
               addPart('box', wallMat, 0, h + h/2, 0, w-0.5, h, d-0.5, wallColor);
               if (roofGeo === 'box') {
@@ -476,9 +579,11 @@ export function ProceduralCity() {
               addPart('box', 'dark', w/2-0.2, h*1.55, d/2-0.2+0.05, 0.1, 0.4, 0.45);
               addPart('box', 'dark', -w/2+0.7, h*1.55, d/2-0.2+0.05, 0.1, 0.4, 0.45);
             }
-            // Front windows flanking door (all cultures)
-            addPart('box', 'dark', w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
-            addPart('box', 'dark', -w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
+            // Front windows flanking door (all cultures except West African)
+            if (c !== 'West African') {
+              addPart('box', 'dark', w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
+              addPart('box', 'dark', -w/3, h*0.55, d/2+0.05, 0.1, 0.5, 0.6);
+            }
             // Torch at estate entrance
             addTorch(0.8, h * 0.7, d/2 + 0.3);
           }

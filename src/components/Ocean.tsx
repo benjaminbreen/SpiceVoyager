@@ -1,12 +1,14 @@
-import { useRef, useMemo, useEffect, type RefObject } from 'react';
-import { useFrame, useLoader, useThree } from '@react-three/fiber';
+import { useRef, useMemo, useEffect } from 'react';
+import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Water } from 'three-stdlib';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
-import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
+import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
+import { ShipWaterInteraction } from './ShipWaterInteraction';
+import { WaterOverlayCameraLayer, useWaterOverlayLayer } from '../utils/waterOverlayLayer';
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
@@ -15,30 +17,66 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 
 const WATER_SURFACE_OFFSET = -0.5;
 const SHALLOW_TINT_OFFSET = .32;
-const WAKE_SURFACE_OFFSET = 0.045;
-const FOAM_SURFACE_OFFSET = 0.35;
 const ALGAE_SURFACE_OFFSET = 0.035;
 const CAUSTIC_SURFACE_OFFSET = 0.005;
 const WATER_SURFACE_ALPHA = 0.75;
-const WATER_OVERLAY_LAYER = 1;
 
-function useWaterOverlayLayer(ref: RefObject<THREE.Object3D | null>) {
-  useEffect(() => {
-    ref.current?.layers.set(WATER_OVERLAY_LAYER);
-  }, [ref]);
+type ReflectionTuning = {
+  reflectanceBase: number;
+  reflectanceBoost: number;
+  reflectanceCap: number;
+  scatterScale: number;
+  distanceFadeFloor: number;
+};
+
+function glslFloat(value: number): string {
+  return value.toFixed(2);
 }
 
-function WaterOverlayCameraLayer() {
-  const { camera } = useThree();
-
-  useEffect(() => {
-    camera.layers.enable(WATER_OVERLAY_LAYER);
-    return () => {
-      camera.layers.disable(WATER_OVERLAY_LAYER);
-    };
-  }, [camera]);
-
-  return null;
+function getReflectionTuning(waterPaletteId: WaterPaletteId): ReflectionTuning {
+  switch (waterPaletteId) {
+    case 'tropical':
+      return {
+        reflectanceBase: 0.60,
+        reflectanceBoost: 0.52,
+        reflectanceCap: 0.44,
+        scatterScale: 0.12,
+        distanceFadeFloor: 0.48,
+      };
+    case 'arid':
+      return {
+        reflectanceBase: 0.28,
+        reflectanceBoost: 0.48,
+        reflectanceCap: 0.70,
+        scatterScale: 0.76,
+        distanceFadeFloor: 0.48,
+      };
+    case 'mediterranean':
+      return {
+        reflectanceBase: 0.19,
+        reflectanceBoost: .18,
+        reflectanceCap: 0.42,
+        scatterScale: 0.30,
+        distanceFadeFloor: 0.44,
+      };
+    case 'monsoon':
+      return {
+        reflectanceBase: 0.22,
+        reflectanceBoost: 0.40,
+        reflectanceCap: 0.56,
+        scatterScale: 0.90,
+        distanceFadeFloor: 0.46,
+      };
+    case 'temperate':
+    default:
+      return {
+        reflectanceBase: 0.19,
+        reflectanceBoost: .18,
+        reflectanceCap: 0.42,
+        scatterScale: 0.30,
+        distanceFadeFloor: 0.44,
+      };
+  }
 }
 
 function ShallowWaterTint() {
@@ -80,7 +118,7 @@ function ShallowWaterTint() {
       const depthFade = aboveWater ? 0 : 1 - smoothstep(0.5, 6.2, depthBelowSea);
       const alpha =
         tintStrength *
-        0.68 *
+        0.55 *
         (1 - terrain.coastSteepness * 0.20) *
         depthFade;
       turquoise.copy(_turquoiseBase);
@@ -275,339 +313,6 @@ function ShallowWaterTint() {
       position={[0, SEA_LEVEL + SHALLOW_TINT_OFFSET, 0]}
       renderOrder={1}
     />
-  );
-}
-
-// Trail-based ship wake that follows the ship's actual path (curves with turns)
-function ShipWake() {
-  const meshRef = useRef<THREE.Mesh>(null);
-  useWaterOverlayLayer(meshRef);
-
-  const TRAIL_LENGTH = 80;
-  const SAMPLE_DIST = 0.35; // sample every ~0.35 world units of travel
-
-  interface TrailPoint {
-    x: number; z: number;     // stern position
-    perpX: number; perpZ: number; // perpendicular to travel direction
-    speed: number;
-    turn: number;             // signed turn intensity, -1 to 1
-  }
-
-  const trailRef = useRef<TrailPoint[]>([]);
-  const lastPos = useRef<[number, number]>([0, 0]);
-  const lastRot = useRef(0);
-
-  const { geometry, material } = useMemo(() => {
-    const vertCount = TRAIL_LENGTH * 2;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertCount * 3), 3));
-    geo.setAttribute('aAlpha', new THREE.Float32BufferAttribute(new Float32Array(vertCount), 1));
-    geo.setAttribute('aUv', new THREE.Float32BufferAttribute(new Float32Array(vertCount * 2), 2));
-
-    const indices: number[] = [];
-    for (let i = 0; i < TRAIL_LENGTH - 1; i++) {
-      const a = i * 2;
-      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-    }
-    geo.setIndex(indices);
-
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uDaylight: { value: 1.0 } },
-      vertexShader: /* glsl */ `
-        attribute float aAlpha;
-        attribute vec2 aUv;
-        varying float vAlpha;
-        varying vec2 vUv;
-        void main() {
-          vAlpha = aAlpha;
-          vUv = aUv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform float uTime;
-        uniform float uDaylight;
-        varying float vAlpha;
-        varying vec2 vUv;
-
-        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-        float noise(vec2 p) {
-          vec2 i = floor(p), f = fract(p);
-          f = f*f*(3.0-2.0*f);
-          return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-                     mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);
-        }
-        float fbm(vec2 p) {
-          float v = 0.0, a = 0.5;
-          mat2 rot = mat2(0.877,0.479,-0.479,0.877);
-          for (int i = 0; i < 3; i++) { v += a*noise(p); p = rot*p*2.0+vec2(100.0); a *= 0.5; }
-          return v;
-        }
-
-        void main() {
-          if (vAlpha < 0.01) discard;
-
-          // Foam turbulence along the trail
-          float foam = fbm(vUv * vec2(2.0, 15.0) + uTime * vec2(0.2, -0.8));
-          foam = foam * 0.6 + 0.4;
-
-          // Soft edges — fade to transparent at ribbon edges
-          float edgeDist = abs(vUv.x - 0.5) * 2.0;
-          float edgeFade = 1.0 - smoothstep(0.5, 1.0, edgeDist);
-
-          // Two-layer wake: broad disturbed water plus a brighter stern churn.
-          float centerDist = abs(vUv.x - 0.5) * 2.0;
-          float centerChurn = 1.0 - smoothstep(0.0, 0.38, centerDist);
-          centerChurn *= 1.0 - smoothstep(0.0, 0.92, vUv.y);
-          float outerWash = edgeFade * 0.58;
-
-          float wakeShape = outerWash + centerChurn * 0.92;
-          float alpha = vAlpha * foam * wakeShape;
-          if (alpha < 0.01) discard;
-
-          vec3 dayColor = mix(vec3(0.7, 0.87, 0.97), vec3(0.93, 0.97, 1.0), alpha + centerChurn * 0.25);
-          vec3 nightColor = mix(vec3(0.08, 0.12, 0.18), vec3(0.15, 0.18, 0.22), alpha);
-          vec3 color = mix(nightColor, dayColor, uDaylight);
-          gl_FragColor = vec4(color, alpha * 0.62);
-        }
-      `,
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -2,
-      side: THREE.DoubleSide,
-    });
-
-    return { geometry: geo, material: mat };
-  }, []);
-
-  const prevTrailLen = useRef(0);
-
-  useFrame((state) => {
-    const shipTransform = getLiveShipTransform();
-    const speed = Math.abs(shipTransform.vel);
-    const [px, , pz] = shipTransform.pos;
-    const rot = shipTransform.rot;
-    const dirX = Math.sin(rot);
-    const dirZ = Math.cos(rot);
-    const rawTurn = Math.atan2(Math.sin(rot - lastRot.current), Math.cos(rot - lastRot.current));
-    const turn = THREE.MathUtils.clamp(rawTurn * 8, -1, 1);
-    lastRot.current = rot;
-
-    // Stern position (~2.5 units behind ship center)
-    const sternX = px - dirX * 2.5;
-    const sternZ = pz - dirZ * 2.5;
-
-    // Sample by distance traveled (not time) so trail density is consistent
-    const dx = sternX - lastPos.current[0];
-    const dz = sternZ - lastPos.current[1];
-    const distMoved = Math.sqrt(dx * dx + dz * dz);
-    const movingEnough = distMoved > 0.001;
-    const travelX = movingEnough ? dx / distMoved : dirX;
-    const travelZ = movingEnough ? dz / distMoved : dirZ;
-    const perpX = -travelZ;
-    const perpZ = travelX;
-
-    if (distMoved > SAMPLE_DIST || trailRef.current.length === 0) {
-      lastPos.current = [sternX, sternZ];
-      trailRef.current.unshift({
-        x: sternX, z: sternZ,
-        perpX, perpZ,
-        speed,
-        turn,
-      });
-      if (trailRef.current.length > TRAIL_LENGTH) trailRef.current.pop();
-    } else if (trailRef.current.length > 0) {
-      // Update the newest point to track current stern (smooth interpolation)
-      const newest = trailRef.current[0];
-      newest.x = sternX;
-      newest.z = sternZ;
-      newest.perpX = perpX;
-      newest.perpZ = perpZ;
-      newest.speed = speed;
-      newest.turn = turn;
-    }
-
-    // Rebuild geometry from trail
-    const trail = trailRef.current;
-    const positions = geometry.attributes.position.array as Float32Array;
-    const alphas = geometry.attributes.aAlpha.array as Float32Array;
-    const uvs = geometry.attributes.aUv.array as Float32Array;
-    const len = trail.length;
-
-    for (let i = 0; i < TRAIL_LENGTH; i++) {
-      const vi = i * 2;
-      if (i < len) {
-        const pt = trail[i];
-        const age = i / Math.max(len - 1, 1); // 0 = newest, 1 = oldest
-        const speedFactor = Math.min(pt.speed / 7, 1);
-        const wakeStrength = pt.speed > 0.05 ? Math.min(1, 0.18 + speedFactor * 1.05) : 0;
-        const turnStrength = Math.abs(pt.turn);
-        // Width: starts narrow at stern, widens slightly, then narrows as it fades
-        const widthCurve = Math.sin(Math.min(age * 3.0, Math.PI)) * 0.6 + 0.4;
-        const width = (0.42 + speedFactor * 1.05 + turnStrength * 0.55) * widthCurve;
-        // The outside of a turn throws a slightly wider, brighter wash.
-        const turnBias = pt.turn * turnStrength * (0.18 + speedFactor * 0.14);
-        const leftWidth = width * (1 + turnBias);
-        const rightWidth = width * (1 - turnBias);
-
-        positions[vi * 3]       = pt.x + pt.perpX * leftWidth;
-        positions[vi * 3 + 1]   = SEA_LEVEL + WAKE_SURFACE_OFFSET;
-        positions[vi * 3 + 2]   = pt.z + pt.perpZ * leftWidth;
-        positions[(vi+1) * 3]   = pt.x - pt.perpX * rightWidth;
-        positions[(vi+1) * 3 + 1] = SEA_LEVEL + WAKE_SURFACE_OFFSET;
-        positions[(vi+1) * 3 + 2] = pt.z - pt.perpZ * rightWidth;
-
-        // Alpha fades with age, scales with speed
-        const a = Math.pow(1 - age, 1.65) * wakeStrength * (1 + turnStrength * 0.4);
-        alphas[vi] = a * (1 + Math.max(0, turnBias));
-        alphas[vi + 1] = a * (1 + Math.max(0, -turnBias));
-
-        uvs[vi * 2] = 0;       uvs[vi * 2 + 1] = age;
-        uvs[(vi+1) * 2] = 1;   uvs[(vi+1) * 2 + 1] = age;
-      } else {
-        positions[vi * 3 + 1] = -100;
-        positions[(vi+1) * 3 + 1] = -100;
-        alphas[vi] = 0;
-        alphas[vi + 1] = 0;
-      }
-    }
-
-    geometry.attributes.position.needsUpdate = true;
-    (geometry.attributes.aAlpha as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aUv as THREE.BufferAttribute).needsUpdate = true;
-    const curLen = trailRef.current.length;
-    if (curLen !== prevTrailLen.current) {
-      geometry.computeBoundingSphere();
-      prevTrailLen.current = curLen;
-    }
-
-    material.uniforms.uTime.value = state.clock.elapsedTime;
-
-    const time = useGameStore.getState().timeOfDay;
-    const theta = ((time - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(theta);
-    material.uniforms.uDaylight.value = smoothstep(-0.15, 0.25, sunH);
-  });
-
-  return <mesh ref={meshRef} geometry={geometry} material={material} renderOrder={3} />;
-}
-
-// Small shader overlay for bow foam and hull waterline — follows the ship
-function BowFoam() {
-  const meshRef = useRef<THREE.Mesh>(null);
-  useWaterOverlayLayer(meshRef);
-
-  const shaderArgs = useMemo(() => ({
-    uniforms: {
-      uTime: { value: 0 },
-      uShipPos: { value: new THREE.Vector3() },
-      uShipDir: { value: new THREE.Vector2(0, 1) },
-      uShipSpeed: { value: 0.0 },
-      uDaylight: { value: 1.0 },
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vWorldPosition;
-      void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPosition = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      uniform vec3 uShipPos;
-      uniform vec2 uShipDir;
-      uniform float uShipSpeed;
-      uniform float uDaylight;
-      varying vec3 vWorldPosition;
-
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        f = f*f*(3.0-2.0*f);
-        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);
-      }
-      float fbm(vec2 p) {
-        float v = 0.0, a = 0.5;
-        mat2 rot = mat2(0.877,0.479,-0.479,0.877);
-        for (int i = 0; i < 3; i++) { v += a*noise(p); p = rot*p*2.0+vec2(100.0); a *= 0.5; }
-        return v;
-      }
-
-      void main() {
-        if (uShipSpeed < 0.3) discard;
-
-        vec2 toFrag = vWorldPosition.xz - uShipPos.xz;
-        float ahead = dot(toFrag, uShipDir);      // positive = in front
-        float lateral = toFrag.x * uShipDir.y - toFrag.y * uShipDir.x;
-        float absLat = abs(lateral);
-        float dist = length(toFrag);
-        float speedFactor = clamp(uShipSpeed / 12.0, 0.0, 1.0);
-        float alpha = 0.0;
-
-        // Bow wave — small V diverging from prow
-        if (ahead > 1.5 && ahead < 5.0 + speedFactor * 2.0) {
-          float bowDist = ahead - 1.5;
-          float spread = bowDist * 0.5;
-          float bowV = exp(-(absLat - spread) * (absLat - spread) * 4.0);
-          float bowCenter = exp(-absLat * absLat * 3.0) * max(0.0, 1.0 - bowDist / 3.0);
-          float fade = exp(-bowDist * 0.5);
-          float foam = fbm(vec2(ahead * 3.0 + uTime * 2.5, lateral * 4.0)) * 0.5 + 0.5;
-          alpha = (bowV * 0.5 + bowCenter * 0.8) * fade * foam * speedFactor * speedFactor;
-        }
-
-        if (alpha < 0.01) discard;
-        vec3 dayColor = mix(vec3(0.75, 0.88, 0.97), vec3(0.95, 0.98, 1.0), alpha);
-        vec3 nightColor = mix(vec3(0.06, 0.10, 0.16), vec3(0.12, 0.15, 0.20), alpha);
-        vec3 color = mix(nightColor, dayColor, uDaylight);
-        gl_FragColor = vec4(color, alpha * 0.5);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -2,
-  }), []);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    const mat = meshRef.current.material as THREE.ShaderMaterial;
-    const shipTransform = getLiveShipTransform();
-    mat.uniforms.uTime.value = state.clock.elapsedTime;
-    mat.uniforms.uShipPos.value.set(
-      shipTransform.pos[0],
-      shipTransform.pos[1],
-      shipTransform.pos[2],
-    );
-    mat.uniforms.uShipSpeed.value = Math.abs(shipTransform.vel);
-    mat.uniforms.uShipDir.value.set(
-      Math.sin(shipTransform.rot),
-      Math.cos(shipTransform.rot),
-    );
-
-    const time = useGameStore.getState().timeOfDay;
-    const theta = ((time - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(theta);
-    mat.uniforms.uDaylight.value = smoothstep(-0.15, 0.25, sunH);
-
-    meshRef.current.position.x = shipTransform.pos[0];
-    meshRef.current.position.z = shipTransform.pos[2];
-  });
-
-  return (
-    <mesh
-      ref={meshRef}
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, SEA_LEVEL + FOAM_SURFACE_OFFSET, 0]}
-      renderOrder={4}
-    >
-      <planeGeometry args={[20, 20, 1, 1]} />
-      <shaderMaterial args={[shaderArgs]} side={THREE.DoubleSide} />
-    </mesh>
   );
 }
 
@@ -851,11 +556,11 @@ function WaterCaustics() {
         detail = smoothstep(0.3, 0.52, detail);
 
         // Blend: large shapes dominate, detail adds sparkle
-        float combined = caustic * 0.70 + detail * 0.5;
+        float combined = caustic * 0.70 + detail * 0.45;
 
         vec3 causticColor = uCausticTint * (1.02 + combined * 0.18);
 
-        float alpha = combined * 0.046 * uDaylight * distFade;
+        float alpha = combined * 0.036 * uDaylight * distFade;
         if (alpha < 0.002) discard;
 
         gl_FragColor = vec4(causticColor, alpha);
@@ -907,11 +612,10 @@ export function Ocean() {
   const waterRef = useRef<Water | null>(null);
   const advancedWaterEnabled = useGameStore((state) => state.renderDebug.advancedWater);
   const timeOfDay = useGameStore((state) => state.timeOfDay);
-  const shipWakeEnabled = useGameStore((state) => state.renderDebug.shipWake);
-  const bowFoamEnabled = useGameStore((state) => state.renderDebug.bowFoam);
   const algaeEnabled = useGameStore((state) => state.renderDebug.algae);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
+  const reflectionTuning = useMemo(() => getReflectionTuning(waterPaletteId), [waterPaletteId]);
 
   const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
   const sunH = Math.sin(sunAngle);
@@ -927,15 +631,15 @@ export function Ocean() {
   const water = useMemo(() => {
     const geometry = new THREE.PlaneGeometry(10000, 10000);
     const w = new Water(geometry, {
-      textureWidth: 512,
-      textureHeight: 512,
+      textureWidth: 412,
+      textureHeight: 412,
       waterNormals,
       sunDirection: new THREE.Vector3(1, 0, 0).normalize(),
-      sunColor: 0xfffff,
+      sunColor: 0xffff,
       waterColor: waterPalette.surface.fallbackHex,
       alpha: WATER_SURFACE_ALPHA,
-      distortionScale: 1.5,
-      clipBias: 2.00,
+      distortionScale: 1.7,
+      clipBias: 1.5,
       fog: true,
     });
     w.rotation.x = -Math.PI / 2;
@@ -948,6 +652,12 @@ export function Ocean() {
     waterMaterial.polygonOffsetUnits = 4;
 
     // Patch fragment shader:
+    const reflectanceBase = glslFloat(reflectionTuning.reflectanceBase);
+    const reflectanceBoost = glslFloat(reflectionTuning.reflectanceBoost);
+    const reflectanceCap = glslFloat(reflectionTuning.reflectanceCap);
+    const scatterScale = glslFloat(reflectionTuning.scatterScale);
+    const distanceFadeFloor = glslFloat(reflectionTuning.distanceFadeFloor);
+
     // 1. Use a capped Fresnel curve so ship and shoreline reflections stay rich without
     //    creating the old screen-horizontal transition band.
     // 2. Keep some base distortion so far-water reflections are broken up by waves.
@@ -956,12 +666,12 @@ export function Ocean() {
     waterMaterial.fragmentShader = waterMaterial.fragmentShader
       .replace('float rf0 = 0.3;', 'float rf0 = 0.27;')
       .replace(
-        'float reflectance = rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 5.0 );',
-        'float reflectance = min(0.13 + 0.24 * pow(1.0 - theta, 2.0), 0.34);'
+        'float reflectance = rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 1.0 );',
+        `float reflectance = min(${reflectanceBase} + ${reflectanceBoost} * pow(1.0 - theta, 2.0), ${reflectanceCap});`
       )
       .replace(
         'vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor;',
-        'vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor * 1.2;'
+        `vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor * ${scatterScale};`
       )
       .replace(
         'vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;',
@@ -970,14 +680,15 @@ export function Ocean() {
       .replace(
         'vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );',
         `vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );
-				float reflDistFade = smoothstep(350.0, 120.0, distance);
-				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);`
+				float reflDistFade = mix(${distanceFadeFloor}, 1.0, 1.0 - smoothstep(120.0, 350.0, distance));
+				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);
+				`
       );
     waterMaterial.needsUpdate = true;
 
     waterRef.current = w;
     return w;
-  }, [waterNormals, waterPalette]);
+  }, [reflectionTuning, waterNormals, waterPalette]);
 
   useFrame((_, delta) => {
     if (!waterRef.current) return;
@@ -1039,8 +750,7 @@ export function Ocean() {
       )}
       {showAdvancedWater && <WaterCaustics />}
       {algaeEnabled && <PhosphorescentAlgae />}
-      {shipWakeEnabled && <ShipWake />}
-      {bowFoamEnabled && <BowFoam />}
+      <ShipWaterInteraction />
     </>
   );
 }

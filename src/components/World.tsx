@@ -9,10 +9,32 @@ import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '..
 import { setLandCharacterBuildings } from '../utils/landCharacter';
 import { registerTerrainMapCanvas, terrainChartColor } from './WorldMap';
 import { SEA_LEVEL } from '../constants/world';
-import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
+import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 
+/** Shift a hex color's HSL to match the current climate palette.
+ *  Tropical is the baseline — other climates desaturate and hue-shift. */
+function tintVegetation(baseHex: string, paletteId: WaterPaletteId): string {
+  const col = new THREE.Color(baseHex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  col.getHSL(hsl);
+  switch (paletteId) {
+    case 'temperate':
+      hsl.s *= 0.60; hsl.l = hsl.l * 0.96 + 0.04; hsl.h += 0.02; break;
+    case 'arid':
+      hsl.s *= 0.70; hsl.h -= 0.03; break;
+    case 'mediterranean':
+      hsl.s *= 0.78; hsl.h -= 0.01; hsl.l *= 1.02; break;
+    case 'monsoon':
+      hsl.s *= 0.88; hsl.l *= 0.92; break;
+    case 'tropical': default: break;
+  }
+  col.setHSL(hsl.h, Math.min(1, hsl.s), Math.min(1, hsl.l));
+  return '#' + col.getHexString();
+}
+
 import { ProceduralCity } from './ProceduralCity';
+import { Grazers } from './Grazers';
 import { PortIndicators } from './PortIndicators';
 import { BuildingTooltip } from './BuildingTooltip';
 import { generateNPCShip } from '../utils/npcShipGenerator';
@@ -151,6 +173,7 @@ import type { FishShoalEntry } from '../store/gameStore';
 export type { FishShoalEntry };
 let _fishShoalData: FishShoalEntry[] = [];
 export function getFishShoalData() { return _fishShoalData; }
+
 
 // Commodity list now imported from utils/commodities.ts
 type PalmEntry = { position: [number, number, number], scale: number, lean: number, rotation: number };
@@ -402,7 +425,7 @@ export function World() {
   // Generate world data once
   const { 
     landTerrainGeometry, generatedPorts, generatedNpcs, terrainMapCanvas, terrainMapWorldHalf,
-    treeData, deadTreeData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, encounterData,
+    treeData, deadTreeData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
     reseedTerrain(worldSeed);
@@ -440,7 +463,49 @@ export function World() {
     const turtles: { position: [number, number, number], rotation: number, scale: number, color: [number, number, number], shoalIdx: number }[] = [];
     const fishShoals: { center: [number, number, number], fishType: FishType, startIdx: number, count: number, maxCount: number, lastFished: number, scattered: boolean }[] = [];
     const gulls: { position: [number, number, number], phase: number, radius: number }[] = [];
+    const grazers: { position: [number, number, number], rotation: number, color: [number, number, number], scale: number, speedMult: number }[] = [];
     const encounters: OceanEncounterDef[] = [];
+
+    // ── Grazer variant config per port ──────────────────────────────────────
+    const portId = resolveCampaignPortId({ worldSeed, devSoloPort, currentWorldPortId });
+    const GRAZER_VARIANTS: { color: [number, number, number]; scale: number; herdMin: number; herdMax: number; spawnChance: number; biomes: Set<string> }[] = (() => {
+      const col = (hex: string): [number, number, number] => {
+        const c = new THREE.Color(hex);
+        return [c.r, c.g, c.b];
+      };
+      const grass = new Set(['grassland', 'scrubland']);
+      const arid = new Set(['scrubland', 'desert', 'arroyo']);
+      const lush = new Set(['grassland', 'forest', 'scrubland']);
+      const wet = new Set(['grassland', 'swamp', 'scrubland']);
+      switch (portId) {
+        case 'cape':
+          return [{ color: col('#c8a060'), scale: 1.0, herdMin: 5, herdMax: 9, spawnChance: 0.003, biomes: grass }];
+        case 'mombasa': case 'zanzibar':
+          return [{ color: col('#a06840'), scale: 0.9, herdMin: 4, herdMax: 7, spawnChance: 0.0025, biomes: lush }];
+        case 'hormuz': case 'diu': case 'socotra':
+          return [{ color: col('#8a7a6a'), scale: 0.65, herdMin: 3, herdMax: 5, spawnChance: 0.003, biomes: arid }];
+        case 'muscat': case 'mocha': case 'aden':
+          return [{ color: col('#7a6a5a'), scale: 0.7, herdMin: 3, herdMax: 5, spawnChance: 0.003, biomes: arid }];
+        case 'london': case 'amsterdam':
+          return [{ color: col('#e8dcc8'), scale: 0.6, herdMin: 4, herdMax: 8, spawnChance: 0.002, biomes: grass }];
+        case 'lisbon': case 'seville':
+          return [{ color: col('#d8c8a8'), scale: 0.65, herdMin: 3, herdMax: 6, spawnChance: 0.002, biomes: grass }];
+        case 'goa': case 'calicut': case 'surat':
+          return [{ color: col('#4a4a4a'), scale: 1.2, herdMin: 2, herdMax: 3, spawnChance: 0.0015, biomes: wet }];
+        case 'malacca': case 'bantam': case 'macau':
+          return [{ color: col('#5a4a3a'), scale: 1.1, herdMin: 2, herdMax: 3, spawnChance: 0.001, biomes: wet }];
+        case 'salvador': case 'cartagena':
+          return [{ color: col('#8a6848'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: wet }];
+        case 'elmina': case 'luanda':
+          return [{ color: col('#9a7050'), scale: 0.85, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: lush }];
+        case 'havana':
+          return []; // no grazers — iguanas later
+        default:
+          return [{ color: col('#b09060'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: grass }];
+      }
+    })();
+    const CITY_EXCLUSION_SQ = 90 * 90; // no grazers within 90 units of port center
+    const MAX_GRAZERS = 60;
     
     // Single port at center: mesh covers the archetype zone + generous ocean margin
     const size = devSoloPort ? 1000 : 900;
@@ -664,7 +729,38 @@ export function World() {
             radius: 3 + Math.random() * 8,
           });
         }
-      } else if ((biome === 'ocean' || biome === 'lagoon') && height < SEA_LEVEL - 0.3) {
+      } // end beach biome
+
+      // ── Grazer herd spawning ──────────────────────────────────────────
+      if (GRAZER_VARIANTS.length > 0 && grazers.length < MAX_GRAZERS && height > SEA_LEVEL + 0.5) {
+        const variant = GRAZER_VARIANTS[0];
+        if (variant.biomes.has(biome)) {
+          // Exclude city zone — portCenter is near (0,0) for focused maps
+          const portCX = portsData[0]?.position[0] ?? 0;
+          const portCZ = portsData[0]?.position[2] ?? 0;
+          const dpx = x - portCX;
+          const dpz = worldZ - portCZ;
+          if (dpx * dpx + dpz * dpz > CITY_EXCLUSION_SQ && rand < variant.spawnChance) {
+            // Seed a herd — cluster several animals around this point
+            const herdSize = variant.herdMin + Math.floor(Math.random() * (variant.herdMax - variant.herdMin + 1));
+            for (let h = 0; h < herdSize && grazers.length < MAX_GRAZERS; h++) {
+              const jx = x + (Math.random() - 0.5) * 12;
+              const jz = worldZ + (Math.random() - 0.5) * 12;
+              // Slight color variation within herd
+              const cv = 0.92 + Math.random() * 0.16;
+              grazers.push({
+                position: [jx, height + 0.2, jz],
+                rotation: Math.random() * Math.PI * 2,
+                color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
+                scale: variant.scale * (0.85 + Math.random() * 0.3),
+                speedMult: 0.7 + Math.random() * 0.6,
+              });
+            }
+          }
+        }
+      }
+
+      if ((biome === 'ocean' || biome === 'lagoon') && height < SEA_LEVEL - 0.3) {
         // Coral reef 3D instances — in reef zones, capped for performance
         if ((reefFactor > 0.15 || biome === 'lagoon') && rand > (biome === 'lagoon' ? 0.985 : 0.96) && corals.length < 400) {
           corals.push({
@@ -707,9 +803,31 @@ export function World() {
     }
 
     npcs.push(...generateNpcSpawnPositions(portsData, size / 2));
-    
-    // Smooth biome color transitions — only for land-adjacent vertices
+
+    // Height smoothing pass — average each land vertex with its neighbors for rounder hills
     const stride = segments + 1;
+    const origHeights = new Float32Array(posAttribute.count);
+    for (let i = 0; i < posAttribute.count; i++) origHeights[i] = posAttribute.getZ(i);
+    for (let iz = 0; iz < stride; iz++) {
+      for (let ix = 0; ix < stride; ix++) {
+        const idx = iz * stride + ix;
+        if (!isLand[idx]) continue;
+        let sum = 0, cnt = 0;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dz === 0) continue;
+            const nx = ix + dx, nz = iz + dz;
+            if (nx >= 0 && nx < stride && nz >= 0 && nz < stride) {
+              sum += origHeights[nz * stride + nx];
+              cnt++;
+            }
+          }
+        }
+        posAttribute.setZ(idx, origHeights[idx] * 0.6 + (sum / cnt) * 0.4);
+      }
+    }
+
+    // Smooth biome color transitions — only for land-adjacent vertices
     const smoothed = new Float32Array(colors.length);
     for (let iz = 0; iz < stride; iz++) {
       for (let ix = 0; ix < stride; ix++) {
@@ -770,11 +888,12 @@ export function World() {
       turtleData: turtles,
       fishShoalData: fishShoals,
       gullData: gulls,
+      grazerData: grazers,
       encounterData: encounters,
     };
   }, [currentWorldPortId, waterPaletteId, worldSeed, worldSize, devSoloPort]);
 
-  // Sync module-level crab/fish state for Player.tsx and ShiftSelectOverlay
+  // Sync module-level crab/fish/grazer state
   useEffect(() => {
     _crabData = crabData;
     _collectedCrabs = new Set();
@@ -807,6 +926,7 @@ export function World() {
     sunIntensity,
     moonPosition,
     moonIntensity,
+    shadowRadius,
   } = useMemo(() => {
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2; // 6 AM is sunrise
     const sunH = Math.sin(angle); // -1 to 1, how high the sun is
@@ -822,32 +942,64 @@ export function World() {
       -Math.sin(angle) * 15                      // north-south: shadows rotate through the day
     );
 
+    // ── Climate-dependent lighting profiles ────────────────────────────────────
+    // Each climate gets distinct sky fill, ground bounce, sun color, and
+    // ambient-to-sun ratio — this controls shadow color/softness per region.
+    type LightProfile = {
+      ambCol: THREE.Color; groundCol: THREE.Color; ambBase: number; ambScale: number;
+      sunCol: THREE.Color; sunBase: number; sunScale: number; shadowRadius: number;
+    };
+    const profiles: Record<string, LightProfile> = {
+      tropical: {
+        ambCol: new THREE.Color(0.42, 0.72, 0.96), groundCol: new THREE.Color(0.30, 0.44, 0.24),
+        ambBase: 0.44, ambScale: 0.12,
+        sunCol: new THREE.Color(1.0, 0.92, 0.72), sunBase: 1.15, sunScale: 0.85,
+        shadowRadius: 5.0,
+      },
+      monsoon: {
+        ambCol: new THREE.Color(0.42, 0.80, 0.76), groundCol: new THREE.Color(0.28, 0.44, 0.20),
+        ambBase: 0.48, ambScale: 0.10,
+        sunCol: new THREE.Color(0.92, 0.96, 0.76), sunBase: 1.0, sunScale: 0.70,
+        shadowRadius: 6.0,
+      },
+      temperate: {
+        ambCol: new THREE.Color(0.62, 0.68, 0.78), groundCol: new THREE.Color(0.38, 0.34, 0.28),
+        ambBase: 0.52, ambScale: 0.08,
+        sunCol: new THREE.Color(0.90, 0.88, 0.84), sunBase: 0.90, sunScale: 0.65,
+        shadowRadius: 7.0,
+      },
+      arid: {
+        ambCol: new THREE.Color(0.58, 0.56, 0.50), groundCol: new THREE.Color(0.50, 0.40, 0.26),
+        ambBase: 0.38, ambScale: 0.12,
+        sunCol: new THREE.Color(1.0, 0.88, 0.65), sunBase: 1.30, sunScale: 0.90,
+        shadowRadius: 4.0,
+      },
+      mediterranean: {
+        ambCol: new THREE.Color(0.50, 0.66, 0.88), groundCol: new THREE.Color(0.42, 0.36, 0.24),
+        ambBase: 0.44, ambScale: 0.11,
+        sunCol: new THREE.Color(1.0, 0.90, 0.70), sunBase: 1.10, sunScale: 0.80,
+        shadowRadius: 4.5,
+      },
+    };
+    const lp = profiles[waterPaletteId] ?? profiles.tropical;
+
     // Hemisphere light — sky color (top) + ground bounce color (bottom)
-    // Strong blue ambient fills shadows with realistic sky-bounce light
     let ambInt: number, ambCol: THREE.Color, groundCol: THREE.Color;
     if (sunH > 0.35) {
-      ambInt = 0.42 + sunH * 0.12;
-      if (waterPaletteId === 'monsoon') {
-        ambCol = new THREE.Color(0.42, 0.80, 0.76); // saturated humid sky fill
-        groundCol = new THREE.Color(0.28, 0.44, 0.20); // wet green-brown bounce
-      } else if (waterPaletteId === 'tropical') {
-        ambCol = new THREE.Color(0.42, 0.72, 0.96);
-        groundCol = new THREE.Color(0.30, 0.44, 0.24);
-      } else {
-        ambCol = new THREE.Color(0.72, 0.78, 0.95); // soft sky fill keeps shadows friendly
-        groundCol = new THREE.Color(0.45, 0.34, 0.20); // warm sand/earth bounce
-      }
+      ambInt = lp.ambBase + sunH * lp.ambScale;
+      ambCol = lp.ambCol;
+      groundCol = lp.groundCol;
     } else if (sunH > -0.15) {
       const t = (sunH + 0.15) / 0.5;
-      ambInt = 0.22 + t * 0.16;
+      ambInt = 0.22 + t * (lp.ambBase - 0.22);
       ambCol = new THREE.Color().lerpColors(
         new THREE.Color(0.18, 0.22, 0.42),
-        new THREE.Color(1.0, 0.70, 0.44),
+        new THREE.Color().lerpColors(new THREE.Color(1.0, 0.70, 0.44), lp.ambCol, 0.3),
         t
       );
       groundCol = new THREE.Color().lerpColors(
         new THREE.Color(0.08, 0.07, 0.14),
-        new THREE.Color(0.50, 0.31, 0.14),
+        lp.groundCol,
         t
       );
     } else {
@@ -856,19 +1008,17 @@ export function World() {
       groundCol = new THREE.Color(0.07, 0.07, 0.13);
     }
 
-    // Directional sun light — warm but not overpowering; ambient fills the shadows
+    // Directional sun light — intensity and color shaped by climate
     let sInt: number, sCol: THREE.Color;
     if (sunH > 0.35) {
-      sInt = 1.15 + sunH * 0.85;
-      sCol = waterPaletteId === 'monsoon'
-        ? new THREE.Color(0.92, 0.96, 0.76) // filtered humid sun
-        : new THREE.Color(1.0, 0.92, 0.72); // warm tropical sun
+      sInt = lp.sunBase + sunH * lp.sunScale;
+      sCol = lp.sunCol;
     } else if (sunH > -0.05) {
       const t = (sunH + 0.05) / 0.4;
-      sInt = t * 1.15;
+      sInt = t * lp.sunBase;
       sCol = new THREE.Color().lerpColors(
         new THREE.Color(1.0, 0.42, 0.12),
-        new THREE.Color(1.0, 0.80, 0.48),
+        lp.sunCol,
         t
       );
     } else {
@@ -892,13 +1042,18 @@ export function World() {
       sunIntensity: sInt,
       moonPosition: moonPos,
       moonIntensity: moonInt,
+      shadowRadius: lp.shadowRadius,
     };
   }, [timeOfDay, waterPaletteId]);
 
   // ── Terrain material with procedural detail noise ──────────────────────────
+  const terrainShaderUniformsRef = useRef<{ uPlayerPos: { value: THREE.Vector3 } } | null>(null);
   const terrainMaterial = useMemo(() => {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
     mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uPlayerPos = { value: new THREE.Vector3() };
+      terrainShaderUniformsRef.current = shader.uniforms as { uPlayerPos: { value: THREE.Vector3 } };
+
       // Pass world-position varying from vertex to fragment shader
       shader.vertexShader = shader.vertexShader.replace(
         '#include <common>',
@@ -915,6 +1070,7 @@ export function World() {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <common>',
         `#include <common>
+        uniform vec3 uPlayerPos;
         varying vec3 vWorldPos;
 
         // Hash-based noise — fast, no texture lookups
@@ -999,6 +1155,17 @@ export function World() {
         }
         `
       );
+
+      // Fade shadow contribution to zero at distance — hides blocky edges in the
+      // far field and mimics atmospheric softening. Near the ship, full shadow.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;',
+        `{
+          float _shadowFactor = ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;
+          float _shadowFade = smoothstep(50.0, 110.0, distance(vWorldPos.xz, uPlayerPos.xz));
+          directLight.color *= mix(_shadowFactor, 1.0, _shadowFade);
+        }`
+      );
     };
     return mat;
   }, []);
@@ -1006,10 +1173,10 @@ export function World() {
   // Instanced Meshes Setup
   const treeTrunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.2, 0.3, 2, 5), []);
   const treeLeavesGeometry = useMemo(() => new THREE.ConeGeometry(1.5, 4, 5), []);
-  const treeTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#4a3b32' }), []);
-  const treeLeavesMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#2d4c1e' }), []);
+  const treeTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#4a3b32', waterPaletteId) }), [waterPaletteId]);
+  const treeLeavesMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#2d4c1e', waterPaletteId) }), [waterPaletteId]);
 
-  const deadTreeMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#3a3a3a' }), []);
+  const deadTreeMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#3a3a3a', waterPaletteId) }), [waterPaletteId]);
 
   // Palm tree — curved trunk + radiating fronds
   // Geometry is shifted so base is at y=0, top at y=4. Built-in curve bakes into vertices.
@@ -1029,7 +1196,7 @@ export function World() {
     geo.computeVertexNormals();
     return geo;
   }, []);
-  const palmTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#6b5a3e' }), []);
+  const palmTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#6b5a3e', waterPaletteId) }), [waterPaletteId]);
 
   const palmFrondGeometry = useMemo(() => {
     // 6 fronds radiating from center, drooping outward
@@ -1059,9 +1226,9 @@ export function World() {
     return merged ?? new THREE.SphereGeometry(1, 4, 4);
   }, []);
   const palmFrondMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#2a6e1e',
+    color: tintVegetation('#2a6e1e', waterPaletteId),
     side: THREE.DoubleSide,
-  }), []);
+  }), [waterPaletteId]);
 
   // Mangrove cluster — separate prop roots and canopy so the silhouette reads at distance.
   const mangroveRootGeometry = useMemo(() => {
@@ -1081,9 +1248,9 @@ export function World() {
     return merged ?? new THREE.CylinderGeometry(0.08, 0.12, 1.1, 5);
   }, []);
   const mangroveRootMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#4a3324',
+    color: tintVegetation('#4a3324', waterPaletteId),
     roughness: 0.95,
-  }), []);
+  }), [waterPaletteId]);
 
   const mangroveCanopyGeometry = useMemo(() => {
     const canopyA = new THREE.IcosahedronGeometry(0.55, 0);
@@ -1097,9 +1264,9 @@ export function World() {
     return merged ?? new THREE.IcosahedronGeometry(0.6, 0);
   }, []);
   const mangroveCanopyMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#1f4b2b',
+    color: tintVegetation('#1f4b2b', waterPaletteId),
     roughness: 0.95,
-  }), []);
+  }), [waterPaletteId]);
 
   // Reed bed — a small fan of vertical blades, used on tidal flats and mangrove edges
   const reedBedGeometry = useMemo(() => {
@@ -1116,9 +1283,9 @@ export function World() {
     return merged ?? new THREE.CylinderGeometry(0.02, 0.02, 0.7, 3);
   }, []);
   const reedBedMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#6f7d3d',
+    color: tintVegetation('#6f7d3d', waterPaletteId),
     roughness: 0.9,
-  }), []);
+  }), [waterPaletteId]);
 
   const siltPatchGeometry = useMemo(() => {
     const geo = new THREE.CircleGeometry(0.55, 9);
@@ -1149,7 +1316,7 @@ export function World() {
   }), []);
 
   const cactusGeometry = useMemo(() => new THREE.CylinderGeometry(0.3, 0.3, 2, 6), []);
-  const cactusMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#2E8B57' }), []);
+  const cactusMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#2E8B57', waterPaletteId) }), [waterPaletteId]);
 
   // Thornbush — low, wide, spiky cluster for scrubland
   const thornbushGeometry = useMemo(() => {
@@ -1166,8 +1333,8 @@ export function World() {
     return merged ?? new THREE.IcosahedronGeometry(0.4, 0);
   }, []);
   const thornbushMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#6b7a4a', roughness: 0.9,
-  }), []);
+    color: tintVegetation('#6b7a4a', waterPaletteId), roughness: 0.9,
+  }), [waterPaletteId]);
 
   // Driftwood — small weathered log
   const driftwoodGeometry = useMemo(() => {
@@ -1183,8 +1350,8 @@ export function World() {
     return log;
   }, []);
   const driftwoodMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#8a7560', roughness: 0.95,
-  }), []);
+    color: tintVegetation('#8a7560', waterPaletteId), roughness: 0.95,
+  }), [waterPaletteId]);
 
   // Beach rocks — flattened irregular stones
   const beachRockGeometry = useMemo(() => {
@@ -1193,8 +1360,8 @@ export function World() {
     return geo;
   }, []);
   const beachRockMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#6e6860', roughness: 0.85,
-  }), []);
+    color: tintVegetation('#6e6860', waterPaletteId), roughness: 0.85,
+  }), [waterPaletteId]);
 
   // Rice shoots — thin stalk + two tiny leaf planes for paddy fields
   const riceShootGeometry = useMemo(() => {
@@ -1208,8 +1375,8 @@ export function World() {
     return merged ?? new THREE.CylinderGeometry(0.02, 0.02, 0.5, 3);
   }, []);
   const riceShootMaterial = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#5a8c2a', side: THREE.DoubleSide,
-  }), []);
+    color: tintVegetation('#5a8c2a', waterPaletteId), side: THREE.DoubleSide,
+  }), [waterPaletteId]);
   
   const crabGeometry = useMemo(() => {
     // Body — flat wide ellipsoid
@@ -1226,7 +1393,7 @@ export function World() {
     return merged ?? new THREE.BoxGeometry(0.3, 0.1, 0.2);
   }, []);
   const crabMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: '#ff4444' }), []);
-  
+
   // Fish — tapered body + forked tail + dorsal fin (reads as fish even at distance)
   const fishGeometry = useMemo(() => {
     // Tapered body — wider head, narrow tail
@@ -1630,6 +1797,7 @@ export function World() {
       });
       gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
+
   }, [treeData, deadTreeData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, cactusData, thornbushData, riceShootData, driftwoodData, beachRockData, crabData, coralData, fishData, turtleData, gullData]);
 
   // Stabilize shadow camera — snap target to texel grid to prevent shimmer,
@@ -1638,9 +1806,15 @@ export function World() {
     const light = sunLightRef.current;
     if (!light || !light.shadow?.camera) return;
     const playerPos = getLiveShipTransform().pos;
+
+    // Feed player position to terrain shader for distance-based shadow fade
+    if (terrainShaderUniformsRef.current) {
+      terrainShaderUniformsRef.current.uPlayerPos.value.set(playerPos[0], playerPos[1], playerPos[2]);
+    }
+
     const cam = light.shadow.camera as THREE.OrthographicCamera;
     const frustumWidth = cam.right - cam.left;
-    const texelSize = frustumWidth / 4096;
+    const texelSize = frustumWidth / light.shadow.mapSize.x;
     const snappedX = Math.floor(playerPos[0] / texelSize) * texelSize;
     const snappedZ = Math.floor(playerPos[2] / texelSize) * texelSize;
     // Move both target and light together — keeps shadow direction constant everywhere
@@ -1877,6 +2051,7 @@ export function World() {
       });
       if (anyUpdated) gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
+
   });
 
   return (
@@ -1891,9 +2066,9 @@ export function World() {
         color={sunColor}
         castShadow={shadowsActive}
         shadow-mapSize={[4096, 4096]}
-        shadow-bias={-0.0003}
-        shadow-normalBias={0.02}
-        shadow-radius={3.5}
+        shadow-bias={-0.0000}
+        shadow-normalBias={0.0}
+        shadow-radius={shadowRadius}
       >
         <orthographicCamera attach="shadow-camera" args={[-120, 120, 120, -120, 1, 400]} />
       </directionalLight>
@@ -1929,17 +2104,18 @@ export function World() {
       {palmData.length > 0 && (
         <>
           <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          {/* Fronds are thin planes — skip cast to avoid cost and spiderweb artifacts */}
+          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {mangroveData.length > 0 && (
         <>
-          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {reedBedData.length > 0 && (
-        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {siltPatchData.length > 0 && (
         <instancedMesh ref={siltPatchMeshRef} args={[siltPatchGeometry, siltPatchMaterial, siltPatchData.length]} renderOrder={2} frustumCulled={false} />
@@ -1948,10 +2124,10 @@ export function World() {
         <instancedMesh ref={saltStainMeshRef} args={[saltStainGeometry, saltStainMaterial, saltStainData.length]} renderOrder={2} frustumCulled={false} />
       )}
       {cactusData.length > 0 && (
-        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {thornbushData.length > 0 && (
-        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {riceShootData.length > 0 && (
         <instancedMesh ref={riceShootMeshRef} args={[riceShootGeometry, riceShootMaterial, riceShootData.length]} frustumCulled={false} />
@@ -1960,14 +2136,13 @@ export function World() {
         <instancedMesh ref={driftwoodMeshRef} args={[driftwoodGeometry, driftwoodMaterial, driftwoodData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
       {beachRockData.length > 0 && (
-        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
       )}
 
       {crabData.length > 0 && (
         <instancedMesh
           ref={crabMeshRef}
           args={[crabGeometry, crabMaterial, crabData.length]}
-          castShadow={shadowsActive}
           receiveShadow={shadowsActive}
           frustumCulled={false}
           onPointerDown={(e) => {
@@ -2035,6 +2210,7 @@ export function World() {
       {gullData.length > 0 && (
         <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} frustumCulled={false} />
       )}
+      <Grazers data={grazerData} shadowsActive={shadowsActive} />
 
       {/* Coral Reefs — 3 instanced mesh types rendered below water surface */}
       {coralReefEnabled && (() => {

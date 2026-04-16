@@ -378,7 +378,6 @@ function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize
                 vignette: false,
                 advancedWater: false,
                 shipWake: false,
-                bowFoam: false,
                 algae: false,
                 wildlifeMotion: false,
               })}

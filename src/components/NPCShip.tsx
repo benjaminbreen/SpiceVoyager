@@ -390,19 +390,25 @@ export function NPCShip({
   const damageTiltTarget = useRef(0);
   const damageTiltSide = useRef(Math.random() > 0.5 ? 1 : -1); // which side they list to
 
-  // Smoke particles for damaged ships
+  // Smoke particles for damaged ships — mesh only mounts once damage begins
   const smokeMeshRef = useRef<THREE.InstancedMesh>(null);
   const smokeParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number; maxLife: number }[]>([]);
   const SMOKE_COUNT = 12;
   const smokeInitialized = useRef(false);
   const smokeDummy = useMemo(() => new THREE.Object3D(), []);
+  const [smokeActive, setSmokeActive] = useState(false);
 
-  // Bubble particles for sinking
+  // Bubble particles for sinking — mesh only mounts once the ship starts to sink
   const bubbleMeshRef = useRef<THREE.InstancedMesh>(null);
   const bubbleParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number }[]>([]);
   const BUBBLE_COUNT = 16;
   const bubbleInitialized = useRef(false);
   const bubbleDummy = useMemo(() => new THREE.Object3D(), []);
+  const [bubblesActive, setBubblesActive] = useState(false);
+
+  // Frame-rate throttle for distant NPCs
+  const frameSkipCounter = useRef(0);
+  const accumulatedDelta = useRef(0);
 
   // Track proximity state to avoid spamming
   const approachNotified = useRef(false);
@@ -535,8 +541,22 @@ export function NPCShip({
     }
 
     const currentPos = group.current.position;
-    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, setNearestHailableNpc, defeatedNpc, nearestHailableNpc } = useGameStore.getState();
     const playerPos = getLiveShipTransform().pos;
+
+    const dxPlayer = currentPos.x - playerPos[0];
+    const dzPlayer = currentPos.z - playerPos[2];
+    const distToPlayer = Math.sqrt(dxPlayer * dxPlayer + dzPlayer * dzPlayer);
+
+    // Distant ships update every 3rd frame; accumulate delta so motion stays smooth.
+    if (distToPlayer > 200) {
+      accumulatedDelta.current += delta;
+      frameSkipCounter.current = (frameSkipCounter.current + 1) % 3;
+      if (frameSkipCounter.current !== 0) return;
+      delta = accumulatedDelta.current;
+      accumulatedDelta.current = 0;
+    }
+
+    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, setNearestHailableNpc, defeatedNpc, nearestHailableNpc } = useGameStore.getState();
 
     // ── Check for hull damage from projectile hits ──
     const liveEntry = npcLivePositions.get(identity.id);
@@ -545,18 +565,13 @@ export function NPCShip({
       // Ship destroyed?
       if (hullRef.current <= 0) {
         setSinking(true);
+        setBubblesActive(true);
         sfxShipSink();
         defeatedNpc(identity.id, identity.shipName, identity.flag as Nationality, identity.cargo as Partial<Record<Commodity, number>>);
         liveEntry.sunk = true;
         return;
       }
     }
-
-    // Distance to player
-    const distToPlayer = Math.sqrt(
-      (currentPos.x - playerPos[0]) ** 2 +
-      (currentPos.z - playerPos[2]) ** 2
-    );
 
     // ── Proximity detection (only in ship mode) ──
     if (playerMode === 'ship') {
@@ -608,6 +623,7 @@ export function NPCShip({
         if (hullRef.current <= 0) {
           if (liveEntry) liveEntry.sunk = true;
           setSinking(true);
+          setBubblesActive(true);
           sfxShipSink();
           defeatedNpc(identity.id, identity.shipName, identity.flag as Nationality, identity.cargo as Partial<Record<Commodity, number>>);
           return;
@@ -754,7 +770,10 @@ export function NPCShip({
       + damageTilt.current * 0.15;
 
     // ── Damage smoke — rising from damaged ships ──
-    if (hullFrac < 0.7 && smokeMeshRef.current) {
+    if (hullFrac < 0.7 && !smokeActive) {
+      setSmokeActive(true);
+    }
+    if (hullFrac < 0.7 && distToPlayer < 120 && smokeMeshRef.current) {
       if (!smokeInitialized.current) {
         smokeInitialized.current = true;
         for (let i = 0; i < SMOKE_COUNT; i++) {
@@ -824,9 +843,9 @@ export function NPCShip({
 
     // Alert ring visibility
     if (alertRingRef.current) {
-      alertRingRef.current.visible = isAlerted;
-      if (isAlerted) {
-        // Pulse the ring opacity
+      const showAlert = isAlerted && distToPlayer < 180;
+      alertRingRef.current.visible = showAlert;
+      if (showAlert) {
         const pulse = 0.5 + Math.sin(state.clock.elapsedTime * 6) * 0.3;
         (alertRingRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
       }
@@ -958,27 +977,31 @@ export function NPCShip({
       </group>
 
       {/* Damage smoke — world-space particles rising from burning ship */}
-      <instancedMesh ref={smokeMeshRef} args={[undefined, undefined, SMOKE_COUNT]} frustumCulled={false}>
-        <sphereGeometry args={[0.8, 6, 6]} />
-        <meshStandardMaterial
-          color="#222222"
-          transparent
-          opacity={0.45}
-          depthWrite={false}
-        />
-      </instancedMesh>
+      {smokeActive && (
+        <instancedMesh ref={smokeMeshRef} args={[undefined, undefined, SMOKE_COUNT]} frustumCulled={false}>
+          <sphereGeometry args={[0.8, 6, 6]} />
+          <meshStandardMaterial
+            color="#222222"
+            transparent
+            opacity={0.45}
+            depthWrite={false}
+          />
+        </instancedMesh>
+      )}
 
       {/* Sinking bubbles — world-space */}
-      <instancedMesh ref={bubbleMeshRef} args={[undefined, undefined, BUBBLE_COUNT]} frustumCulled={false}>
-        <sphereGeometry args={[0.3, 6, 6]} />
-        <meshStandardMaterial
-          color="#aaddee"
-          emissive="#668899"
-          emissiveIntensity={0.3}
-          transparent
-          opacity={0.7}
-        />
-      </instancedMesh>
+      {bubblesActive && (
+        <instancedMesh ref={bubbleMeshRef} args={[undefined, undefined, BUBBLE_COUNT]} frustumCulled={false}>
+          <sphereGeometry args={[0.3, 6, 6]} />
+          <meshStandardMaterial
+            color="#aaddee"
+            emissive="#668899"
+            emissiveIntensity={0.3}
+            transparent
+            opacity={0.7}
+          />
+        </instancedMesh>
+      )}
     </>
   );
 }

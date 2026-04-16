@@ -11,6 +11,7 @@ import {
   type CommodityTier,
 } from '../utils/commodities';
 import { sfxCoin, sfxClick, sfxHover } from '../audio/SoundEffects';
+import { getEffectiveKnowledge, type KnowledgeLevel } from '../utils/knowledgeSystem';
 
 export interface MarketTabLedgerProps {
   port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
@@ -38,6 +39,8 @@ interface MarketRow {
   playerInv: number;
   maxBuy: number;
   maxSell: number;
+  knowledgeLevel: KnowledgeLevel;
+  displayName: string;
 }
 
 const TIERS: CommodityTier[] = [1, 2, 3, 4, 5];
@@ -90,6 +93,9 @@ export function MarketTabLedger({
   const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(null);
   const [quantity, setQuantity] = useState(1);
 
+  const knowledgeState = useGameStore(s => s.knowledgeState);
+  const crew = useGameStore(s => s.crew);
+
   const spaceLeft = Math.max(0, cargoCapacity - cargoWeight);
 
   const rows = useMemo<MarketRow[]>(() => {
@@ -108,6 +114,9 @@ export function MarketTabLedger({
       const price = port.prices[commodity] ?? 0;
       const available = price > 0 || portInv > 0 || playerInv > 0;
       if (!available) return [];
+
+      const kLevel = getEffectiveKnowledge(commodity, knowledgeState, crew);
+      const displayName = kLevel >= 1 ? commodity : def.physicalDescription;
 
       const avg = averageFor(commodity);
       const portStocksGood = port.basePrices[commodity] > 0;
@@ -132,9 +141,11 @@ export function MarketTabLedger({
         playerInv,
         maxBuy,
         maxSell: playerInv,
+        knowledgeLevel: kLevel,
+        displayName,
       }];
     });
-  }, [cargo, gold, port.basePrices, port.id, port.inventory, port.prices, ports, spaceLeft]);
+  }, [cargo, gold, port.basePrices, port.id, port.inventory, port.prices, ports, spaceLeft, knowledgeState, crew]);
 
   const rowsByTier = useMemo(() => {
     const grouped = new Map<CommodityTier, MarketRow[]>();
@@ -258,6 +269,8 @@ export function MarketTabLedger({
                     const isSelected = row.commodity === selected.commodity;
                     const signal = getSignalLabel(row.signal);
                     const role = getRoleLabel(row.role);
+                    const isUnknown = row.knowledgeLevel === 0;
+                    const isMastered = row.knowledgeLevel >= 2;
                     const image = getCommodityImage(row.commodity);
                     const meterPct = Math.round(clamp(row.ratio / 2, 0.06, 1) * 100);
 
@@ -265,6 +278,7 @@ export function MarketTabLedger({
                       <button
                         key={row.commodity}
                         type="button"
+                        aria-selected={isSelected}
                         onMouseEnter={() => sfxHover()}
                         onClick={() => {
                           sfxClick();
@@ -277,22 +291,35 @@ export function MarketTabLedger({
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           {image ? (
-                            <img src={image} alt="" className="h-11 w-11 shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.03] object-cover opacity-90" />
+                            <img src={image} alt="" className={`h-11 w-11 shrink-0 rounded-lg border object-cover ${isUnknown ? 'border-amber-400/15 opacity-60 saturate-50' : 'border-white/[0.06] bg-white/[0.03] opacity-90'}`} />
                           ) : (
-                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-lg" style={{ color: def.color }}>
+                            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border text-lg ${isUnknown ? 'border-amber-400/15 bg-amber-400/[0.05]' : 'border-white/[0.06] bg-white/[0.03]'}`} style={{ color: isUnknown ? '#d4a054' : def.color }}>
                               {def.icon}
                             </span>
                           )}
                           <span className="min-w-0">
-                            <span className="block truncate text-[15px] font-bold leading-tight text-slate-200" style={{ fontFamily: '"Fraunces", serif' }}>
-                              {row.commodity}
+                            <span className={`block truncate text-[15px] font-bold leading-tight ${isUnknown ? 'text-amber-200/70 italic' : isMastered ? 'text-emerald-200' : 'text-slate-200'}`} style={{ fontFamily: '"Fraunces", serif' }}>
+                              {row.displayName}
                             </span>
                             <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                              <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] ${role.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                                {role.label}
-                              </span>
+                              {isUnknown ? (
+                                <span className="rounded-full border border-amber-400/20 bg-amber-400/[0.08] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] text-amber-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                  Unknown
+                                </span>
+                              ) : (
+                                <>
+                                  <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] ${role.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    {role.label}
+                                  </span>
+                                  {isMastered && (
+                                    <span className="rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] text-emerald-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                      Mastered
+                                    </span>
+                                  )}
+                                </>
+                              )}
                               <span className="hidden truncate text-[10px] text-slate-600 sm:inline" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                                {def.description}
+                                {isUnknown ? 'You do not recognize this good.' : def.description}
                               </span>
                             </span>
                           </span>
@@ -330,35 +357,53 @@ export function MarketTabLedger({
         </div>
       </section>
 
-      <aside className="rounded-lg border border-white/[0.05] bg-white/[0.018] p-4">
+      <aside className={`rounded-lg border p-4 ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-950/[0.15]' : 'border-white/[0.05] bg-white/[0.018]'}`}>
         <div className="flex items-start gap-4">
           {selectedImage ? (
-            <img src={selectedImage} alt="" className="h-24 w-24 shrink-0 rounded-lg border border-white/[0.07] bg-white/[0.025] object-cover opacity-95" />
+            <img src={selectedImage} alt="" className={`h-24 w-24 shrink-0 rounded-lg border object-cover ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 opacity-60 saturate-50' : 'border-white/[0.07] bg-white/[0.025] opacity-95'}`} />
           ) : (
-            <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] text-4xl" style={{ color: selectedDef.color }}>
+            <div className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border text-4xl ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-400/[0.05]' : 'border-white/[0.07] bg-white/[0.025]'}`} style={{ color: selected.knowledgeLevel === 0 ? '#d4a054' : selectedDef.color }}>
               {selectedDef.icon}
             </div>
           )}
           <div className="min-w-0 flex-1">
             <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              Trade Ticket
+              {selected.knowledgeLevel === 0 ? 'Unknown Goods' : 'Trade Ticket'}
             </div>
-            <h3 className="mt-1 text-xl font-bold leading-tight text-slate-100" style={{ fontFamily: '"Fraunces", serif' }}>
-              {selected.commodity}
+            <h3 className={`mt-1 text-xl font-bold leading-tight ${selected.knowledgeLevel === 0 ? 'italic text-amber-200/70' : selected.knowledgeLevel >= 2 ? 'text-emerald-200' : 'text-slate-100'}`} style={{ fontFamily: '"Fraunces", serif' }}>
+              {selected.displayName}
             </h3>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedRole.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                {selectedRole.label}
-              </span>
-              <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                {selectedSignal.label}
-              </span>
+              {selected.knowledgeLevel === 0 ? (
+                <span className="rounded-full border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                  Unidentified
+                </span>
+              ) : (
+                <>
+                  <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedRole.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                    {selectedRole.label}
+                  </span>
+                  <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                    {selectedSignal.label}
+                  </span>
+                  {selected.knowledgeLevel >= 2 && (
+                    <span className="rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-emerald-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                      Mastered
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
 
         <p className="mt-4 text-[15px] leading-relaxed text-slate-400" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-          {selectedDef.description}
+          {selected.knowledgeLevel === 0
+            ? 'You do not recognize this substance. Buying it is a gamble — it could be worthless, or extraordinarily valuable.'
+            : selected.knowledgeLevel >= 2
+              ? `${selectedDef.description} You know the best markets for this good.`
+              : selectedDef.description
+          }
         </p>
 
         <div className="mt-3 h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
@@ -366,7 +411,10 @@ export function MarketTabLedger({
         </div>
         <div className="mt-1 flex justify-between text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>
           <span>Cheap</span>
-          <span>Average {Math.round(selected.avg)}g</span>
+          {selected.knowledgeLevel >= 1
+            ? <span>Average {Math.round(selected.avg)}g</span>
+            : <span>You cannot judge the fair price</span>
+          }
           <span>Dear</span>
         </div>
 

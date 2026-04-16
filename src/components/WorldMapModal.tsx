@@ -546,6 +546,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                 key={region}
                 onClick={() => { sfxClick(); navigateToRegion(region); }}
                 onMouseEnter={() => sfxHover()}
+                aria-selected={activeRegion === region}
                 className={`px-3 py-1 rounded-full text-[10px] font-semibold tracking-wide transition-all ${
                   activeRegion === region
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
@@ -627,6 +628,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                   <button
                     onClick={() => { sfxClick(); toggleRegion(region); }}
                     onMouseEnter={() => sfxHover()}
+                    aria-pressed={isExpanded}
                     className="w-full flex items-center gap-2 px-4 py-2 text-left
                       hover:bg-white/[0.03] transition-colors"
                   >
@@ -652,6 +654,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                       <button
                         key={port.id}
                         onMouseEnter={() => sfxHover()}
+                        aria-selected={isSelected}
                         onClick={() => {
                           if (!isPlayer && !isReachable) return;
                           sfxClick();

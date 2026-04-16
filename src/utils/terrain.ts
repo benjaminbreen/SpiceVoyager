@@ -191,8 +191,8 @@ function getHeightOnly(x: number, z: number): number {
   let elevation = 0;
   elevation += _mainNoise(x * 0.005, z * 0.005) * 30;
   elevation += _mainNoise(x * 0.01, z * 0.01) * 15;
-  elevation += _mainNoise(x * 0.02, z * 0.02) * 7.5;
-  elevation += _mainNoise(x * 0.04, z * 0.04) * 3.75;
+  elevation += _mainNoise(x * 0.02, z * 0.02) * 5.0;
+  elevation += _mainNoise(x * 0.04, z * 0.04) * 2.0;
 
   const continentNoise = _mainNoise(x * 0.0003, z * 0.0003);
   const islandNoise = _mainNoise(x * 0.0012 + 500, z * 0.0012 + 500);
@@ -309,7 +309,7 @@ function archetypeHeightFromShape(
   const massif = Math.max(interiorSummit * 0.85, smoothstep(0.66, 0.88, massifNoise));
   const peakNoise = (_volcanoNoise(x * 0.004 + 914.0, z * 0.004 - 313.0) + 1) * 0.5;
   const peak = Math.max(interiorSummit * 0.75, smoothstep(0.90, 0.985, peakNoise));
-  const detail = _mainNoise(x * 0.025, z * 0.025) * 3.2;
+  const detail = _mainNoise(x * 0.025, z * 0.025) * 2.0;
   const escarpment = bandFactor(
     inlandDistance,
     45,
@@ -367,8 +367,8 @@ export function getTerrainData(x: number, z: number): TerrainData {
   let elevation = 0;
   elevation += _mainNoise(x * 0.005, z * 0.005) * 30;
   elevation += _mainNoise(x * 0.01, z * 0.01) * 15;
-  elevation += _mainNoise(x * 0.02, z * 0.02) * 7.5;
-  elevation += _mainNoise(x * 0.04, z * 0.04) * 3.75;
+  elevation += _mainNoise(x * 0.02, z * 0.02) * 5.0;
+  elevation += _mainNoise(x * 0.04, z * 0.04) * 2.0;
 
   // Continent/Island mask — continent scale dominates for fewer, larger landmasses
   const continentNoise = _mainNoise(x * 0.0003, z * 0.0003);          // large continents
@@ -539,12 +539,12 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
   // Noise-fuzzed height for biome boundary selection — makes ecotones irregular
   // instead of following contour lines
-  const biomeNoise = _patchNoise(x * 0.008, z * 0.008) * 2.0;
+  const biomeNoise = _patchNoise(x * 0.008, z * 0.008) * 1.3;
   const biomeHeight = finalHeight + biomeNoise;
 
   // Sub-biome patch noise at two frequencies for within-biome variety
-  const patch1 = _patchNoise(x * 0.015, z * 0.015);       // field-scale patches
-  const patch2 = _patchNoise(x * 0.04 + 100, z * 0.04 + 100); // clump-scale detail
+  const patch1 = _patchNoise(x * 0.015, z * 0.015) * 0.72;       // field-scale patches (damped for smoother biome coloring)
+  const patch2 = _patchNoise(x * 0.04 + 100, z * 0.04 + 100) * 0.72; // clump-scale detail
 
   // Slope-based rock exposure — steep slopes show underlying rock
   const rockColor: TerrainColor = [
@@ -552,7 +552,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
     0.36 - moisture * 0.04,          // wetter = darker basalt
     0.30 + moisture * 0.03,
   ];
-  const rockExposure = clamp01(slope * 1.8) * smoothstep(SEA_LEVEL + 1, SEA_LEVEL + 3, finalHeight);
+  const rockExposure = clamp01(slope * 1.4) * smoothstep(SEA_LEVEL + 1, SEA_LEVEL + 3, finalHeight);
 
   if (isWaterfall) {
     biome = 'waterfall';
@@ -812,6 +812,11 @@ export function getTerrainData(x: number, z: number): TerrainData {
     }
   }
 
+  // Apply climate-specific color tinting — desaturation + tonal shift for cohesion
+  if (biome !== 'ocean' && nearbyClimate) {
+    color = applyClimateTint(color, nearbyClimate);
+  }
+
   return {
     height: finalHeight,
     biome,
@@ -827,6 +832,50 @@ export function getTerrainData(x: number, z: number): TerrainData {
     paddyFlooded,
     slope,
   };
+}
+
+/** Shifts terrain color toward a climate-appropriate tone — desaturates and tints
+ *  so all biomes within a region share a common color family. */
+function applyClimateTint(color: TerrainColor, climate: ClimateProfile): TerrainColor {
+  let sat: number, tint: TerrainColor, tintStr: number;
+
+  switch (climate) {
+    case 'tropical':
+      // Lush but slightly earthy — just a gentle muting
+      sat = 0.92; tint = [0.45, 0.42, 0.32]; tintStr = 0.06;
+      break;
+    case 'temperate':
+      // Grey-green, cool, noticeably muted
+      sat = 0.72; tint = [0.42, 0.46, 0.44]; tintStr = 0.14;
+      break;
+    case 'arid':
+      // Dusty ochre warmth, moderately desaturated
+      sat = 0.78; tint = [0.55, 0.45, 0.32]; tintStr = 0.12;
+      break;
+    case 'mediterranean':
+      // Warm olive, between tropical and temperate
+      sat = 0.82; tint = [0.48, 0.44, 0.34]; tintStr = 0.10;
+      break;
+    case 'monsoon':
+      // Deep rich greens, mild muting
+      sat = 0.88; tint = [0.28, 0.38, 0.30]; tintStr = 0.10;
+      break;
+  }
+
+  // Perceptual luminance
+  const lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+
+  // Desaturate toward grey
+  let r = lum + (color[0] - lum) * sat;
+  let g = lum + (color[1] - lum) * sat;
+  let b = lum + (color[2] - lum) * sat;
+
+  // Mix toward climate tint
+  r = r + (tint[0] - r) * tintStr;
+  g = g + (tint[1] - g) * tintStr;
+  b = b + (tint[2] - b) * tintStr;
+
+  return [clamp01(r), clamp01(g), clamp01(b)];
 }
 
 // Keep this for backwards compatibility if needed, but we'll use getTerrainData mostly

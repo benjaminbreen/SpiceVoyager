@@ -1,6 +1,6 @@
 import { getTerrainData, setPlacedArchetypes } from './terrain';
 import { generateCity } from './cityGenerator';
-import { generatePortPrices, generatePortInventory, supplyDemandModifier, ALL_COMMODITIES, type Commodity } from './commodities';
+import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
 import {
   PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,

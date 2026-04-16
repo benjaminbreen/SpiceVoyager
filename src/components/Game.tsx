@@ -110,6 +110,7 @@ function landfallDescription(x: number, z: number): { title: string; subtitle: s
 // Custom camera controller with right-click-drag panning
 function CameraController() {
   const setCameraZoom = useGameStore((state) => state.setCameraZoom);
+  const setCameraRotation = useGameStore((state) => state.setCameraRotation);
   const { camera, gl } = useThree();
   const currentPos = useRef(new THREE.Vector3());
   const targetPos = useRef(new THREE.Vector3());
@@ -122,6 +123,10 @@ function CameraController() {
   // Smooth zoom — store a target and lerp toward it each frame
   const zoomTarget = useRef(useGameStore.getState().cameraZoom);
 
+  // Camera orbit rotation — Z/X keys
+  const rotationTarget = useRef(useGameStore.getState().cameraRotation);
+  const rotationKeys = useRef({ z: false, x: false });
+
   // Raycaster for mouse→world projection (combat aiming)
   const raycaster = useRef(new THREE.Raycaster());
   const mouseNDC = useRef(new THREE.Vector2());
@@ -132,9 +137,10 @@ function CameraController() {
     const el = gl.domElement;
 
     const handleWheel = (e: WheelEvent) => {
-      // Accumulate into target; actual zoom lerps in useFrame
+      // Step scales with current zoom so it feels consistent at all distances
+      const step = Math.max(1.5, zoomTarget.current * 0.06);
       zoomTarget.current = Math.max(10, Math.min(150,
-        zoomTarget.current + (e.deltaY > 0 ? 4 : -4)
+        zoomTarget.current + (e.deltaY > 0 ? step : -step)
       ));
     };
 
@@ -165,29 +171,56 @@ function CameraController() {
       if (e.button === 0) setFireHeld(false);
     };
 
+    // Z/X camera rotation keys (use window so they work even when canvas isn't focused)
+    const handleRotKeyDown = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (k === 'z') rotationKeys.current.z = true;
+      if (k === 'x') rotationKeys.current.x = true;
+    };
+    const handleRotKeyUp = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (k === 'z') rotationKeys.current.z = false;
+      if (k === 'x') rotationKeys.current.x = false;
+    };
+
     el.addEventListener('wheel', handleWheel);
     el.addEventListener('contextmenu', handleContextMenu);
     el.addEventListener('pointermove', handlePointerMove);
     el.addEventListener('pointerdown', handlePointerDown);
     el.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('keydown', handleRotKeyDown);
+    window.addEventListener('keyup', handleRotKeyUp);
     return () => {
       el.removeEventListener('wheel', handleWheel);
       el.removeEventListener('contextmenu', handleContextMenu);
       el.removeEventListener('pointermove', handlePointerMove);
       el.removeEventListener('pointerdown', handlePointerDown);
       el.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('keydown', handleRotKeyDown);
+      window.removeEventListener('keyup', handleRotKeyUp);
     };
   }, [gl, setCameraZoom]);
 
   useFrame((_, delta) => {
-    // Smooth zoom lerp
+    // Smooth zoom lerp — gentle ease-out
     const currentZoom = useGameStore.getState().cameraZoom;
     if (Math.abs(zoomTarget.current - currentZoom) > 0.05) {
-      const lerpSpeed = 1 - Math.pow(0.001, delta); // ~6x per second smoothing
+      const lerpSpeed = 1 - Math.exp(-delta * 6); // smooth ~6/s convergence
       setCameraZoom(currentZoom + (zoomTarget.current - currentZoom) * lerpSpeed);
     }
 
-    const { playerMode, cameraZoom, viewMode } = useGameStore.getState();
+    // Camera orbit rotation — continuous while Z/X held
+    const rotSpeed = 1.8; // radians per second
+    if (rotationKeys.current.z) rotationTarget.current += rotSpeed * delta;
+    if (rotationKeys.current.x) rotationTarget.current -= rotSpeed * delta;
+    // Smooth lerp toward target
+    const currentRot = useGameStore.getState().cameraRotation;
+    if (Math.abs(rotationTarget.current - currentRot) > 0.001) {
+      const rotLerp = 1 - Math.pow(0.001, delta);
+      setCameraRotation(currentRot + (rotationTarget.current - currentRot) * rotLerp);
+    }
+
+    const { playerMode, cameraZoom, viewMode, cameraRotation } = useGameStore.getState();
     const shipTransform = getLiveShipTransform();
     const walkingTransform = getLiveWalkingTransform();
     const activePos = playerMode === 'ship' ? shipTransform.pos : walkingTransform.pos;
@@ -226,8 +259,12 @@ function CameraController() {
     currentPos.current.x += panOffset.current.x;
     currentPos.current.z += panOffset.current.z;
 
+    // Pre-compute rotation sin/cos for orbit
+    const sinR = Math.sin(cameraRotation);
+    const cosR = Math.cos(cameraRotation);
+
     if (viewMode === 'firstperson') {
-      // First-person: camera at eye level, looking in heading direction
+      // First-person: camera at eye level, looking in heading direction (rotation not applied — you look where the ship faces)
       camera.position.x = currentPos.current.x;
       camera.position.y = currentPos.current.y + (playerMode === 'ship' ? 4 : 2);
       camera.position.z = currentPos.current.z;
@@ -237,27 +274,35 @@ function CameraController() {
         currentPos.current.z + Math.cos(activeRot) * 10
       );
     } else if (viewMode === 'cinematic') {
-      // Cinematic: close behind-and-above follow with offset behind the heading
+      // Cinematic: close behind-and-above follow, rotated by orbit angle
       const dist = Math.min(cameraZoom, 20);
-      camera.position.x = currentPos.current.x - Math.sin(activeRot) * dist * 0.8;
+      const behindX = -Math.sin(activeRot + cameraRotation) * dist * 0.8;
+      const behindZ = -Math.cos(activeRot + cameraRotation) * dist * 0.8;
+      camera.position.x = currentPos.current.x + behindX;
       camera.position.y = currentPos.current.y + dist * 0.5;
-      camera.position.z = currentPos.current.z - Math.cos(activeRot) * dist * 0.8;
+      camera.position.z = currentPos.current.z + behindZ;
       camera.lookAt(
         currentPos.current.x + Math.sin(activeRot) * 5,
         currentPos.current.y + 1,
         currentPos.current.z + Math.cos(activeRot) * 5
       );
     } else if (viewMode === 'topdown') {
-      // Top-down strategic view
-      camera.position.x = currentPos.current.x;
+      // Top-down strategic view — orbit offset so it's not perfectly vertical
+      const tinyOffset = 0.01;
+      camera.position.x = currentPos.current.x + sinR * tinyOffset;
       camera.position.y = currentPos.current.y + cameraZoom * 1.5;
-      camera.position.z = currentPos.current.z + 0.01; // tiny offset to avoid gimbal lock
+      camera.position.z = currentPos.current.z + cosR * tinyOffset;
       camera.lookAt(currentPos.current);
     } else {
-      // Default: original 45-degree diagonal view
-      camera.position.x = currentPos.current.x + cameraZoom * 0.5;
+      // Default: 45-degree diagonal view, rotated around player by orbit angle
+      const offsetX = cameraZoom * 0.5;
+      const offsetZ = cameraZoom;
+      // Rotate the offset vector around Y axis
+      const rotatedX = offsetX * cosR + offsetZ * sinR;
+      const rotatedZ = -offsetX * sinR + offsetZ * cosR;
+      camera.position.x = currentPos.current.x + rotatedX;
       camera.position.y = currentPos.current.y + cameraZoom;
-      camera.position.z = currentPos.current.z + cameraZoom;
+      camera.position.z = currentPos.current.z + rotatedZ;
       camera.lookAt(currentPos.current);
     }
 
@@ -712,8 +757,8 @@ function useAtmosphere() {
     let skyColor: THREE.Color;
     let fogColor: THREE.Color;
     const climateSky = {
-      daySky: waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#119df2' : '#58b7ec',
-      dayFog: waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#92d8ff' : '#a7d8ef',
+      daySky: waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc',
+      dayFog: waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede',
       duskSky: waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158',
       duskFog: waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42',
       warmSky: waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b',
@@ -764,11 +809,11 @@ function useAtmosphere() {
       || waterPaletteId === 'arid'
       || waterPaletteId === 'mediterranean';
     const fogNear = sunH > 0
-      ? clearDayPalette ? 520 : 460
-      : 120 + Math.max(0, sunH + 0.3) * 420;
+      ? clearDayPalette ? 300 : 280
+      : 100 + Math.max(0, sunH + 0.3) * 200;
     const fogFar = sunH > 0
-      ? clearDayPalette ? 1800 : 1450
-      : 360 + Math.max(0, sunH + 0.3) * 1100;
+      ? clearDayPalette ? 1000 : 880
+      : 300 + Math.max(0, sunH + 0.3) * 580;
 
     // Postprocessing — golden hour warm, night cool/desaturated
     let brightness = 0;
@@ -777,10 +822,10 @@ function useAtmosphere() {
     let saturation = 0;
 
     if (sunH > 0.3) {
-      // Day — gently saturated and bright, closer to a Sid Meier's Pirates tone.
+      // Day — gentle with restrained saturation for a period-painterly feel.
       brightness = 0.01;
       contrast = 0.02;
-      saturation = 0.08;
+      saturation = 0.02;
     } else if (sunH > -0.05) {
       // Golden hour — warm, slightly saturated
       const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
@@ -839,7 +884,7 @@ export function Game() {
   return (
     <div className="w-full h-screen bg-black overflow-hidden relative">
       <Canvas
-        dpr={[1, 2]}
+        dpr={[1, 1.5]}
         gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
         shadows={{ type: THREE.PCFSoftShadowMap }}
         camera={{ position: [0, 50, 50], fov: 45 }}
@@ -889,9 +934,9 @@ function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boole
       <N8AO
         aoRadius={1.4}
         intensity={1.4}
-        aoSamples={8}
-        denoiseSamples={4}
-        denoiseRadius={12}
+        aoSamples={6}
+        denoiseSamples={3}
+        denoiseRadius={10}
         distanceFalloff={1.2}
         halfRes
       />

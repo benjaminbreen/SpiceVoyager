@@ -2217,14 +2217,14 @@ function ShipStatRow({ label, value, pct, color }: { label: string; value: strin
 // CARGO TAB
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { ALL_COMMODITIES, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 
 // Derive colors and icons from the central commodity definitions
 const COMMODITY_COLORS: Record<string, string> = Object.fromEntries(
-  ALL_COMMODITIES.map(c => [c, COMMODITY_DEFS[c].color])
+  ALL_COMMODITIES_FULL.map(c => [c, COMMODITY_DEFS[c].color])
 );
 const COMMODITY_ICONS: Record<string, string> = Object.fromEntries(
-  ALL_COMMODITIES.map(c => [c, COMMODITY_DEFS[c].icon])
+  ALL_COMMODITIES_FULL.map(c => [c, COMMODITY_DEFS[c].icon])
 );
 
 function CargoTab() {
@@ -2253,7 +2253,7 @@ function CargoTab() {
 
   // Total estimated sell value at nearest port
   const totalValue = nearPort
-    ? ALL_COMMODITIES.reduce((sum, c) => sum + (cargo[c as keyof typeof cargo] ?? 0) * Math.floor((nearPort.prices[c as keyof typeof nearPort.prices] ?? 0) * 0.8), 0)
+    ? ALL_COMMODITIES_FULL.reduce((sum, c) => sum + (cargo[c as keyof typeof cargo] ?? 0) * Math.floor((nearPort.prices[c as keyof typeof nearPort.prices] ?? 0) * 0.8), 0)
     : null;
 
   return (
@@ -2305,7 +2305,7 @@ function CargoTab() {
 
           {/* Segmented hold bar */}
           <div className="h-[10px] rounded-full overflow-hidden flex" style={{ backgroundColor: CLR.rule + '40' }}>
-            {ALL_COMMODITIES.map(c => {
+            {ALL_COMMODITIES_FULL.map(c => {
               const qty = cargo[c as keyof typeof cargo] ?? 0;
               if (qty === 0) return null;
               const pct = (qty / stats.cargoCapacity) * 100;
@@ -2325,7 +2325,7 @@ function CargoTab() {
 
           {/* Legend */}
           <div className="flex items-center gap-3 mt-2 flex-wrap">
-            {ALL_COMMODITIES.map(c => {
+            {ALL_COMMODITIES_FULL.map(c => {
               const qty = cargo[c as keyof typeof cargo] ?? 0;
               if (qty === 0) return null;
               return (
@@ -2372,7 +2372,7 @@ function CargoTab() {
         <div className="h-[1px]" style={{ background: `linear-gradient(90deg, transparent, ${CLR.rule}60, transparent)` }} />
 
         {/* Commodity rows */}
-        {ALL_COMMODITIES.map((c, i) => {
+        {ALL_COMMODITIES_FULL.map((c, i) => {
           const qty = cargo[c as keyof typeof cargo] ?? 0;
           const pct = stats.cargoCapacity > 0 ? Math.round((qty / stats.cargoCapacity) * 100) : 0;
           const color = COMMODITY_COLORS[c];

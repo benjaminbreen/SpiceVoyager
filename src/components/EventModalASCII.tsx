@@ -1,20 +1,22 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
-import { ALL_COMMODITIES, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { parchment } from '../theme/tokens';
 
 // ── Colors ───────────────────────────────────────────────────────────────────
-const GOLD      = '#c9a84c';
-const DIM_GOLD  = '#8a7a4a';
-const WARM      = '#b89a6a';
-const CRIMSON   = '#a05050';
-const TEAL      = '#5a9aaa';
-const RULE      = '#3a3528';
-const RULE_LT   = '#4a4538';
-const DIM       = '#5a5445';
-const TXT       = '#9a9080';
-const BRIGHT    = '#d8ccb0';
-const BG        = '#0c0b08';
+// Shared palette lives in src/theme/tokens.ts. Local aliases kept for brevity.
+const GOLD      = parchment.gold;
+const DIM_GOLD  = parchment.dimGold;
+const WARM      = parchment.warm;
+const CRIMSON   = parchment.crimson;
+const TEAL      = parchment.teal;
+const RULE      = parchment.rule;
+const RULE_LT   = parchment.ruleLt;
+const DIM       = parchment.dim;
+const TXT       = parchment.txt;
+const BRIGHT    = parchment.bright;
+const BG        = parchment.bgPanel;
 
 // ── Inner width: chars between the ║ borders ─────────────────────────────────
 // Total line width = 2 (║ + space) + IW + 2 (space + ║) = IW + 4
@@ -423,7 +425,7 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           </L>
 
           {(() => {
-            const items = ALL_COMMODITIES.filter(c => cargo[c] > 0);
+            const items = ALL_COMMODITIES_FULL.filter(c => cargo[c] > 0);
             if (isWide) {
               // Two-column layout using dynamic column widths
               const pairs: [string, string | null][] = [];

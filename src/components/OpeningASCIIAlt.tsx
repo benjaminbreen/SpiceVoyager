@@ -323,7 +323,7 @@ function TitleLockup() {
         <span style={{ color: ASCII_COLORS.dimGold, fontFamily: MONO_FONT }}> ]</span>
       </div>
       <div className="mt-2 text-[12px]" style={{ color: ASCII_COLORS.txt, fontFamily: SERIF_FONT, fontStyle: 'italic' }}>
-        A game of oceanic trade, 1580-1620
+        An educational game of oceanic trade, 1612
       </div>
     </div>
   );

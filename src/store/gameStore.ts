@@ -17,11 +17,19 @@ import {
   syncLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
 import {
-  type Commodity, ALL_COMMODITIES, COMMODITY_DEFS,
+  type Commodity, ALL_COMMODITIES, ALL_COMMODITIES_FULL, COMMODITY_DEFS,
   supplyDemandModifier, generateStartingCargo,
 } from '../utils/commodities';
+import {
+  type KnowledgeLevel,
+  generateStartingKnowledge,
+  getEffectiveKnowledge,
+  getUnknownBuyDiscount,
+  getMasterySellBonus,
+} from '../utils/knowledgeSystem';
 
 export type { Commodity } from '../utils/commodities';
+export type { KnowledgeLevel } from '../utils/knowledgeSystem';
 
 // Map port IDs to their controlling nationality for reputation
 export const PORT_FACTION: Record<string, Nationality> = {
@@ -466,7 +474,6 @@ export interface RenderDebugSettings {
   vignette: boolean;
   advancedWater: boolean;
   shipWake: boolean;
-  bowFoam: boolean;
   algae: boolean;
   coralReefs: boolean;
   wildlifeMotion: boolean;
@@ -487,6 +494,7 @@ interface GameState {
   notifications: Notification[];
   activePort: Port | null;
   cameraZoom: number;
+  cameraRotation: number; // radians, orbits around player on Y axis
   viewMode: 'default' | 'cinematic' | 'topdown' | 'firstperson';
   cycleViewMode: () => void;
   
@@ -513,6 +521,9 @@ interface GameState {
   // Wind
   windDirection: number; // radians, 0 = north, PI/2 = east
   windSpeed: number;     // 0-1 normalized
+
+  // Knowledge system — tracks what the player knows about trade goods
+  knowledgeState: Record<string, KnowledgeLevel>;
 
   // Provisions (food/supplies for crew)
   provisions: number;
@@ -584,6 +595,7 @@ interface GameState {
   sellCommodity: (commodity: Commodity, amount: number) => void;
   advanceTime: (delta: number) => void;
   setCameraZoom: (zoom: number) => void;
+  setCameraRotation: (rotation: number) => void;
   setViewMode: (mode: 'default' | 'cinematic' | 'topdown' | 'firstperson') => void;
   setWorldSeed: (seed: number) => void;
   setWorldSize: (size: number) => void;
@@ -591,6 +603,7 @@ interface GameState {
   setWaterPaletteSetting: (setting: WaterPaletteSetting) => void;
   updateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
   resetRenderDebug: () => void;
+  learnAboutCommodity: (commodityId: string, newLevel: KnowledgeLevel, source: string) => void;
   collectCrab: () => void;
   fastTravel: (portId: string) => void;
   setPaused: (paused: boolean) => void;
@@ -615,7 +628,6 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   vignette: true,
   advancedWater: true,
   shipWake: true,
-  bowFoam: true,
   algae: true,
   coralReefs: true,
   wildlifeMotion: true,
@@ -687,6 +699,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   notifications: [],
   activePort: null,
   cameraZoom: 50,
+  cameraRotation: 0,
   viewMode: 'default',
   cycleViewMode: () => set((state) => {
     const modes: Array<'default' | 'cinematic' | 'topdown' | 'firstperson'> = ['default', 'cinematic', 'topdown', 'firstperson'];
@@ -710,6 +723,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   dayCount: 1,
   windDirection: Math.PI * 0.75, // start SW
   windSpeed: 0.5,
+  knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew),
   provisions: 30, // starting food supply
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 150,
@@ -942,12 +956,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     const port = state.activePort;
     if (!port) return;
 
+    // Knowledge-aware pricing
+    const knowledgeLevel = getEffectiveKnowledge(commodity, state.knowledgeState, state.crew);
+
     // Calculate effective price with supply/demand + crew bonuses
     const sdMod = supplyDemandModifier(port.inventory[commodity], port.baseInventory[commodity]);
     const effectiveBase = Math.max(1, Math.round(port.basePrices[commodity] * sdMod));
     const factorDiscount = getRoleBonus(state, 'Factor', 'charisma');
     const traitDiscount = captainHasTrait(state, 'Silver Tongue') ? 0.95 : 1.0;
-    const price = Math.max(1, Math.floor(effectiveBase / factorDiscount * traitDiscount));
+
+    // Unknown goods are cheap — sellers exploit your ignorance by offering low prices
+    // (they assume you don't know the value and will accept any price)
+    const unknownDiscount = knowledgeLevel === 0 ? getUnknownBuyDiscount() : 1.0;
+
+    const price = Math.max(1, Math.floor(effectiveBase / factorDiscount * traitDiscount * unknownDiscount));
     const totalCost = price * amount;
 
     const commodityWeight = COMMODITY_DEFS[commodity].weight;
@@ -963,7 +985,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] - amount };
       // Recalculate prices based on new inventory levels
       const newPrices = { ...port.prices };
-      for (const c of ALL_COMMODITIES) {
+      for (const c of ALL_COMMODITIES_FULL) {
         if (port.basePrices[c] > 0) {
           const mod = supplyDemandModifier(newInventory[c], port.baseInventory[c]);
           newPrices[c] = Math.max(1, Math.round(port.basePrices[c] * mod));
@@ -978,12 +1000,16 @@ export const useGameStore = create<GameState>((set, get) => ({
           : p
         ),
       });
-      get().addNotification(`Bought ${amount} ${commodity} for ${totalCost}g`, 'success');
+
+      const displayName = knowledgeLevel >= 1
+        ? commodity
+        : COMMODITY_DEFS[commodity].physicalDescription;
+      get().addNotification(`Bought ${amount} ${displayName} for ${totalCost}g`, 'success');
       get().addJournalEntry('commerce', commerceBuyTemplate(commodity, amount, totalCost, port.name), port.name);
       const faction = PORT_FACTION[port.id];
       if (faction) get().adjustReputation(faction, 2);
       const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
-      if (factor) get().addCrewHistory(factor.id, `Negotiated purchase of ${amount} ${commodity} at ${port.name}`);
+      if (factor) get().addCrewHistory(factor.id, `Negotiated purchase of ${amount} ${displayName} at ${port.name}`);
     } else {
       get().addNotification('Not enough gold or port inventory!', 'error');
     }
@@ -995,6 +1021,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!port) return;
 
     if (state.cargo[commodity] >= amount) {
+      // Knowledge-aware sell pricing
+      const knowledgeLevel = getEffectiveKnowledge(commodity, state.knowledgeState, state.crew);
+
       // If port doesn't stock this commodity (basePrice = 0), sell at reduced global average
       const portHasGood = port.basePrices[commodity] > 0;
       const sdMod = portHasGood
@@ -1007,13 +1036,17 @@ export const useGameStore = create<GameState>((set, get) => ({
           ));
       const factorBonus = getRoleBonus(state, 'Factor', 'charisma');
       const traitBonus = captainHasTrait(state, 'Silver Tongue') ? 1.05 : 1.0;
-      const price = Math.max(1, Math.floor(effectiveBase * 0.8 * factorBonus * traitBonus));
+
+      // Mastered goods sell for 15-20% more (you know the best buyers)
+      const masteryBonus = knowledgeLevel >= 2 ? getMasterySellBonus() : 1.0;
+
+      const price = Math.max(1, Math.floor(effectiveBase * 0.8 * factorBonus * traitBonus * masteryBonus));
       const totalGain = price * amount;
 
       const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] + amount };
       // Recalculate prices based on new supply levels
       const newPrices = { ...port.prices };
-      for (const c of ALL_COMMODITIES) {
+      for (const c of ALL_COMMODITIES_FULL) {
         if (port.basePrices[c] > 0) {
           const mod = supplyDemandModifier(newInventory[c], port.baseInventory[c]);
           newPrices[c] = Math.max(1, Math.round(port.basePrices[c] * mod));
@@ -1064,7 +1097,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const restockedPorts = state.ports.map(p => {
         let changed = false;
         const newInv = { ...p.inventory };
-        for (const c of ALL_COMMODITIES) {
+        for (const c of ALL_COMMODITIES_FULL) {
           const base = p.baseInventory[c as Commodity];
           if (base <= 0) continue;
           const current = newInv[c as Commodity];
@@ -1079,7 +1112,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
         if (!changed) return p;
         const newPrices = { ...p.prices };
-        for (const c of ALL_COMMODITIES) {
+        for (const c of ALL_COMMODITIES_FULL) {
           if (p.basePrices[c as Commodity] > 0) {
             const mod = supplyDemandModifier(newInv[c as Commodity], p.baseInventory[c as Commodity]);
             newPrices[c as Commodity] = Math.max(1, Math.round(p.basePrices[c as Commodity] * mod));
@@ -1172,6 +1205,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   
   setCameraZoom: (zoom) => set({ cameraZoom: Math.max(10, Math.min(150, zoom)) }),
+  setCameraRotation: (rotation) => set({ cameraRotation: rotation }),
   setViewMode: (mode) => set({ viewMode: mode }),
   
   setWorldSeed: (seed) => set({ worldSeed: seed, currentWorldPortId: null }),
@@ -1182,6 +1216,51 @@ export const useGameStore = create<GameState>((set, get) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),
   resetRenderDebug: () => set({ renderDebug: DEFAULT_RENDER_DEBUG }),
+  learnAboutCommodity: (commodityId, newLevel, source) => {
+    const state = get();
+    const current = state.knowledgeState[commodityId] ?? 0;
+    if (newLevel <= current) return; // no downgrade
+
+    const commodityName = commodityId;
+    const def = COMMODITY_DEFS[commodityId as Commodity];
+
+    set({
+      knowledgeState: { ...state.knowledgeState, [commodityId]: newLevel },
+    });
+
+    if (newLevel === 1 && current === 0) {
+      // Dramatic identification reveal
+      get().addNotification(
+        `Identified: ${commodityName}`,
+        'success',
+        {
+          size: 'grand',
+          subtitle: def?.description ?? `You now recognize this good.`,
+          imageCandidates: def?.iconImage ? [def.iconImage] : undefined,
+        },
+      );
+      get().addJournalEntry(
+        'commerce',
+        `Through ${source}, we identified the mysterious goods as ${commodityName}. ${def?.description ?? ''}`,
+        state.activePort?.name,
+      );
+    } else if (newLevel === 2) {
+      get().addNotification(
+        `Mastered: ${commodityName}`,
+        'legendary',
+        {
+          size: 'grand',
+          subtitle: 'You know the best markets and can spot any fraud.',
+          imageCandidates: def?.iconImage ? [def.iconImage] : undefined,
+        },
+      );
+      get().addJournalEntry(
+        'commerce',
+        `Our expertise in ${commodityName} is now complete. We know the finest grades, the best buyers, and every trick of adulteration.`,
+        state.activePort?.name,
+      );
+    }
+  },
   collectCrab: () => {
     const state = get();
     const loot = rollLoot(CRAB_LOOT);

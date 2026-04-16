@@ -70,7 +70,7 @@ export function OpeningPamphlet({
             color: '#5a4e3a',
           }}
         >
-          A Game of Oceanic Trade
+          A Game of Oceanic Trade, 1612
         </p>
 
         <p

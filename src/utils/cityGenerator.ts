@@ -70,7 +70,7 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
         moisture: terrain.moisture,
         occupied: false,
         isWater: terrain.height < SEA_LEVEL,
-        isBeach: terrain.height >= SEA_LEVEL + 0.3 && (terrain.coastFactor > 0.22 || terrain.height < SEA_LEVEL + 2.2),
+        isBeach: terrain.height >= SEA_LEVEL && (terrain.coastFactor > 0.22 || terrain.height < SEA_LEVEL + 2.2),
         isLand: terrain.height >= SEA_LEVEL && terrain.coastFactor <= 0.22 && terrain.height >= SEA_LEVEL + 0.6,
         distToCenter: Math.sqrt((x - portX)**2 + (z - portZ)**2)
       };
@@ -87,7 +87,13 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
   ): Cell | null => {
     let candidates = grid.filter(c => !c.occupied && condition(c));
     if (sortFn) candidates.sort(sortFn);
-    else candidates.sort(() => prng() - 0.5); // shuffle
+    else {
+      // Fisher-Yates shuffle for uniform randomness
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(prng() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      }
+    }
     
     for (const cell of candidates) {
       // Check if the area for the building is clear
@@ -235,11 +241,15 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
   }
 
   // 6. Place Houses (town)
+  // Pre-compute jitter per cell so the sort comparator is stable
+  const houseJitter = new Map<string, number>();
+  for (const c of grid) houseJitter.set(`${c.x},${c.z}`, prng() * 20);
   for (let i = 0; i < counts.house; i++) {
     const spot = findSpot(
-      c => c.isLand, 
+      c => c.isLand,
       BUILDING_SIZES.house,
-      (a, b) => (a.distToCenter + prng()*20) - (b.distToCenter + prng()*20) // somewhat clustered
+      (a, b) => (a.distToCenter + (houseJitter.get(`${a.x},${a.z}`) ?? 0))
+              - (b.distToCenter + (houseJitter.get(`${b.x},${b.z}`) ?? 0)) // somewhat clustered
     );
     if (spot) {
       buildings.push({

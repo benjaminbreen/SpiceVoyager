@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, CrewMember, CrewRole, CrewQuality, WEAPON_DEFS } from '../store/gameStore';
 import type { Commodity } from '../utils/commodities';
-import { ALL_COMMODITIES, COMMODITY_DEFS } from '../utils/commodities';
+import { ALL_COMMODITIES_FULL, COMMODITY_DEFS } from '../utils/commodities';
 import {
   X, Shield, Coins, Users, Package,
   Wrench, Heart, Star, ChevronDown, Crosshair, Sailboat, Flag,
@@ -245,10 +245,10 @@ function OverviewTab() {
           Status
         </div>
         <div className="space-y-0.5">
-          <StatRow label="Hull" value={`${stats.hull}/${stats.maxHull}`} bar={stats.hull} barMax={stats.maxHull} barColor={hullPct > 50 ? 'bg-cyan-500' : hullPct > 25 ? 'bg-yellow-500' : 'bg-red-500'} />
+          <StatRow label="Hull" value={`${stats.hull}/${stats.maxHull}`} bar={stats.hull} barMax={stats.maxHull} barColor={hullPct > 50 ? 'bg-hull' : hullPct > 25 ? 'bg-yellow-500' : 'bg-danger'} />
           <StatRow label="Sails" value={`${stats.sails}/${stats.maxSails}`} bar={stats.sails} barMax={stats.maxSails} barColor="bg-slate-400" />
-          <StatRow label="Cargo" value={`${currentCargo}/${stats.cargoCapacity}`} bar={currentCargo} barMax={stats.cargoCapacity} barColor={currentCargo >= stats.cargoCapacity ? 'bg-red-500' : 'bg-teal-500'} />
-          <StatRow label="Morale" value={`${avgMorale}%`} bar={avgMorale} barColor={avgMorale > 60 ? 'bg-green-500' : avgMorale > 30 ? 'bg-yellow-500' : 'bg-red-500'} />
+          <StatRow label="Cargo" value={`${currentCargo}/${stats.cargoCapacity}`} bar={currentCargo} barMax={stats.cargoCapacity} barColor={currentCargo >= stats.cargoCapacity ? 'bg-danger' : 'bg-cargo'} />
+          <StatRow label="Morale" value={`${avgMorale}%`} bar={avgMorale} barColor={avgMorale > 60 ? 'bg-morale' : avgMorale > 30 ? 'bg-yellow-500' : 'bg-danger'} />
           <StatRow label="Guns" value={stats.armament.length.toString()} bar={stats.armament.length} barMax={12} barColor="bg-orange-500" />
         </div>
       </div>
@@ -277,7 +277,7 @@ function OverviewTab() {
             Cargo Hold
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-1">
-            {ALL_COMMODITIES.filter(c => cargo[c] > 0).map(c => (
+            {ALL_COMMODITIES_FULL.filter(c => cargo[c] > 0).map(c => (
               <div key={c} className="flex items-center gap-2 text-xs">
                 <span className="text-slate-400">{c}</span>
                 <span className="font-mono text-slate-200">{cargo[c]}</span>
@@ -492,7 +492,7 @@ function CargoTab() {
           <span className="w-12 text-right">Qty</span>
           <span className="w-10 text-right">%</span>
         </div>
-        {ALL_COMMODITIES.map((c, i) => {
+        {ALL_COMMODITIES_FULL.map((c, i) => {
           const qty = cargo[c];
           const pct = stats.cargoCapacity > 0 ? Math.round((qty / stats.cargoCapacity) * 100) : 0;
           return (
@@ -500,7 +500,7 @@ function CargoTab() {
               key={c}
               className={`flex items-center gap-2 px-3 py-2 transition-colors ${
                 qty > 0 ? 'hover:bg-white/[0.02]' : 'opacity-40'
-              } ${i < ALL_COMMODITIES.length - 1 ? 'border-b border-white/[0.03]' : ''}`}
+              } ${i < ALL_COMMODITIES_FULL.length - 1 ? 'border-b border-white/[0.03]' : ''}`}
             >
               <span className={`flex-1 text-sm ${qty > 0 ? 'text-slate-200' : 'text-slate-600'}`}>{c}</span>
               <div className="w-24 hidden md:block">
@@ -636,7 +636,7 @@ export function ShipDashboard({ open, onClose }: { open: boolean; onClose: () =>
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.97, y: 12 }}
         transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
-        className="w-full max-w-3xl h-full max-h-[90vh] md:max-h-[85vh] bg-[#0b1120] border border-slate-700/50 overflow-hidden flex flex-col shadow-[0_25px_60px_rgba(0,0,0,0.7)]"
+        className="w-full max-w-3xl h-full max-h-[90vh] md:max-h-[85vh] bg-[#0b1120] border border-slate-700/50 overflow-hidden flex flex-col shadow-panel"
       >
         {/* Close button — floating */}
         <button

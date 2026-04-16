@@ -6,11 +6,11 @@ import type { Commodity } from '../utils/commodities';
 import {
   COMMODITY_DEFS,
 } from '../utils/commodities';
-import { tavernTemplate } from '../utils/journalTemplates';
 import { audioManager } from '../audio/AudioManager';
 import { sfxTab, sfxCoin, sfxClose, sfxHover, startTabAmbient, stopTabAmbientLoop } from '../audio/SoundEffects';
 import { getPortBannerCandidates, getPortIconCandidates } from '../utils/portAssets';
 import { MarketTabLedger } from './MarketTabLedger';
+import { TavernTab } from './TavernTab';
 import {
   X, Coins, Shield, Anchor, ShoppingBag,
   Wrench, Beer, Building, Sailboat,
@@ -554,7 +554,6 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
   const handleClose = () => { stopTabAmbientLoop(); sfxClose(); (onDismiss ?? (() => setActivePort(null)))(); };
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const [rumor, setRumor] = useState<string | null>(null);
   const [imageError, setImageError] = useState<Record<string, boolean>>({});
   const [showSources, setShowSources] = useState(false);
 
@@ -567,7 +566,6 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
   useEffect(() => {
     if (!activePort) return;
     setActiveTab('overview');
-    setRumor(null);
     setShowSources(false);
   }, [activePort?.id]);
 
@@ -598,14 +596,6 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
   const season = getSeason(dayCount);
   const harborNews = getSeasonalNews(activePort.id, season);
   const gradient = CULTURE_GRADIENT[activePort.culture] || CULTURE_GRADIENT['Indian Ocean'];
-
-  const handleBuyDrink = () => {
-    if (gold >= 5) {
-      useGameStore.setState({ gold: gold - 5 });
-      setRumor("I heard the Sultan is taxing silk heavily these days. And watch out for pirates in the deep waters to the south!");
-      useGameStore.getState().addJournalEntry('crew', tavernTemplate(activePort.name), activePort.name);
-    }
-  };
 
   // Image fallback chain: prefer jpg, then png, before falling back to gradients/text.
   const bannerSrc = getPortBannerCandidates(activePort.id, activeTab).find(src => !imageError[src]) ?? null;
@@ -639,6 +629,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
             <button
               type="button"
               onClick={() => { sfxTab(); setActiveTab('overview'); }}
+              aria-selected={activeTab === 'overview'}
               title="Overview"
               className={`group w-14 h-14 rounded-full overflow-hidden border-2 bg-white/[0.03] transition-all active:scale-95
                 ${activeTab === 'overview'
@@ -686,6 +677,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                 <button
                   key={tab.id}
                   onClick={() => { sfxTab(); setActiveTab(tab.id); }}
+                  aria-selected={isActive}
                   className={`group relative w-10 h-10 rounded-full flex items-center justify-center
                     transition-all duration-200 active:scale-95
                     ${isActive
@@ -820,6 +812,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
               <button
                 type="button"
                 onClick={() => { sfxTab(); setActiveTab('overview'); }}
+                aria-selected={activeTab === 'overview'}
                 title="Overview"
                 className={`h-7 w-7 shrink-0 rounded-full border flex items-center justify-center overflow-hidden transition-all active:scale-95 ${
                   activeTab === 'overview'
@@ -848,6 +841,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                   <button
                     key={tab.id}
                     onClick={() => { sfxTab(); setActiveTab(tab.id); }}
+                    aria-selected={isActive}
                     className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold tracking-wider transition-all whitespace-nowrap
                       ${isActive ? 'text-white bg-white/[0.12]' : 'text-white/40 hover:text-white/70'}`}
                     style={{ fontFamily: '"DM Sans", sans-serif' }}
@@ -1224,49 +1218,10 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                 </motion.div>
               )}
 
-              {/* ── Tavern ── */}
-              {activeTab === 'tavern' && (
-                <motion.div key="tavern" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
-                  <div className="px-3 py-4 rounded-lg border border-white/[0.04] bg-white/[0.015]">
-                    {rumor ? (
-                      <motion.div
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="pl-3 border-l-2 border-slate-700"
-                      >
-                        <div className="text-[9px] font-bold tracking-[0.12em] uppercase text-slate-600 mb-1"
-                          style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                          Barkeep whispers
-                        </div>
-                        <p className="text-[12px] text-slate-400 leading-relaxed"
-                          style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-                          "{rumor}"
-                        </p>
-                      </motion.div>
-                    ) : (
-                      <div className="text-center py-4">
-                        <p className="text-[12px] text-slate-500 mb-4 leading-relaxed max-w-md mx-auto"
-                          style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-                          The barkeep eyes your purse. A round of drinks might loosen some tongues.
-                        </p>
-                        <button
-                          onClick={() => { sfxCoin(5); handleBuyDrink(); }}
-                          disabled={gold < 5}
-                          className="px-4 py-2 rounded-lg text-[10px] font-bold
-                            bg-white/[0.04] border border-white/[0.06] text-slate-300
-                            hover:bg-white/[0.08] hover:text-white
-                            disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95
-                            inline-flex items-center gap-1.5"
-                          style={{ fontFamily: '"DM Sans", sans-serif' }}
-                        >
-                          <Beer size={11} /> Buy a round — 5g
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
+              {/* ── Tavern (always mounted so state persists across tab switches) ── */}
+              <div style={{ display: activeTab === 'tavern' ? 'block' : 'none' }}>
+                <TavernTab port={activePort} />
+              </div>
 
               {/* ── Governor ── */}
               {activeTab === 'governor' && (

@@ -1,1 +1,69 @@
 @import "tailwindcss";
+
+/* ── Design tokens — mirrored in src/theme/tokens.ts ───────────────────── */
+@theme {
+  /* Semantic stat colors (HUD bars & icons) */
+  --color-hull:   #22d3ee;
+  --color-morale: #34d399;
+  --color-cargo:  #fbbf24;
+  --color-food:   #a3e635;
+  --color-danger: #f87171;
+  --color-warn:   #fbbf24;
+
+  /* Parchment palette (modals, events, ASCII surfaces) */
+  --color-parchment-gold:    #c9a84c;
+  --color-parchment-dimgold: #8a7a4a;
+  --color-parchment-warm:    #b89a6a;
+  --color-parchment-bright:  #d8ccb0;
+  --color-parchment-txt:     #9a9080;
+  --color-parchment-dim:     #5a5445;
+  --color-parchment-rule:    #3a3528;
+  --color-parchment-bg:      #0c0b08;
+
+  /* Depth shadows */
+  --shadow-panel:    0 25px 60px rgba(0,0,0,0.7);
+  --shadow-card:     0 8px 32px rgba(0,0,0,0.4);
+  --shadow-inset:    inset 0 2px 4px rgba(0,0,0,0.5);
+  --shadow-vignette: inset 0 0 60px rgba(0,0,0,0.4);
+  --shadow-glow-gold: 0 0 12px rgba(201,168,76,0.25);
+}
+
+:where(button:not(:disabled)) {
+  transform-origin: center;
+  transition-property: transform, filter, box-shadow, background-color, border-color, color, opacity;
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:where(button:not(:disabled):active) {
+  transform: translateY(1px) scale(0.975);
+  filter: brightness(1.14) saturate(1.08);
+}
+
+:where(button[aria-pressed="true"], button[aria-selected="true"], button[data-active="true"]) {
+  animation: ui-selection-pop 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes ui-selection-pop {
+  0% {
+    transform: scale(0.96);
+    filter: brightness(1.28) saturate(1.12);
+  }
+  70% {
+    transform: scale(1.035);
+  }
+  100% {
+    transform: scale(1);
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button:not(:disabled)) {
+    transition-duration: 0ms;
+  }
+
+  :where(button[aria-pressed="true"], button[aria-selected="true"], button[data-active="true"]) {
+    animation: none;
+  }
+}
