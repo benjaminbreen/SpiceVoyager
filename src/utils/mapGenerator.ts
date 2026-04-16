@@ -6,7 +6,7 @@ import {
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
 } from './portArchetypes';
 
-export type Culture = 'Indian Ocean' | 'European' | 'Caribbean';
+export type Culture = 'Indian Ocean' | 'European' | 'Caribbean' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
 
 export interface PortOverride {
@@ -167,6 +167,19 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
 
     let portX = pos.x;
     let portZ = pos.z;
+
+    // Strait geography: the channel center is water, so offset the search
+    // center perpendicular to the channel onto one landmass.
+    // The channel runs along the open direction; land is on either side.
+    if (pos.def?.geography === 'strait') {
+      const cw = (pos.def.channelWidth ?? 1.0) * 0.25;
+      const openAngle = { N: 0, NE: Math.PI/4, E: Math.PI/2, SE: 3*Math.PI/4, S: Math.PI, SW: 5*Math.PI/4, W: 3*Math.PI/2, NW: 7*Math.PI/4 }[pos.def.openDirection] ?? 0;
+      // Perpendicular to open direction — offset onto the "left" landmass
+      const perpAngle = openAngle + Math.PI / 2;
+      const offset = (cw + 0.15) * 450; // just past channel edge in world units
+      portX += Math.sin(perpAngle) * offset;
+      portZ += Math.cos(perpAngle) * offset;
+    }
 
     // Search for a good coastal position near the distributed position
     const searchRadius = pos.def && pos.def.geography !== 'archipelago'

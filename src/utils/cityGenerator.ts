@@ -133,23 +133,39 @@ export function generateCity(portX: number, portZ: number, scale: PortScale, cul
     return null;
   };
 
-  // 1. Place Docks (needs to be on the water edge)
+  // 1. Place Docks (on the water edge, adjacent to land/beach)
+  // Helper: check if a water cell has at least one neighboring land or beach cell
+  const isCoastalWater = (cell: Cell): boolean => {
+    if (!cell.isWater || cell.height <= -3) return false;
+    for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]) {
+      const neighbor = gridMap.get(`${cell.x + dx * cellSize},${cell.z + dz * cellSize}`);
+      if (neighbor && (neighbor.isLand || neighbor.isBeach)) return true;
+    }
+    return false;
+  };
+
   for (let i = 0; i < counts.dock; i++) {
     const spot = findSpot(
-      c => c.isWater && c.height > -3 && c.height < SEA_LEVEL,
+      c => isCoastalWater(c),
       BUILDING_SIZES.dock,
       (a, b) => a.distToCenter - b.distToCenter // closest to center
     );
     if (spot) {
-      // Rotate dock to face land (roughly)
-      const landDir = grid.find(c => c.isLand && Math.abs(c.x - spot.x) < 10 && Math.abs(c.z - spot.z) < 10);
+      // Find nearest land/beach cell to orient dock toward shore
+      let landDir: Cell | undefined;
+      let bestDist = Infinity;
+      for (const c of grid) {
+        if (!(c.isLand || c.isBeach)) continue;
+        const d = (c.x - spot.x) ** 2 + (c.z - spot.z) ** 2;
+        if (d < bestDist && d < 15 * 15) { bestDist = d; landDir = c; }
+      }
       let rot = prng() * Math.PI;
       if (landDir) {
         rot = Math.atan2(landDir.x - spot.x, landDir.z - spot.z);
       }
       buildings.push({
         id: `dock_${i}`, type: 'dock',
-        position: [spot.x, 0.2, spot.z], // Docks are slightly above water
+        position: [spot.x, 0.55, spot.z], // raised above water so deck is visible
         rotation: rot, scale: BUILDING_SIZES.dock
       });
     }

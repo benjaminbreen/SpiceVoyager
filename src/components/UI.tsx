@@ -629,7 +629,9 @@ export function UI() {
                 <button
                   onClick={() => { sfxOpen(); setShowDashboard(true); }}
                   className="w-[72px] h-[72px] rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
-                    transition-all duration-500 active:scale-95"
+                    transition-all duration-500 active:scale-95
+                    hover:scale-110 hover:brightness-125
+                    outline outline-0 hover:outline-[3px] outline-amber-500 outline-offset-1"
                   style={{
                     border: `3px solid ${ringColor}`,
                     boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`,

@@ -56,6 +56,14 @@ const FORT_NAMES: Record<Culture, string[]> = {
     'Fuerte San Felipe', 'Fortaleza Ozama', 'Castillo del Morro',
     'Fort Charles', 'Fuerte de la Concepción',
   ],
+  'West African': [
+    'São Jorge da Mina', 'Fort Coenraadsburg', 'Fort Nassau',
+    'Elmina Castle', 'Fort São Sebastião',
+  ],
+  'Atlantic': [
+    'Castillo del Morro', 'Fortaleza de São Marcelo', 'Castillo de San Felipe',
+    'Fort San Lorenzo', 'Forte do Mar',
+  ],
 };
 
 // ── Market names ─────────────────────────────────────────────────────────────
@@ -72,6 +80,14 @@ const MARKET_NAMES: Record<Culture, string[]> = {
   'Caribbean': [
     'Plaza del Mercado', 'Market Square', 'Traders\' Yard',
     'Fish Market', 'Provision Ground',
+  ],
+  'West African': [
+    'Gold Market', 'Bead Traders\' Row', 'Cloth Market',
+    'Yam Market', 'Salt Market',
+  ],
+  'Atlantic': [
+    'Plaza del Mercado', 'Sugar Market', 'Tobacco Wharf',
+    'Traders\' Square', 'Provision Market',
   ],
 };
 
@@ -90,6 +106,14 @@ const DOCK_NAMES: Record<Culture, string[]> = {
     'Main Wharf', 'Careening Wharf', 'Sugar Dock', 'Trader\'s Landing',
     'Fisherman\'s Pier', 'Long Wharf',
   ],
+  'West African': [
+    'Canoe Landing', 'Trade Beach', 'Surf Landing',
+    'Gold Wharf', 'Fisher\'s Landing',
+  ],
+  'Atlantic': [
+    'Sugar Wharf', 'Main Landing', 'Timber Dock',
+    'Traders\' Pier', 'Careening Beach',
+  ],
 };
 
 // ── Warehouse goods ──────────────────────────────────────────────────────────
@@ -107,6 +131,14 @@ const WAREHOUSE_GOODS: Record<Culture, string[]> = {
     'sugar', 'tobacco', 'hides', 'logwood', 'cacao',
     'salt', 'rum casks', 'cotton bales', 'cassava', 'indigo',
   ],
+  'West African': [
+    'gold dust', 'ivory', 'palm oil', 'kola nuts', 'beeswax',
+    'hides', 'pepper', 'cotton cloth', 'slaves', 'dyed textiles',
+  ],
+  'Atlantic': [
+    'sugar', 'tobacco', 'brazilwood', 'hides', 'cacao',
+    'silver bars', 'cotton bales', 'indigo', 'rum casks', 'logwood',
+  ],
 };
 
 const WAREHOUSE_OWNERS: Record<Culture, string[]> = {
@@ -121,6 +153,14 @@ const WAREHOUSE_OWNERS: Record<Culture, string[]> = {
   'Caribbean': [
     'the Governor', 'the Audiencia', 'the friars', 'the encomendero',
     'private traders', 'the garrison',
+  ],
+  'West African': [
+    'the Asantehene\'s agents', 'the Portuguese factor', 'the Akan traders',
+    'the chief', 'the garrison', 'local merchants',
+  ],
+  'Atlantic': [
+    'the Governor', 'the Câmara', 'the Jesuits',
+    'the encomendero', 'the Casa de Contratación', 'private traders',
   ],
 };
 
@@ -147,6 +187,14 @@ const TRADES_NEAR_MARKET: Record<Culture, string[]> = {
     'Charcoal-burner', 'Canoe-builder', 'Dyer', 'Lime-burner',
     'Basket-maker', 'Hammock-maker',
   ],
+  'West African': [
+    'Goldsmith', 'Bead-maker', 'Weaver', 'Dyer', 'Blacksmith',
+    'Potter', 'Basket-maker', 'Drummer', 'Palm-wine tapper', 'Ivory carver',
+  ],
+  'Atlantic': [
+    'Carpenter', 'Blacksmith', 'Sugar-boiler', 'Tanner', 'Potter',
+    'Apothecary', 'Tailor', 'Money-changer', 'Barrel-maker', 'Lime-burner',
+  ],
 };
 
 // ── Commoner occupations ─────────────────────────────────────────────────────
@@ -167,6 +215,16 @@ const COMMONER_LABELS: Record<Culture, string[]> = {
     'Canoe-man\'s hut', 'Laborer\'s cottage', 'Hunter\'s dwelling',
     'Salt-raker\'s house', 'Turtle-catcher\'s hut',
   ],
+  'West African': [
+    'Fisher\'s hut', 'Canoe-builder\'s dwelling', 'Gold-washer\'s house',
+    'Porter\'s hut', 'Palm-tapper\'s dwelling', 'Farmer\'s compound',
+    'Smith\'s quarters', 'Net-maker\'s house',
+  ],
+  'Atlantic': [
+    'Fisherman\'s hut', 'Dockhand\'s dwelling', 'Sugar worker\'s house',
+    'Laborer\'s cottage', 'Washwoman\'s house', 'Porter\'s quarters',
+    'Slave quarters', 'Sailor\'s billet',
+  ],
 };
 
 // ── Shack occupations ────────────────────────────────────────────────────────
@@ -183,6 +241,14 @@ const SHACK_LABELS: Record<Culture, string[]> = {
   'Caribbean': [
     'Fisher\'s hut', 'Turtle pen', 'Canoe shelter', 'Driftwood shack',
     'Salt-raker\'s hut', 'Crab-catcher\'s lean-to', 'Beach shelter',
+  ],
+  'West African': [
+    'Fisher\'s hut', 'Palm-leaf shelter', 'Canoe shelter',
+    'Drying rack', 'Beach vendor', 'Net-mender\'s lean-to', 'Shell collector',
+  ],
+  'Atlantic': [
+    'Fisher\'s hut', 'Turtle pen', 'Sugar shed',
+    'Driftwood shack', 'Beach vendor', 'Crab-catcher\'s lean-to', 'Palm shelter',
   ],
 };
 
@@ -201,6 +267,14 @@ const WET_CROPS: Record<Culture, string[]> = {
     'Sugar field', 'Tobacco plot', 'Cacao grove', 'Cassava field',
     'Banana grove', 'Cotton plot', 'Indigo field',
   ],
+  'West African': [
+    'Yam field', 'Palm oil grove', 'Kola nut trees',
+    'Banana grove', 'Rice paddy', 'Cotton plot', 'Cassava field',
+  ],
+  'Atlantic': [
+    'Sugar field', 'Tobacco plot', 'Cacao grove',
+    'Cassava field', 'Banana grove', 'Cotton plot', 'Manioc field',
+  ],
 };
 
 const DRY_CROPS: Record<Culture, string[]> = {
@@ -216,6 +290,14 @@ const DRY_CROPS: Record<Culture, string[]> = {
     'Goat pen', 'Cattle ranch', 'Maize field', 'Provision ground',
     'Henequen plot', 'Pineapple patch',
   ],
+  'West African': [
+    'Millet field', 'Goat pen', 'Groundnut plot',
+    'Sorghum field', 'Cattle enclosure', 'Shea tree grove',
+  ],
+  'Atlantic': [
+    'Goat pen', 'Cattle ranch', 'Maize field',
+    'Provision ground', 'Henequen plot', 'Pineapple patch',
+  ],
 };
 
 // ── Elite titles ─────────────────────────────────────────────────────────────
@@ -230,6 +312,12 @@ const ELITE_TITLES: Record<Culture, string[]> = {
   ],
   'Caribbean': [
     'Cacique', 'Alcalde', 'Encomendero', 'Regidor', 'Hacendado',
+  ],
+  'West African': [
+    'Ohene', 'Asantehene\'s envoy', 'Okyeame', 'Chief', 'Elder', 'Linguist',
+  ],
+  'Atlantic': [
+    'Alcalde', 'Senhor de engenho', 'Capitão-mor', 'Oidor', 'Hacendado', 'Regidor',
   ],
 };
 
@@ -247,6 +335,14 @@ const MERCHANT_GOODS: Record<Culture, string[]> = {
   'Caribbean': [
     'hides', 'tobacco', 'sugar', 'cacao', 'logwood',
     'cotton', 'hammocks', 'cassava', 'salt', 'turtle shell',
+  ],
+  'West African': [
+    'gold dust', 'ivory', 'kola nuts', 'cloth', 'beads',
+    'palm oil', 'slaves', 'hides', 'pepper', 'iron',
+  ],
+  'Atlantic': [
+    'sugar', 'tobacco', 'hides', 'cacao', 'brazilwood',
+    'silver', 'cotton', 'indigo', 'logwood', 'rum',
   ],
 };
 

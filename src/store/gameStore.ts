@@ -42,9 +42,23 @@ export const PORT_FACTION: Record<string, Nationality> = {
   kilwa: 'Swahili',
   socotra: 'Portuguese',
   diu: 'Portuguese',        // key Portuguese fortress off Gujarat
+  // European ports
+  lisbon: 'Portuguese',
+  amsterdam: 'Dutch',
+  seville: 'Spanish',
+  london: 'English',
+  // West Africa
+  elmina: 'Portuguese',     // São Jorge da Mina fortress
+  luanda: 'Portuguese',     // São Paulo de Luanda
+  // Atlantic Americas
+  salvador: 'Portuguese',   // capital of Portuguese Brazil
+  havana: 'Spanish',        // treasure fleet base
+  cartagena: 'Spanish',     // fortified colonial port
+  // Cape route
+  cape: 'Portuguese',       // no permanent settlement but Portuguese-claimed
 };
 
-export type Culture = 'Indian Ocean' | 'European' | 'Caribbean';
+export type Culture = 'Indian Ocean' | 'European' | 'Caribbean' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
 
 export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market';
@@ -133,6 +147,20 @@ export const PORT_ARMORY: Record<string, WeaponType[]> = {
   calicut:  ['swivelGun', 'minion'],
   socotra:  ['swivelGun', 'minion'],                                         // remote outpost, minimal arms
   diu:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],  // major Portuguese fortress
+  // European ports
+  lisbon:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // imperial arsenal
+  amsterdam: ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // VOC arsenal
+  seville:   ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
+  london:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
+  // West African ports
+  elmina:    ['swivelGun', 'minion'],                                                      // fortress garrison, limited stock
+  luanda:    [],                                                                           // no weapons trade
+  // Atlantic American ports
+  salvador:  ['swivelGun', 'minion', 'saker'],
+  havana:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],               // treasure fleet arsenal
+  cartagena: ['swivelGun', 'minion', 'saker', 'demiCulverin'],
+  // Cape route
+  cape:      [],                                                                           // no settlement, no weapons
 };
 const DEFAULT_PORT_ARMORY: WeaponType[] = ['swivelGun', 'minion'];
 
@@ -254,6 +282,20 @@ const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
   calicut:  ['newCanvas', 'lateenRigging', 'surgeonsChest', 'betterProvisions'],
   zanzibar: ['newCanvas', 'betterProvisions'],
   socotra:  ['betterProvisions'],
+  // European ports
+  lisbon:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
+  amsterdam: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
+  seville:   ['newCanvas', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
+  london:    ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
+  // West African ports
+  elmina:    ['newCanvas', 'betterProvisions'],
+  luanda:    ['betterProvisions'],
+  // Atlantic American ports
+  salvador:  ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  havana:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
+  cartagena: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  // Cape route
+  cape:      ['betterProvisions'],
 };
 const DEFAULT_UPGRADE_POOL: ShipUpgradeType[] = ['newCanvas', 'betterProvisions'];
 

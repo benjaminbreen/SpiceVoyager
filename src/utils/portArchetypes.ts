@@ -22,7 +22,7 @@ export type GeographicArchetype =
   | 'crater_harbor'      // volcanic caldera harbor (Aden)
   | 'continental_coast'; // straight coastline (Calicut)
 
-export type ClimateProfile = 'tropical' | 'arid' | 'temperate' | 'monsoon';
+export type ClimateProfile = 'tropical' | 'arid' | 'temperate' | 'monsoon' | 'mediterranean';
 
 /** Island shape sub-classifications for realistic silhouettes */
 export type IslandShape =
@@ -60,6 +60,7 @@ export interface PortDefinition {
   cityDirection?: CardinalDir;
   /** Archetype-specific params */
   channelWidth?: number;          // inlet/strait width multiplier (0.5-2.0)
+  channelTaper?: number;          // 0 = uniform width, 0.5 = narrows to half at one end (rivers)
   landmassSize?: number;          // legacy island size multiplier (use islandCoverage instead)
   coastCurvature?: number;        // bay curvature (0.3 - 1.0)
   /** Island shape sub-classification system */
@@ -285,6 +286,149 @@ export const CORE_PORTS: PortDefinition[] = [
       { side: 'S', position: 0.4, depth: 0.2, width: 0.35 },  // main harbor on south side
     ],
   },
+
+  // ── European Ports ───────────────────────────────────────────────────────────
+  {
+    id: 'lisbon',
+    name: 'Lisbon',
+    geography: 'estuary',
+    climate: 'mediterranean',
+    culture: 'European',
+    scale: 'Very Large',
+    description: 'The Tagus estuary opens wide below the city, crowded with carracks and smaller craft. The Casa da Índia warehouses line the Ribeira waterfront, where stevedores unload pepper, cinnamon, and Chinese porcelain under the eye of customs agents. The streets climbing the hills behind are narrow and steep. Lisbon has been under the Spanish Habsburgs since 1580, and the Carreira da Índia is fraying, but the pepper still flows.',
+    openDirection: 'W',
+    enclosure: 0.2,
+    headlands: [
+      { side: 'right', size: 0.35, width: 0.2 },  // southern bank headland
+    ],
+  },
+  {
+    id: 'amsterdam',
+    name: 'Amsterdam',
+    geography: 'estuary',
+    climate: 'temperate',
+    culture: 'European',
+    scale: 'Large',
+    description: 'The IJ waterfront is all activity — cranes swinging bales from lighters into canal-side warehouses, VOC clerks tallying inventories, shipwrights caulking hulls in the yards. The city is flat and wet, and smells of tar and herring. The new Bourse is barely a year old but already thick with merchants trading pepper futures and Baltic grain contracts. Sephardic refugees from Iberia have settled along the canals, and their networks reach from Antwerp to Goa. Even in summer the wind off the Zuiderzee cuts through the rigging.',
+    openDirection: 'N',
+    channelWidth: 0.7,
+    enclosure: 0.15,
+  },
+  {
+    id: 'seville',
+    name: 'Seville',
+    geography: 'estuary',
+    climate: 'mediterranean',
+    culture: 'European',
+    scale: 'Large',
+    description: 'The river is shallow — ocean-going ships unload downstream at Sanlúcar de Barrameda, and flat-bottomed barges ferry cargo up the Guadalquivir to the city. The Torre del Oro marks the old river quay where goods from the Americas are landed and tallied by the Casa de Contratación. Genoese bankers have offices near the cathedral, converting Potosí silver into credit. The streets smell of olive oil, tobacco smoke, and orange blossom. Merchants grumble that Cádiz would be better, but the monopoly stays.',
+    openDirection: 'S',
+    channelWidth: 0.6,
+    enclosure: 0.2,
+  },
+  {
+    id: 'london',
+    name: 'London',
+    geography: 'strait',
+    climate: 'temperate',
+    culture: 'European',
+    scale: 'Large',
+    description: 'The Thames at low tide exposes mudflats and timber pilings below warehouses packed tight along both banks. Lighters and wherries crowd the river — London Bridge blocks larger vessels, so ocean-going ships moor downstream at Deptford and Wapping. The East India Company is barely twelve years old, still fitting out modest voyages. Apothecaries on Bucklersbury sell pepper and nutmeg at steep markups, and Virginia tobacco has just started appearing in the pipes of gentlemen. Sea coal smoke hangs over the rooftops on still days.',
+    openDirection: 'E',
+    channelWidth: 0.5,
+    channelTaper: 0.4,
+  },
+
+  // ── West African Ports ───────────────────────────────────────────────────────
+  {
+    id: 'elmina',
+    name: 'Elmina',
+    geography: 'continental_coast',
+    climate: 'tropical',
+    culture: 'West African',
+    scale: 'Small',
+    description: 'São Jorge da Mina rises white and angular above the rocky headland, its walls stained with tropical damp. Akan traders arrive from the forest interior with gold dust wrapped in leaves, exchanging it for Indian textiles, Venetian beads, and iron bars in the courtyard below the keep. Fishing canoes line the beach on either side of the fortress. The Portuguese garrison is small and nervous — Dutch ships have been probing the coast more often. The forest behind the settlement is dense, pressing up to the cleared ground.',
+    openDirection: 'S',
+    enclosure: 0.1,
+    headlands: [
+      { side: 'left', size: 0.3, width: 0.2 },  // fortress headland
+    ],
+  },
+  {
+    id: 'luanda',
+    name: 'Luanda',
+    geography: 'bay',
+    climate: 'tropical',
+    culture: 'West African',
+    scale: 'Small',
+    description: 'The Ilha de Luanda — a long, low sand spit — shelters the bay from the open Atlantic. The settlement is sparse: a fortress, a Jesuit college, a few streets of stone buildings in dry heat. This is a slaving port — pombeiros march coffles down from the interior to holding pens near the beach, where captives wait for ships bound to Bahia and Pernambuco. Nzimbu shells harvested from the island circulate as currency. The Benguela Current keeps the coast surprisingly cool and arid.',
+    openDirection: 'W',
+    coastCurvature: 0.5,
+    enclosure: 0.3,
+  },
+
+  // ── Atlantic American Ports ──────────────────────────────────────────────────
+  {
+    id: 'salvador',
+    name: 'Salvador da Bahia',
+    geography: 'bay',
+    climate: 'tropical',
+    culture: 'Atlantic',
+    scale: 'Large',
+    description: 'The city divides between the upper town on the bluff — churches, the governor\'s palace, Jesuit college — and the lower town at the waterline, where warehouses, slave markets, and chandlers\' shops crowd the quay. The Baía de Todos os Santos is enormous, its shores lined with sugar engenhos and tobacco farms. Enslaved Africans far outnumber the Portuguese. The harbor is always busy with coasting vessels bringing sugar chests down from the Recôncavo, and the smell of boiling cane carries across the water before the city comes into view.',
+    openDirection: 'E',
+    coastCurvature: 0.7,
+    enclosure: 0.4,
+    headlands: [
+      { side: 'left', size: 0.4, width: 0.25 },   // Ponta de Santo Antônio
+      { side: 'right', size: 0.3, width: 0.2 },
+    ],
+  },
+  {
+    id: 'havana',
+    name: 'Havana',
+    geography: 'inlet',
+    climate: 'tropical',
+    culture: 'Atlantic',
+    scale: 'Large',
+    description: 'The entrance is narrow — the channel passes directly beneath the guns of Morro Castle on one side and La Punta fortress on the other, then opens into a wide, deep harbor. The treasure fleet assembles here each summer before the Atlantic crossing, and the waterfront is loud with shipwrights and caulkers refitting galleons. Mexican silver, Cuban tobacco, and hides fill the customs warehouses. The fortifications are the strongest in the Americas — Drake raided the city in 1585, and the Spanish have been building walls ever since.',
+    openDirection: 'N',
+    channelWidth: 0.6,
+    enclosure: 0.6,
+    headlands: [
+      { side: 'left', size: 0.5, width: 0.2 },    // Morro Castle headland
+      { side: 'right', size: 0.45, width: 0.18 },  // La Punta
+    ],
+  },
+  {
+    id: 'cartagena',
+    name: 'Cartagena de Indias',
+    geography: 'bay',
+    climate: 'tropical',
+    culture: 'Atlantic',
+    scale: 'Medium',
+    description: 'The bay is nearly landlocked — ships enter through a narrow bocachica between low headlands fortified with batteries. Inside, the water is calm and deep. The Inquisition established a tribunal here just two years ago, and its agents are visible in the streets. Emeralds from Muzo, pearls from the Venezuelan coast, and silver transshipped overland from Portobelo pass through guarded warehouses. It is also one of the largest slave markets in the Americas, with thousands of captives arriving annually under the asiento.',
+    openDirection: 'W',
+    coastCurvature: 0.8,
+    enclosure: 0.55,
+    headlands: [
+      { side: 'left', size: 0.45, width: 0.2 },
+      { side: 'right', size: 0.4, width: 0.18 },
+    ],
+  },
+
+  // ── Cape Route Waypoint ──────────────────────────────────────────────────────
+  {
+    id: 'cape',
+    name: 'Cape of Good Hope',
+    geography: 'continental_coast',
+    climate: 'mediterranean',
+    culture: 'Indian Ocean',
+    scale: 'Small',
+    description: 'Table Mountain rises flat-topped above a wide, exposed anchorage in Table Bay. There is no settlement here, no quay — just a stony beach where ships send boats ashore to fill water casks from a stream running off the mountain\'s slopes. Khoikhoi herders sometimes drive cattle down to trade for iron and tobacco, though encounters can turn hostile without warning. The southeast wind blows relentlessly in summer, and ships that linger too long risk dragging anchor onto the rocks.',
+    openDirection: 'S',
+    enclosure: 0.05,
+  },
 ];
 
 // ── Climate → moisture range ───────────────────────────────────────────────────
@@ -294,6 +438,7 @@ export function getClimateMoisture(climate: ClimateProfile): [number, number] {
     case 'arid':     return [0.05, 0.25];
     case 'temperate':return [0.3, 0.6];
     case 'monsoon':  return [0.4, 0.8];
+    case 'mediterranean': return [0.15, 0.45];
   }
 }
 
@@ -517,7 +662,10 @@ export function getArchetypeShape(
 
     case 'strait': {
       // Two landmasses separated by a navigable channel — land extends off all edges
-      const cw = (def.channelWidth ?? 1.0) * 0.25;
+      // Optional taper: channel narrows toward +z (upstream end), for river-like ports
+      const taperFactor = def.channelTaper ?? 0;
+      const taper = 1.0 - taperFactor * (wrz * 0.5 + 0.5);
+      const cw = (def.channelWidth ?? 1.0) * 0.25 * taper;
       const channelNoise = cn * 0.5;
       const channelEdge = cw + channelNoise;
       const absWrx = Math.abs(wrx);

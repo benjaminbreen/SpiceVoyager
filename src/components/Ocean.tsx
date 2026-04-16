@@ -13,13 +13,13 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-const WATER_SURFACE_OFFSET = -0.03;
-const SHALLOW_TINT_OFFSET = 0.012;
+const WATER_SURFACE_OFFSET = -0.5;
+const SHALLOW_TINT_OFFSET = .32;
 const WAKE_SURFACE_OFFSET = 0.045;
-const FOAM_SURFACE_OFFSET = 0.055;
+const FOAM_SURFACE_OFFSET = 0.35;
 const ALGAE_SURFACE_OFFSET = 0.035;
 const CAUSTIC_SURFACE_OFFSET = 0.005;
-const WATER_SURFACE_ALPHA = 0.88;
+const WATER_SURFACE_ALPHA = 0.75;
 const WATER_OVERLAY_LAYER = 1;
 
 function useWaterOverlayLayer(ref: RefObject<THREE.Object3D | null>) {
@@ -47,6 +47,7 @@ function ShallowWaterTint() {
   const worldSeed = useGameStore((state) => state.worldSeed);
   const worldSize = useGameStore((state) => state.worldSize);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
 
@@ -60,6 +61,7 @@ function ShallowWaterTint() {
     const alphas = new Float32Array(position.count);
     const foamIntensities = new Float32Array(position.count);
     const reefFactors = new Float32Array(position.count);
+    const shoreEdges = new Float32Array(position.count);
 
     const _turquoiseBase = new THREE.Color().setRGB(...waterPalette.oceanOverlay.base);
     const _paleSurf = new THREE.Color().setRGB(...waterPalette.oceanOverlay.paleSurf);
@@ -70,19 +72,20 @@ function ShallowWaterTint() {
       const x = position.getX(i);
       const worldZ = -position.getY(i);
       const terrain = getTerrainData(x, worldZ);
-      const tintStrength = Math.min(1, terrain.shallowFactor * 1.45 + terrain.surfFactor * 1.2 + terrain.wetSandFactor * 0.35);
+      const tintStrength = Math.min(1, terrain.shallowFactor * 1.55 + terrain.surfFactor * 1.15 + terrain.wetSandFactor * 0.38);
 
       // Only tint below sea level — above-water terrain is handled by land geometry
       const aboveWater = terrain.height >= SEA_LEVEL;
-      const depthFade = aboveWater ? 0 : Math.min(1, Math.max(0, 1 + terrain.height * 1.5));
+      const depthBelowSea = SEA_LEVEL - terrain.height;
+      const depthFade = aboveWater ? 0 : 1 - smoothstep(0.5, 6.2, depthBelowSea);
       const alpha =
         tintStrength *
-        0.58 *
-        (1 - terrain.coastSteepness * 0.28) *
+        0.68 *
+        (1 - terrain.coastSteepness * 0.20) *
         depthFade;
       turquoise.copy(_turquoiseBase);
-      turquoise.lerp(_outerShallow, terrain.shallowFactor * 0.72);
-      turquoise.lerp(_paleSurf, terrain.surfFactor * 0.72);
+      turquoise.lerp(_outerShallow, terrain.shallowFactor * 0.68);
+      turquoise.lerp(_paleSurf, terrain.surfFactor * 0.58);
 
       colors[i * 3] = turquoise.r;
       colors[i * 3 + 1] = turquoise.g;
@@ -94,12 +97,22 @@ function ShallowWaterTint() {
       foamIntensities[i] = Math.min(1, foam) * (1 - terrain.coastSteepness * 0.5);
 
       reefFactors[i] = terrain.reefFactor;
+
+      // Shore edge: dark band at the waterline for coastline definition
+      if (depthBelowSea > 0 && depthBelowSea < 2.5) {
+        const proximity = Math.max(0, 1 - depthBelowSea * 0.55);
+        shoreEdges[i] = proximity * Math.min(1, terrain.surfFactor * 2.5 + terrain.shallowFactor * 1.0)
+          * (0.55 + terrain.coastSteepness * 0.45);
+      } else {
+        shoreEdges[i] = 0;
+      }
     }
 
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geo.setAttribute('aAlpha', new THREE.Float32BufferAttribute(alphas, 1));
     geo.setAttribute('aFoam', new THREE.Float32BufferAttribute(foamIntensities, 1));
     geo.setAttribute('aReef', new THREE.Float32BufferAttribute(reefFactors, 1));
+    geo.setAttribute('aShoreEdge', new THREE.Float32BufferAttribute(shoreEdges, 1));
 
     const mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -111,10 +124,12 @@ function ShallowWaterTint() {
         attribute float aAlpha;
         attribute float aFoam;
         attribute float aReef;
+        attribute float aShoreEdge;
         varying vec3 vColor;
         varying float vAlpha;
         varying float vFoam;
         varying float vReef;
+        varying float vShoreEdge;
         varying vec2 vWorldXZ;
 
         void main() {
@@ -122,6 +137,7 @@ function ShallowWaterTint() {
           vAlpha = aAlpha;
           vFoam = aFoam;
           vReef = aReef;
+          vShoreEdge = aShoreEdge;
           vWorldXZ = position.xy; // plane is XY before rotation
 
           vec3 pos = position;
@@ -140,6 +156,7 @@ function ShallowWaterTint() {
         varying float vAlpha;
         varying float vFoam;
         varying float vReef;
+        varying float vShoreEdge;
         varying vec2 vWorldXZ;
 
         float hash(vec2 p) {
@@ -183,18 +200,30 @@ function ShallowWaterTint() {
             float foamMask = smoothstep(0.32, 0.58, foam) * vFoam;
 
             // Mix toward foam color — darken at night
-            vec3 foamColor = mix(vec3(0.12, 0.14, 0.18), vec3(0.92, 0.96, 0.98), uDaylight);
-            col = mix(col, foamColor, foamMask * 0.85);
-            alpha = max(alpha, foamMask * 0.45);
+            vec3 foamColor = mix(vec3(0.12, 0.14, 0.18), vec3(0.82, 0.90, 0.92), uDaylight);
+            col = mix(col, foamColor, foamMask * 0.74);
+            alpha = max(alpha, foamMask * 0.36);
           }
 
           // Coral reef caustic shimmer — warm dappled light over reef patches (suppressed at night)
           if (vReef > 0.1 && uDaylight > 0.15) {
             float caustic = noise(vWorldXZ * 1.2 + uTime * vec2(0.12, -0.08));
-            caustic = smoothstep(0.35, 0.65, caustic);
+            caustic = smoothstep(0.55, 0.65, caustic);
             vec3 reefWarm = mix(vec3(0.75, 0.48, 0.58), vec3(0.40, 0.72, 0.58), caustic);
             col = mix(col, reefWarm, vReef * 0.3 * uDaylight);
             alpha = max(alpha, vReef * 0.22 * uDaylight);
+          }
+
+          // Shoreline shadow — dark edge right at the water-land boundary
+          if (vShoreEdge > 0.02) {
+            float edgeNoise = noise(vWorldXZ * 1.8 + vec2(3.7)) * 0.25 + 0.75;
+            float edgeStrength = vShoreEdge * edgeNoise;
+            // Dark teal shadow that reads as depth at the shoreline
+            vec3 shoreDay = vec3(0.12, 0.20, 0.24);
+            vec3 shoreNight = vec3(0.04, 0.07, 0.10);
+            vec3 shoreColor = mix(shoreNight, shoreDay, uDaylight);
+            col = mix(col, shoreColor, edgeStrength * 0.75);
+            alpha = max(alpha, edgeStrength * 0.70);
           }
 
           // Darken shallow tint at night — both color and opacity
@@ -215,7 +244,7 @@ function ShallowWaterTint() {
     });
 
     return { geometry: geo, material: mat };
-  }, [devSoloPort, waterPalette, worldSeed, worldSize]);
+  }, [currentWorldPortId, devSoloPort, waterPalette, worldSeed, worldSize]);
 
   useFrame((state) => {
     if (meshRef.current) {
@@ -748,7 +777,7 @@ function WaterCaustics() {
       case 'monsoon':
         return new THREE.Vector3(0.34, 0.64, 0.54);
       case 'tropical':
-        return new THREE.Vector3(0.36, 0.84, 0.88);
+        return new THREE.Vector3(0.36, 0.94, 0.88);
       case 'arid':
         return new THREE.Vector3(0.36, 0.78, 0.92);
       case 'mediterranean':
@@ -811,7 +840,7 @@ function WaterCaustics() {
         float n2 = noise(uv2);
         // Intersect two noise fields — creates bright caustic lines where both are high
         float caustic = n1 * n2;
-        caustic = smoothstep(0.23, 0.52, caustic);
+        caustic = smoothstep(0.83, 0.22, caustic);
 
         // Smaller, faster detail layer
         vec2 uv3 = vWorldXZ * 0.135 + vec2(t * 0.29, -t * 0.22);
@@ -819,14 +848,14 @@ function WaterCaustics() {
         float n3 = noise(uv3);
         float n4 = noise(uv4);
         float detail = n3 * n4;
-        detail = smoothstep(0.30, 0.62, detail);
+        detail = smoothstep(0.3, 0.52, detail);
 
         // Blend: large shapes dominate, detail adds sparkle
-        float combined = caustic * 0.70 + detail * 0.32;
+        float combined = caustic * 0.70 + detail * 0.5;
 
         vec3 causticColor = uCausticTint * (1.02 + combined * 0.18);
 
-        float alpha = combined * 0.075 * uDaylight * distFade;
+        float alpha = combined * 0.046 * uDaylight * distFade;
         if (alpha < 0.002) discard;
 
         gl_FragColor = vec4(causticColor, alpha);
@@ -884,10 +913,9 @@ export function Ocean() {
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
 
-  // Mount/unmount advanced water based on time — identical to toggling the checkbox
   const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
   const sunH = Math.sin(sunAngle);
-  const showAdvancedWater = advancedWaterEnabled && sunH > 0;
+  const showAdvancedWater = advancedWaterEnabled;
 
   // Load the standard three.js water normals texture for realistic distortion
   const waterNormals = useLoader(
@@ -899,19 +927,19 @@ export function Ocean() {
   const water = useMemo(() => {
     const geometry = new THREE.PlaneGeometry(10000, 10000);
     const w = new Water(geometry, {
-      textureWidth: 1024,
-      textureHeight: 1024,
+      textureWidth: 512,
+      textureHeight: 512,
       waterNormals,
-      sunDirection: new THREE.Vector3(1, 1, 0).normalize(),
-      sunColor: 0xffffff,
+      sunDirection: new THREE.Vector3(1, 0, 0).normalize(),
+      sunColor: 0xfffff,
       waterColor: waterPalette.surface.fallbackHex,
       alpha: WATER_SURFACE_ALPHA,
-      distortionScale: 1.2,
-      clipBias: 0.003,
+      distortionScale: 1.5,
+      clipBias: 2.00,
       fog: true,
     });
     w.rotation.x = -Math.PI / 2;
-    w.receiveShadow = true;
+    w.receiveShadow = false;
     const waterMaterial = w.material as THREE.ShaderMaterial;
     waterMaterial.transparent = true;
     waterMaterial.depthWrite = false;
@@ -919,18 +947,31 @@ export function Ocean() {
     waterMaterial.polygonOffsetFactor = 2;
     waterMaterial.polygonOffsetUnits = 4;
 
-    // Patch fragment shader: reduce Fresnel reflection so waterColor shows through more
-    // Original: rf0 = 0.3, no clamp -> water is mostly sky reflection from above
-    // Patched:  rf0 = 0.15, clamp 0.6, scatter * 1.6 -> balanced color + reflection
+    // Patch fragment shader:
+    // 1. Use a capped Fresnel curve so ship and shoreline reflections stay rich without
+    //    creating the old screen-horizontal transition band.
+    // 2. Keep some base distortion so far-water reflections are broken up by waves.
+    // 3. Fade reflection toward waterColor at distance to keep horizon/coastline
+    //    reflections from forming a hard stripe in default camera view.
     waterMaterial.fragmentShader = waterMaterial.fragmentShader
-      .replace('float rf0 = 0.3;', 'float rf0 = 0.15;')
+      .replace('float rf0 = 0.3;', 'float rf0 = 0.27;')
       .replace(
         'float reflectance = rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 5.0 );',
-        'float reflectance = min( rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 5.0 ), 0.6 );'
+        'float reflectance = min(0.13 + 0.24 * pow(1.0 - theta, 2.0), 0.34);'
       )
       .replace(
         'vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor;',
-        'vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor * 1.6;'
+        'vec3 scatter = max( 0.0, dot( surfaceNormal, eyeDirection ) ) * waterColor * 1.2;'
+      )
+      .replace(
+        'vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;',
+        'vec2 distortion = surfaceNormal.xz * ( 0.0018 + 1.0 / distance ) * distortionScale;'
+      )
+      .replace(
+        'vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );',
+        `vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );
+				float reflDistFade = smoothstep(350.0, 120.0, distance);
+				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);`
       );
     waterMaterial.needsUpdate = true;
 
@@ -950,9 +991,17 @@ export function Ocean() {
 
     if (sunH > 0.2) {
       mat.uniforms.sunColor.value.setRGB(0.9, 0.88, 0.8);
-    } else {
+    } else if (sunH > 0) {
       const t = sunH / 0.2;
       mat.uniforms.sunColor.value.setRGB(0.95, 0.45 + t * 0.43, 0.15 + t * 0.65);
+    } else {
+      // Night — cool moonlight reflection
+      const moonStr = Math.min(1, Math.max(0, -sunH) * 2);
+      mat.uniforms.sunColor.value.setRGB(
+        0.3 + moonStr * 0.15,
+        0.35 + moonStr * 0.2,
+        0.5 + moonStr * 0.25
+      );
     }
 
     // Adjust water body color with time

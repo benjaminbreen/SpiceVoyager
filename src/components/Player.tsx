@@ -9,6 +9,7 @@ import {
   getLiveWalkingTransform,
   syncLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
+import { spawnSplash } from '../utils/splashState';
 
 const CRAB_COLLECT_RADIUS_SQ = 1.5 * 1.5; // 1.5 units
 const STORE_SYNC_INTERVAL = 1 / 12;
@@ -127,8 +128,13 @@ export function Player() {
         // Check if we landed in water → death
         const terrainH = getTerrainHeight(walkingPos[0], walkingPos[2]);
         if (terrainH < -1) {
+          spawnSplash(walkingPos[0], walkingPos[2], 0.7);
           store.triggerGameOver('Drowned after a fatal plunge into the depths.');
           return;
+        }
+        // Splash on landing near water's edge
+        if (terrainH < 0) {
+          spawnSplash(walkingPos[0], walkingPos[2], 0.3);
         }
       }
     }
@@ -181,6 +187,10 @@ export function Player() {
     // Drowning timer — track time spent in water
     const currentTerrainH = getTerrainHeight(walkingPos[0], walkingPos[2]);
     if (currentTerrainH < -0.5 && !isJumping.current) {
+      // Splash on first entry into water
+      if (waterTimer.current === 0) {
+        spawnSplash(walkingPos[0], walkingPos[2], 0.4);
+      }
       waterTimer.current += delta;
 
       if (waterTimer.current >= 30) {

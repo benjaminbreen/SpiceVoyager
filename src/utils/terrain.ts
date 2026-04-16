@@ -226,6 +226,7 @@ function climateWindStrength(climate: ClimateProfile): number {
   switch (climate) {
     case 'monsoon': return 1.0;
     case 'tropical': return 0.85;
+    case 'mediterranean': return 0.7;
     case 'temperate': return 0.55;
     case 'arid': return 0.35;
   }
@@ -477,7 +478,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
   const sandyClimate = nearbyClimate === 'tropical' || nearbyClimate === 'monsoon';
   const beachWidthBoost = (0.72 + (sandyClimate ? 0.42 : 0)) * coastWidthScale * (1 - slope * 0.55);
 
-  const shallowDepth = lerp(2.4, 5.8 + beachWidthBoost * 1.1, coastWidthScale);
+  const shallowDepth = lerp(3.1, 7.8 + beachWidthBoost * 1.3, coastWidthScale);
   const surfHeight = lerp(0.16, 0.62 + beachWidthBoost * 0.12, coastWidthScale);
   const wetSandHeight = lerp(0.42, 1.15 + beachWidthBoost * 0.34, coastWidthScale);
   const dryBeachHeight = lerp(0.95, 2.45 + beachWidthBoost * 0.95, coastWidthScale);
@@ -581,9 +582,15 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
     if (shallowFactor > 0.45 && coastSteepness < 0.36 && moisture > 0.48) {
       biome = 'lagoon';
-      const lagoonColor: TerrainColor = [0.20, 0.62, 0.58];
-      const sandbarColor: TerrainColor = [0.58, 0.70, 0.52];
-      const channelColor: TerrainColor = [0.10, 0.42, 0.48];
+      const lagoonColor: TerrainColor = _cachedWaterPalette.id === 'monsoon'
+        ? [0.12, 0.44, 0.34]
+        : [0.20, 0.62, 0.58];
+      const sandbarColor: TerrainColor = _cachedWaterPalette.id === 'monsoon'
+        ? [0.42, 0.54, 0.34]
+        : [0.58, 0.70, 0.52];
+      const channelColor: TerrainColor = _cachedWaterPalette.id === 'monsoon'
+        ? [0.05, 0.28, 0.28]
+        : [0.10, 0.42, 0.48];
       const sandbarBlend = smoothstep(0.30, 0.58, patch1) * shallowFactor * 0.28;
       const channelBlend = smoothstep(-0.20, -0.46, patch2) * 0.22;
       color = mixColor(color, lagoonColor, 0.35 + shallowFactor * 0.25);

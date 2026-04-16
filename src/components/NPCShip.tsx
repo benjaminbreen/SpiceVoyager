@@ -7,6 +7,8 @@ import { getLiveShipTransform } from '../utils/livePlayerTransform';
 import { npcLivePositions } from '../utils/combatState';
 import { getMeshHalf, getTerrainHeight } from '../utils/terrain';
 import { sfxShipSink } from '../audio/SoundEffects';
+import { spawnSplash } from '../utils/splashState';
+import { SEA_LEVEL } from '../constants/world';
 
 const APPROACH_RADIUS = 40;  // show "approaching" toast
 const HAIL_RADIUS = 12;     // show "Press T to Talk" prompt
@@ -116,21 +118,32 @@ function LateenSail({ visual, position, scale = 1, angle = -0.46 }: { visual: NP
 
 function DhowLikeModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
   const large = shipType === 'Baghla' || shipType === 'Ghurab';
+  const hw = large ? 1.95 : 1.6; // hull width
+  const hl = large ? 5.2 : 4.4;  // hull length
   return (
     <group scale={visual.scale}>
-      <mesh position={[0, 0.45, 0]} castShadow receiveShadow>
-        <boxGeometry args={[large ? 1.95 : 1.6, 0.8, large ? 5.2 : 4.4]} />
+      {/* Main hull — shortened to make room for tapered bow */}
+      <mesh position={[0, 0.45, -0.3]} castShadow receiveShadow>
+        <boxGeometry args={[hw, 0.8, hl * 0.78]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
-      <mesh position={[0, 0.55, 2.55]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-        <boxGeometry args={[large ? 1.35 : 1.1, 0.75, large ? 1.35 : 1.1]} />
+      {/* Tapered bow — cone tapering to a sharp prow, raked slightly upward */}
+      <mesh position={[0, 0.55, hl * 0.32]} rotation={[-0.15, 0, 0]} castShadow receiveShadow>
+        <coneGeometry args={[hw * 0.52, hl * 0.38, 4]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
+      {/* Curved stem post — thin upward-raking spar at the prow tip */}
+      <mesh position={[0, 1.05, hl * 0.46]} rotation={[-0.4, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.04, 0.06, 1.2, 6]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
+      </mesh>
+      {/* Stern rail */}
       <mesh position={[0, 0.95, -1.8]} castShadow receiveShadow>
         <boxGeometry args={[large ? 1.8 : 1.45, 0.28, 0.22]} />
         <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
       </mesh>
-      <mesh position={[0, 2.4, 0.4]} castShadow>
+      {/* Main mast — raked slightly forward (characteristic of dhows) */}
+      <mesh position={[0, 2.4, 0.4]} rotation={[0.08, 0, 0]} castShadow>
         <cylinderGeometry args={[0.08, 0.1, 3.7, 7]} />
         <meshStandardMaterial color="#3e2723" />
       </mesh>
@@ -153,29 +166,51 @@ function DhowLikeModel({ visual, shipType }: { visual: NPCShipVisual; shipType: 
 function JunkModel({ visual }: { visual: NPCShipVisual }) {
   return (
     <group scale={visual.scale}>
-      <mesh position={[0, 0.55, 0]} castShadow receiveShadow>
-        <boxGeometry args={[2.35, 1.0, 5.0]} />
+      {/* Main hull — wider at waterline (flat-bottomed junk characteristic) */}
+      <mesh position={[0, 0.35, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.55, 0.6, 5.0]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
-      <mesh position={[0, 1.1, -2.0]} castShadow receiveShadow>
-        <boxGeometry args={[2.15, 0.9, 0.9]} />
+      {/* Upper hull — slightly narrower (tumblehome) */}
+      <mesh position={[0, 0.78, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.25, 0.4, 4.8]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      {/* High flat transom — the junk's most distinctive feature */}
+      <mesh position={[0, 1.25, -2.45]} castShadow receiveShadow>
+        <boxGeometry args={[2.35, 1.4, 0.2]} />
         <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
       </mesh>
+      {/* Stern cabin */}
+      <mesh position={[0, 1.1, -1.85]} castShadow receiveShadow>
+        <boxGeometry args={[2.0, 0.7, 0.9]} />
+        <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
+      </mesh>
+      {/* Bluff bow platform (kept flat — historically accurate) */}
       <mesh position={[0, 0.92, 2.35]} castShadow receiveShadow>
         <boxGeometry args={[1.9, 0.35, 0.42]} />
         <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
       </mesh>
+      {/* Masts with batten sails */}
       {[-0.85, 0.95].map((z, mastIdx) => (
         <group key={z} position={[0, 0, z]}>
           <mesh position={[0, 2.35, 0]} castShadow>
             <cylinderGeometry args={[0.08, 0.1, 3.5 - mastIdx * 0.25, 7]} />
             <meshStandardMaterial color="#3e2723" />
           </mesh>
+          {/* Sail panels with bamboo batten ribs between them */}
           {[-0.55, 0, 0.55].map((y, panelIdx) => (
-            <mesh key={y} position={[0.05, 2.6 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
-              <boxGeometry args={[2.15 - panelIdx * 0.18, 0.42, 0.08]} />
-              <meshStandardMaterial color={panelIdx === 1 ? visual.sailColor : visual.sailTrimColor} roughness={1} />
-            </mesh>
+            <group key={y}>
+              <mesh position={[0.05, 2.6 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
+                <boxGeometry args={[2.15 - panelIdx * 0.18, 0.38, 0.08]} />
+                <meshStandardMaterial color={panelIdx === 1 ? visual.sailColor : visual.sailTrimColor} roughness={1} />
+              </mesh>
+              {/* Bamboo batten rib */}
+              <mesh position={[0.05, 2.38 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
+                <boxGeometry args={[2.2 - panelIdx * 0.16, 0.04, 0.1]} />
+                <meshStandardMaterial color="#5c4a2e" roughness={0.8} />
+              </mesh>
+            </group>
           ))}
         </group>
       ))}
@@ -187,24 +222,40 @@ function JunkModel({ visual }: { visual: NPCShipVisual }) {
 
 function PrauModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
   const jong = shipType === 'Jong';
+  const hw = jong ? 2.15 : 1.2;
+  const hl = jong ? 5.2 : 4.6;
   return (
     <group scale={visual.scale}>
-      <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
-        <boxGeometry args={[jong ? 2.15 : 1.2, 0.72, jong ? 5.2 : 4.6]} />
+      {/* Main hull — shortened for tapered bow */}
+      <mesh position={[0, 0.42, -0.2]} castShadow receiveShadow>
+        <boxGeometry args={[hw, 0.72, hl * 0.75]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
-      <mesh position={[0, 0.62, 2.35]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-        <boxGeometry args={[jong ? 1.25 : 0.9, 0.58, jong ? 1.25 : 0.9]} />
+      {/* Sharp pointed bow — narrow cone, praus had very fine entries */}
+      <mesh position={[0, 0.42, hl * 0.3]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
+        <coneGeometry args={[hw * 0.38, hl * 0.35, 4]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      {/* Raised bow platform / carved prow ornament */}
+      <mesh position={[0, 0.85, hl * 0.42]} rotation={[-0.3, 0, 0]} castShadow>
+        <boxGeometry args={[hw * 0.35, 0.5, 0.6]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
+      </mesh>
+      {/* Stern — slightly tapered */}
+      <mesh position={[0, 0.52, -hl * 0.42]} rotation={[-Math.PI / 2, 0, 0]} castShadow>
+        <coneGeometry args={[hw * 0.45, hl * 0.18, 4]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
       {visual.hasOutrigger && (
         <>
+          {/* Outrigger floats */}
           {[-1.45, 1.45].map((x) => (
             <mesh key={x} position={[x, 0.22, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
               <cylinderGeometry args={[0.08, 0.08, 4.1, 8]} />
               <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
             </mesh>
           ))}
+          {/* Cross-spars */}
           {[-1.2, 0.6].map((z) => (
             <mesh key={z} position={[0, 0.48, z]} rotation={[0, 0, Math.PI / 2]} castShadow>
               <cylinderGeometry args={[0.035, 0.035, 3.1, 6]} />
@@ -213,10 +264,12 @@ function PrauModel({ visual, shipType }: { visual: NPCShipVisual; shipType: stri
           ))}
         </>
       )}
-      <mesh position={[0, 2.15, 0.35]} castShadow>
+      {/* Mast — slightly canted (characteristic of tanja rig) */}
+      <mesh position={[0, 2.15, 0.35]} rotation={[0.06, 0, 0.04]} castShadow>
         <cylinderGeometry args={[0.07, 0.09, 3.2, 7]} />
         <meshStandardMaterial color="#3e2723" />
       </mesh>
+      {/* Lug sail */}
       <mesh position={[0.35, 2.7, 0.45]} rotation={[0, 0, -0.25]}>
         <boxGeometry args={[2.05, 1.45, 0.08]} />
         <meshStandardMaterial color={visual.sailColor} roughness={1} />
@@ -231,22 +284,43 @@ function PrauModel({ visual, shipType }: { visual: NPCShipVisual; shipType: stri
 
 function EuropeanModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
   const galleon = shipType === 'Galleon' || shipType === 'Carrack' || shipType === 'Armed Merchantman';
+  const hw = galleon ? 2.35 : 1.85;
+  const hl = galleon ? 5.9 : 4.9;
   return (
     <group scale={visual.scale}>
-      <mesh position={[0, 0.58, 0]} castShadow receiveShadow>
-        <boxGeometry args={[galleon ? 2.35 : 1.85, 1.05, galleon ? 5.9 : 4.9]} />
+      {/* Main hull — shortened to leave room for bow taper */}
+      <mesh position={[0, 0.58, -0.25]} castShadow receiveShadow>
+        <boxGeometry args={[hw, 1.05, hl * 0.8]} />
         <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
       </mesh>
-      <mesh position={[0, 1.15, 2.45]} castShadow receiveShadow>
-        <boxGeometry args={[galleon ? 1.75 : 1.25, 0.75, 0.75]} />
+      {/* Bow taper — wedge narrowing to the beakhead */}
+      <mesh position={[0, 0.5, hl * 0.3]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
+        <coneGeometry args={[hw * 0.52, hl * 0.28, 4]} />
+        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
+      </mesh>
+      {/* Beakhead — the pointed spar projecting forward below the bowsprit */}
+      <mesh position={[0, 0.65, hl * 0.46]} castShadow receiveShadow>
+        <boxGeometry args={[hw * 0.35, 0.45, 0.55]} />
         <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
       </mesh>
+      {/* Bowsprit — angled spar projecting forward and upward from the bow */}
+      <mesh position={[0, 1.35, hl * 0.42]} rotation={[-0.55, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.05, 0.07, galleon ? 2.8 : 2.0, 6]} />
+        <meshStandardMaterial color="#3e2723" />
+      </mesh>
+      {/* Forecastle */}
+      <mesh position={[0, 1.15, hl * 0.28]} castShadow receiveShadow>
+        <boxGeometry args={[galleon ? 1.75 : 1.25, 0.55, 0.75]} />
+        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
+      </mesh>
+      {/* Stern castle */}
       {visual.hasSternCastle && (
         <mesh position={[0, 1.4, -2.35]} castShadow receiveShadow>
-          <boxGeometry args={[galleon ? 2.2 : 1.65, 1.15, 0.9]} />
+          <boxGeometry args={[galleon ? 2.2 : 1.65, galleon ? 1.35 : 1.15, 0.9]} />
           <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
         </mesh>
       )}
+      {/* Masts and sails */}
       {[-1.45, 0.2, 1.55].slice(0, visual.mastCount).map((z, idx) => (
         <group key={z} position={[0, 0, z]}>
           <mesh position={[0, 2.45, 0]} castShadow>
@@ -309,6 +383,26 @@ export function NPCShip({
   const hullRef = useRef(identity.maxHull);
   const [sinking, setSinking] = useState(false);
   const sinkProgress = useRef(0); // 0→1 over sink animation
+  const sinkSplashFired = useRef(false);
+
+  // Damage visual state
+  const damageTilt = useRef(0); // persistent list angle from hull damage
+  const damageTiltTarget = useRef(0);
+  const damageTiltSide = useRef(Math.random() > 0.5 ? 1 : -1); // which side they list to
+
+  // Smoke particles for damaged ships
+  const smokeMeshRef = useRef<THREE.InstancedMesh>(null);
+  const smokeParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number; maxLife: number }[]>([]);
+  const SMOKE_COUNT = 12;
+  const smokeInitialized = useRef(false);
+  const smokeDummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Bubble particles for sinking
+  const bubbleMeshRef = useRef<THREE.InstancedMesh>(null);
+  const bubbleParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number }[]>([]);
+  const BUBBLE_COUNT = 16;
+  const bubbleInitialized = useRef(false);
+  const bubbleDummy = useMemo(() => new THREE.Object3D(), []);
 
   // Track proximity state to avoid spamming
   const approachNotified = useRef(false);
@@ -340,14 +434,100 @@ export function NPCShip({
   useFrame((state, delta) => {
     if (!group.current) return;
 
-    // ── Sinking animation ──
+    // ── Sinking animation (3 phases) ──
     if (sinking) {
-      sinkProgress.current += delta * 0.4; // ~2.5 seconds to sink
-      group.current.position.y = -sinkProgress.current * 6;
-      group.current.rotation.z = sinkProgress.current * 0.8;
-      group.current.rotation.x = sinkProgress.current * 0.3;
-      if (sinkProgress.current >= 1) {
-        // Fully sunk — remove from live positions
+      sinkProgress.current += delta * 0.22; // ~4.5 seconds total
+      const t = sinkProgress.current;
+      const side = damageTiltSide.current;
+
+      if (t < 0.3) {
+        // Phase 1: settle low in water, heavy list
+        const p = t / 0.3;
+        const ease = p * p; // ease-in
+        group.current.position.y = -ease * 1.5;
+        group.current.rotation.z = side * ease * 0.6;
+        group.current.rotation.x = ease * 0.15;
+      } else if (t < 0.7) {
+        // Phase 2: capsize — roll hard, bow rises
+        const p = (t - 0.3) / 0.4;
+        const ease = 1 - (1 - p) * (1 - p); // ease-out
+        group.current.position.y = -1.5 - ease * 3.0;
+        group.current.rotation.z = side * (0.6 + ease * 0.8);
+        group.current.rotation.x = 0.15 + ease * 0.5;
+      } else {
+        // Phase 3: slip beneath the surface
+        const p = Math.min(1, (t - 0.7) / 0.3);
+        const ease = p * p;
+        group.current.position.y = -4.5 - ease * 4;
+        group.current.rotation.z = side * 1.4;
+        group.current.rotation.x = 0.65 + ease * 0.2;
+      }
+
+      // Spawn splash when hull meets waterline
+      if (t > 0.25 && !sinkSplashFired.current) {
+        sinkSplashFired.current = true;
+        const pos = group.current.position;
+        spawnSplash(pos.x, pos.z, 0.8);
+      }
+
+      // Bubble particles while sinking
+      if (bubbleMeshRef.current) {
+        if (!bubbleInitialized.current) {
+          bubbleInitialized.current = true;
+          for (let i = 0; i < BUBBLE_COUNT; i++) {
+            bubbleParticles.current.push({
+              pos: new THREE.Vector3(0, -1000, 0),
+              vel: new THREE.Vector3(),
+              life: 0,
+            });
+          }
+        }
+        const shipPos = group.current.position;
+        // Continuously spawn bubbles while sinking
+        for (let i = 0; i < BUBBLE_COUNT; i++) {
+          const bp = bubbleParticles.current[i];
+          if (bp.life <= 0 && t > 0.15 && t < 0.95) {
+            bp.pos.set(
+              shipPos.x + (Math.random() - 0.5) * 4,
+              SEA_LEVEL - 0.1,
+              shipPos.z + (Math.random() - 0.5) * 4,
+            );
+            bp.vel.set(
+              (Math.random() - 0.5) * 0.5,
+              1.5 + Math.random() * 2,
+              (Math.random() - 0.5) * 0.5,
+            );
+            bp.life = 0.4 + Math.random() * 0.6;
+            break; // one spawn per frame
+          }
+        }
+        let needsUpdate = false;
+        for (let i = 0; i < BUBBLE_COUNT; i++) {
+          const bp = bubbleParticles.current[i];
+          if (bp.life > 0) {
+            bp.life -= delta;
+            bp.pos.addScaledVector(bp.vel, delta);
+            bp.vel.x *= 1 - 2 * delta;
+            bp.vel.z *= 1 - 2 * delta;
+            bubbleDummy.position.copy(bp.pos);
+            const s = Math.max(0, bp.life) * 0.25;
+            bubbleDummy.scale.set(s, s, s);
+            bubbleDummy.updateMatrix();
+            bubbleMeshRef.current.setMatrixAt(i, bubbleDummy.matrix);
+            needsUpdate = true;
+          } else if (bp.pos.y > -100) {
+            bp.pos.set(0, -1000, 0);
+            bubbleDummy.position.copy(bp.pos);
+            bubbleDummy.scale.set(0, 0, 0);
+            bubbleDummy.updateMatrix();
+            bubbleMeshRef.current.setMatrixAt(i, bubbleDummy.matrix);
+            needsUpdate = true;
+          }
+        }
+        if (needsUpdate) bubbleMeshRef.current.instanceMatrix.needsUpdate = true;
+      }
+
+      if (t >= 1) {
         npcLivePositions.delete(identity.id);
         group.current.visible = false;
       }
@@ -554,10 +734,93 @@ export function NPCShip({
       nextTargetSearchAt.current = now + 350;
     }
 
-    // Bobbing
-    group.current.position.y = Math.sin(state.clock.elapsedTime * 2 + initialPosition[0]) * 0.2;
-    group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.5 + initialPosition[2]) * 0.05;
-    group.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2 + initialPosition[0]) * 0.05;
+    // ── Damage tilt — ships list as they take damage ──
+    const hullFrac = hullRef.current / identity.maxHull;
+    if (hullFrac < 0.85) {
+      // Target tilt increases as hull drops: 0 at 85%, up to ~0.35 rad at 0%
+      damageTiltTarget.current = (1 - hullFrac / 0.85) * 0.35;
+    } else {
+      damageTiltTarget.current = 0;
+    }
+    // Smooth approach to target tilt
+    damageTilt.current += (damageTiltTarget.current - damageTilt.current) * delta * 2;
+
+    // Bobbing — damage adds persistent list + lower waterline
+    const sinkOffset = damageTilt.current * 1.2; // settle lower as damage increases
+    group.current.position.y = Math.sin(state.clock.elapsedTime * 2 + initialPosition[0]) * 0.2 - sinkOffset;
+    group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.5 + initialPosition[2]) * 0.05
+      + damageTilt.current * damageTiltSide.current;
+    group.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2 + initialPosition[0]) * 0.05
+      + damageTilt.current * 0.15;
+
+    // ── Damage smoke — rising from damaged ships ──
+    if (hullFrac < 0.7 && smokeMeshRef.current) {
+      if (!smokeInitialized.current) {
+        smokeInitialized.current = true;
+        for (let i = 0; i < SMOKE_COUNT; i++) {
+          smokeParticles.current.push({
+            pos: new THREE.Vector3(0, -1000, 0),
+            vel: new THREE.Vector3(),
+            life: 0,
+            maxLife: 1,
+          });
+        }
+      }
+      // Spawn rate increases with damage
+      const spawnRate = hullFrac < 0.3 ? 3 : hullFrac < 0.5 ? 2 : 1; // particles per frame attempt
+      let spawned = 0;
+      for (let i = 0; i < SMOKE_COUNT && spawned < spawnRate; i++) {
+        const sp = smokeParticles.current[i];
+        if (sp.life <= 0) {
+          const shipPos = currentPos;
+          sp.pos.set(
+            shipPos.x + (Math.random() - 0.5) * 2.5,
+            shipPos.y + 1.5 + Math.random() * 1.5,
+            shipPos.z + (Math.random() - 0.5) * 2.5,
+          );
+          sp.vel.set(
+            (Math.random() - 0.5) * 0.4,
+            1.2 + Math.random() * 1.5,
+            (Math.random() - 0.5) * 0.4,
+          );
+          sp.maxLife = 1.5 + Math.random() * 1.5;
+          sp.life = sp.maxLife;
+          spawned++;
+        }
+      }
+      // Update smoke particles
+      let needsUpdate = false;
+      for (let i = 0; i < SMOKE_COUNT; i++) {
+        const sp = smokeParticles.current[i];
+        if (!sp) continue;
+        if (sp.life > 0) {
+          sp.life -= delta;
+          sp.pos.addScaledVector(sp.vel, delta);
+          // Slow drift and spread
+          sp.vel.x += (Math.random() - 0.5) * delta * 0.8;
+          sp.vel.z += (Math.random() - 0.5) * delta * 0.8;
+          sp.vel.y *= 1 - 0.3 * delta; // decelerate upward
+          smokeDummy.position.copy(sp.pos);
+          // Grow then fade: start small, expand to max, then shrink
+          const lifeRatio = sp.life / sp.maxLife;
+          const growPhase = Math.min(1, (1 - lifeRatio) * 4); // quick grow at start
+          const fadePhase = Math.max(0, lifeRatio); // fade toward end
+          const s = growPhase * fadePhase * 0.8;
+          smokeDummy.scale.set(s, s, s);
+          smokeDummy.updateMatrix();
+          smokeMeshRef.current!.setMatrixAt(i, smokeDummy.matrix);
+          needsUpdate = true;
+        } else if (sp.pos.y > -100) {
+          sp.pos.set(0, -1000, 0);
+          smokeDummy.position.copy(sp.pos);
+          smokeDummy.scale.set(0, 0, 0);
+          smokeDummy.updateMatrix();
+          smokeMeshRef.current!.setMatrixAt(i, smokeDummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) smokeMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
 
     // Alert ring visibility
     if (alertRingRef.current) {
@@ -606,7 +869,6 @@ export function NPCShip({
 
     // ── Health bar (billboard toward camera) ──
     if (healthBarGroupRef.current) {
-      const hullFrac = hullRef.current / identity.maxHull;
       const showBar = hullFrac < 1 && distToPlayer < 60;
       healthBarGroupRef.current.visible = showBar;
       if (showBar && healthBarFgRef.current) {
@@ -643,55 +905,80 @@ export function NPCShip({
   };
 
   return (
-    <group ref={group} position={initialPosition} onClick={handleClick}>
-      {/* Alert ring - orange circle when fleeing */}
-      <mesh ref={alertRingRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
-        <ringGeometry args={[3.5, 4, 32]} />
-        <meshBasicMaterial color="#ff8800" transparent opacity={0.6} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Selection ring - white circle when clicked */}
-      <mesh ref={selectRingRef} position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
-        <ringGeometry args={[4, 4.4, 48]} />
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.45} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Health bar — appears when damaged */}
-      <group ref={healthBarGroupRef} position={[0, 5.5, 0]} visible={false}>
-        {/* Background (dark) */}
-        <mesh position={[0, 0, -0.01]}>
-          <planeGeometry args={[3, 0.3]} />
-          <meshBasicMaterial color="#220000" transparent opacity={0.7} />
+    <>
+      <group ref={group} position={initialPosition} onClick={handleClick}>
+        {/* Alert ring - orange circle when fleeing */}
+        <mesh ref={alertRingRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+          <ringGeometry args={[3.5, 4, 32]} />
+          <meshBasicMaterial color="#ff8800" transparent opacity={0.6} side={THREE.DoubleSide} />
         </mesh>
-        {/* Foreground (colored) */}
-        <mesh ref={healthBarFgRef}>
-          <planeGeometry args={[3, 0.25]} />
-          <meshBasicMaterial color="#00ff00" />
+        {/* Selection ring - white circle when clicked */}
+        <mesh ref={selectRingRef} position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+          <ringGeometry args={[4, 4.4, 48]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.45} side={THREE.DoubleSide} />
         </mesh>
-      </group>
-      <NPCShipModel identity={identity} />
-      {/* Night torch */}
-      <group position={[0.5, 2.2, -1]}>
-        <pointLight
-          ref={torchRef}
-          color="#ff8833"
-          intensity={0}
-          distance={15}
-          decay={2}
-        />
-        <mesh>
-          <sphereGeometry args={[0.08, 6, 6]} />
-          <meshStandardMaterial
-            ref={torchMeshRef}
-            color="#ff6600"
-            emissive="#ff8822"
-            emissiveIntensity={0}
-            toneMapped={false}
+        {/* Health bar — appears when damaged */}
+        <group ref={healthBarGroupRef} position={[0, 5.5, 0]} visible={false}>
+          {/* Background (dark) */}
+          <mesh position={[0, 0, -0.01]}>
+            <planeGeometry args={[3, 0.3]} />
+            <meshBasicMaterial color="#220000" transparent opacity={0.7} />
+          </mesh>
+          {/* Foreground (colored) */}
+          <mesh ref={healthBarFgRef}>
+            <planeGeometry args={[3, 0.25]} />
+            <meshBasicMaterial color="#00ff00" />
+          </mesh>
+        </group>
+        <NPCShipModel identity={identity} />
+        {/* Night torch */}
+        <group position={[0.5, 2.2, -1]}>
+          <pointLight
+            ref={torchRef}
+            color="#ff8833"
+            intensity={0}
+            distance={15}
+            decay={2}
           />
-        </mesh>
-        <mesh position={[0, -0.3, 0]}>
-          <cylinderGeometry args={[0.025, 0.025, 0.5]} />
-          <meshStandardMaterial color="#3e2723" />
-        </mesh>
+          <mesh>
+            <sphereGeometry args={[0.08, 6, 6]} />
+            <meshStandardMaterial
+              ref={torchMeshRef}
+              color="#ff6600"
+              emissive="#ff8822"
+              emissiveIntensity={0}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh position={[0, -0.3, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, 0.5]} />
+            <meshStandardMaterial color="#3e2723" />
+          </mesh>
+        </group>
       </group>
-    </group>
+
+      {/* Damage smoke — world-space particles rising from burning ship */}
+      <instancedMesh ref={smokeMeshRef} args={[undefined, undefined, SMOKE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.8, 6, 6]} />
+        <meshStandardMaterial
+          color="#222222"
+          transparent
+          opacity={0.45}
+          depthWrite={false}
+        />
+      </instancedMesh>
+
+      {/* Sinking bubbles — world-space */}
+      <instancedMesh ref={bubbleMeshRef} args={[undefined, undefined, BUBBLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.3, 6, 6]} />
+        <meshStandardMaterial
+          color="#aaddee"
+          emissive="#668899"
+          emissiveIntensity={0.3}
+          transparent
+          opacity={0.7}
+        />
+      </instancedMesh>
+    </>
   );
 }

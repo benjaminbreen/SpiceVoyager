@@ -21,6 +21,8 @@ import {
   getLiveShipTransform,
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
+import { SplashSystem } from './SplashSystem';
+import { spawnSplash, spawnSplinters } from '../utils/splashState';
 import {
   mouseWorldPos,
   projectiles,
@@ -38,6 +40,11 @@ import { resolveWaterPaletteId } from '../utils/waterPalettes';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
 
 function landfallDescription(x: number, z: number): { title: string; subtitle: string } {
   const td = getTerrainData(x, z);
@@ -585,6 +592,7 @@ function ProjectileSystem() {
       p.pos.addScaledVector(p.vel, delta);
 
       if (p.pos.y < 0) {
+        spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
         sfxCannonSplash();
         projectiles.splice(i, 1);
         continue;
@@ -597,6 +605,7 @@ function ProjectileSystem() {
         const dz = p.pos.z - npc.z;
         if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
           sfxCannonImpact();
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
           // Deal damage based on projectile's weapon type + gunner/ability bonuses
           const gState = useGameStore.getState();
           const gunner = getCrewByRole(gState, 'Gunner');
@@ -703,14 +712,14 @@ function useAtmosphere() {
     let skyColor: THREE.Color;
     let fogColor: THREE.Color;
     const climateSky = {
-      daySky: waterPaletteId === 'monsoon' ? '#22aee8' : waterPaletteId === 'tropical' ? '#119df2' : '#58b7ec',
-      dayFog: waterPaletteId === 'monsoon' ? '#8bd6e6' : waterPaletteId === 'tropical' ? '#92d8ff' : '#a7d8ef',
-      duskSky: waterPaletteId === 'monsoon' ? '#24445a' : '#1d3158',
-      duskFog: waterPaletteId === 'monsoon' ? '#263b46' : '#202b42',
-      warmSky: waterPaletteId === 'monsoon' ? '#e6a06c' : '#f2a15f',
-      warmFog: waterPaletteId === 'monsoon' ? '#bca887' : '#d9b59a',
-      nightSky: waterPaletteId === 'monsoon' ? '#122b3d' : '#14284a',
-      nightFog: waterPaletteId === 'monsoon' ? '#142633' : '#18243a',
+      daySky: waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#119df2' : '#58b7ec',
+      dayFog: waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#92d8ff' : '#a7d8ef',
+      duskSky: waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158',
+      duskFog: waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42',
+      warmSky: waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b',
+      warmFog: waterPaletteId === 'monsoon' ? '#bca887' : waterPaletteId === 'temperate' ? '#b5aa99' : '#d9b59a',
+      nightSky: waterPaletteId === 'monsoon' ? '#122b3d' : waterPaletteId === 'temperate' ? '#182832' : '#14284a',
+      nightFog: waterPaletteId === 'monsoon' ? '#142633' : waterPaletteId === 'temperate' ? '#1a2a31' : '#18243a',
     };
     if (sunH > 0.3) {
       // Full day — cheerful tropical blue with a little humid warmth.
@@ -748,17 +757,17 @@ function useAtmosphere() {
       fogColor = new THREE.Color(climateSky.nightFog);
     }
 
-    // Daytime fog should not turn open tropical water into a gray horizon.
-    // Keep sunset/night haze closer, but push clear-day fog well beyond the map.
+    // Keep a faint baseline haze everywhere so the world is not unnaturally
+    // crisp, then let AtmosphereSync add stronger fog near map edges.
     const clearDayPalette = waterPaletteId === 'tropical'
       || waterPaletteId === 'monsoon'
       || waterPaletteId === 'arid'
       || waterPaletteId === 'mediterranean';
     const fogNear = sunH > 0
-      ? clearDayPalette ? 850 : 650
+      ? clearDayPalette ? 520 : 460
       : 120 + Math.max(0, sunH + 0.3) * 420;
     const fogFar = sunH > 0
-      ? clearDayPalette ? 3200 : 2400
+      ? clearDayPalette ? 1800 : 1450
       : 360 + Math.max(0, sunH + 0.3) * 1100;
 
     // Postprocessing — golden hour warm, night cool/desaturated
@@ -795,6 +804,7 @@ function useAtmosphere() {
 // Syncs Three.js fog and background with computed atmosphere colors
 function AtmosphereSync() {
   const { skyColor, fogColor, fogNear, fogFar } = useAtmosphere();
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
   const { scene } = useThree();
 
   useFrame(() => {
@@ -802,9 +812,19 @@ function AtmosphereSync() {
       scene.background.copy(skyColor);
     }
     if (scene.fog instanceof THREE.Fog) {
+      const shipTransform = getLiveShipTransform();
+      const mapHalf = (devSoloPort ? 1000 : 900) / 2;
+      const edgeDistance = mapHalf - Math.max(
+        Math.abs(shipTransform.pos[0]),
+        Math.abs(shipTransform.pos[2]),
+      );
+      const edgeFog = 1 - smoothstep(45, 185, edgeDistance);
+      const edgeNear = THREE.MathUtils.lerp(fogNear, 70, edgeFog);
+      const edgeFar = THREE.MathUtils.lerp(fogFar, 260, edgeFog);
+
       scene.fog.color.copy(fogColor);
-      scene.fog.near = fogNear;
-      scene.fog.far = fogFar;
+      scene.fog.near = edgeNear;
+      scene.fog.far = Math.max(edgeNear + 80, edgeFar);
     }
   });
 
@@ -837,6 +857,7 @@ export function Game() {
           <CameraController />
           <InteractionController />
           <ProjectileSystem />
+          <SplashSystem />
           <TimeController />
           <AtmosphereSync />
           <ShiftSelectOverlay />
@@ -846,6 +867,7 @@ export function Game() {
           )}
         </Suspense>
       </Canvas>
+      <NightVignetteOverlay enabled={vignetteEnabled} />
       <UI />
       <CrewDeathModal />
       <GameOverScreen />
@@ -856,6 +878,11 @@ export function Game() {
 
 function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boolean; vignetteEnabled: boolean }) {
   const { brightness, contrast, hue, saturation } = useAtmosphere();
+  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
+  const nightFactor = THREE.MathUtils.smoothstep((0.12 - sunH) / 0.42, 0, 1);
+  const vignetteOffset = THREE.MathUtils.lerp(0.18, 0.12, nightFactor);
+  const vignetteDarkness = THREE.MathUtils.lerp(0.85, 1.12, nightFactor);
 
   return (
     <EffectComposer>
@@ -871,7 +898,32 @@ function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boole
       {bloomEnabled && <Bloom luminanceThreshold={0.65} luminanceSmoothing={0.9} height={300} intensity={0.8} />}
       <BrightnessContrast brightness={brightness} contrast={contrast} />
       <HueSaturation hue={hue} saturation={saturation} />
-      {vignetteEnabled && <Vignette eskil={false} offset={0.18} darkness={0.85} />}
+      {vignetteEnabled && <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} />}
     </EffectComposer>
+  );
+}
+
+function NightVignetteOverlay({ enabled }: { enabled: boolean }) {
+  const timeOfDay = useGameStore((state) => state.timeOfDay);
+
+  if (!enabled) return null;
+
+  const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
+  const nightFactor = THREE.MathUtils.smoothstep((0.14 - sunH) / 0.48, 0, 1);
+  const bottomAlpha = THREE.MathUtils.lerp(0.10, 0.36, nightFactor);
+  const sideAlpha = THREE.MathUtils.lerp(0.05, 0.18, nightFactor);
+  const topAlpha = THREE.MathUtils.lerp(0.04, 0.13, nightFactor);
+
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none"
+      style={{
+        background: [
+          `linear-gradient(to top, rgba(0,0,0,${bottomAlpha}) 0%, rgba(0,0,0,${bottomAlpha * 0.82}) 12%, rgba(0,0,0,${bottomAlpha * 0.28}) 24%, transparent 38%)`,
+          `linear-gradient(to bottom, rgba(0,0,0,${topAlpha}) 0%, rgba(0,0,0,${topAlpha * 0.45}) 14%, transparent 30%)`,
+          `radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,${sideAlpha * 0.42}) 74%, rgba(0,0,0,${sideAlpha}) 100%)`,
+        ].join(', '),
+      }}
+    />
   );
 }

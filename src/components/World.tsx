@@ -36,7 +36,7 @@ const SKY_DOME_FS = `
   varying vec3 vDir;
   void main() {
     float skyT = smoothstep(-0.04, 0.82, vDir.y);
-    float lowerT = smoothstep(-0.36, 0.04, vDir.y);
+    float lowerT = smoothstep(-0.55, 0.18, vDir.y);
     vec3 sky = mix(uHorizonColor, uZenithColor, skyT);
     vec3 col = mix(uLowerColor, sky, lowerT);
     gl_FragColor = vec4(col, 1.0);
@@ -70,13 +70,17 @@ function ClearSkyDome() {
 
     if (sunH > 0.3) {
       if (waterPaletteId === 'monsoon') {
-        zenith = new THREE.Color('#0693e3');
-        horizon = new THREE.Color('#4ec2ee');
-        lower = new THREE.Color('#78cfe8');
+        zenith = new THREE.Color('#3d9fbb');
+        horizon = new THREE.Color('#75bfc9');
+        lower = new THREE.Color('#9acdcf');
       } else if (waterPaletteId === 'tropical') {
         zenith = new THREE.Color('#0289e8');
         horizon = new THREE.Color('#50c7ff');
         lower = new THREE.Color('#7ed5ff');
+      } else if (waterPaletteId === 'temperate') {
+        zenith = new THREE.Color('#6f8894');
+        horizon = new THREE.Color('#9fb4bc');
+        lower = new THREE.Color('#b5c3c8');
       } else {
         zenith = new THREE.Color('#158bd8');
         horizon = new THREE.Color('#68c4f2');
@@ -84,20 +88,32 @@ function ClearSkyDome() {
       }
     } else if (sunH > 0.0) {
       const t = sunH / 0.3;
-      const dayZenith = waterPaletteId === 'tropical' ? '#0289e8' : '#0693e3';
-      const dayHorizon = waterPaletteId === 'tropical' ? '#50c7ff' : '#4ec2ee';
+      const dayZenith = waterPaletteId === 'temperate'
+        ? '#6f8894'
+        : waterPaletteId === 'monsoon'
+        ? '#3d9fbb'
+        : waterPaletteId === 'tropical'
+        ? '#0289e8'
+        : '#0693e3';
+      const dayHorizon = waterPaletteId === 'temperate'
+        ? '#9fb4bc'
+        : waterPaletteId === 'monsoon'
+        ? '#75bfc9'
+        : waterPaletteId === 'tropical'
+        ? '#50c7ff'
+        : '#4ec2ee';
       zenith = lerpColorHex('#223a68', dayZenith, t);
       horizon = lerpColorHex('#f0a36b', dayHorizon, t);
-      lower = lerpColorHex('#d4a06f', '#7ed5ff', t);
+      lower = lerpColorHex('#f0a36b', dayHorizon, t);
     } else if (sunH > -0.15) {
       const t = (sunH + 0.15) / 0.15;
       zenith = lerpColorHex('#101f42', '#223a68', t);
       horizon = lerpColorHex('#172747', '#f0a36b', t);
-      lower = lerpColorHex('#10192f', '#d4a06f', t);
+      lower = lerpColorHex('#172747', '#f0a36b', t);
     } else {
       zenith = new THREE.Color('#081833');
       horizon = new THREE.Color('#102241');
-      lower = new THREE.Color('#0a1224');
+      lower = new THREE.Color('#102241');
     }
 
     uniforms.uZenithColor.value.copy(zenith);
@@ -234,105 +250,6 @@ function generateNpcSpawnPositions(
   }
 
   return positions;
-}
-
-// ── Edge fog overlay ──────────────────────────────────────────────────────────
-// A massive flat plane that's transparent in the playable center and fades to
-// fully opaque haze at map edges. Extends far beyond the mesh so the fog
-// covers the horizon. Color adapts to time of day (bright haze → dark night).
-const EDGE_FOG_VS = `
-  varying vec2 vWorldXZ;
-  void main() {
-    vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-const EDGE_FOG_FS = `
-  uniform float uHalfSize;
-  uniform vec3 uFogColor;
-  uniform float uMaxAlpha;
-  varying vec2 vWorldXZ;
-  void main() {
-    float edgeDist = max(abs(vWorldXZ.x), abs(vWorldXZ.y));
-    float fogStart = uHalfSize * 0.88;
-    float fogFull = uHalfSize * 1.0;
-    float t = clamp((edgeDist - fogStart) / (fogFull - fogStart), 0.0, 1.0);
-    float alpha = t * t * uMaxAlpha;
-    gl_FragColor = vec4(uFogColor, alpha);
-  }
-`;
-
-function EdgeFogPlane({ halfSize }: { halfSize: number }) {
-  const matRef = useRef<THREE.ShaderMaterial>(null);
-
-  // Update fog color each frame to match atmosphere
-  useFrame(() => {
-    if (!matRef.current) return;
-    const { timeOfDay } = useGameStore.getState();
-    const waterPaletteId = resolveWaterPaletteId(useGameStore.getState());
-    const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(angle);
-    let r: number, g: number, b: number;
-    if (sunH > 0.3) {
-      // Day — light edge haze only. The clear sky should remain visible.
-      if (waterPaletteId === 'monsoon') {
-        r = 0.45; g = 0.78; b = 0.88;
-      } else if (waterPaletteId === 'tropical') {
-        r = 0.40; g = 0.74; b = 0.96;
-      } else {
-        r = 0.58; g = 0.76; b = 0.90;
-      }
-    } else if (sunH > 0.0) {
-      // Golden hour — theatrical amber mist.
-      const t = sunH / 0.3;
-      if (waterPaletteId === 'monsoon') {
-        r = 0.72 + t * -0.15; g = 0.60 + t * 0.14; b = 0.48 + t * 0.22;
-      } else {
-        r = 0.84 + t * -0.06; g = 0.64 + t * 0.20; b = 0.52 + t * 0.29;
-      }
-    } else if (sunH > -0.15) {
-      // Dusk/dawn — readable blue with a little retained warmth.
-      const t = (sunH + 0.15) / 0.15;
-      r = 0.18 + t * 0.66; g = 0.24 + t * 0.40; b = 0.34 + t * 0.18;
-    } else {
-      // Night — blue but not grim.
-      r = 0.10; g = 0.15; b = 0.25;
-    }
-    matRef.current.uniforms.uFogColor.value.set(r, g, b);
-    const clearDayPalette = waterPaletteId === 'tropical'
-      || waterPaletteId === 'monsoon'
-      || waterPaletteId === 'arid'
-      || waterPaletteId === 'mediterranean';
-    const maxAlpha = sunH > 0.3
-      ? clearDayPalette ? 0.04 : 0.18
-      : sunH > 0.0
-      ? 0.48
-      : sunH > -0.15
-      ? 0.68
-      : 0.92;
-    matRef.current.uniforms.uMaxAlpha.value = maxAlpha;
-  });
-
-  // Plane is 5x mesh size so it extends well past the horizon
-  const planeSize = halfSize * 5;
-
-  return (
-    <mesh position={[0, 12, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} renderOrder={999}>
-      <planeGeometry args={[planeSize, planeSize, 1, 1]} />
-      <shaderMaterial
-        ref={matRef}
-        transparent
-        depthWrite={false}
-        uniforms={{
-          uHalfSize: { value: halfSize },
-          uFogColor: { value: new THREE.Vector3(0.70, 0.76, 0.80) },
-          uMaxAlpha: { value: 0.34 },
-        }}
-        vertexShader={EDGE_FOG_VS}
-        fragmentShader={EDGE_FOG_FS}
-      />
-    </mesh>
-  );
 }
 
 // Clip land geometry at the water surface so no land triangles exist below
@@ -1998,9 +1915,6 @@ export function World() {
         material={terrainMaterial}
       />
 
-
-      {/* Edge fog — transparent center, opaque past map edges, extends to horizon */}
-      <EdgeFogPlane halfSize={(devSoloPort ? 1000 : 900) / 2} />
 
       {/* Instanced Flora & Fauna */}
       {treeData.length > 0 && (

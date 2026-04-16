@@ -10,6 +10,7 @@ import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
 import { swivelAimAngle, broadsideReload } from '../utils/combatState';
+import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 
 const SHIP_ROOT_Y = -0.3;
@@ -971,6 +972,8 @@ export function Ship() {
           const rot = rotation.current;
           const splashX = shipPos.x + Math.sin(rot) * 2.5 + Math.cos(rot) * 1.8;
           const splashZ = shipPos.z + Math.cos(rot) * 2.5 - Math.sin(rot) * 1.8;
+          // Trigger water ripple for anchor splash
+          if (progress < 0.40) spawnSplash(splashX, splashZ, 0.6);
           for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
             const p = anchorSplashData.current[i];
             if (p.life <= 0) {

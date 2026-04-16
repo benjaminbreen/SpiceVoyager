@@ -133,6 +133,58 @@ const CLOTHING: Record<Culture, Record<FigureType, ClothingEntry[]>> = {
       { color: [0.80, 0.72, 0.58], weight: 2 },  // undyed linen
     ],
   },
+
+  // ── WEST AFRICAN (Akan, Fante, coastal West Africa) ──────────────────
+  // Kente-adjacent woven cloth, bark cloth, imported European textiles.
+  // Dyes: indigo, camwood (red), kola nut (brown). Gold adornment common.
+  'West African': {
+    man: [
+      { color: [0.82, 0.76, 0.62], weight: 3 },  // undyed cotton cloth
+      { color: [0.55, 0.42, 0.28], weight: 3 },  // bark cloth brown
+      { color: [0.15, 0.22, 0.42], weight: 2 },  // deep indigo (prestigious)
+      { color: [0.62, 0.30, 0.18], weight: 2 },  // camwood red
+      { color: [0.45, 0.38, 0.28], weight: 1 },  // kola-dyed brown
+      { color: [0.88, 0.82, 0.68], weight: 1 },  // white cotton (imported)
+    ],
+    woman: [
+      { color: [0.80, 0.74, 0.60], weight: 3 },  // undyed cotton wrap
+      { color: [0.60, 0.28, 0.16], weight: 3 },  // camwood red wrap
+      { color: [0.14, 0.20, 0.40], weight: 2 },  // deep indigo
+      { color: [0.85, 0.62, 0.15], weight: 1 },  // yellow (turmeric trade)
+      { color: [0.50, 0.40, 0.25], weight: 1 },  // kola brown
+    ],
+    child: [
+      { color: [0.82, 0.76, 0.62], weight: 4 },  // undyed cotton
+      { color: [0.58, 0.48, 0.34], weight: 3 },  // faded bark cloth
+      { color: [0.72, 0.62, 0.46], weight: 2 },  // worn cotton
+    ],
+  },
+
+  // ── ATLANTIC (Portuguese Brazil, Spanish Caribbean colonies) ─────────
+  // Mix of Portuguese colonial dress, indigenous cotton, enslaved African cloth.
+  // Sugar plantation economy — rough working clothes dominate.
+  'Atlantic': {
+    man: [
+      { color: [0.82, 0.76, 0.64], weight: 3 },  // rough undyed linen
+      { color: [0.55, 0.45, 0.32], weight: 3 },  // brown cotton (slaves/workers)
+      { color: [0.42, 0.36, 0.28], weight: 2 },  // brown wool (Portuguese colonist)
+      { color: [0.72, 0.62, 0.48], weight: 2 },  // natural cotton (indigenous)
+      { color: [0.18, 0.15, 0.12], weight: 1 },  // black (Jesuit/merchant)
+      { color: [0.20, 0.28, 0.42], weight: 1 },  // dark blue (better-off)
+    ],
+    woman: [
+      { color: [0.80, 0.74, 0.62], weight: 3 },  // undyed linen
+      { color: [0.58, 0.48, 0.34], weight: 3 },  // brown cotton
+      { color: [0.70, 0.60, 0.46], weight: 2 },  // natural cotton
+      { color: [0.45, 0.22, 0.18], weight: 1 },  // brazilwood red
+      { color: [0.22, 0.30, 0.48], weight: 1 },  // indigo
+    ],
+    child: [
+      { color: [0.80, 0.74, 0.60], weight: 4 },  // undyed linen
+      { color: [0.72, 0.62, 0.48], weight: 3 },  // natural cotton
+      { color: [0.58, 0.48, 0.34], weight: 2 },  // brown cotton
+    ],
+  },
 };
 
 // Culture-appropriate skin tone distributions
@@ -158,6 +210,21 @@ const SKIN_TONES: Record<Culture, { color: [number, number, number]; weight: num
     { color: [0.45, 0.32, 0.22], weight: 2 },  // African
     { color: [0.38, 0.27, 0.18], weight: 2 },  // darker African
     { color: [0.78, 0.64, 0.50], weight: 1 },  // Spanish colonist
+  ],
+  'West African': [
+    // Akan, Fante, and other coastal West African peoples
+    { color: [0.42, 0.30, 0.20], weight: 4 },  // West African
+    { color: [0.35, 0.25, 0.17], weight: 3 },  // darker West African
+    { color: [0.50, 0.36, 0.24], weight: 2 },  // lighter
+    { color: [0.78, 0.64, 0.50], weight: 1 },  // Portuguese garrison
+  ],
+  'Atlantic': [
+    // Portuguese Brazil / Spanish colonies: colonists, indigenous, enslaved Africans
+    { color: [0.45, 0.32, 0.22], weight: 3 },  // African (enslaved population)
+    { color: [0.38, 0.27, 0.18], weight: 2 },  // darker African
+    { color: [0.62, 0.44, 0.28], weight: 2 },  // indigenous/Tupi
+    { color: [0.72, 0.56, 0.42], weight: 2 },  // mestiço/mixed
+    { color: [0.80, 0.66, 0.52], weight: 1 },  // Portuguese/Spanish colonist
   ],
 };
 

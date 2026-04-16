@@ -254,6 +254,146 @@ const PORT_INFO: Record<string, PortInfo> = {
       governor: { title: 'Captain\'s Fortress', text: 'The great fortress of Diu, built after the decisive naval victory of 1509, is the most powerful fortification on India\'s western coast. The Captain governs with an iron hand, controlling all maritime trade between Gujarat and the Arabian Sea.' },
     },
   },
+
+  // ── European Ports ───────────────────────────────────────────────────────────
+  lisbon: {
+    sovereign: 'Philip III of Spain',
+    sovereignType: 'Iberian Union',
+    population: '~150,000',
+    languages: 'Portuguese · Castilian',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Rua Nova dos Mercadores', text: 'The covered arcades of the Rua Nova are the commercial heart of the city. Pepper is sold by the quintal, Chinese porcelain by the crate. New Christian merchants dominate the wholesale trade, while smaller dealers crowd the streets running uphill toward the Rossio.' },
+      shipyard: { title: 'Ribeira das Naus', text: 'The royal shipyard stretches along the Tagus below the palace. This is where the great carracks of the Carreira da Índia are built and refitted — vessels of 1,000 tons and more. Indian teak supplements local pine and oak. The yard is busy but aging, and skilled shipwrights are harder to find than they were a generation ago.' },
+      tavern: { title: 'Taberna do Cais', text: 'A low stone room off the Ribeira docks, dark even at noon. Douro wine by the jug, salt cod on the board. Returned India hands drink alongside Genoese factors, African freedmen, and New Christians keeping a low profile. The Inquisition has informants everywhere, so conversations run carefully.' },
+      governor: { title: 'Paço da Ribeira', text: 'The royal palace on the waterfront sits empty of its own king — Portugal has been ruled from Madrid since 1580. A council of governors administers the kingdom on Philip III\'s behalf. The Casa da Índia, which controls all Eastern trade, operates from the ground floor of the palace itself. Petitions for trading licenses can take months.' },
+    },
+  },
+  amsterdam: {
+    sovereign: 'States-General',
+    sovereignType: 'Dutch Republic',
+    population: '~100,000',
+    languages: 'Dutch',
+    religions: 'Calvinist · Mennonite · Jewish',
+    tabDescriptions: {
+      market: { title: 'The Bourse', text: 'The new Amsterdam Exchange, opened just last year, is already the busiest trading floor in Europe. Merchants trade futures in pepper, grain, and VOC shares. Prices here set the market for half the continent.' },
+      shipyard: { title: 'Admiralty Yard', text: 'The wharves along the IJ can build and outfit anything from a herring buss to a 600-ton East Indiaman. Dutch shipwrights are the best in Europe — their fluyt design carries more cargo with fewer crew than any vessel afloat. Timber comes from the Baltic, canvas from Haarlem, tar from Scandinavia.' },
+      tavern: { title: 'De Gouden Haring', text: 'A packed herberg on the Warmoesstraat, warm with pipe smoke and the smell of beer. VOC sailors on shore leave, Baltic skippers, Sephardic merchants speaking Portuguese among themselves. Jenever is cheap, opinions are loud, and the war news from Flanders is always a few weeks old.' },
+      governor: { title: 'Stadhuis', text: 'Amsterdam is governed by its burgomasters and the city council, not by a king. The VOC\'s Heeren XVII — the seventeen directors — wield as much power as any prince. Stadholder Maurits of Orange leads the war against Spain but has limited authority here. The city runs on trade, and trade runs on consensus.' },
+    },
+  },
+  seville: {
+    sovereign: 'Philip III of Spain',
+    sovereignType: 'Kingdom of Castile',
+    population: '~120,000',
+    languages: 'Castilian',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Gradas de la Catedral', text: 'The steps of the cathedral serve as an open-air exchange where merchants close deals on American silver, cochineal, indigo, tobacco, and chocolate. Flemish textile dealers, Genoese bankers, and Castilian factors crowd the arcade.' },
+      shipyard: { title: 'Atarazanas', text: 'The old Moorish arsenals along the Guadalquivir handle repairs and refitting, but the river is too shallow and silting for serious shipbuilding — most new construction has moved to the coast. Smaller vessels and river barges are maintained here. For anything larger, you go to Cádiz or Sanlúcar.' },
+      tavern: { title: 'El Arenal', text: 'A rough wine house in the Arenal district by the river, where sailors, stevedores, and galeón crews crowd the benches. Sherry from Jerez, olives, fried fish. Soldiers waiting for passage to the Indies sit alongside returning colonists spending their first night back in Spain. Card games run late and end badly.' },
+      governor: { title: 'Casa de Contratación', text: 'All trade with the Americas passes through the Casa de Contratación, housed in the Alcázar. Royal officials register every ship, every cargo, every passenger bound for the Indies. The bureaucracy is enormous and slow. Genoese bankers have more influence than most of the officials — they finance the Crown\'s debts with American silver.' },
+    },
+  },
+  london: {
+    sovereign: 'James I',
+    sovereignType: 'Kingdom of England',
+    population: '~200,000',
+    languages: 'English',
+    religions: 'Protestant (Anglican)',
+    tabDescriptions: {
+      market: { title: 'Royal Exchange', text: 'Gresham\'s Royal Exchange, modeled on the Antwerp Bourse, is where London\'s merchants gather to trade. The ground-floor arcade sells luxury goods — Venetian glass, Spanish gloves, East Indian pepper at prices that would make a Lisbon factor wince. Apothecaries on nearby Bucklersbury sell drugs and spices by the ounce.' },
+      shipyard: { title: 'Deptford Dockyard', text: 'The royal dockyard at Deptford, downstream from London Bridge, has built warships since Henry VIII\'s day. Private yards at Rotherhithe and Ratcliffe handle merchant vessels. English ships are smaller than Portuguese carracks or Dutch fluyts, but well-armed and increasingly ambitious.' },
+      tavern: { title: 'The Prospect of Whitby', text: 'A low-beamed riverside tavern at Wapping, where the tide slaps against the pilings below the floor. Watermen, EIC sailors, and Ratcliffe shipwrights drink small beer and smoke Virginia tobacco from clay pipes. News from the Virginia colony and the first tentative EIC voyages to the Spice Islands is the talk of the room.' },
+      governor: { title: 'Guildhall', text: 'The Lord Mayor and aldermen govern the City of London from the Guildhall, jealously guarding its ancient liberties from the Crown at Westminster. The East India Company holds a royal charter but raises its own capital through joint stock subscriptions. Power here is mercantile — the great livery companies have more practical authority than most earls.' },
+    },
+  },
+
+  // ── West African Ports ───────────────────────────────────────────────────────
+  elmina: {
+    localName: 'São Jorge da Mina',
+    sovereign: 'Portuguese Crown',
+    sovereignType: 'Colonial Fortress',
+    population: '~15,000',
+    languages: 'Akan (Fante) · Portuguese',
+    religions: 'Animist · Catholic',
+    tabDescriptions: {
+      market: { title: 'Castle Courtyard', text: 'Gold dust is the currency and the commodity. Akan traders arrive from the interior with gold weighed in brass weights shaped like animals and proverbs. They want Indian textiles, Venetian beads, iron bars, and brass manillas. The Portuguese factor mediates every transaction, taking his cut.' },
+      shipyard: { title: 'Castle Beach', text: 'There is no proper shipyard — vessels anchor offshore and send boats through the surf. Emergency hull repairs are done on the beach east of the castle, with local timber and pitch brought from the forest. For anything serious, a ship must limp to Lisbon or make do.' },
+      tavern: { title: 'The Castle Cellar', text: 'A vaulted room beneath the fortress, lit by tallow candles. The garrison drinks palm wine and whatever Portuguese wine survives the voyage south. Fante traders, mulatto intermediaries, and Portuguese soldiers share the space with less ease than the close quarters require.' },
+      governor: { title: 'Captain\'s Quarters', text: 'The Captain of São Jorge da Mina governs from the upper floor of the castle, answering to the Crown in Lisbon. His authority extends about as far as the fortress guns carry. Trade with the Akan kingdoms depends entirely on the goodwill of local chiefs and brokers. The garrison is small, underpaid, and dying of fever at a steady rate.' },
+    },
+  },
+  luanda: {
+    localName: 'São Paulo de Luanda',
+    sovereign: 'Portuguese Crown',
+    sovereignType: 'Colonial',
+    population: '~3,000',
+    languages: 'Kimbundu · Portuguese',
+    religions: 'Catholic · Animist',
+    tabDescriptions: {
+      market: { title: 'Slave Market', text: 'The trade here is in human beings. Captives brought from the interior are held in barracoons near the shore, inspected, branded, and loaded onto ships for the middle passage to Bahia and Pernambuco. Nzimbu shells from the Ilha de Luanda serve as local currency. There is little else to buy.' },
+      shipyard: { title: 'Beach Repair', text: 'There is no shipyard. Ships anchor in the bay and send damaged spars and rigging ashore for patching. Hull work means careening on the beach with whatever materials are at hand. The nearest proper yard is in Salvador, across the Atlantic.' },
+      tavern: { title: 'The Ilha', text: 'Less a tavern than a palm-roofed shelter on the sand spit where off-duty soldiers and sailors drink palm wine and aguardente. The breeze off the water is the only relief from the heat. Conversation is limited — the men posted here talk about when their term ends and how many of them will live to see it.' },
+      governor: { title: 'Governor\'s Fortress', text: 'The Governor of Angola rules from a stone fortress overlooking the bay. His primary business is the slave trade — securing captives from the wars in the interior and shipping them to Brazil. The Jesuits run a college and baptize the enslaved before embarkation. Relations with the Kingdom of Ndongo shift between uneasy alliance and open war.' },
+    },
+  },
+
+  // ── Atlantic American Ports ──────────────────────────────────────────────────
+  salvador: {
+    sovereign: 'Portuguese Crown',
+    sovereignType: 'Colonial Capital',
+    population: '~25,000',
+    languages: 'Portuguese · Tupi · West African languages',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Praça do Comércio', text: 'Sugar chests, tobacco rolls, and brazilwood logs pile up on the quay waiting for ships to Lisbon. The slave market operates nearby — newly arrived Africans are sold at auction to agents from the Recôncavo plantations. A few apothecaries sell quinine bark, ipecacuanha, and other New World drugs alongside imported European medicines.' },
+      shipyard: { title: 'Ribeira Yard', text: 'A working colonial shipyard in the lower town, capable of building coastal vessels and refitting ocean-going ships. Brazilian hardwoods — jacarandá, peroba — are abundant and rot-resistant. The yard stays busy repairing sugar fleet vessels and fitting out ships for the Africa trade.' },
+      tavern: { title: 'Taverna do Porto', text: 'A dockside establishment in the lower town, where the smell of cane rum and fried manioc competes with the harbor stench. Sugar planters\' agents, ship captains, slave traders, and freedmen share the crowded tables. Cachaça is cheap and rough.' },
+      governor: { title: 'Palácio do Governo', text: 'The Governor-General of Brazil administers the colony from the upper town, overlooking the bay. Sugar is the foundation of everything — the Crown taxes it, the planters grow it, and enslaved Africans produce it. The Jesuits operate missions in the interior and wield considerable influence. The Dutch have been raiding the coast, and the fortifications are being strengthened.' },
+    },
+  },
+  havana: {
+    sovereign: 'Philip III of Spain',
+    sovereignType: 'Captaincy General of Cuba',
+    population: '~10,000',
+    languages: 'Castilian',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Plaza de Armas', text: 'When the fleet is in port, the plaza is a provisioning market — salt beef, biscuit, water casks, ship chandlery. At other times, it trades in tobacco, hides, and local produce. There is little spice or luxury trade here; Havana exists to move silver across the Atlantic and to keep the ships that carry it afloat.' },
+      shipyard: { title: 'Royal Shipyard', text: 'Havana\'s shipyard is one of the best in the Americas. Cuban hardwoods — mahogany, cedar, guayacán — produce hulls that outlast European-built vessels by years. The yard builds and repairs galleons for the treasure fleet, and skilled carpenters are always in demand. The Crown subsidizes the operation directly.' },
+      tavern: { title: 'La Bodeguita', text: 'A rough stone-walled room near the harbor where fleet sailors, garrison soldiers, and local traders drink cheap Spanish wine and aguardiente. When the treasure fleet is in port, the place is packed and dangerous. When the fleet sails, it\'s half-empty. Cuban tobacco is smoked everywhere.' },
+      governor: { title: 'Real Fuerza', text: 'The Captain General governs from the Castillo de la Real Fuerza, the oldest stone fort in the Americas. His primary duty is ensuring the treasure fleet assembles safely and departs on schedule. The garrison is large and expensive, paid for by Mexican silver. Corsairs are a constant preoccupation — every governor lives with the memory of Drake.' },
+    },
+  },
+  cartagena: {
+    sovereign: 'Philip III of Spain',
+    sovereignType: 'Governorate of Cartagena',
+    population: '~20,000',
+    languages: 'Castilian',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Plaza de la Aduana', text: 'The customs house plaza is where legal trade happens — silver bars stamped with the royal quinto, emeralds from the Muzo mines, pearls from Cubagua and Margarita. The slave market operates nearby, supplied by the asiento. Contraband is at least as large as the legal trade, and everyone from the Governor down takes a cut.' },
+      shipyard: { title: 'Bahía Yard', text: 'The calm waters of the enclosed bay make for good repair facilities. Galleons from the silver fleet are careened and refitted here before the crossing to Havana. Local timber is adequate for hull patching, and experienced caulkers are available. Full construction is limited — for a new hull, ships are built in Havana.' },
+      tavern: { title: 'El Galeón', text: 'A stone-floored tavern near the customs house where Spanish officers, Genoese merchants, and mulatto boatmen drink aguardiente and wine from Andalusia. Enslaved Africans serve the tables. When the silver fleet is in port, the prices double and the crowd triples. Rumors about English and Dutch raiders circulate with every round.' },
+      governor: { title: 'Governor\'s Palace', text: 'The Governor of Cartagena answers to the Viceroy of New Granada, but in practice runs the city as a military and commercial stronghold. The Inquisition established its tribunal here in 1610 and has already begun proceedings against accused heretics and crypto-Jews. The fortifications are constantly being expanded — the memory of Drake\'s sacking in 1586 drives every budget decision.' },
+    },
+  },
+
+  // ── Cape Route Waypoint ──────────────────────────────────────────────────────
+  cape: {
+    sovereign: 'None',
+    sovereignType: 'Khoikhoi territory',
+    population: 'Seasonal camps',
+    languages: 'Khoikhoi',
+    religions: 'Khoikhoi traditional',
+    tabDescriptions: {
+      market: { title: 'Barter on the Beach', text: 'If the Khoikhoi come, they bring cattle and sheep, which they trade for iron, copper, tobacco, and beads. The exchange is unpredictable — some encounters go well, others end in misunderstanding or theft on both sides. Fresh meat is desperately needed after months at sea, so captains swallow their frustration.' },
+      shipyard: { title: 'Beach Careening', text: 'There is no shipyard. Ships that need emergency hull work are careened on the beach at considerable risk — the southeaster can blow up in hours and strand a vessel on its side. Spare timber must come from the ship\'s own stores.' },
+      tavern: { title: 'The Watering Place', text: 'Crews gather at the freshwater stream that runs down from the mountain, filling casks and washing clothes while keeping one eye on the weather. When the Khoikhoi come to trade, this is where it happens — cattle and sheep driven down to the stream bank, iron and copper goods laid out on the rocks. On calm evenings, sailors build driftwood fires on the beach.' },
+      governor: { title: 'Khoikhoi Chiefs', text: 'The clans that graze their cattle on the slopes below Table Mountain have their own leaders, but there is no single authority a ship captain can negotiate with. One visit you might deal with a cooperative elder willing to trade a dozen head of cattle; the next, a different clan has moved through and wants nothing to do with you. The Dutch and English have both tried leaving letters and gifts to establish ongoing relations. Results have been mixed.' },
+    },
+  },
 };
 
 const PORT_OVERVIEWS: Record<string, PortOverview> = {
@@ -339,6 +479,8 @@ const CULTURE_GRADIENT: Record<Culture, string> = {
   'Indian Ocean': 'from-amber-950/25 via-amber-950/10 to-transparent',
   'European': 'from-slate-900/25 via-slate-800/10 to-transparent',
   'Caribbean': 'from-emerald-950/25 via-emerald-950/10 to-transparent',
+  'West African': 'from-yellow-950/25 via-yellow-950/10 to-transparent',
+  'Atlantic': 'from-emerald-950/25 via-emerald-950/10 to-transparent',
 };
 
 // ── Helpers ──
@@ -631,22 +773,22 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
             <div className="absolute inset-0 flex flex-col justify-between p-4 pb-14 md:p-6 z-10">
               {/* Historical info panel (desktop — top-left of banner) */}
               {info && (
-                <div className="hidden md:flex items-start gap-5 text-[9px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                <div className="hidden md:flex items-start gap-5 text-[11px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
                   <div>
-                    <div className="font-bold tracking-[0.12em] uppercase text-white/30">Sovereign</div>
-                    <div className="text-white/60 mt-0.5">{info.sovereign}</div>
-                    <div className="text-white/30">{info.sovereignType}</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Sovereign</div>
+                    <div className="text-white/100 mt-0.5">{info.sovereign}</div>
+                    <div className="text-white/60">{info.sovereignType}</div>
                   </div>
                   <div>
-                    <div className="font-bold tracking-[0.12em] uppercase text-white/30">Population</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Population</div>
                     <div className="text-white/60 font-mono mt-0.5">{info.population}</div>
                   </div>
                   <div>
-                    <div className="font-bold tracking-[0.12em] uppercase text-white/30">Language</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Language</div>
                     <div className="text-white/60 mt-0.5">{info.languages}</div>
                   </div>
                   <div>
-                    <div className="font-bold tracking-[0.12em] uppercase text-white/30">Religion</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Religion</div>
                     <div className="text-white/60 mt-0.5">{info.religions}</div>
                   </div>
                 </div>

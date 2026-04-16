@@ -173,7 +173,12 @@ export function terrainChartColor(terrain: TerrainData, waterPalette: WaterPalet
     const shallow = tintColor(...waterPalette.map.shallow);
     color = mixColor(color, shallow, Math.min(1, terrain.shallowFactor * 0.75 + terrain.reefFactor * 0.35));
     if (terrain.biome === 'lagoon') {
-      color = mixColor(color, [0.26, 0.58, 0.52], 0.35);
+      const lagoonTint: [number, number, number] = waterPalette.id === 'monsoon'
+        ? [0.16, 0.40, 0.32]
+        : waterPalette.id === 'temperate'
+        ? [0.24, 0.34, 0.36]
+        : [0.26, 0.58, 0.52];
+      color = mixColor(color, lagoonTint, 0.35);
     }
     return clampMapColor(color, 0.12);
   }

@@ -63,96 +63,91 @@ A per-nationality reputation system tracks the player's standing with each facti
 
 ## Knowledge & Information Asymmetry System
 
-The core expansion mechanic: the player doesn't automatically know what trade goods are. Goods exist on a **knowledge spectrum** from unrecognized to expert-level understanding, and knowledge is acquired through layered sources — tavern gossip, POI visits, broker consultations, and rare permanent crew hires. This mirrors the real historical experience of European merchants in the Indian Ocean c. 1600–1650, where identifying, sourcing, and understanding drugs/spices/medicines was the fundamental challenge of the trade.
+The core expansion mechanic: the player doesn't automatically know what trade goods are. Knowledge is acquired through three sources — tavern gossip, POI visits, and knowledgeable crew hires. This mirrors the real historical experience of European merchants in the Indian Ocean c. 1600–1650, where identifying, sourcing, and understanding drugs/spices/medicines was the fundamental challenge of the trade.
 
 ### Design Philosophy
 
-The information asymmetry is the game. A port market might show 15 goods; the player recognizes 5. The rest appear as evocative physical descriptions ("a pungent dried seed," "a dark resinous substance"). The player can still buy unknown goods — gambling on them being valuable — but trades with knowledge advantage when goods are identified. This makes knowledge acquisition the primary progression system alongside wealth.
+The information asymmetry is the game. A port market shows 15 goods; the player recognizes 5. The rest appear as evocative physical descriptions ("a pungent dried seed," "a dark resinous substance"). The player can still buy unknown goods — and **unknown goods are cheap** (20–40% of true value, because sellers know you're ignorant) — so buying blind is a genuine gamble. You might turn 5 coins into 200, or buy painted bark.
 
-Fraud/deception is part of the system: tavern rumors can be wrong, brokers can cheat you, and goods themselves can be adulterated (painted bark sold as cinnamon, cut opium). The player discovers fraud when they try to sell — the good is revealed as worthless or worth far less than expected.
+This makes knowledge the primary progression system alongside wealth. The moment you identify a mysterious substance as ambergris worth 500x what you paid should be the best moment in the game — dramatic reveal toast, journal entry, the full Dampier feeling.
 
 ### Knowledge Levels
 
-Each good has a per-player knowledge level (0–3), stored in game state:
+Three levels, stored as `knowledgeState: Record<string, 0 | 1 | 2>` in game state:
 
-| Level | What the player sees | How it's acquired |
-|-------|---------------------|-------------------|
-| **0 — Unrecognized** | Physical description only: "a fragrant reddish bark," "small dried flower buds." No name, no price guidance. Can still buy blind. | Default for goods outside the player's cultural knowledge |
-| **1 — Rumored** | Category hint: "some kind of pepper," "a resin used in incense." Vague price range. | Tavern gossip, dockside observation, partial POI info |
-| **2 — Identified** | Full name revealed (e.g., "Long Pepper — *Piper longum*"). Base price visible. Origin and primary markets known. | POI visits, broker consultation, knowledgeable crew |
-| **3 — Expert** | Medicinal/ritual uses, adulteration risks, best markets, seasonal availability. Unlocks premium sale prices and related quests. | Specialized POIs (naturalists, temple physicians), crew with domain expertise, or accumulating multiple Level 2 fragments about the same good |
+| Level | Name | Market Display | Price Display | Fraud Risk |
+|-------|------|---------------|---------------|------------|
+| **0 — Unknown** | Physical description: "small brown ovoid seeds with a strong fragrance" | "???" | Full (base `fraudRisk` applies) |
+| **1 — Identified** | Real name: "Nutmeg." Origin and primary markets known. | Actual port price shown | Reduced 50% |
+| **2 — Mastered** | Full name + expert info. **Sells for 15–20% more** (you know the best buyers). Fraud immunity. Unlocks quest content for this good. | Price + "You know the best markets" | Immune |
+
+Every knowledge upgrade is a clear, discrete moment — a conversation, a POI visit, a crew hire — not an invisible counter ticking up.
 
 ### Starting Knowledge
 
-The player starts with knowledge based on their origin/nationality (already tracked in crew system):
-- **English captain**: Level 2 on European-familiar goods (Pepper, Cotton Textiles, Iron, Timber, Tea). Level 1 on widely-traded goods (Cinnamon, Indigo, Coffee). Level 0 on most Asian-specific goods (Nutmeg, Cloves, Camphor, Bezoar, Bangue, etc.).
-- Starting crew (generated via `generateStartingCrew()` in `crewGenerator.ts`) contribute their own knowledge domains, so a starting Gujarati lascar might give Level 1 on western Indian Ocean goods immediately.
+Based on player nationality (already tracked in crew system):
+- **English captain**: Identified (1) on European-familiar goods (Pepper, Cotton Textiles, Iron, Timber). Unknown (0) on most Asian-specific goods.
+- Starting crew contribute their knowledge domains passively, so a starting Gujarati lascar immediately gives Identified on western Indian Ocean goods.
 
-### Knowledge Acquisition Sources (Tiered)
+### Knowledge Sources
 
-#### Tier 1 — Casual / Free / Low Cost
+#### 1. Tavern Gossip (free, unreliable)
 
-**Tavern gossip** (existing tavern tab in PortModal):
+Extension of existing tavern tab in `PortModal.tsx`:
 - Free, available at every port.
-- Gives Level 0→1 on 1–3 random goods available at the current port or nearby ports.
-- **Unreliable**: ~20% chance the information is wrong (identifies a good incorrectly, claims false medicinal properties, or points to a nonexistent trade route).
-- Flavor: NPC dialogue snippets. "A Banyan merchant told me the dark paste from Bengal brings visions and dulls pain." (Opium — but might be wrong.)
-- Can also reveal: existence of nearby POIs, rumors about distant ports, warnings about piracy.
+- Gives Unknown→Identified on 1–2 random goods at the current port.
+- **~20% chance the information is wrong** — misidentifies a good, claims false properties, or points to a nonexistent trade route. The player finds out when they try to sell.
+- Can also reveal: existence of nearby POIs, rumors about distant ports.
+- Flavor: NPC dialogue snippets. "A Banyan merchant told me the dark paste from Bengal brings visions and dulls pain."
+- Optionally, paying the barkeep introduces you to a local merchant for more reliable identification (still Unknown→Identified, but lower error rate).
 
-**Dockside observation** (passive, triggered on port arrival):
-- The player automatically observes what other ships are loading/unloading.
-- Gives category-level hints: "Gujarati dhows are loading heavy sacks from the spice warehouse" → hints that the port produces bulk spices.
-- No direct good identification, but narrows possibilities.
+#### 2. POI Visits (reliable, mid-cost)
 
-#### Tier 2 — Moderate Cost / Effort
+See POI System section below. POIs give:
+- Reliable Unknown→Identified on goods within their knowledge domain.
+- Identified→Mastered on goods in their specialty (e.g., the Calicut temple masters Pepper, Cardamom, Turmeric).
+- Costs: gold, a gift, offering a sample for analysis, or reputation with local faction.
 
-**POI visits** (new system, see POI section below):
-- Visiting a temple, monastery, naturalist, merchant guild, or ruin.
-- Gives reliable Level 1→2 identification on goods within the POI's knowledge domain.
-- Some POIs can give Level 3 on specific goods in their specialty.
-- Costs: time (travel to the POI), sometimes a gift/payment, sometimes trading a good you have for analysis.
-- Example: A Hindu temple physician near Calicut can identify Ayurvedic medicinal goods (Cardamom, Turmeric, Neem, Bangue) to Level 2, and if you bring him a sample of an unknown substance, he might identify it or tell you where to learn more.
+#### 3. Crew Knowledge (permanent, expensive, rare)
 
-**Broker/factor consultation** (new tab or interaction in PortModal):
-- Pay a local intermediary to identify goods currently in the port's market.
-- Cost scales with port size and number of goods identified.
-- **Temporary**: the broker identifies what's here NOW. You don't retain the knowledge when you leave — unless you write it in your journal (see Journal section). Essentially the broker gives you Level 2 for the duration of your port visit.
-- The broker's reliability depends on the port: a major trading hub (Malacca, Surat) has reliable brokers; a small port (Socotra) might have a broker who's guessing.
-- Brokers can also be bribed to reveal what rival merchants are buying, or to spread disinformation to other traders (future feature).
+Extension of existing crew hire system in `generateHireableCrewMember()`:
+- Rare: 0–1 knowledgeable hires available at a port at any time.
+- Expensive: 2–5x normal crew hire cost. Takes a crew slot.
+- **Permanent**: as long as this crew member is aboard, their domain goods are Identified. Rare crew give Mastered on their specialty.
+- If the crew member leaves/dies, knowledge reverts to whatever the player independently acquired.
 
-#### Tier 3 — Rare / Expensive / Permanent
+| Crew Background | Identified Goods | Mastered Specialty |
+|-----------------|------------------|--------------------|
+| Gujarati factor | Pepper, Cotton, Indigo, Opium, Calico, Saltpeter | Adulteration detection (all goods) |
+| Malay navigator | Cloves, Nutmeg, Mace, Camphor, Benzoin, Tin | Spice Islands sourcing |
+| Arab merchant | Frankincense, Myrrh, Coffee, Ambergris | Red Sea trade routes |
+| Chinese trader | Porcelain, Silk, Tea, Rhubarb, Musk, Lacquerware | Quality grading |
+| Portuguese naturalist | Can upgrade any Identified good to Mastered | Galenic medicinal classification |
+| Swahili pilot | Ivory, Gold, Tortoiseshell, Copal, Mangrove Poles | East African coastal knowledge |
+| Tamil pearl diver | Pearls, Gems, Coral, Chanks | Quality grading, diving sites |
 
-**Hiring a knowledgeable crew member** (extension of existing crew hire system in `generateHireableCrewMember()`):
-- Rare: not always available. A port might have 0–1 knowledgeable hires at any time.
-- Expensive: 2–5x normal crew hire cost.
-- Takes a crew slot (crew slots are limited).
-- **Permanent knowledge**: as long as this crew member is aboard, their knowledge domain goods are identified at Level 2 (or Level 3 for their specialty).
-- If the crew member leaves, dies, or is dismissed, the knowledge stays at whatever level the player has independently acquired — you lose the crew member's bonus.
-- Crew knowledge domains (extend `CrewMember` interface):
+### Fraud System
 
-| Crew Background | Knowledge Domain | Level 2 Goods | Level 3 Specialty |
-|-----------------|-----------------|---------------|-------------------|
-| Gujarati factor | Western Indian Ocean trade | Pepper, Cotton, Indigo, Opium, Calico, Saltpeter | Market prices & adulteration detection |
-| Malay navigator | Southeast Asian goods | Cloves, Nutmeg, Mace, Camphor, Benzoin, Tin | Origin sourcing, seasonal availability |
-| Arab merchant | Red Sea / East African trade | Frankincense, Myrrh, Coffee, Ambergris, Slaves | Trade route knowledge, caravan connections |
-| Chinese trader | East Asian goods | Porcelain, Silk, Tea, Rhubarb, Musk, Lacquerware | Quality grading, imperial demand cycles |
-| Portuguese naturalist | European pharmacopoeia | Can upgrade any Level 2 good to Level 3 | Medicinal classification, Galenic properties |
-| Swahili pilot | East African coast | Ivory, Gold, Tortoiseshell, Copal, Mangrove Poles | Coastal navigation, monsoon timing |
-| Tamil pearl diver | Pearl fisheries, gems | Pearls, Gems, Coral, Chanks | Quality grading, diving site knowledge |
+One mechanic, not three. Extends existing `fraudRisk` on `CommodityDef`.
 
-### The Journal System
+- When buying a good at Unknown (Level 0), there's a chance (scaled by `fraudRisk` × port context) that **the good is bad** — adulterated, substituted, or fake.
+- The player doesn't know until they try to sell at another port: "Your buyer examines the cinnamon and shakes his head — this is cassia bark, worth a fraction of the price." Value drops to 10–30%.
+- **Prevention**: Identified (Level 1) cuts fraud chance by 50%. Mastered (Level 2) eliminates it. Crew with relevant domain warn on purchase ("Your Gujarati factor says this pepper smells wrong").
+- **Port context**: Major hubs (Malacca, Surat) = lower fraud. Remote ports (Socotra) = higher.
 
-The player accumulates knowledge fragments in a **journal** (new UI component, accessible from ship dashboard). This is the Dampier's-notebook mechanic.
+### The Journal
 
-- Each knowledge fragment is a short text entry tied to a good, with its source and reliability noted.
-- Fragments accumulate: 2–3 reliable fragments about the same good can upgrade it from Level 1 to Level 2 without a crew hire.
-- The journal also stores: port rumors, POI discoveries, trade route hints, quest-relevant lore.
-- Visually: a ledger-style interface consistent with the existing `MarketTabLedger.tsx` aesthetic. Entries appear handwritten/period-appropriate.
-- Journal entries persist across port visits — this is the player's own compiled knowledge, distinct from temporary broker consultations.
+A readable record of what the player has learned, styled like Dampier's notebooks. **Not a crafting system** — knowledge upgrades come from clear moments (conversations, POI visits, crew), not from accumulating fragments.
+
+- New UI component accessible from ship dashboard, ledger-style consistent with `MarketTabLedger.tsx`.
+- Entries auto-generated on knowledge events: "In Calicut, the temple physician identified our 'fragrant bark' as true cinnamon — *Cinnamomum verum* — and noted it grows inland, not on the coast."
+- Stores: identification records, port rumors (marked as unverified), POI lore, trade tips from crew.
+- Useful as reference: "Where did I hear about nutmeg?" → check journal.
+- No fragment accumulation mechanic. The journal is atmosphere and reference, not a progress bar.
 
 ### POI System (Points of Interest)
 
-New location type on the local 3D port maps. POIs appear as markers the player can sail or walk to, similar to how ports work on the world map but at the local level.
+New location type on local 3D port maps. POIs appear as markers the player can sail to, similar to port markers on the world map.
 
 #### POI Data Model
 
@@ -160,78 +155,66 @@ New location type on the local 3D port maps. POIs appear as markers the player c
 interface POIDefinition {
   id: string;
   name: string;
-  type: 'temple' | 'monastery' | 'naturalist' | 'merchant_guild' | 'ruin' | 'garden' | 'court' | 'market_quarter';
+  type: 'temple' | 'monastery' | 'naturalist' | 'merchant_guild' | 'ruin' | 'garden' | 'court';
   port: string;                    // which port this POI is near
   position: [number, number];      // local map coordinates
-  description: string;
-  knowledgeDomain: string[];       // which commodity categories this POI can identify
-  maxLevel: number;                // highest knowledge level this POI can grant (usually 2, sometimes 3)
-  cost?: {                         // what the player must pay/trade for knowledge
-    type: 'gold' | 'commodity' | 'reputation' | 'quest';
+  description: string;             // short flavor text
+  knowledgeDomain: string[];       // commodity IDs this POI can identify/master
+  masteryGoods: string[];          // subset that this POI can upgrade to Mastered
+  cost: {                          // what the player pays for knowledge
+    type: 'gold' | 'commodity' | 'reputation';
     amount?: number;
     commodityId?: string;
   };
-  reliability: number;             // 0-1, how likely the info is correct
-  lore: string[];                  // flavor text / historical narrative
-  unlocksPort?: string;            // visiting this POI reveals a new port on the world map
-  unlocksQuest?: string;           // visiting triggers a quest
+  npcName: string;                 // the character you interact with
+  npcRole: string;                 // "Jesuit naturalist," "temple physician," etc.
+  lore: string;                    // historical context for the Converse tab (LLM context)
+  unlocksPort?: string;            // visiting reveals a new port on world map
 }
 ```
 
 #### POI Examples by Port
 
-| Port | POI | Type | Knowledge Domain | Special |
-|------|-----|------|-----------------|---------|
-| Goa | Jesuit College of St. Paul | monastery | European pharmacopoeia, New World drugs | Can analyze any sample to Level 2; has Orta's *Colóquios* — identifies many goods but some info is outdated/wrong |
-| Calicut | Temple of Thalassery | temple | Ayurvedic medicines, Malabar spices | Reliable Level 3 on Pepper, Cardamom, Turmeric |
-| Malacca | Chinese merchant guild | merchant_guild | East Asian trade goods, Spice Islands goods | Reveals sea routes to Bantam, Macau; broker services |
-| Mocha | Sufi lodge | monastery | Coffee, Arabian incense, perfumes | Level 3 on Coffee; lore about Ethiopian origins |
-| Zanzibar | Swahili merchant quarter | market_quarter | East African goods, ivory trade | Reveals inland trade routes; gold/ivory sourcing |
-| Hormuz | Persian royal factor | court | Gems, carpets, horses, rhubarb | Expensive but very reliable; connects to Safavid court quests |
-| Surat | Banyan merchant house | merchant_guild | Cotton textiles, indigo, opium | Best broker services in game; textile quality grading |
-| Macau | Jesuit observatory | naturalist | Chinese medicines, natural philosophy | Can upgrade any Level 2 Asian good to Level 3; astronomical knowledge |
-| Bantam | Pepper gardens | garden | Pepper varieties, local spices | Walk through actual pepper/spice cultivation; Level 3 on pepper family |
-| Socotra | Aloe groves & ruins | ruin | Aloe, dragon's blood, ancient trade | Reveals Ptolemaic-era trade knowledge; hints at legendary goods |
-| Mombasa | Swahili ruins at Gedi | ruin | East African trade history | Unlocks knowledge about Great Zimbabwe gold route |
-| Muscat | Omani frankincense merchants | merchant_guild | Arabian incense trade | Level 3 on Frankincense, Myrrh; Dhofar sourcing |
-| Aden | Rasulid-era library | monastery | Historical pharmacopoeia, Red Sea trade | Broad but sometimes outdated knowledge; covers many goods at Level 1–2 |
+| Port | POI | Type | NPC | Knowledge Domain | Mastery Specialty |
+|------|-----|------|-----|-----------------|-------------------|
+| Goa | Jesuit College of St. Paul | monastery | Fr. António de Sousa, naturalist | European pharmacopoeia, New World drugs | Has Orta's *Colóquios* — broad but some info outdated/wrong |
+| Calicut | Temple of Thalassery | temple | Vaidya Krishnan, Ayurvedic physician | Ayurvedic medicines, Malabar spices | Mastery: Pepper, Cardamom, Turmeric |
+| Malacca | Chinese merchant guild | merchant_guild | Lim Wei, guild elder | East Asian trade goods, Spice Islands goods | Mastery: Porcelain, Silk quality grades |
+| Mocha | Sufi lodge | monastery | Sheikh al-Dhabhani | Coffee, Arabian incense, perfumes | Mastery: Coffee (including Ethiopian origin lore) |
+| Zanzibar | Swahili merchant quarter | merchant_guild | Mwana Khadija, trader | East African goods, ivory trade | Reveals inland gold/ivory routes |
+| Hormuz | Persian royal factor | court | Mirza Abbas, Safavid agent | Gems, carpets, horses, rhubarb | Expensive but very reliable; Safavid court quests |
+| Surat | Banyan merchant house | merchant_guild | Seth Virji Vora, merchant prince | Cotton textiles, indigo, opium | Mastery: textile grading, opium purity |
+| Macau | Jesuit observatory | naturalist | Fr. Manuel Dias, astronomer | Chinese medicines, natural philosophy | Can upgrade any Identified Asian good to Mastered |
+| Bantam | Pepper gardens | garden | Kyai Demang, plantation overseer | Pepper varieties, local spices | Mastery: pepper family (walk through actual cultivation) |
+| Socotra | Aloe groves & ruins | ruin | Old Socotran hermit | Aloe, dragon's blood, ancient trade | Hints at legendary goods; Ptolemaic-era routes |
+| Mombasa | Swahili ruins at Gedi | ruin | Local guide | East African trade history | Unlocks Great Zimbabwe gold route knowledge |
+| Muscat | Omani frankincense merchants | merchant_guild | Sheikh Salim, incense trader | Arabian incense trade | Mastery: Frankincense, Myrrh; Dhofar sourcing |
+| Aden | Rasulid-era library | monastery | Qadi Ibrahim, librarian | Historical pharmacopoeia, Red Sea trade | Broad but sometimes outdated; covers many goods at Identified |
 
 #### POI Modal
 
-New component: `POIModal.tsx`, similar structure to `PortModal.tsx` but with different tabs:
+New component: `POIModal.tsx`. Visually similar to `PortModal.tsx` (same frame/chrome) but with **two tabs only**:
 
-- **Lore tab**: Historical narrative about the place. Provides atmosphere and context. May contain hints about goods or trade routes embedded in the text.
-- **Identify tab**: Bring goods from your cargo for identification. The POI examines them and provides knowledge (if within their domain). Some POIs charge for this; some want you to trade a sample.
-- **Learn tab**: The POI shares knowledge about goods you DON'T have. Reveals what exists, where to find it, what it's used for. This is how you learn "nutmeg comes from the Banda Islands" before you've ever seen nutmeg.
-- **Trade Knowledge tab** (some POIs): Exchange knowledge for knowledge. "I'll tell you about the camphor trade if you tell me about European medicines." This creates a mechanic where your existing knowledge has value beyond commerce.
+**Tab 1 — Learn**
+- The core knowledge-acquisition interface.
+- Shows the POI's NPC and a brief narrative introduction ("Vaidya Krishnan examines your cargo with interest...").
+- Lists goods from your cargo that this POI can identify or upgrade, plus goods in their domain that you haven't encountered yet.
+- Player selects goods to learn about. Each identification costs according to the POI's `cost` definition.
+- On identification: dramatic reveal moment — the good's name appears, a short historical description displays, journal entry auto-generated, knowledge state updated.
+- For goods not in your cargo: the POI describes what exists and where to find it ("The Banda Islands, far to the east, produce a seed called nutmeg..."). This adds the good to your journal as a known-but-unseen entry.
 
-### Fraud & Deception System
-
-Extends the existing `fraudRisk` property on `CommodityDef` in `commodities.ts`.
-
-**How fraud works:**
-- When buying a good at Level 0 or Level 1, there's a chance (scaled by `fraudRisk` and port reliability) that the good is **adulterated or counterfeit**.
-- The player doesn't know until they try to sell it at another port (or have it analyzed at a POI).
-- On attempted sale: "Your buyer examines the cinnamon closely and shakes his head — this is cassia bark, worth a fraction of the price."
-- The good's value drops to 10–30% of what it should be.
-
-**Fraud types:**
-- **Substitution**: Cheaper good sold as expensive one (cassia as cinnamon, wild pepper as black pepper).
-- **Adulteration**: Real good cut with filler (opium mixed with plant gum, saffron bulked with safflower).
-- **Counterfeiting**: Completely fake (painted bark as nutmeg, colored glass as gems).
-
-**Fraud prevention:**
-- Level 2+ knowledge on a good: fraud chance reduced by 50%.
-- Level 3 knowledge: fraud chance reduced by 90% (you know what to look for).
-- Crew member with relevant domain: additional fraud detection on purchase ("Your Gujarati factor warns you this pepper smells wrong").
-- Broker consultation: brokers can detect fraud on goods in their domain (but dishonest brokers might not tell you, or might be in on it).
-- POI analysis: a naturalist or temple physician can verify authenticity. Costs time/money but is definitive.
-
-**Fraud likelihood by context:**
-- Major trading hub (Malacca, Surat): lower fraud risk, more oversight.
-- Small/remote port (Socotra): higher fraud risk.
-- Buying from a tavern contact (future feature): highest fraud risk.
-- Buying from the regular market: moderate risk, scaled by `fraudRisk` per commodity.
+**Tab 2 — Converse**
+- An interactive LLM-powered conversation with the POI's NPC character.
+- **Model**: Gemini 2.0 Flash Lite (latest) via API.
+- **System prompt context includes**:
+  - The POI's `lore` field (historical context about this place and person).
+  - The NPC's name, role, and knowledge domain.
+  - The player's captain name, nationality, crew composition, current cargo, ports visited, and knowledge state.
+  - Era-appropriate constraints: the NPC speaks as a person of 1600–1650, with the knowledge and biases of their position. A Jesuit naturalist thinks in Galenic humoral terms. A Vaidya thinks in Ayurvedic terms. An Arab merchant knows trade routes but not botanical taxonomy.
+  - The NPC can reveal knowledge through conversation — if the player asks the right questions, the NPC might identify a good or hint at a trade route, and the system should detect this and update knowledge state accordingly.
+- **Gameplay function**: This is where depth lives. The player can ask "What is this dark resin I bought in Aden?" and the Jesuit might say "Ah, that appears to be *olibanum* — true frankincense. The ancients prized it, though Dioscorides confused it with several similar gums..." This is educational, atmospheric, AND mechanically useful.
+- **Guard rails**: The LLM should stay in character and in period. It should not reveal information outside its NPC's plausible knowledge (a Calicut physician doesn't know about Chinese trade goods). Token budget per conversation should be capped to control costs.
+- **Implementation**: API call on each player message. Conversation history maintained for the duration of the POI visit. NPC responses are short (2-4 sentences typical). A simple chat interface within the tab — player text input at bottom, scrollable message history above.
 
 ### Implementation: State Changes
 
@@ -239,7 +222,7 @@ Extends the existing `fraudRisk` property on `CommodityDef` in `commodities.ts`.
 
 ```typescript
 // Add to game state
-knowledgeState: Record<string, number>;  // commodityId → knowledge level (0-3)
+knowledgeState: Record<string, number>;  // commodityId → knowledge level (0 | 1 | 2)
 journalEntries: JournalEntry[];
 discoveredPOIs: string[];                // POI ids the player has found
 visitedPOIs: string[];                   // POI ids the player has interacted with
@@ -249,9 +232,8 @@ interface JournalEntry {
   id: string;
   timestamp: number;                     // in-game date
   commodityId?: string;                  // if about a specific good
-  source: 'tavern' | 'poi' | 'broker' | 'crew' | 'trade' | 'observation';
-  reliability: 'rumor' | 'likely' | 'confirmed';
-  text: string;                          // the knowledge fragment
+  source: 'tavern' | 'poi' | 'crew' | 'trade';
+  text: string;                          // the knowledge record
   portId: string;                        // where this was learned
 }
 
@@ -260,32 +242,32 @@ learnAboutCommodity(commodityId: string, newLevel: number, source: string): void
 addJournalEntry(entry: Omit<JournalEntry, 'id'>): void;
 discoverPOI(poiId: string): void;
 visitPOI(poiId: string): void;
-checkForFraud(commodityId: string, quantity: number): { isFraud: boolean; fraudType?: string; realValue?: number };
 ```
 
 #### CrewMember interface extensions (crewGenerator.ts)
 
 ```typescript
 // Add to CrewMember interface
-knowledgeDomains?: string[];        // commodity categories this crew member knows
-knowledgeLevel?: number;            // 2 or 3, what level they grant
-knowledgeSpecialty?: string;        // specific area of Level 3 expertise
+knowledgeDomains?: string[];        // commodity IDs this crew member identifies
+masteryDomain?: string[];           // commodity IDs this crew member masters
 ```
 
 #### Commodity display logic (MarketTabLedger.tsx)
 
 ```typescript
-// Pseudocode for market display
-function getDisplayName(commodity: CommodityDef, knowledgeLevel: number): string {
-  if (knowledgeLevel >= 2) return commodity.id;                    // "Nutmeg"
-  if (knowledgeLevel === 1) return commodity.categoryHint;         // "A warm aromatic seed"
-  return commodity.physicalDescription;                            // "Small brown ovoid seeds with a strong fragrance"
+function getDisplayName(commodity: CommodityDef, level: number): string {
+  if (level >= 1) return commodity.id;                    // "Nutmeg"
+  return commodity.physicalDescription;                   // "Small brown ovoid seeds with a strong fragrance"
 }
 
-function getDisplayPrice(commodity: CommodityDef, knowledgeLevel: number, portPrice: number): string {
-  if (knowledgeLevel >= 2) return `${portPrice} coins`;
-  if (knowledgeLevel === 1) return "~" + roughEstimate(portPrice); // vague range
+function getDisplayPrice(commodity: CommodityDef, level: number, portPrice: number): string {
+  if (level >= 1) return `${portPrice} coins`;
   return "???";
+}
+
+// Unknown goods sell at 20-40% of true value (seller knows you're ignorant)
+function getUnknownDiscount(): number {
+  return 0.2 + Math.random() * 0.2;  // 20-40%
 }
 ```
 
@@ -294,28 +276,237 @@ function getDisplayPrice(commodity: CommodityDef, knowledgeLevel: number, portPr
 ```typescript
 // Add to CommodityDef interface
 physicalDescription: string;     // Level 0 display: "a pungent dried seed"
-categoryHint: string;            // Level 1 display: "some kind of pepper"
-expertKnowledge: string;         // Level 3 info: medicinal uses, adulteration risks
+expertKnowledge: string;         // Level 2 info shown in journal: medicinal uses, best markets
 originRegion: string;            // where it actually comes from
-culturalDomains: string[];       // which crew knowledge domains cover this good
+culturalDomains: string[];       // which crew backgrounds cover this good
 ```
 
 ### Implementation: New Files
 
 | File | Purpose |
 |------|---------|
-| `src/utils/knowledgeSystem.ts` | Core knowledge logic: level checks, fraud detection, knowledge acquisition calculations |
-| `src/utils/poiDefinitions.ts` | All POI data (similar to `worldPorts.ts` for ports) |
-| `src/utils/commodityDescriptions.ts` | Physical descriptions and category hints for all 41 commodities at each knowledge level |
-| `src/components/POIModal.tsx` | POI interaction modal with Lore/Identify/Learn/Trade Knowledge tabs |
+| `src/utils/knowledgeSystem.ts` | Knowledge level checks, effective level calculation (player + crew), fraud roll on purchase |
+| `src/utils/poiDefinitions.ts` | All POI data (similar to `worldPorts.ts`) |
+| `src/utils/commodityDescriptions.ts` | `physicalDescription` and `expertKnowledge` for all 41 commodities |
+| `src/components/POIModal.tsx` | POI modal with Learn and Converse tabs |
 | `src/components/POIMarker.tsx` | 3D marker for POIs on local port maps |
 | `src/components/Journal.tsx` | Journal/notebook UI component |
+| `src/utils/poiConversation.ts` | Gemini Flash Lite API integration: system prompt construction, message handling, knowledge-state extraction from NPC responses |
 
 ### Implementation Order
 
-1. **Phase 1 — Knowledge state & display**: Add `knowledgeState` to game store. Add `physicalDescription` and `categoryHint` to all 41 commodities. Modify `MarketTabLedger.tsx` to show goods based on knowledge level. Set starting knowledge based on player nationality.
-2. **Phase 2 — Crew knowledge**: Extend `CrewMember` with knowledge domains. Modify `generateStartingCrew()` and `generateHireableCrewMember()` to assign domains. Wire crew presence to knowledge level checks.
-3. **Phase 3 — Tavern knowledge**: Add gossip/rumor generation to tavern tab in `PortModal.tsx`. Implement journal entries. Add unreliable information mechanic.
-4. **Phase 4 — POI system**: Create POI definitions, modal, and map markers. Implement POI-based knowledge acquisition. Add broker consultation mechanic.
-5. **Phase 5 — Fraud system**: Extend `fraudRisk` into full fraud/deception system. Add fraud detection on sale. Wire crew/knowledge-based fraud prevention.
-6. **Phase 6 — Journal UI**: Build out the Dampier's-notebook journal interface. Implement fragment accumulation (multiple fragments → level upgrade).
+1. **Phase 1 — Knowledge state & display**: Add `knowledgeState` to game store. Add `physicalDescription` to all 41 commodities. Modify `MarketTabLedger.tsx` to show goods based on knowledge level. Unknown goods display at 20–40% price. Set starting knowledge by nationality. Add dramatic reveal toast (via existing `ASCIIToast`) when a good is first identified.
+2. **Phase 2 — Crew knowledge**: Extend `CrewMember` with `knowledgeDomains` and `masteryDomain`. Modify `generateStartingCrew()` and `generateHireableCrewMember()` to assign domains. Effective knowledge = max(player level, crew level).
+3. **Phase 3 — Tavern knowledge**: Add gossip/rumor generation to tavern tab in `PortModal.tsx`. ~20% unreliable info. Auto-generate journal entries.
+4. **Phase 4 — POI system**: Create POI definitions and `POIMarker.tsx` on local maps. Build `POIModal.tsx` with Learn tab. Wire knowledge acquisition through POI visits.
+5. **Phase 5 — POI Converse tab**: Integrate Gemini 2.0 Flash Lite API. Build system prompt from POI lore + player state. Chat UI in Converse tab. Detect knowledge reveals in conversation and update state.
+6. **Phase 6 — Fraud & Journal**: Fraud roll on Unknown purchases, revealed on sale. Journal UI as readable reference.
+
+## Expanded World Map — Europe, Atlantic & Cape Route
+
+### Architecture: One Map, Not Tabs
+
+The world map remains a **single D3 Mercator projection** (in `WorldMapModal.tsx`), not separate tab-based maps. Reasons:
+
+1. The Indian Ocean, Atlantic, and European trade networks were *becoming connected* in this period — the Portuguese Carreira da Índia linked them. Separate maps would break that feeling.
+2. The current D3 setup supports it: recenter from `[75, 8]` to ~`[30, 10]` and zoom out to show Lisbon→Macau in one view.
+3. Tabs add UI complexity for no gameplay gain ("Is Luanda on the Atlantic map or the Indian Ocean map?" shouldn't be a question).
+
+**Interactive zoom + pan** via `d3.zoom()` replaces the fixed view. The map opens centered on the player's current region. Quick-jump buttons along the bottom recenter without changing maps: **Atlantic | East Africa | Indian Ocean | East Indies**.
+
+### New Climate Profile: Mediterranean
+
+Add `'mediterranean'` to the `ClimateProfile` union type in `portArchetypes.ts`. This sits between `arid` and `temperate` — warm clear water, mixed vegetation.
+
+#### Climate → Water & Vegetation Mapping
+
+| Climate | Water Palette | Trees | Ground Character |
+|---------|--------------|-------|-----------------|
+| `tropical` | tropical (cyan-turquoise) | Palms dominant, some broad-leaf | Lush green, jungle undergrowth |
+| `monsoon` | monsoon (deep teal) | Palms + dense jungle trees | Dark green, muddy riverbanks |
+| `arid` | arid (bright cobalt) | Cacti, thornbush, dead trees | Sandy, sparse scrub |
+| `temperate` | temperate (slate-grey) | **Fir/cone trees only, no palms.** Denser, darker green canopy. | Mossy greens, grey-brown earth |
+| `mediterranean` | mediterranean (warm blue) | **Mix of palms and fir/cone trees.** Palms near coast only, firs on hills. Olive/cypress feel. | Dry golden-brown grass, green scrub near water |
+
+#### Implementation (climate changes)
+
+1. **`portArchetypes.ts`**: Add `'mediterranean'` to `ClimateProfile` union. Add moisture range in `getClimateMoisture()`: `'mediterranean': [0.15, 0.45]` (drier than temperate, wetter than arid).
+2. **`waterPalettes.ts`**: The `mediterranean` water palette already exists. Add `'mediterranean'` to the `ClimateLike` type alias and wire it in `getDefaultWaterPaletteForClimate()`: `case 'mediterranean': return 'mediterranean';`
+3. **`World.tsx` vegetation placement**: In the forest/jungle biome tree-placement block (~line 520), add climate-aware logic:
+   - If `temperate`: suppress all palm placement. Cone trees only, slightly denser (lower rand threshold).
+   - If `mediterranean`: reduce palm frequency by ~60%. Palms only below elevation threshold (coastal). Cone trees on hills.
+   - Other climates: unchanged.
+4. **`terrain.ts`**: `getClimateMoisture` and `climateWindStrength` need `mediterranean` cases. Wind strength ~0.7 (moderate Atlantic breeze).
+
+### New Ports (10 ports, 24 total)
+
+#### Europe (4 ports)
+
+**Lisbon** `[−9.14, 38.71]`
+- Scale: Very Large. Culture: European.
+- Geography: `estuary`. Climate: `mediterranean`.
+- The metropole. Hub of the Carreira da Índia. Sells European manufactures (iron, textiles, weapons). Buys everything from the East — highest prices for spices but longest voyage.
+- `openDirection: 'W'`. Wide Tagus estuary opening to the Atlantic. Palms along waterfront, pines on hills above.
+
+**Amsterdam** `[4.90, 52.37]`
+- Scale: Large. Culture: European.
+- Geography: `estuary`. Climate: `temperate`.
+- VOC headquarters. Emerging rival to Portuguese monopoly. Best prices for fine spices (nutmeg, mace, cloves). Hostile to Portuguese-flagged ships.
+- `openDirection: 'N'`. Flat marshy IJ river/Zuiderzee. Dark cold water, sparse firs on banks. `channelWidth: 0.7`.
+
+**Seville** `[−5.99, 37.39]`
+- Scale: Large. Culture: European.
+- Geography: `estuary`. Climate: `mediterranean`.
+- Gateway to the Spanish Atlantic. New World silver flows through here. Buys Asian luxury goods for re-export to the Americas.
+- `openDirection: 'S'`. Guadalquivir river, warm blue water, mixed vegetation. `channelWidth: 0.6`.
+
+**London** `[−0.08, 51.51]`
+- Scale: Large. Culture: European.
+- Geography: `strait`. Climate: `temperate`.
+- EIC headquarters. Apothecary/drug trade center — best market for exotic medicines. Hostile to Spanish/Portuguese-flagged ships.
+- `openDirection: 'E'`. Narrow Thames with land close on both sides. Dark slate-grey water, fir trees only. `channelWidth: 0.5`, `channelTaper: 0.4` (narrows upstream). Note: `channelTaper` is a new `PortDefinition` field — see strait taper implementation below.
+
+#### West Africa (2 ports)
+
+**Elmina** `[−1.35, 5.08]`
+- Scale: Small. Culture: European (Portuguese fortress).
+- Geography: `continental_coast`. Climate: `tropical`.
+- Gold Coast fortress. Gold, slaves, ivory. Provisioning stop on the Carreira da Índia. Knowledge about African interior trade.
+- `openDirection: 'S'`. Open tropical coastline with fortress on headland.
+
+**Luanda** `[13.23, −8.84]`
+- Scale: Small. Culture: European (Portuguese).
+- Geography: `bay`. Climate: `tropical`.
+- Portuguese slave-trading hub. Slaves, ivory, wax. Connects Atlantic slave trade to Indian Ocean economy (slaves traded in Goa, Malacca).
+- `openDirection: 'W'`. Natural bay, tropical vegetation.
+
+#### Atlantic Americas (3 ports)
+
+**Salvador da Bahia** `[−38.51, −12.97]`
+- Scale: Large. Culture: European (Portuguese Brazil).
+- Geography: `bay`. Climate: `tropical`.
+- Capital of Portuguese Brazil. Sugar, tobacco, brazilwood. Hub of the Atlantic triangle — Brazilian sugar traded for African slaves traded for Asian spices.
+- `openDirection: 'E'`. Baía de Todos os Santos — large natural harbor, lush tropical vegetation.
+
+**Havana** `[−82.36, 23.14]`
+- Scale: Large. Culture: European (Spanish).
+- Geography: `inlet`. Climate: `tropical`.
+- Treasure fleet staging point. Silver, tobacco, sugar, hides. Gateway to New Spain silver. Heavily fortified, Spanish-controlled.
+- `openDirection: 'N'`. Narrow channel opening into large protected harbor.
+
+**Cartagena de Indias** `[−75.51, 10.39]`
+- Scale: Medium. Culture: European (Spanish).
+- Geography: `bay`. Climate: `tropical`.
+- Spanish colonial port. Silver, emeralds, New World drugs (tobacco, cacao, coca). Gateway to Potosí silver.
+- `openDirection: 'W'`. Enclosed bay with narrow entrance, heavily fortified.
+
+#### Cape Route (1 waypoint)
+
+**Cape of Good Hope** `[18.42, −33.93]`
+- Scale: Small. Culture: None (no permanent settlement in 1612).
+- Geography: `continental_coast`. Climate: `mediterranean`.
+- Critical provisioning stop, not a true port. Fresh water, limited trade with Khoikhoi pastoralists. Mandatory waypoint on Europe↔India routes.
+- `openDirection: 'S'`. Rocky exposed coastline. Mediterranean climate (historically accurate — fynbos biome). Mixed vegetation, warm-ish water but windswept.
+- Special: minimal port services. No tavern, no full market. Just provisioning (water, food) and a POI (Khoikhoi trading post).
+
+### Sea Lane Connections
+
+New connections extending `SEA_LANE_GRAPH` in `worldPorts.ts`:
+
+```typescript
+// New port connections
+london:    ['amsterdam', 'lisbon', 'seville'],
+amsterdam: ['london', 'lisbon', 'elmina'],
+lisbon:    ['london', 'amsterdam', 'seville', 'elmina', 'salvador'],
+seville:   ['london', 'lisbon', 'havana', 'cartagena'],
+elmina:    ['amsterdam', 'lisbon', 'luanda', 'salvador'],
+luanda:    ['elmina', 'salvador', 'cape'],
+salvador:  ['lisbon', 'elmina', 'luanda', 'havana'],
+havana:    ['seville', 'salvador', 'cartagena'],
+cartagena: ['seville', 'havana'],
+cape:      ['luanda', 'zanzibar', 'mombasa', 'mozambique_channel'],
+
+// Updated existing connections (add Cape route links)
+zanzibar:  ['calicut', 'goa', 'mombasa', 'cape'],
+mombasa:   ['aden', 'muscat', 'socotra', 'zanzibar', 'cape'],
+```
+
+The **Cape of Good Hope** is the bottleneck connecting the two halves — historically accurate. You cannot sail Lisbon→Goa without passing through Cape and then up the East African coast. This creates meaningful route planning.
+
+### Strait Taper (new feature for London)
+
+Small addition to the `strait` case in `portArchetypes.ts` (~line 518) so that straits can narrow at one end, making them look like rivers:
+
+```typescript
+// Add to PortDefinition interface
+channelTaper?: number;  // 0 = uniform width, 0.5 = narrows to half at one end
+
+// In the 'strait' case:
+case 'strait': {
+  const taperFactor = def.channelTaper ?? 0;
+  // wrz ranges roughly -0.5 to 0.5; taper narrows toward +z (upstream)
+  const taper = 1.0 - taperFactor * (wrz * 0.5 + 0.5);
+  const cw = (def.channelWidth ?? 1.0) * 0.25 * taper;
+  const channelNoise = cn * 0.5;
+  const channelEdge = cw + channelNoise;
+  const absWrx = Math.abs(wrx);
+  const isLand = absWrx > channelEdge;
+  const landStrength = isLand ? smoothstep(channelEdge, channelEdge + 0.12, absWrx) : 0;
+  shape = landStrength * 0.9 - (isLand ? 0 : 0.5);
+  break;
+}
+```
+
+### Gameplay Impact
+
+**The Carreira da Índia becomes playable.** Buy pepper in Calicut → sail to Goa → load up → Cape → Elmina → Lisbon → sell at 10x markup. But the voyage takes months, provisions spoil, crew morale drops, and you might lose everything to weather or pirates off the Swahili coast.
+
+**Atlantic triangle opens up.** European manufactures → West Africa (trade for gold/slaves) → Brazil (trade for sugar/tobacco) → Europe (sell sugar) — or cut east from Cape into the Indian Ocean with European goods that sell at premium.
+
+**Knowledge system gets richer.** A Portuguese naturalist knows European and New World goods but is useless in the Spice Islands. A Gujarati factor is invaluable in the Indian Ocean but has no idea what Brazilian tobacco is. Different regions need different knowledge.
+
+**New World drugs enter the system.** Tobacco, cacao, coca, cinchona bark (quinine), guaiacum — all historically entering global trade in exactly this period. Unknown to everyone in the Indian Ocean, creating fresh discovery moments even late in the game.
+
+### New Commodities (to add to commodities.ts)
+
+New World and European goods to support the expanded map:
+
+| Good | Tier | Origin Region | Notes |
+|------|------|--------------|-------|
+| Tobacco | 2 | Atlantic Americas | Havana, Salvador. Rapidly becoming global commodity by 1612. |
+| Cacao | 3 | Atlantic Americas | Cartagena, Havana. Luxury drink, not yet widely known in Asia. |
+| Sugar | 1 | Atlantic Americas / tropical | Salvador primary producer. Bulk commodity. |
+| Brazilwood | 2 | Atlantic Americas | Salvador. Red dye source, valuable in Europe and Asia. |
+| Silver | 4 | Atlantic Americas | Havana, Cartagena, Seville. The currency of global trade. |
+| Emeralds | 4 | Atlantic Americas | Cartagena. Colombian mines, prized in Mughal India. |
+| Cinchona bark | 3 | Atlantic Americas | Cartagena. "Jesuit's bark" — anti-malarial. Barely known in 1612. |
+| Guaiacum | 3 | Atlantic Americas | Havana, Cartagena. "Holy wood" — supposed syphilis cure, major drug trade item. |
+| Wool cloth | 1 | Europe | London, Amsterdam. Bulk European export, staple of Indian Ocean trade. |
+| Firearms | 3 | Europe | London, Amsterdam, Lisbon. Muskets, powder. High demand everywhere. |
+| Wine | 2 | Europe | Lisbon, Seville. Portuguese wine traded across the Estado da Índia. |
+| Gold (West African) | 4 | West Africa | Elmina. Alluvial gold, the original reason for Portuguese presence on the Gold Coast. |
+| Slaves | 3 | West Africa | Luanda, Elmina, Zanzibar. Historically central to this trade network. Handle with appropriate gravity. |
+
+### POIs for New Ports
+
+| Port | POI | Type | NPC | Knowledge Domain |
+|------|-----|------|-----|-----------------|
+| Lisbon | Royal Hospital of All Saints | naturalist | Dr. Tomás Rodrigues, royal physician | European pharmacopoeia, New World drugs. Has access to Garcia de Orta's networks. |
+| Amsterdam | VOC Spice Warehouse | merchant_guild | Hendrik van Hoorn, VOC factor | Spice Islands goods, market prices. Best intelligence on nutmeg/clove trade. |
+| Seville | Casa de Contratación | court | Don Luis de Velasco, trade official | New World goods, silver trade, Atlantic routes. Bureaucratic but comprehensive. |
+| London | Apothecaries' Hall | naturalist | Thomas Johnson, apothecary | Drug identification, medicinal uses. Excellent Level 2→Mastered on medicines. |
+| Havana | Fortress garrison | court | Capitán Diego de Salazar | New Spain silver routes, treasure fleet schedules. Military knowledge, fortification. |
+| Salvador | Jesuit college | monastery | Fr. Fernão Cardim | Brazilian drugs (tobacco, ipecacuanha), Tupi medicinal knowledge. |
+| Cartagena | Inquisition library | monastery | Fr. Pedro Claver | New World drugs, indigenous knowledge filtered through Catholic lens. Unreliable on some things. |
+| Elmina | Akan traders outside the fort | merchant_guild | Kwame Asante, gold trader | West African gold sourcing, inland trade routes, forest products. |
+| Luanda | Imbangala war camp | ruin | Ngola's envoy | Slave trade networks, inland African geography, wax and ivory sourcing. |
+| Cape of Good Hope | Khoikhoi pastoral camp | garden | /Xam elder | Local plants, animal products, fresh water sources. Very limited trade goods but unique botanical knowledge. |
+
+### Implementation Order (Map Expansion)
+
+1. **Phase M1 — Climate system**: Add `mediterranean` to `ClimateProfile`. Wire moisture, water palette, wind. Add vegetation rules for `temperate` (no palms) and `mediterranean` (mixed) in `World.tsx`.
+2. **Phase M2 — Strait taper**: Add `channelTaper` to `PortDefinition`. Modify strait case in `portArchetypes.ts`. Test with London definition.
+3. **Phase M3 — Port definitions**: Add all 10 new ports to `portArchetypes.ts` (CORE_PORTS) and `worldPorts.ts` (WORLD_PORT_COORDS, SEA_LANE_GRAPH, PORT_TRADE_PROFILES).
+4. **Phase M4 — World map zoom**: Replace fixed-center D3 projection with `d3.zoom()` pan/zoom. Add region quick-jump buttons. Recenter default to show player's current region.
+5. **Phase M5 — New commodities**: Add ~13 new commodities to `commodities.ts`. Define trade profiles for new ports. Wire into market generation.
+6. **Phase M6 — New POIs**: Add POI definitions for the 10 new ports. Wire into POI system (depends on Knowledge System Phase 4).
