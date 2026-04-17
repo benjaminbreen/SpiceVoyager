@@ -11,6 +11,7 @@ import {
 import { CORE_PORTS, WORLD_SIZE_VALUES, WorldSize } from '../utils/portArchetypes';
 import { WATER_PALETTES, resolveWaterPaletteId } from '../utils/waterPalettes';
 import type { WaterPaletteId, WaterPaletteSetting } from '../utils/waterPalettes';
+import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 
 type SettingsTab = 'world' | 'display' | 'audio' | 'gameplay' | 'dev' | 'about';
 
@@ -64,17 +65,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      {...modalBackdropMotion}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6 pointer-events-auto"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        initial={{ scale: 0.95, y: 20, opacity: 0 }}
-        animate={{ scale: 1, y: 0, opacity: 1 }}
-        exit={{ scale: 0.95, y: 20, opacity: 0 }}
-        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        {...modalPanelMotion}
         className="w-full max-w-3xl h-[520px] flex rounded-xl overflow-hidden
           bg-[#0c1019]/95 backdrop-blur-xl border border-[#2a2d3a]/50
           shadow-[0_16px_64px_rgba(0,0,0,0.6)]"
@@ -134,10 +130,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             <AnimatePresence mode="wait">
               <motion.div
                 key={tab}
-                initial={{ opacity: 0, x: 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -12 }}
-                transition={{ duration: 0.2 }}
+                {...modalContentMotion}
               >
                 {tab === 'world' && (
                   <WorldTab

@@ -12,6 +12,7 @@ import {
 } from '../utils/commodities';
 import { sfxCoin, sfxClick, sfxHover } from '../audio/SoundEffects';
 import { getEffectiveKnowledge, type KnowledgeLevel } from '../utils/knowledgeSystem';
+import { ValueFlash } from './ValueFlash';
 
 export interface MarketTabLedgerProps {
   port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
@@ -229,7 +230,12 @@ export function MarketTabLedger({
               <Coins size={15} className="text-[#c9a84c]" />
               <span>
                 <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Gold</span>
-                <span className="block font-mono text-[17px] font-bold leading-none text-[#d8c47a]">{gold.toLocaleString()}g</span>
+                <span className="block font-mono text-[17px] font-bold leading-none text-[#d8c47a]">
+                  <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
+                    {gold.toLocaleString()}
+                  </ValueFlash>
+                  g
+                </span>
               </span>
             </span>
             <span className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-3 py-2">
@@ -237,7 +243,10 @@ export function MarketTabLedger({
               <span>
                 <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Hold</span>
                 <span className={`block font-mono text-[17px] font-bold leading-none ${cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-200'}`}>
-                  {cargoWeight}<span className="text-slate-600">/{cargoCapacity}</span>
+                  <ValueFlash value={cargoWeight} upColor="#fbbf24" downColor="#38bdf8">
+                    {cargoWeight}
+                  </ValueFlash>
+                  <span className="text-slate-600">/{cargoCapacity}</span>
                 </span>
               </span>
             </span>

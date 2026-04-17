@@ -9,6 +9,7 @@ import { CrewPortrait, crewToPortraitConfig, getSkin, getEyeColor, getHairColor 
 import type { PortraitConfig } from './CrewPortrait';
 import { SKIN_PALETTES, HAIR_COLORS, EYE_COLORS } from '../utils/portraitConfig';
 import { ASCII_COLORS as CLR } from './ascii-ui-kit';
+import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 const SANS = '"DM Sans", sans-serif';
@@ -30,19 +31,13 @@ export function PortraitModal({ member, open, onClose }: PortraitModalProps) {
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          {...modalBackdropMotion}
           className="fixed inset-0 z-[200] flex items-center justify-center px-4"
           style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
           onClick={onClose}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.25 }}
+            {...modalPanelMotion}
             className="relative max-w-[680px] w-full rounded-lg overflow-hidden"
             style={{
               backgroundColor: '#0c0b08',

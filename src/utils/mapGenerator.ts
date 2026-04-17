@@ -4,6 +4,7 @@ import { generatePortPrices, generatePortInventory, supplyDemandModifier, type C
 import {
   PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
+  resolveDirRadians,
 } from './portArchetypes';
 
 export type Culture = 'Indian Ocean' | 'European' | 'Caribbean' | 'West African' | 'Atlantic';
@@ -14,6 +15,7 @@ export interface PortOverride {
   name: string;
   culture: Culture;
   scale: PortScale;
+  buildingStyle?: string;
   forcedPosition?: [number, number, number];
 }
 
@@ -32,6 +34,7 @@ function corePortsToOverrides(): PortOverride[] {
     name: p.name,
     culture: p.culture,
     scale: p.scale,
+    buildingStyle: p.buildingStyle,
   }));
 }
 
@@ -52,6 +55,7 @@ export function focusedPortConfig(portId: string, seed: number, worldSize: numbe
       name: port.name,
       culture: port.culture,
       scale: port.scale,
+      buildingStyle: port.buildingStyle,
     }],
     soloPort: port.id,
   };
@@ -173,7 +177,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
     // The channel runs along the open direction; land is on either side.
     if (pos.def?.geography === 'strait') {
       const cw = (pos.def.channelWidth ?? 1.0) * 0.25;
-      const openAngle = { N: 0, NE: Math.PI/4, E: Math.PI/2, SE: 3*Math.PI/4, S: Math.PI, SW: 5*Math.PI/4, W: 3*Math.PI/2, NW: 7*Math.PI/4 }[pos.def.openDirection] ?? 0;
+      const openAngle = resolveDirRadians(pos.def.openDirection);
       // Perpendicular to open direction — offset onto the "left" landmass
       const perpAngle = openAngle + Math.PI / 2;
       const offset = (cw + 0.15) * 450; // just past channel edge in world units
@@ -181,55 +185,76 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       portZ += Math.cos(perpAngle) * offset;
     }
 
-    // Search for a good coastal position near the distributed position
-    const searchRadius = pos.def && pos.def.geography !== 'archipelago'
-      ? ARCHETYPE_RADIUS * 0.6  // archetype ports: search within their shaped area
-      : 200;                     // random ports: wider search
+    // Estuary geography: the river center is water along the open-direction axis.
+    // Push the search center perpendicular to the river onto a bank, just past
+    // the mouth half-width, so the city sits on the riverbank rather than mid-channel.
+    if (pos.def?.geography === 'estuary') {
+      const mouthW = pos.def.riverMouthWidth ?? 0.18;
+      const openAngle = resolveDirRadians(pos.def.openDirection);
+      const perpAngle = openAngle + Math.PI / 2;
+      const offset = (mouthW + 0.06) * 450;
+      portX += Math.sin(perpAngle) * offset;
+      portZ += Math.cos(perpAngle) * offset;
+    }
+
+    // Search for a good coastal position near the distributed position.
+    // For archetype ports, start within the shaped area; if nothing usable is
+    // found, retry with a wider radius so wide-channel estuaries / harbors don't
+    // strand the port marker in open water.
+    const baseRadius = pos.def && pos.def.geography !== 'archipelago'
+      ? ARCHETYPE_RADIUS * 0.6
+      : 200;
+    const searchRadii = pos.def && pos.def.geography !== 'archipelago'
+      ? [baseRadius, ARCHETYPE_RADIUS * 1.5, ARCHETYPE_RADIUS * 3.0]
+      : [baseRadius];
 
     let bestScore = -Infinity;
     let bestX = portX, bestZ = portZ;
     const step = 15;
 
-    for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
-      for (let dz = -searchRadius; dz <= searchRadius; dz += step) {
-        const sx = portX + dx;
-        const sz = portZ + dz;
-        const terrain = getTerrainData(sx, sz);
+    for (const searchRadius of searchRadii) {
+      for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
+        for (let dz = -searchRadius; dz <= searchRadius; dz += step) {
+          const sx = portX + dx;
+          const sz = portZ + dz;
+          const terrain = getTerrainData(sx, sz);
 
-        // Look for coastlines
-        if (terrain.height > 0 && terrain.height < 3) {
-          // Harbor suitability check
-          let landCount = 0;
-          const radius = 25;
-          const samples = 8;
-          for (let i = 0; i < samples; i++) {
-            const angle = (i / samples) * Math.PI * 2;
-            const cx = sx + Math.cos(angle) * radius;
-            const cz = sz + Math.sin(angle) * radius;
-            if (getTerrainData(cx, cz).height > 0) landCount++;
-          }
+          // Look for coastlines
+          if (terrain.height > 0 && terrain.height < 3) {
+            // Harbor suitability check
+            let landCount = 0;
+            const radius = 25;
+            const samples = 8;
+            for (let i = 0; i < samples; i++) {
+              const angle = (i / samples) * Math.PI * 2;
+              const cx = sx + Math.cos(angle) * radius;
+              const cz = sz + Math.sin(angle) * radius;
+              if (getTerrainData(cx, cz).height > 0) landCount++;
+            }
 
-          let score = 0;
-          if (landCount >= 4 && landCount <= 6) score = 50;
-          else if (landCount === 3 || landCount === 7) score = 20;
-          else if (landCount < 3) score = -30;
-          else score = -80;
+            let score = 0;
+            if (landCount >= 4 && landCount <= 6) score = 50;
+            else if (landCount === 3 || landCount === 7) score = 20;
+            else if (landCount < 3) score = -30;
+            else score = -80;
 
-          score += terrain.moisture * 20;
+            score += terrain.moisture * 20;
 
-          // Prefer positions closer to the distributed center for archetype ports
-          if (pos.def && pos.def.geography !== 'archipelago') {
-            const distFromCenter = Math.sqrt(dx * dx + dz * dz);
-            score -= distFromCenter * 0.1;
-          }
+            // Prefer positions closer to the distributed center for archetype ports
+            if (pos.def && pos.def.geography !== 'archipelago') {
+              const distFromCenter = Math.sqrt(dx * dx + dz * dz);
+              score -= distFromCenter * 0.1;
+            }
 
-          if (score > bestScore) {
-            bestScore = score;
-            bestX = sx;
-            bestZ = sz;
+            if (score > bestScore) {
+              bestScore = score;
+              bestX = sx;
+              bestZ = sz;
+            }
           }
         }
       }
+      if (bestScore > -Infinity) break;
     }
 
     // If we found a valid coast, use it; otherwise fall back to distributed position
@@ -248,6 +273,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       name: override.name,
       culture: override.culture,
       scale: override.scale,
+      buildingStyle: override.buildingStyle,
       position: [portX, 0.5, portZ] as [number, number, number],
       inventory: { ...baseInventory },
       baseInventory,

@@ -5,6 +5,7 @@ import {
   X, Anchor, Coins, Shield, Users, Swords,
   StickyNote, Send,
 } from 'lucide-react';
+import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 
 const CATEGORY_CONFIG: Record<JournalCategory, { icon: typeof Anchor; color: string; label: string }> = {
   navigation: { icon: Anchor, color: '#60a5fa', label: 'Navigation' },
@@ -75,16 +76,12 @@ export function JournalModal({ open, onClose, initialEntry }: {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      {...modalBackdropMotion}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6 pointer-events-auto"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        initial={{ scale: 0.95, y: 20 }}
-        animate={{ scale: 1, y: 0 }}
-        exit={{ scale: 0.95, y: 20 }}
+        {...modalPanelMotion}
         className="w-full max-w-4xl h-[80vh] flex rounded-xl overflow-hidden shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-[#2a2d3a]/50"
       >
         {/* LEFT PANE — Event Log (sleek dark) */}

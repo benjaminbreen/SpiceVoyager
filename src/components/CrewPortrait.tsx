@@ -20,6 +20,7 @@ import {
   type PortraitConfig,
   type SkinPalette,
   type Personality,
+  type SocialClass,
   type TavernNpcPortraitInput,
 } from '../utils/portraitConfig';
 
@@ -350,13 +351,22 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
       {/* Clothing */}
       {renderClothing(config, rng, cx, chinY, skin)}
 
-      {/* Neck */}
-      <path d={`M ${cx - 15} ${chinY - 8} L ${cx - 17} ${chinY + 25} L ${cx + 17} ${chinY + 25} L ${cx + 15} ${chinY - 8} Z`}
-        fill={`url(#skin-${uid})`} />
-      <path d={`M ${cx - 15} ${chinY - 8} L ${cx - 17} ${chinY + 25} L ${cx + 17} ${chinY + 25} L ${cx + 15} ${chinY - 8} Z`}
-        fill={`url(#shadow-${uid})`} />
-      <path d={`M ${cx - 15} ${chinY - 8} L ${cx - 17} ${chinY + 25} L ${cx + 17} ${chinY + 25} L ${cx + 15} ${chinY - 8} Z`}
-        fill={skin.mid} opacity={skinTextureOpacity * 0.7} filter={`url(#skinTex-${uid})`} />
+      {/* Neck — wider to read as anatomical, not a stem */}
+      {(() => {
+        const neckPath = `M ${cx - 19} ${chinY - 8} C ${cx - 21} ${chinY + 6}, ${cx - 23} ${chinY + 18}, ${cx - 24} ${chinY + 30} L ${cx + 24} ${chinY + 30} C ${cx + 23} ${chinY + 18}, ${cx + 21} ${chinY + 6}, ${cx + 19} ${chinY - 8} Z`;
+        return (
+          <g key="neck">
+            <path d={neckPath} fill={`url(#skin-${uid})`} />
+            <path d={neckPath} fill={`url(#shadow-${uid})`} />
+            <path d={neckPath} fill={skin.mid} opacity={skinTextureOpacity * 0.7} filter={`url(#skinTex-${uid})`} />
+            {/* Sternocleidomastoid shadow on the dark side — anchors the neck to the body */}
+            <path d={`M ${cx - lightSide * 10} ${chinY - 4} Q ${cx - lightSide * 14} ${chinY + 14}, ${cx - lightSide * 18} ${chinY + 28}`}
+              stroke={`rgba(0,0,0,${0.08 * lightIntensity})`} strokeWidth="3" fill="none" strokeLinecap="round" />
+            {/* Throat shadow under chin */}
+            <ellipse cx={cx} cy={chinY + 2} rx={10} ry={3} fill="rgba(0,0,0,0.12)" />
+          </g>
+        );
+      })()}
 
       {/* Ears */}
       {renderEars(cx, earAttach, headWidth, earSize, skin, uid)}
@@ -877,82 +887,472 @@ function renderWrinkles(
 
 // ── Facial hair ──────────────────────────────────────────
 
+// Adjust a hex color's lightness by a delta (-1..1). Used to derive shadow + highlight tones from base hair color.
+function shiftHex(hex: string, delta: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const f = (c: number) => {
+    const v = delta >= 0 ? c + (255 - c) * delta : c * (1 + delta);
+    return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  };
+  return `#${f(r)}${f(g)}${f(b)}`;
+}
+
+type BeardStyle = 'vandyke' | 'spade' | 'pointed' | 'fullBushy' | 'square' | 'patriarch' | 'goatee' | 'chinStrap' | 'stubble' | 'mustacheOnly';
+
 function renderFacialHair(
   config: PortraitConfig, rng: () => number,
   cx: number, mouthY: number, _mouthW: number,
   chinY: number, jawW: number, headWidth: number, hairColor: string,
 ): React.ReactNode {
   const age = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
-  if (age === 0 && rng() > 0.3) return null;
+  // Young men: usually clean-shaven or stubble
+  if (age === 0 && rng() > 0.35) return null;
 
-  const paths: React.ReactNode[] = [];
-  const r1 = rng(), r2 = rng(), r3 = rng();
+  const grow = rng();
+  const cg = config.culturalGroup;
 
-  const beardLikelihood = config.culturalGroup === 'ArabPersian' ? 0.85 :
-    config.culturalGroup === 'Indian' ? 0.75 :
-    config.culturalGroup === 'NorthEuropean' ? 0.5 :
-    config.culturalGroup === 'SouthEuropean' ? 0.55 :
-    config.culturalGroup === 'EastAsian' ? 0.15 :
-    config.culturalGroup === 'SoutheastAsian' ? 0.2 :
-    config.culturalGroup === 'Swahili' ? 0.6 : 0.4;
+  const beardLikelihood =
+    cg === 'ArabPersian' ? 0.88 :
+    cg === 'Indian' ? 0.78 :
+    cg === 'NorthEuropean' ? 0.55 :
+    cg === 'SouthEuropean' ? 0.62 :
+    cg === 'EastAsian' ? 0.18 :
+    cg === 'SoutheastAsian' ? 0.22 :
+    cg === 'Swahili' ? 0.6 : 0.45;
 
-  const mustacheLikelihood = beardLikelihood + 0.1;
+  if (grow > beardLikelihood + 0.12) return null;
 
-  if (r1 < mustacheLikelihood) {
-    const mW = 12 + r2 * 8;
-    const mDrop = r3 * 5;
-    const mThick = 2.5 + rng() * 3;
-    const handlebar = config.culturalGroup === 'Indian' || config.culturalGroup === 'ArabPersian' ? rng() > 0.3 : rng() > 0.7;
+  // ── Pick a culturally-weighted style ──
+  const styleRoll = rng();
+  let style: BeardStyle;
+  if (cg === 'ArabPersian' || cg === 'Indian') {
+    // Trimmed full or patriarchal flowing styles dominate
+    style = age >= 3 && styleRoll > 0.55 ? 'patriarch' :
+            styleRoll > 0.35 ? 'fullBushy' :
+            styleRoll > 0.15 ? 'square' : 'pointed';
+  } else if (cg === 'NorthEuropean' || cg === 'SouthEuropean') {
+    // Van Dyke and spade beards were the height of fashion c.1610s
+    style = styleRoll > 0.7 ? 'vandyke' :
+            styleRoll > 0.5 ? 'spade' :
+            styleRoll > 0.35 ? 'pointed' :
+            styleRoll > 0.22 ? 'fullBushy' :
+            styleRoll > 0.12 ? 'mustacheOnly' :
+            styleRoll > 0.06 ? 'goatee' : 'stubble';
+  } else if (cg === 'EastAsian') {
+    style = styleRoll > 0.6 ? 'patriarch' :
+            styleRoll > 0.3 ? 'pointed' : 'mustacheOnly';
+  } else if (cg === 'SoutheastAsian') {
+    style = styleRoll > 0.5 ? 'goatee' : styleRoll > 0.25 ? 'mustacheOnly' : 'stubble';
+  } else if (cg === 'Swahili') {
+    style = styleRoll > 0.55 ? 'fullBushy' :
+            styleRoll > 0.3 ? 'chinStrap' :
+            styleRoll > 0.15 ? 'stubble' : 'goatee';
+  } else {
+    style = styleRoll > 0.5 ? 'fullBushy' : styleRoll > 0.25 ? 'goatee' : 'stubble';
+  }
 
-    if (handlebar) {
-      paths.push(
-        <path key="mustache"
-          d={`M ${cx - mW} ${mouthY - 3 + mDrop}
-              C ${cx - mW * 0.5} ${mouthY - 6 - mThick}, ${cx + mW * 0.5} ${mouthY - 6 - mThick}, ${cx + mW} ${mouthY - 3 + mDrop}
-              C ${cx + mW * 0.5} ${mouthY - 4 + mThick * 0.3}, ${cx - mW * 0.5} ${mouthY - 4 + mThick * 0.3}, ${cx - mW} ${mouthY - 3 + mDrop} Z`}
-          fill={hairColor} />
+  // Outdoor working sailors more often have unkempt full or stubble
+  if (config.isSailor && rng() > 0.6 && (cg === 'NorthEuropean' || cg === 'SouthEuropean')) {
+    style = rng() > 0.5 ? 'fullBushy' : 'stubble';
+  }
+
+  // ── Tonal palette derived from hair color ──
+  const shadow = shiftHex(hairColor, -0.35);
+  const highlight = shiftHex(hairColor, 0.25);
+  const isLight = hairColor === '#888888' || hairColor === '#b0b0b0' ||
+    hairColor === '#d4a860' || hairColor === '#e0c880';
+  const strandColor = isLight ? shiftHex(hairColor, -0.2) : shiftHex(hairColor, 0.15);
+  const greying = age >= 4 && rng() > 0.4;
+
+  return (
+    <g key="facial-hair">
+      {renderBeardStyle(style, cx, mouthY, chinY, jawW, headWidth, rng, hairColor, shadow, highlight, strandColor, greying, age)}
+    </g>
+  );
+}
+
+function renderBeardStyle(
+  style: BeardStyle,
+  cx: number, mouthY: number, chinY: number, jawW: number, headWidth: number,
+  rng: () => number,
+  base: string, shadow: string, highlight: string, strand: string,
+  greying: boolean, age: number,
+): React.ReactNode {
+  const greyOverlay = greying ? '#c8c0b8' : null;
+  // Most styles include a mustache; we render that here separately and compose.
+  const mustacheStyle: 'walrus' | 'handlebar' | 'imperial' | 'trimmed' | 'thin' | 'none' =
+    style === 'goatee' || style === 'chinStrap' || style === 'stubble' ? 'none' :
+    style === 'patriarch' ? (rng() > 0.4 ? 'walrus' : 'trimmed') :
+    style === 'vandyke' ? (rng() > 0.5 ? 'imperial' : 'handlebar') :
+    style === 'spade' ? (rng() > 0.6 ? 'handlebar' : 'walrus') :
+    style === 'pointed' ? (rng() > 0.5 ? 'handlebar' : 'trimmed') :
+    style === 'mustacheOnly' ? (rng() > 0.5 ? 'walrus' : rng() > 0.5 ? 'handlebar' : 'trimmed') :
+    'trimmed';
+
+  const beardEl = renderBeardShape(style, cx, mouthY, chinY, jawW, headWidth, rng, base, shadow, highlight, strand);
+  const mustEl = mustacheStyle !== 'none'
+    ? renderMustacheShape(mustacheStyle, cx, mouthY, rng, base, shadow, highlight)
+    : null;
+
+  return (
+    <g>
+      {beardEl}
+      {mustEl}
+      {greyOverlay && (
+        // Grey-streak overlay — applied softly across the whole beard area
+        <ellipse cx={cx} cy={chinY - 2} rx={jawW + 2} ry={(chinY - mouthY) + 8}
+          fill={greyOverlay} opacity={0.18} />
+      )}
+    </g>
+  );
+}
+
+function renderBeardShape(
+  style: BeardStyle, cx: number, mouthY: number, chinY: number,
+  jawW: number, headWidth: number, rng: () => number,
+  base: string, shadow: string, highlight: string, strand: string,
+): React.ReactNode {
+  switch (style) {
+    case 'fullBushy': {
+      // Wraps the entire jaw, fairly long
+      const bLen = 12 + rng() * 14;
+      const fullness = 1 + rng() * 0.3;
+      const path = `M ${cx - headWidth + 2} ${mouthY - 6}
+        C ${cx - headWidth - 2} ${chinY - 4}, ${cx - jawW - 2} ${chinY + bLen - 4}, ${cx} ${chinY + bLen + 2}
+        C ${cx + jawW + 2} ${chinY + bLen - 4}, ${cx + headWidth + 2} ${chinY - 4}, ${cx + headWidth - 2} ${mouthY - 6}
+        C ${cx + 16 * fullness} ${mouthY + 4}, ${cx - 16 * fullness} ${mouthY + 4}, ${cx - headWidth + 2} ${mouthY - 6} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform={`translate(0, 1)`} opacity={0.85} />
+          <path d={path} fill={base} />
+          {/* Highlight streak down the center */}
+          <path d={`M ${cx - jawW * 0.4} ${mouthY + 4} Q ${cx} ${chinY + bLen * 0.4} ${cx + jawW * 0.4} ${mouthY + 4}`}
+            stroke={highlight} strokeWidth="1.5" fill="none" opacity={0.4} />
+          {strandsAlongCurve(cx - headWidth + 2, mouthY - 6, cx + headWidth - 2, mouthY - 6, cx, chinY + bLen + 2, 14, rng, strand, base, 4)}
+        </g>
       );
-    } else {
-      paths.push(
-        <path key="mustache"
-          d={`M ${cx - mW} ${mouthY - 2}
-              C ${cx - mW * 0.3} ${mouthY - 5 - mThick}, ${cx + mW * 0.3} ${mouthY - 5 - mThick}, ${cx + mW} ${mouthY - 2}
-              C ${cx + mW * 0.3} ${mouthY - 1}, ${cx - mW * 0.3} ${mouthY - 1}, ${cx - mW} ${mouthY - 2} Z`}
-          fill={hairColor} />
+    }
+    case 'spade': {
+      // Wide squared-off bottom — the classic Spanish/Habsburg court beard
+      const bLen = 14 + rng() * 6;
+      const flare = jawW - 4;
+      const path = `M ${cx - flare} ${mouthY - 4}
+        C ${cx - flare - 2} ${chinY - 2}, ${cx - flare - 6} ${chinY + bLen - 4}, ${cx - flare + 2} ${chinY + bLen}
+        L ${cx + flare - 2} ${chinY + bLen}
+        C ${cx + flare + 6} ${chinY + bLen - 4}, ${cx + flare + 2} ${chinY - 2}, ${cx + flare} ${mouthY - 4}
+        C ${cx + 12} ${mouthY + 4}, ${cx - 12} ${mouthY + 4}, ${cx - flare} ${mouthY - 4} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform={`translate(0,1)`} opacity={0.9} />
+          <path d={path} fill={base} />
+          {/* Center mid-line groove (combed beard) */}
+          <path d={`M ${cx} ${mouthY + 5} L ${cx} ${chinY + bLen - 2}`}
+            stroke={shadow} strokeWidth="0.6" opacity={0.5} />
+          {/* Highlight on lit side */}
+          <path d={`M ${cx + 4} ${mouthY + 6} Q ${cx + flare * 0.7} ${chinY + bLen * 0.4} ${cx + flare * 0.4} ${chinY + bLen - 2}`}
+            stroke={highlight} strokeWidth="1.2" fill="none" opacity={0.4} />
+          {strandsAlongCurve(cx - flare, chinY + bLen - 2, cx + flare, chinY + bLen - 2, cx, chinY + bLen + 4, 10, rng, strand, base, 2.5)}
+        </g>
+      );
+    }
+    case 'vandyke': {
+      // Pointed chin tuft + linked mustache (handled separately) — the gentleman's mark
+      const tipLen = 12 + rng() * 8;
+      const cw = 6 + rng() * 3;
+      const path = `M ${cx - cw} ${mouthY + 3}
+        C ${cx - cw - 2} ${chinY - 2}, ${cx - 2} ${chinY + tipLen}, ${cx} ${chinY + tipLen + 2}
+        C ${cx + 2} ${chinY + tipLen}, ${cx + cw + 2} ${chinY - 2}, ${cx + cw} ${mouthY + 3}
+        C ${cx + cw * 0.4} ${mouthY + 5}, ${cx - cw * 0.4} ${mouthY + 5}, ${cx - cw} ${mouthY + 3} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform="translate(0,1)" opacity={0.85} />
+          <path d={path} fill={base} />
+          {/* Center groove */}
+          <path d={`M ${cx} ${mouthY + 5} L ${cx} ${chinY + tipLen}`}
+            stroke={shadow} strokeWidth="0.5" opacity={0.6} />
+          {/* Tip strand */}
+          <path d={`M ${cx} ${chinY + tipLen + 2} l 0 3`} stroke={base} strokeWidth="1" strokeLinecap="round" />
+        </g>
+      );
+    }
+    case 'pointed': {
+      // Narrow stiletto-pointed beard
+      const tipLen = 10 + rng() * 12;
+      const w = 7 + rng() * 4;
+      const path = `M ${cx - w} ${mouthY - 2}
+        C ${cx - w - 1} ${chinY - 2}, ${cx - 1} ${chinY + tipLen}, ${cx} ${chinY + tipLen + 3}
+        C ${cx + 1} ${chinY + tipLen}, ${cx + w + 1} ${chinY - 2}, ${cx + w} ${mouthY - 2}
+        C ${cx + w * 0.3} ${mouthY + 3}, ${cx - w * 0.3} ${mouthY + 3}, ${cx - w} ${mouthY - 2} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform="translate(0,1)" opacity={0.85} />
+          <path d={path} fill={base} />
+          <path d={`M ${cx} ${mouthY + 2} L ${cx + 0.5} ${chinY + tipLen + 1}`}
+            stroke={highlight} strokeWidth="0.5" opacity={0.5} />
+        </g>
+      );
+    }
+    case 'square': {
+      // Cropped square beard hugging the jaw
+      const bLen = 4 + rng() * 6;
+      const path = `M ${cx - jawW - 1} ${mouthY - 3}
+        C ${cx - jawW - 3} ${chinY - 2}, ${cx - jawW + 2} ${chinY + bLen}, ${cx} ${chinY + bLen + 1}
+        C ${cx + jawW - 2} ${chinY + bLen}, ${cx + jawW + 3} ${chinY - 2}, ${cx + jawW + 1} ${mouthY - 3}
+        C ${cx + 14} ${mouthY + 3}, ${cx - 14} ${mouthY + 3}, ${cx - jawW - 1} ${mouthY - 3} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} opacity={0.85} transform="translate(0,1)" />
+          <path d={path} fill={base} />
+          {strandsAlongCurve(cx - jawW, chinY + bLen, cx + jawW, chinY + bLen, cx, chinY + bLen + 3, 8, rng, strand, base, 2)}
+        </g>
+      );
+    }
+    case 'patriarch': {
+      // Long flowing beard — old wise men, scholars, imams
+      const bLen = 26 + rng() * 18;
+      const wave1 = (rng() - 0.5) * 4;
+      const wave2 = (rng() - 0.5) * 4;
+      const path = `M ${cx - jawW - 2} ${mouthY - 4}
+        C ${cx - jawW - 8} ${chinY - 2}, ${cx - jawW - 6 + wave1} ${chinY + bLen * 0.5}, ${cx - jawW * 0.4} ${chinY + bLen}
+        C ${cx - 4} ${chinY + bLen + 4}, ${cx + 4} ${chinY + bLen + 4}, ${cx + jawW * 0.4} ${chinY + bLen}
+        C ${cx + jawW + 6 + wave2} ${chinY + bLen * 0.5}, ${cx + jawW + 8} ${chinY - 2}, ${cx + jawW + 2} ${mouthY - 4}
+        C ${cx + 14} ${mouthY + 4}, ${cx - 14} ${mouthY + 4}, ${cx - jawW - 2} ${mouthY - 4} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform="translate(0,1.5)" opacity={0.9} />
+          <path d={path} fill={base} />
+          {/* Wavy strands flowing down the length */}
+          {[0.3, 0.5, 0.7].map((t, i) => (
+            <path key={`wv${i}`}
+              d={`M ${cx - jawW * 0.4 + (i - 1) * 4} ${mouthY + 4 + t * (chinY + bLen - mouthY - 4)} q 2 4 0 8`}
+              stroke={shadow} strokeWidth="0.5" fill="none" opacity={0.6} />
+          ))}
+          {/* Highlight along center */}
+          <path d={`M ${cx} ${mouthY + 6} Q ${cx + 1} ${chinY + bLen * 0.5} ${cx} ${chinY + bLen}`}
+            stroke={highlight} strokeWidth="1" fill="none" opacity={0.35} />
+          {/* Strand wisps at the bottom tip */}
+          {[-3, -1, 1, 3].map(dx => (
+            <path key={`tip${dx}`}
+              d={`M ${cx + dx} ${chinY + bLen + 2} l ${dx * 0.3} ${4 + rng() * 2}`}
+              stroke={strand} strokeWidth="0.6" strokeLinecap="round" opacity={0.7} />
+          ))}
+        </g>
+      );
+    }
+    case 'goatee': {
+      // Small chin tuft, no mustache
+      const w = 6 + rng() * 3;
+      const len = 5 + rng() * 6;
+      const path = `M ${cx - w} ${mouthY + 5}
+        C ${cx - w - 1} ${chinY + len - 2}, ${cx - 2} ${chinY + len}, ${cx} ${chinY + len + 1}
+        C ${cx + 2} ${chinY + len}, ${cx + w + 1} ${chinY + len - 2}, ${cx + w} ${mouthY + 5}
+        C ${cx + w * 0.3} ${mouthY + 7}, ${cx - w * 0.3} ${mouthY + 7}, ${cx - w} ${mouthY + 5} Z`;
+      return (
+        <g>
+          <path d={path} fill={shadow} transform="translate(0,1)" opacity={0.85} />
+          <path d={path} fill={base} />
+        </g>
+      );
+    }
+    case 'chinStrap': {
+      // Narrow band of hair following the jawline only — common in some African styles
+      const r = rng;
+      const sw = 1.6;
+      return (
+        <g>
+          <path
+            d={`M ${cx - headWidth + 4} ${mouthY - 2}
+                C ${cx - headWidth - 1} ${chinY - 6}, ${cx - jawW - 2} ${chinY + 2}, ${cx} ${chinY + 4}
+                C ${cx + jawW + 2} ${chinY + 2}, ${cx + headWidth + 1} ${chinY - 6}, ${cx + headWidth - 4} ${mouthY - 2}`}
+            stroke={base} strokeWidth={sw + 0.5} fill="none" strokeLinecap="round" />
+          <path
+            d={`M ${cx - headWidth + 5} ${mouthY - 1}
+                C ${cx - headWidth} ${chinY - 5}, ${cx - jawW - 1} ${chinY + 3}, ${cx} ${chinY + 5}
+                C ${cx + jawW + 1} ${chinY + 3}, ${cx + headWidth} ${chinY - 5}, ${cx + headWidth - 5} ${mouthY - 1}`}
+            stroke={shadow} strokeWidth={sw} fill="none" strokeLinecap="round" opacity={0.7} />
+          {/* Scattered short hairs along the strap */}
+          {Array.from({ length: 14 }).map((_, i) => {
+            const t = (i + 0.5) / 14;
+            const ang = Math.PI * t;
+            const px = cx + Math.cos(ang) * (headWidth - 2) * (1 - t * 0.1);
+            const py = mouthY - 2 + Math.sin(ang) * (chinY + 4 - mouthY + 4);
+            return <circle key={`cs${i}`} cx={px} cy={py} r={0.6 + r() * 0.5} fill={base} opacity={0.7} />;
+          })}
+        </g>
+      );
+    }
+    case 'stubble': {
+      // Several days of growth — speckled dots across jaw + chin + upper lip
+      const dots: React.ReactNode[] = [];
+      const count = 70 + Math.floor(rng() * 40);
+      for (let i = 0; i < count; i++) {
+        // Distribute around the jawline and chin region
+        const t = rng();
+        const u = rng();
+        // Cluster around the jaw — use parametric ellipse-like region
+        const xRange = jawW + 2;
+        const yRange = chinY - mouthY + 6;
+        const px = cx + (u - 0.5) * xRange * 2;
+        const py = mouthY + 2 + t * yRange;
+        // Reject points that fall outside an oval mask
+        const dx = (px - cx) / xRange;
+        const dy = (py - (mouthY + yRange * 0.5)) / (yRange * 0.55);
+        if (dx * dx + dy * dy > 1) continue;
+        // Also exclude the lip/mouth region
+        if (py < mouthY + 3 && Math.abs(px - cx) < 12) continue;
+        dots.push(
+          <circle key={`sb${i}`} cx={px} cy={py} r={0.4 + rng() * 0.4}
+            fill={shadow} opacity={0.55 + rng() * 0.25} />
+        );
+      }
+      // Upper-lip stubble
+      for (let i = 0; i < 24; i++) {
+        const px = cx + (rng() - 0.5) * 22;
+        const py = mouthY - 4 + rng() * 3;
+        dots.push(
+          <circle key={`sbu${i}`} cx={px} cy={py} r={0.35 + rng() * 0.3}
+            fill={shadow} opacity={0.5 + rng() * 0.2} />
+        );
+      }
+      return <g>{dots}</g>;
+    }
+    case 'mustacheOnly':
+      // No beard shape — just the mustache rendered separately by caller
+      // But add a tiny bit of chin shadow to suggest stubble underneath
+      return (
+        <ellipse cx={cx} cy={chinY - 2} rx={jawW - 4} ry={6}
+          fill={shadow} opacity={0.12} />
+      );
+  }
+}
+
+function renderMustacheShape(
+  style: 'walrus' | 'handlebar' | 'imperial' | 'trimmed' | 'thin',
+  cx: number, mouthY: number, rng: () => number,
+  base: string, shadow: string, highlight: string,
+): React.ReactNode {
+  switch (style) {
+    case 'walrus': {
+      // Drooping, thick — covers the upper lip and droops past the corners
+      const w = 16 + rng() * 5;
+      const drop = 4 + rng() * 3;
+      const thick = 4 + rng() * 1.5;
+      const path = `M ${cx - w} ${mouthY - 2 + drop * 0.4}
+        C ${cx - w * 0.6} ${mouthY - 6 - thick}, ${cx + w * 0.6} ${mouthY - 6 - thick}, ${cx + w} ${mouthY - 2 + drop * 0.4}
+        L ${cx + w + 1} ${mouthY + drop}
+        C ${cx + w * 0.4} ${mouthY + 1}, ${cx - w * 0.4} ${mouthY + 1}, ${cx - w - 1} ${mouthY + drop} Z`;
+      return (
+        <g key="must">
+          <path d={path} fill={shadow} transform="translate(0,0.8)" opacity={0.85} />
+          <path d={path} fill={base} />
+          {/* Center groove under philtrum */}
+          <path d={`M ${cx} ${mouthY - thick - 4} L ${cx} ${mouthY - 1}`}
+            stroke={shadow} strokeWidth="0.6" opacity={0.55} />
+          {/* Tip wisps drooping past corners */}
+          <path d={`M ${cx - w - 1} ${mouthY + drop} l -2 ${1.5 + rng()}`}
+            stroke={base} strokeWidth="1" strokeLinecap="round" />
+          <path d={`M ${cx + w + 1} ${mouthY + drop} l 2 ${1.5 + rng()}`}
+            stroke={base} strokeWidth="1" strokeLinecap="round" />
+        </g>
+      );
+    }
+    case 'handlebar': {
+      // Curled-up tips — the dashing cavalier look
+      const w = 14 + rng() * 5;
+      const thick = 2.5 + rng() * 1.5;
+      const curl = 4 + rng() * 2;
+      const path = `M ${cx - w} ${mouthY - 2}
+        C ${cx - w * 0.5} ${mouthY - 5 - thick}, ${cx + w * 0.5} ${mouthY - 5 - thick}, ${cx + w} ${mouthY - 2}
+        C ${cx + w * 0.4} ${mouthY - 1}, ${cx - w * 0.4} ${mouthY - 1}, ${cx - w} ${mouthY - 2} Z`;
+      return (
+        <g key="must">
+          <path d={path} fill={shadow} transform="translate(0,0.7)" opacity={0.85} />
+          <path d={path} fill={base} />
+          {/* Curled tips — thin tapered strokes that rise upward */}
+          <path d={`M ${cx - w + 1} ${mouthY - 3}
+              C ${cx - w - 3} ${mouthY - 4}, ${cx - w - curl} ${mouthY - 6}, ${cx - w - curl - 1} ${mouthY - 8}`}
+            stroke={base} strokeWidth="1.6" fill="none" strokeLinecap="round" />
+          <path d={`M ${cx + w - 1} ${mouthY - 3}
+              C ${cx + w + 3} ${mouthY - 4}, ${cx + w + curl} ${mouthY - 6}, ${cx + w + curl + 1} ${mouthY - 8}`}
+            stroke={base} strokeWidth="1.6" fill="none" strokeLinecap="round" />
+          {/* Highlight along upper edge */}
+          <path d={`M ${cx - w + 3} ${mouthY - 4} Q ${cx} ${mouthY - 5 - thick * 0.6} ${cx + w - 3} ${mouthY - 4}`}
+            stroke={highlight} strokeWidth="0.7" fill="none" opacity={0.45} />
+        </g>
+      );
+    }
+    case 'imperial': {
+      // Narrow waxed mustache, sharply pointed — Charles I / Cardinal Richelieu look
+      const w = 13 + rng() * 4;
+      const thick = 1.6 + rng() * 0.8;
+      const path = `M ${cx - w} ${mouthY - 2}
+        C ${cx - w * 0.4} ${mouthY - 4 - thick}, ${cx + w * 0.4} ${mouthY - 4 - thick}, ${cx + w} ${mouthY - 2}
+        C ${cx + w * 0.3} ${mouthY - 1}, ${cx - w * 0.3} ${mouthY - 1}, ${cx - w} ${mouthY - 2} Z`;
+      return (
+        <g key="must">
+          <path d={path} fill={base} />
+          {/* Sharp waxed points extending past corners */}
+          <path d={`M ${cx - w + 1} ${mouthY - 3} l -5 -2`} stroke={base} strokeWidth="1.2" strokeLinecap="round" />
+          <path d={`M ${cx + w - 1} ${mouthY - 3} l 5 -2`} stroke={base} strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+      );
+    }
+    case 'trimmed': {
+      // Neat compact mustache
+      const w = 11 + rng() * 4;
+      const thick = 2 + rng() * 1.5;
+      const path = `M ${cx - w} ${mouthY - 2}
+        C ${cx - w * 0.4} ${mouthY - 4 - thick}, ${cx + w * 0.4} ${mouthY - 4 - thick}, ${cx + w} ${mouthY - 2}
+        C ${cx + w * 0.3} ${mouthY - 1}, ${cx - w * 0.3} ${mouthY - 1}, ${cx - w} ${mouthY - 2} Z`;
+      return (
+        <g key="must">
+          <path d={path} fill={shadow} transform="translate(0,0.6)" opacity={0.8} />
+          <path d={path} fill={base} />
+          <path d={`M ${cx} ${mouthY - thick - 2} L ${cx} ${mouthY - 1}`}
+            stroke={shadow} strokeWidth="0.5" opacity={0.5} />
+        </g>
+      );
+    }
+    case 'thin': {
+      // Pencil mustache — barely there
+      const w = 10 + rng() * 3;
+      return (
+        <path key="must"
+          d={`M ${cx - w} ${mouthY - 2} Q ${cx} ${mouthY - 3.5} ${cx + w} ${mouthY - 2}`}
+          stroke={base} strokeWidth="1.4" strokeLinecap="round" fill="none" />
       );
     }
   }
+}
 
-  if (r2 < beardLikelihood && rng() > 0.3) {
-    const beardType = rng();
-    if (beardType > 0.6) {
-      const bLen = 10 + rng() * 18;
-      paths.push(
-        <path key="beard"
-          d={`M ${cx - headWidth + 4} ${mouthY - 8}
-              C ${cx - headWidth} ${chinY}, ${cx - jawW} ${chinY + bLen}, ${cx} ${chinY + bLen + 4}
-              C ${cx + jawW} ${chinY + bLen}, ${cx + headWidth} ${chinY}, ${cx + headWidth - 4} ${mouthY - 8}
-              C ${cx + 14} ${mouthY + 4}, ${cx - 14} ${mouthY + 4}, ${cx - headWidth + 4} ${mouthY - 8} Z`}
-          fill={hairColor} />
-      );
-    } else if (beardType > 0.3) {
-      const gW = 8 + rng() * 6, gLen = 6 + rng() * 12;
-      paths.push(
-        <path key="goatee"
-          d={`M ${cx - gW} ${mouthY + 4}
-              C ${cx - gW} ${chinY + gLen}, ${cx + gW} ${chinY + gLen}, ${cx + gW} ${mouthY + 4}
-              C ${cx + gW * 0.3} ${mouthY + 6}, ${cx - gW * 0.3} ${mouthY + 6}, ${cx - gW} ${mouthY + 4} Z`}
-          fill={hairColor} />
-      );
-    } else {
-      paths.push(
-        <ellipse key="stubble" cx={cx} cy={chinY - 5} rx={jawW - 2} ry={chinY - mouthY + 4}
-          fill={hairColor} opacity={0.2} />
-      );
-    }
+// Generate small hair strands radiating out from the bottom edge of a beard for fuzzy texture.
+function strandsAlongCurve(
+  x1: number, _y1: number, x2: number, _y2: number,
+  apexX: number, apexY: number,
+  count: number, rng: () => number,
+  strandColor: string, baseColor: string, lengthBase: number,
+): React.ReactNode {
+  const strands: React.ReactNode[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = (i + 0.5) / count;
+    // Quadratic interpolation to find a point near the apex curve
+    const px = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * apexX + t * t * x2;
+    const py = (1 - t) * (1 - t) * _y1 + 2 * (1 - t) * t * apexY + t * t * _y2;
+    const len = lengthBase * (0.6 + rng() * 0.8);
+    // Direction roughly perpendicular to the curve, fanning slightly outward
+    const dx = (px - apexX) * 0.2 + (rng() - 0.5) * 1.5;
+    const dy = len * (0.7 + rng() * 0.4);
+    const color = rng() > 0.5 ? strandColor : baseColor;
+    strands.push(
+      <path key={`st${i}`}
+        d={`M ${px} ${py} l ${dx * 0.3} ${dy}`}
+        stroke={color} strokeWidth="0.7" strokeLinecap="round" opacity={0.7 + rng() * 0.25} />
+    );
   }
-
-  return paths.length > 0 ? <g key="facial-hair">{paths}</g> : null;
+  return <g key="strands">{strands}</g>;
 }
 
 // ── Scar ─────────────────────────────────────────────────
@@ -1002,12 +1402,31 @@ function renderBackHair(
   cx: number, headTop: number, hw: number, hairColor: string,
 ): React.ReactNode {
   if (config.gender === 'Female') {
+    // Hair tucked behind the ears, ending around the upper neck — never extends
+    // past the chin (which created a "hood with ear flaps" silhouette in head-crop view).
+    // Most 1612 European women wore hair gathered up under a coif/hood anyway.
+    const styleRoll = rng();
+    if (styleRoll > 0.5) {
+      // Gathered/bun — minimal back hair visible
+      return (
+        <g key="back-hair">
+          <path d={`M ${cx - hw - 2} ${headTop + 18}
+              C ${cx - hw - 6} ${headTop + 45}, ${cx - hw - 3} ${headTop + 70}, ${cx - hw + 4} ${headTop + 78}
+              L ${cx + hw - 4} ${headTop + 78}
+              C ${cx + hw + 3} ${headTop + 70}, ${cx + hw + 6} ${headTop + 45}, ${cx + hw + 2} ${headTop + 18} Z`}
+            fill={hairColor} />
+          {/* Bun at the back */}
+          <ellipse cx={cx} cy={headTop + 22} rx={hw * 0.6} ry={10} fill={hairColor} opacity={0.92} />
+        </g>
+      );
+    }
+    // Loose shoulder-length — stops at the jaw, doesn't drape past
     return (
       <path key="back-hair"
-        d={`M ${cx - hw - 6} ${headTop + 15}
-            C ${cx - hw - 15} ${headTop + 60}, ${cx - hw - 12} ${headTop + 120}, ${cx - hw + 5} ${headTop + 140}
-            L ${cx + hw - 5} ${headTop + 140}
-            C ${cx + hw + 12} ${headTop + 120}, ${cx + hw + 15} ${headTop + 60}, ${cx + hw + 6} ${headTop + 15} Z`}
+        d={`M ${cx - hw - 4} ${headTop + 18}
+            C ${cx - hw - 8} ${headTop + 50}, ${cx - hw - 6} ${headTop + 80}, ${cx - hw + 2} ${headTop + 92}
+            L ${cx + hw - 2} ${headTop + 92}
+            C ${cx + hw + 6} ${headTop + 80}, ${cx + hw + 8} ${headTop + 50}, ${cx + hw + 4} ${headTop + 18} Z`}
         fill={hairColor} />
     );
   }
@@ -1063,17 +1482,23 @@ function renderFrontHair(
   }
 
   if (config.gender === 'Female') {
+    // Center-parted hair, smoothed back over the crown — typical 1612 European style
+    // (hair would normally be gathered under a coif/hood, drawn separately in renderHeadwear).
     const partSide = rng() > 0.5 ? -1 : 1;
+    const partOffset = partSide * 2;
     return (
       <g key="front-hair">
+        {/* Crown sweep — covers the top of the head, parted slightly off-center */}
         <path
-          d={`M ${cx} ${headTop - 2}
-              C ${cx - hw * 0.6} ${headTop - 4}, ${cx - hw - 4} ${headTop + 8}, ${cx - hw - 3} ${eyeY - 8}
-              C ${cx - hw + 5} ${headTop + foreheadH + 5}, ${cx - 8} ${headTop + 6}, ${cx} ${headTop + 4}
-              C ${cx + 8} ${headTop + 6}, ${cx + hw - 5} ${headTop + foreheadH + 5}, ${cx + hw + 3} ${eyeY - 8}
-              C ${cx + hw + 4} ${headTop + 8}, ${cx + hw * 0.6} ${headTop - 4}, ${cx} ${headTop - 2} Z`}
+          d={`M ${cx - hw - 2} ${eyeY - 8}
+              C ${cx - hw - 3} ${headTop + 4}, ${cx - hw * 0.4} ${headTop - 2}, ${cx + partOffset} ${headTop - 1}
+              C ${cx + hw * 0.4} ${headTop - 2}, ${cx + hw + 3} ${headTop + 4}, ${cx + hw + 2} ${eyeY - 8}
+              C ${cx + hw - 4} ${headTop + foreheadH * 0.6}, ${cx + 6} ${headTop + foreheadH * 0.4}, ${cx + partOffset} ${headTop + foreheadH * 0.3}
+              C ${cx - 6} ${headTop + foreheadH * 0.4}, ${cx - hw + 4} ${headTop + foreheadH * 0.6}, ${cx - hw - 2} ${eyeY - 8} Z`}
           fill={hairColor} />
-        <ellipse cx={cx + partSide * 4} cy={headTop - 1} rx={hw - 2} ry={6} fill={hairColor} />
+        {/* Subtle part line — slight darker shadow along the parting */}
+        <path d={`M ${cx + partOffset} ${headTop} L ${cx + partOffset + partSide * 1} ${headTop + foreheadH * 0.3}`}
+          stroke="rgba(0,0,0,0.18)" strokeWidth="0.6" fill="none" />
       </g>
     );
   }
@@ -1179,48 +1604,295 @@ function renderHeadwear(
     );
   }
 
-  if (config.isSailor && gender === 'Male' && culturalGroup !== 'ArabPersian' && culturalGroup !== 'Indian' && rng() > 0.45) {
-    const capColors = ['#4a3828', '#2a3a4a', '#3a4a3a', '#5c2828', '#2a2a40'];
-    const capColor = capColors[Math.floor(rng() * capColors.length)];
-    return (
-      <g key="knit-cap">
-        <path d={`M ${cx - hw - 1} ${headTop + 8}
-            C ${cx - hw - 1} ${headTop - 8}, ${cx + hw + 1} ${headTop - 8}, ${cx + hw + 1} ${headTop + 8} Z`}
-          fill={capColor} />
-        <path d={`M ${cx - hw - 2} ${headTop + 6} L ${cx + hw + 2} ${headTop + 6}`}
-          stroke="rgba(0,0,0,0.2)" strokeWidth="2.5" />
-      </g>
-    );
+  // ── European male hats — c. 1612 was a hat-wearing era; bare-headed was unusual ──
+  const isEurMale = (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') && gender === 'Male';
+  if (isEurMale) {
+    const ageIdx = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
+    let hatProb: number;
+    if (config.role === 'Captain') hatProb = 0.92;
+    else if (socialClass === 'Noble') hatProb = 0.85;
+    else if (socialClass === 'Merchant') hatProb = 0.78;
+    else if (config.isSailor) hatProb = 0.70;
+    else hatProb = 0.55;
+    if (ageIdx >= 3) hatProb = Math.min(0.96, hatProb + 0.15); // older men rarely bareheaded
+
+    if (rng() < hatProb) {
+      const r = rng();
+      // Captains, nobles, factors → wide-brim cavalier or capotain
+      if (config.role === 'Captain' || socialClass === 'Noble' || socialClass === 'Merchant') {
+        if (r < 0.5) {
+          return renderWideBrimHat(cx, headTop, hw, rng, socialClass);
+        } else if (r < 0.85) {
+          return renderCapotain(cx, headTop, hw, rng, socialClass);
+        } else {
+          // Plain coif/skullcap for scholar/older type
+          return renderCoif(cx, headTop, hw, eyeY, rng);
+        }
+      }
+      // Sailors / working class → Monmouth knit cap or head kerchief
+      if (r < 0.7) return renderMonmouthCap(cx, headTop, hw, rng);
+      return renderHeadKerchief(cx, headTop, hw, eyeY, rng);
+    }
   }
 
-  if (socialClass === 'Noble' && gender === 'Male' &&
-    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') && rng() > 0.4) {
+  // ── European female headcoverings — c. 1612, virtually all women wore something on the head ──
+  const isEurFemale = (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') && gender === 'Female';
+  if (isEurFemale) {
+    if (socialClass === 'Noble') {
+      // French hood — black velvet semi-circle worn back from the forehead, with a billiment band
+      const veil = '#0e0c10';
+      return (
+        <g key="french-hood">
+          {/* Veil falling behind the head */}
+          <path d={`M ${cx - hw - 2} ${eyeY - 4}
+              C ${cx - hw - 6} ${headTop + 18}, ${cx - hw - 4} ${headTop + 50}, ${cx - hw + 6} ${headTop + 70}
+              L ${cx + hw - 6} ${headTop + 70}
+              C ${cx + hw + 4} ${headTop + 50}, ${cx + hw + 6} ${headTop + 18}, ${cx + hw + 2} ${eyeY - 4} Z`}
+            fill={veil} />
+          {/* Hood front arc — sits back from the forehead showing front hair */}
+          <path d={`M ${cx - hw - 4} ${eyeY - 8}
+              C ${cx - hw - 4} ${headTop + 4}, ${cx + hw + 4} ${headTop + 4}, ${cx + hw + 4} ${eyeY - 8}
+              C ${cx + hw - 6} ${headTop + 12}, ${cx - hw + 6} ${headTop + 12}, ${cx - hw - 4} ${eyeY - 8} Z`}
+            fill={veil} />
+          {/* Billiment — gold/pearl band along the hood front */}
+          <path d={`M ${cx - hw - 3} ${eyeY - 9} C ${cx - hw - 3} ${headTop + 3}, ${cx + hw + 3} ${headTop + 3}, ${cx + hw + 3} ${eyeY - 9}`}
+            stroke="#d4b060" strokeWidth="2" fill="none" />
+          {/* Pearl dots along billiment */}
+          {[-0.8, -0.4, 0, 0.4, 0.8].map((t, i) => {
+            const px = cx + t * (hw + 2);
+            const py = headTop + 4 - Math.cos(t * Math.PI / 2) * (eyeY - headTop - 12);
+            return <circle key={`p${i}`} cx={px} cy={py} r={1.2} fill="#f8f0e0" stroke="#a89060" strokeWidth="0.3" />;
+          })}
+        </g>
+      );
+    }
+    // Merchant or Working — linen coif, the universal women's cap
+    const linen = socialClass === 'Merchant' ? '#f5efde' : '#ebe3d0';
     return (
-      <g key="tall-hat">
-        <path d={`M ${cx - hw + 6} ${headTop + 4} L ${cx - hw + 8} ${headTop - 24}
-            C ${cx - hw + 8} ${headTop - 30}, ${cx + hw - 8} ${headTop - 30}, ${cx + hw - 8} ${headTop - 24}
-            L ${cx + hw - 6} ${headTop + 4} Z`}
-          fill="#1a1a1a" />
-        <ellipse cx={cx} cy={headTop + 5} rx={hw + 8} ry={5} fill="#222" />
-        <path d={`M ${cx - hw + 7} ${headTop - 8} L ${cx + hw - 7} ${headTop - 8}`}
-          stroke="#8a7a40" strokeWidth="2" />
+      <g key="coif">
+        <path d={`M ${cx - hw - 3} ${eyeY - 4}
+            C ${cx - hw - 5} ${headTop - 2}, ${cx + hw + 5} ${headTop - 2}, ${cx + hw + 3} ${eyeY - 4}
+            C ${cx + hw + 4} ${eyeY + 16}, ${cx + hw + 4} ${eyeY + 38}, ${cx + hw} ${eyeY + 54}
+            L ${cx - hw} ${eyeY + 54}
+            C ${cx - hw - 4} ${eyeY + 38}, ${cx - hw - 4} ${eyeY + 16}, ${cx - hw - 3} ${eyeY - 4} Z`}
+          fill={linen} stroke="#bdb29a" strokeWidth="0.7" />
+        {/* Center seam */}
+        <path d={`M ${cx} ${headTop - 1} L ${cx} ${eyeY - 6}`} stroke="rgba(0,0,0,0.08)" strokeWidth="0.6" />
+        {/* Subtle fold shadow at the brow */}
+        <path d={`M ${cx - hw - 1} ${eyeY - 6} Q ${cx} ${headTop + 6} ${cx + hw + 1} ${eyeY - 6}`}
+          stroke="rgba(0,0,0,0.1)" strokeWidth="0.6" fill="none" />
+        {socialClass === 'Merchant' && (
+          <path d={`M ${cx - hw - 1} ${eyeY - 5} Q ${cx} ${headTop + 5} ${cx + hw + 1} ${eyeY - 5}`}
+            stroke="#d4b070" strokeWidth="0.5" fill="none" opacity={0.5} />
+        )}
       </g>
-    );
-  }
-
-  if (gender === 'Female' && socialClass === 'Working') {
-    return (
-      <path key="coif"
-        d={`M ${cx - hw - 4} ${eyeY - 2}
-            C ${cx - hw - 6} ${headTop - 4}, ${cx + hw + 6} ${headTop - 4}, ${cx + hw + 4} ${eyeY - 2}
-            C ${cx + hw + 5} ${eyeY + 20}, ${cx + hw + 6} ${eyeY + 40}, ${cx + hw + 4} ${eyeY + 50}
-            L ${cx - hw - 4} ${eyeY + 50}
-            C ${cx - hw - 6} ${eyeY + 40}, ${cx - hw - 5} ${eyeY + 20}, ${cx - hw - 4} ${eyeY - 2} Z`}
-        fill="#f0ede6" stroke="#d8d0c4" strokeWidth="0.8" />
     );
   }
 
   return null;
+}
+
+// ── 1612 European male hats ──────────────────────────────
+
+// Wide-brim cavalier / "slouch" felt hat — by far the most common gentleman's hat c.1610s.
+// Broad flat brim, rounded crown, hat band, optional feather sweeping back.
+function renderWideBrimHat(
+  cx: number, headTop: number, hw: number, rng: () => number, socialClass: SocialClass,
+): React.ReactNode {
+  const feltOptions = socialClass === 'Noble'
+    ? ['#141214', '#1a1418', '#1c1410', '#221610']
+    : ['#2a2018', '#3a2a20', '#1a1a1a', '#3a2818'];
+  const felt = feltOptions[Math.floor(rng() * feltOptions.length)];
+  const brimRx = hw + 14 + rng() * 6;
+  const brimRy = 4 + rng() * 1.5;
+  const brimY = headTop + 4;
+  const crownH = 14 + rng() * 8;
+  const crownTop = headTop - crownH;
+  const crownHalfWidth = hw - 2;
+  const featherSide = rng() > 0.5 ? 1 : -1;
+  const hasFeather = rng() > 0.3;
+  const featherColor = ['#c83020', '#e0a020', '#f0e8d0', '#1a4a8a', '#80a040'][Math.floor(rng() * 5)];
+  const bandColor = socialClass === 'Noble'
+    ? (rng() > 0.5 ? '#c8a040' : '#7a1818')
+    : '#0e0a08';
+
+  return (
+    <g key="wide-brim">
+      {/* Cast shadow on forehead */}
+      <ellipse cx={cx} cy={brimY + 2} rx={brimRx - 6} ry={3} fill="rgba(0,0,0,0.22)" />
+      {/* Brim — single solid ellipse, broad and flat */}
+      <ellipse cx={cx} cy={brimY} rx={brimRx} ry={brimRy} fill={felt} />
+      {/* Brim top highlight */}
+      <ellipse cx={cx} cy={brimY - brimRy * 0.5} rx={brimRx * 0.95} ry={brimRy * 0.4}
+        fill="rgba(255,240,210,0.08)" />
+      {/* Crown — domed felt sitting on the brim */}
+      <path d={`M ${cx - crownHalfWidth} ${brimY - 1}
+          C ${cx - crownHalfWidth - 2} ${crownTop + 8}, ${cx - crownHalfWidth + 4} ${crownTop}, ${cx} ${crownTop - 1}
+          C ${cx + crownHalfWidth - 4} ${crownTop}, ${cx + crownHalfWidth + 2} ${crownTop + 8}, ${cx + crownHalfWidth} ${brimY - 1} Z`}
+        fill={felt} />
+      {/* Crown highlight on lit side */}
+      <path d={`M ${cx + 4} ${crownTop + 4} Q ${cx + crownHalfWidth - 4} ${crownTop + 6} ${cx + crownHalfWidth - 2} ${brimY - 3}`}
+        stroke="rgba(255,240,210,0.12)" strokeWidth="1.5" fill="none" />
+      {/* Hat band — wraps the base of the crown */}
+      <rect x={cx - crownHalfWidth + 1} y={brimY - 5} width={(crownHalfWidth - 1) * 2} height={3.5} fill={bandColor} />
+      {socialClass === 'Noble' && (
+        <rect x={cx - crownHalfWidth + 1} y={brimY - 5.5} width={(crownHalfWidth - 1) * 2} height={0.8}
+          fill="#d4b060" opacity={0.6} />
+      )}
+      {/* Feather — sweeps from the band up and to the back */}
+      {hasFeather && (() => {
+        const fx = cx + featherSide * (crownHalfWidth - 4);
+        const fy = brimY - 4;
+        const tipX = cx + featherSide * (crownHalfWidth + 18);
+        const tipY = crownTop - 6;
+        return (
+          <g key="feather">
+            {/* Quill */}
+            <path d={`M ${fx} ${fy} Q ${cx + featherSide * (crownHalfWidth + 4)} ${crownTop - 2} ${tipX} ${tipY}`}
+              stroke={featherColor} strokeWidth="3.5" fill="none" strokeLinecap="round" />
+            {/* Vane shading */}
+            <path d={`M ${fx + featherSide * 2} ${fy - 1} Q ${cx + featherSide * (crownHalfWidth + 6)} ${crownTop - 4} ${tipX + featherSide * 2} ${tipY - 1}`}
+              stroke={featherColor} strokeWidth="2" fill="none" strokeLinecap="round" opacity={0.7} />
+            {/* Tip wisps */}
+            {[0, 1, 2].map(i => (
+              <path key={`vw${i}`}
+                d={`M ${tipX - featherSide * i * 3} ${tipY + i * 2} l ${featherSide * 4} -2`}
+                stroke={featherColor} strokeWidth="0.9" opacity={0.5} />
+            ))}
+          </g>
+        );
+      })()}
+    </g>
+  );
+}
+
+// Capotain — the iconic "Puritan" steeple-crowned hat, also worn widely by merchants and
+// gentlemen across Protestant Europe c.1590-1640. Stiff felt, narrow flat brim, tall tapered crown.
+function renderCapotain(
+  cx: number, headTop: number, hw: number, rng: () => number, socialClass: SocialClass,
+): React.ReactNode {
+  const felt = socialClass === 'Noble' ? '#0e0e10' : (rng() > 0.5 ? '#1a1410' : '#241810');
+  const brimW = hw + 4 + rng() * 4;
+  const brimY = headTop + 5;
+  const crownH = 26 + rng() * 8;               // tall
+  const taper = 4 + rng() * 3;                 // crown narrows toward top
+  const crownTop = headTop - crownH;
+  const tilt = (rng() - 0.5) * 3;
+  const hasBuckle = socialClass === 'Noble' || rng() > 0.5;
+
+  return (
+    <g key="capotain" transform={`rotate(${tilt} ${cx} ${headTop})`}>
+      <ellipse cx={cx} cy={brimY + 3} rx={brimW - 2} ry={3} fill="rgba(0,0,0,0.2)" />
+      {/* Brim — flat, narrow */}
+      <ellipse cx={cx} cy={brimY} rx={brimW} ry={3.5} fill={felt} />
+      <ellipse cx={cx} cy={brimY + 1} rx={brimW - 1} ry={1.5} fill="rgba(0,0,0,0.3)" />
+      {/* Crown — tall, slightly tapered upward */}
+      <path d={`M ${cx - hw + 2} ${brimY - 1}
+          L ${cx - hw + 2 + taper} ${crownTop + 2}
+          C ${cx - hw + 2 + taper} ${crownTop - 2}, ${cx + hw - 2 - taper} ${crownTop - 2}, ${cx + hw - 2 - taper} ${crownTop + 2}
+          L ${cx + hw - 2} ${brimY - 1} Z`}
+        fill={felt} />
+      {/* Crown highlight strip */}
+      <path d={`M ${cx - hw + 4 + taper} ${crownTop + 6} L ${cx - hw + 5 + taper} ${brimY - 3}`}
+        stroke="rgba(255,240,210,0.1)" strokeWidth="1.5" fill="none" />
+      {/* Hat band */}
+      <rect x={cx - hw + 2} y={brimY - 4} width={(hw - 2) * 2} height={3} fill="#0a0608" />
+      {/* Buckle (Puritan signature) */}
+      {hasBuckle && (
+        <g>
+          <rect x={cx - 3} y={brimY - 4.5} width={6} height={4} fill="none" stroke="#d4b060" strokeWidth="0.8" />
+          <rect x={cx - 1.5} y={brimY - 3.5} width={3} height={2} fill="#d4b060" opacity={0.4} />
+        </g>
+      )}
+    </g>
+  );
+}
+
+// Coif / linen skullcap — close-fitting cap tied under the chin, common for older men,
+// scholars, and indoor wear. Plain white linen.
+function renderCoif(
+  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number,
+): React.ReactNode {
+  const linen = rng() > 0.5 ? '#f0ebde' : '#e6dfce';
+  return (
+    <g key="coif">
+      {/* Cap covering top and sides of head */}
+      <path d={`M ${cx - hw - 2} ${eyeY - 6}
+          C ${cx - hw - 4} ${headTop - 2}, ${cx + hw + 4} ${headTop - 2}, ${cx + hw + 2} ${eyeY - 6}
+          C ${cx + hw - 2} ${eyeY - 4}, ${cx - hw + 2} ${eyeY - 4}, ${cx - hw - 2} ${eyeY - 6} Z`}
+        fill={linen} stroke="#bdb29a" strokeWidth="0.6" />
+      {/* Center seam */}
+      <path d={`M ${cx} ${headTop - 1} L ${cx} ${eyeY - 8}`} stroke="rgba(0,0,0,0.08)" strokeWidth="0.6" />
+      {/* Subtle fold shadow */}
+      <path d={`M ${cx - hw} ${eyeY - 8} Q ${cx} ${headTop + 4} ${cx + hw} ${eyeY - 8}`}
+        stroke="rgba(0,0,0,0.06)" strokeWidth="1" fill="none" />
+    </g>
+  );
+}
+
+// Monmouth cap — knitted wool sailor's cap, the standard 1612 mariner's headwear.
+// Round dome, rolled brim. Brown, dark blue, or russet.
+function renderMonmouthCap(
+  cx: number, headTop: number, hw: number, rng: () => number,
+): React.ReactNode {
+  const palette = ['#3a2818', '#2a3a4a', '#1a2030', '#5c2a18', '#3a3828', '#4a3818'];
+  const wool = palette[Math.floor(rng() * palette.length)];
+  const apexLean = (rng() - 0.5) * 4;          // small lean — symmetric apex with subtle tilt
+  const apexY = headTop - 12 - rng() * 4;
+  const brimY = headTop + 8;
+
+  return (
+    <g key="monmouth">
+      {/* Cast shadow on forehead */}
+      <ellipse cx={cx} cy={brimY - 1} rx={hw} ry={2.5} fill="rgba(0,0,0,0.2)" />
+      {/* Main cap dome — symmetric apex with optional lean */}
+      <path d={`M ${cx - hw - 2} ${brimY}
+          C ${cx - hw - 3} ${headTop - 4}, ${cx - hw + 4 + apexLean} ${apexY + 2}, ${cx + apexLean} ${apexY}
+          C ${cx + hw - 4 + apexLean} ${apexY + 2}, ${cx + hw + 3} ${headTop - 4}, ${cx + hw + 2} ${brimY} Z`}
+        fill={wool} />
+      {/* Knit texture — subtle horizontal ribbing */}
+      {[1, 2, 3, 4].map(i => (
+        <path key={`rib-${i}`}
+          d={`M ${cx - hw + 2} ${brimY - i * 4} Q ${cx + apexLean * (i / 5)} ${brimY - 1 - i * 4} ${cx + hw - 2} ${brimY - i * 4}`}
+          stroke="rgba(0,0,0,0.16)" strokeWidth="0.4" fill="none" />
+      ))}
+      {/* Rolled brim — fattened band along the base */}
+      <ellipse cx={cx} cy={brimY + 1} rx={hw + 2} ry={2.5} fill={wool} />
+      <ellipse cx={cx} cy={brimY + 2} rx={hw + 1.5} ry={1.5} fill="rgba(0,0,0,0.28)" />
+    </g>
+  );
+}
+
+// Head kerchief — knotted cloth tied around the head, common among working sailors.
+function renderHeadKerchief(
+  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number,
+): React.ReactNode {
+  const cloths = ['#8b2020', '#1a3a5a', '#4a2818', '#2a4a2a', '#5a3a1a', '#404048'];
+  const cloth = cloths[Math.floor(rng() * cloths.length)];
+  const knotSide = rng() > 0.5 ? 1 : -1;
+  return (
+    <g key="head-kerchief">
+      {/* Wrap covering crown */}
+      <path d={`M ${cx - hw - 2} ${eyeY - 8}
+          C ${cx - hw - 3} ${headTop + 2}, ${cx + hw + 3} ${headTop + 2}, ${cx + hw + 2} ${eyeY - 8}
+          C ${cx + hw - 4} ${eyeY - 6}, ${cx - hw + 4} ${eyeY - 6}, ${cx - hw - 2} ${eyeY - 8} Z`}
+        fill={cloth} />
+      {/* Fold shadow */}
+      <path d={`M ${cx - hw} ${eyeY - 9} Q ${cx} ${headTop + 6} ${cx + hw} ${eyeY - 9}`}
+        stroke="rgba(0,0,0,0.25)" strokeWidth="0.8" fill="none" />
+      {/* Knot — sticks out the side */}
+      <g key="knot">
+        <ellipse cx={cx + knotSide * (hw + 4)} cy={eyeY - 14} rx={4} ry={3} fill={cloth} />
+        {/* Tail ends */}
+        <path d={`M ${cx + knotSide * (hw + 4)} ${eyeY - 12}
+            C ${cx + knotSide * (hw + 8)} ${eyeY - 6}, ${cx + knotSide * (hw + 6)} ${eyeY + 2}, ${cx + knotSide * (hw + 10)} ${eyeY + 6}`}
+          stroke={cloth} strokeWidth="2.2" fill="none" strokeLinecap="round" />
+        <path d={`M ${cx + knotSide * (hw + 5)} ${eyeY - 13}
+            C ${cx + knotSide * (hw + 10)} ${eyeY - 8}, ${cx + knotSide * (hw + 12)} ${eyeY - 4}, ${cx + knotSide * (hw + 14)} ${eyeY + 2}`}
+          stroke={cloth} strokeWidth="1.6" fill="none" strokeLinecap="round" opacity={0.85} />
+      </g>
+    </g>
+  );
 }
 
 // ── Clothing ─────────────────────────────────────────────
@@ -1251,23 +1923,56 @@ function renderClothing(
   paths.push(<path key="torso" d={torsoPath} fill={color1} />);
 
   if (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') {
+    // High collar/neckline that sits right under the chin — visible in the head-crop view.
+    // Period: 1612 — falling band collar replacing the older Elizabethan ruff.
+    const collarTopY = chinY + 6;   // tucks just under the throat shadow
+    const collarMidY = chinY + 16;
     if (socialClass === 'Noble') {
-      const ruffY = torsoTop - 3;
-      for (let i = 0; i < 10; i++) {
-        const angle = (i / 10) * Math.PI;
-        const rx = cx + Math.cos(angle) * 28 - 14;
-        const ry = ruffY + Math.sin(angle) * 6;
-        paths.push(<ellipse key={`ruff-${i}`} cx={rx} cy={ry} rx={6} ry={3}
-          fill="#f0ece4" stroke="#d8d0c4" strokeWidth="0.5"
-          transform={`rotate(${(i / 10) * 180 - 90} ${rx} ${ry})`} />);
+      // Falling band — flat white linen collar draped over the doublet.
+      paths.push(<path key="band-shadow"
+        d={`M ${cx - 30} ${collarTopY + 2} C ${cx - 22} ${collarMidY + 6}, ${cx + 22} ${collarMidY + 6}, ${cx + 30} ${collarTopY + 2}
+            L ${cx + 36} ${collarMidY + 14} L ${cx - 36} ${collarMidY + 14} Z`}
+        fill="rgba(0,0,0,0.25)" />);
+      paths.push(<path key="band"
+        d={`M ${cx - 28} ${collarTopY} C ${cx - 20} ${collarMidY + 4}, ${cx + 20} ${collarMidY + 4}, ${cx + 28} ${collarTopY}
+            L ${cx + 34} ${collarMidY + 12} L ${cx - 34} ${collarMidY + 12} Z`}
+        fill="#f2ece0" stroke="#c8bfa8" strokeWidth="0.6" />);
+      // Lace edging hint
+      paths.push(<path key="band-edge"
+        d={`M ${cx - 34} ${collarMidY + 12} L ${cx + 34} ${collarMidY + 12}`}
+        stroke="#a89870" strokeWidth="0.5" strokeDasharray="2,1" fill="none" />);
+      // Doublet underneath
+      const doubletPath = `M ${cx - 60} 250 L ${cx - 36} ${collarMidY + 12} L ${cx + 36} ${collarMidY + 12} L ${cx + 60} 250 Z`;
+      paths.push(<path key="doublet" d={doubletPath} fill={color1} />);
+      // Gold trim/buttons down the front
+      paths.push(<path key="doublet-trim" d={`M ${cx} ${collarMidY + 14} L ${cx} 250`} stroke={color2} strokeWidth="2" opacity={0.9} />);
+      for (let i = 0; i < 4; i++) {
+        const by = collarMidY + 22 + i * 14;
+        if (by < 248) paths.push(<circle key={`btn-${i}`} cx={cx} cy={by} r={1.6} fill={color2} />);
       }
-      paths.push(<path key="trim" d={`M ${cx - 2} ${torsoTop} L ${cx - 2} 250`} stroke={color2} strokeWidth="3" />);
     } else if (socialClass === 'Merchant') {
-      paths.push(<path key="collar" d={`M ${cx - 16} ${torsoTop - 2} L ${cx} ${torsoTop + 14} L ${cx + 16} ${torsoTop - 2}`}
-        fill="#e0d8c8" stroke="#c8c0b0" strokeWidth="0.5" />);
+      // Plain falling band — linen collar without the lace
+      paths.push(<path key="band"
+        d={`M ${cx - 24} ${collarTopY} C ${cx - 16} ${collarMidY + 2}, ${cx + 16} ${collarMidY + 2}, ${cx + 24} ${collarTopY}
+            L ${cx + 28} ${collarMidY + 9} L ${cx - 28} ${collarMidY + 9} Z`}
+        fill="#ece5d2" stroke="#bdb29a" strokeWidth="0.6" />);
+      // Doublet underneath
+      paths.push(<path key="doublet" d={`M ${cx - 60} 250 L ${cx - 30} ${collarMidY + 9} L ${cx + 30} ${collarMidY + 9} L ${cx + 60} 250 Z`} fill={color1} />);
+      paths.push(<path key="lace" d={`M ${cx} ${collarMidY + 11} L ${cx} 250`} stroke={color2} strokeWidth="1.2" opacity={0.7} />);
     } else {
-      paths.push(<path key="shirt-v" d={`M ${cx - 10} ${torsoTop - 2} L ${cx} ${torsoTop + 10} L ${cx + 10} ${torsoTop - 2}`}
-        fill={skin.mid} stroke="rgba(0,0,0,0.1)" strokeWidth="0.5" />);
+      // Working sailor — plain shirt with open neckline; no fancy collar
+      // Tunic body
+      paths.push(<path key="shirt"
+        d={`M ${cx - 60} 250 L ${cx - 28} ${collarTopY + 4} C ${cx - 14} ${collarTopY - 2}, ${cx + 14} ${collarTopY - 2}, ${cx + 28} ${collarTopY + 4} L ${cx + 60} 250 Z`}
+        fill={color1} />);
+      // Shirt opening / placket
+      paths.push(<path key="shirt-v"
+        d={`M ${cx - 8} ${collarTopY + 2} L ${cx} ${collarTopY + 14} L ${cx + 8} ${collarTopY + 2}`}
+        fill={skin.mid} stroke="rgba(0,0,0,0.18)" strokeWidth="0.6" />);
+      // Shirt neckband
+      paths.push(<path key="shirt-band"
+        d={`M ${cx - 28} ${collarTopY + 4} C ${cx - 14} ${collarTopY - 2}, ${cx + 14} ${collarTopY - 2}, ${cx + 28} ${collarTopY + 4}`}
+        stroke="rgba(0,0,0,0.25)" strokeWidth="0.7" fill="none" />);
     }
   } else if (culturalGroup === 'ArabPersian' || culturalGroup === 'Indian') {
     if (socialClass === 'Noble') {

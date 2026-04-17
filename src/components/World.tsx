@@ -34,7 +34,10 @@ function tintVegetation(baseHex: string, paletteId: WaterPaletteId): string {
 }
 
 import { ProceduralCity } from './ProceduralCity';
-import { Grazers } from './Grazers';
+import { Grazers, SpeciesInfo } from './Grazers';
+import { Primates, PrimateEntry } from './Primates';
+import { Reptiles, ReptileEntry } from './Reptiles';
+import { WadingBirds, WadingBirdEntry } from './WadingBirds';
 import { PortIndicators } from './PortIndicators';
 import { BuildingTooltip } from './BuildingTooltip';
 import { generateNPCShip } from '../utils/npcShipGenerator';
@@ -173,6 +176,24 @@ import type { FishShoalEntry } from '../store/gameStore';
 export type { FishShoalEntry };
 let _fishShoalData: FishShoalEntry[] = [];
 export function getFishShoalData() { return _fishShoalData; }
+
+// Module-level animal data + species info for the full-size map overlay
+export interface AnimalMarker { position: [number, number, number] }
+let _grazerMapData: AnimalMarker[] = [];
+let _primateMapData: AnimalMarker[] = [];
+let _reptileMapData: AnimalMarker[] = [];
+let _wadingBirdMapData: AnimalMarker[] = [];
+let _grazerSpeciesMap: SpeciesInfo | undefined;
+let _primateSpeciesMap: SpeciesInfo | undefined;
+let _reptileSpeciesMap: SpeciesInfo | undefined;
+let _wadingSpeciesMap: SpeciesInfo | undefined;
+export function getAnimalMapData() {
+  return {
+    grazers: _grazerMapData, primates: _primateMapData, reptiles: _reptileMapData, wadingBirds: _wadingBirdMapData,
+    grazerSpecies: _grazerSpeciesMap, primateSpecies: _primateSpeciesMap,
+    reptileSpecies: _reptileSpeciesMap, wadingSpecies: _wadingSpeciesMap,
+  };
+}
 
 
 // Commodity list now imported from utils/commodities.ts
@@ -425,7 +446,7 @@ export function World() {
   // Generate world data once
   const { 
     landTerrainGeometry, generatedPorts, generatedNpcs, terrainMapCanvas, terrainMapWorldHalf,
-    treeData, deadTreeData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, encounterData,
+    treeData, deadTreeData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, grazerKind, primateSpecies, reptileSpecies, wadingSpecies, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
     reseedTerrain(worldSeed);
@@ -464,11 +485,16 @@ export function World() {
     const fishShoals: { center: [number, number, number], fishType: FishType, startIdx: number, count: number, maxCount: number, lastFished: number, scattered: boolean }[] = [];
     const gulls: { position: [number, number, number], phase: number, radius: number }[] = [];
     const grazers: { position: [number, number, number], rotation: number, color: [number, number, number], scale: number, speedMult: number }[] = [];
+    const primates: PrimateEntry[] = [];
+    const reptiles: ReptileEntry[] = [];
+    const wadingBirds: WadingBirdEntry[] = [];
     const encounters: OceanEncounterDef[] = [];
 
     // ── Grazer variant config per port ──────────────────────────────────────
     const portId = resolveCampaignPortId({ worldSeed, devSoloPort, currentWorldPortId });
-    const GRAZER_VARIANTS: { color: [number, number, number]; scale: number; herdMin: number; herdMax: number; spawnChance: number; biomes: Set<string> }[] = (() => {
+    type GrazerKind = 'antelope' | 'deer' | 'goat' | 'camel' | 'sheep' | 'bovine' | 'pig' | 'capybara';
+    type GrazerVariant = { color: [number, number, number]; scale: number; herdMin: number; herdMax: number; spawnChance: number; biomes: Set<string>; species: SpeciesInfo; kind: GrazerKind };
+    const GRAZER_VARIANTS: GrazerVariant[] = (() => {
       const col = (hex: string): [number, number, number] => {
         const c = new THREE.Color(hex);
         return [c.r, c.g, c.b];
@@ -477,35 +503,158 @@ export function World() {
       const arid = new Set(['scrubland', 'desert', 'arroyo']);
       const lush = new Set(['grassland', 'forest', 'scrubland']);
       const wet = new Set(['grassland', 'swamp', 'scrubland']);
+      const capeBiomes = new Set(['grassland', 'scrubland', 'forest']);
+      const sp = (name: string, latin: string, info: string): SpeciesInfo => ({ name, latin, info });
       switch (portId) {
         case 'cape':
-          return [{ color: col('#c8a060'), scale: 1.0, herdMin: 5, herdMax: 9, spawnChance: 0.003, biomes: grass }];
+          return [{ color: col('#c8a060'), scale: 1.0, herdMin: 6, herdMax: 12, spawnChance: 0.012, biomes: capeBiomes, kind: 'antelope',
+            species: sp('Springbok', 'Antidorcas marsupialis', 'Herds of hundreds still roam the Cape veld in 1612.') }];
         case 'mombasa': case 'zanzibar':
-          return [{ color: col('#a06840'), scale: 0.9, herdMin: 4, herdMax: 7, spawnChance: 0.0025, biomes: lush }];
-        case 'hormuz': case 'diu': case 'socotra':
-          return [{ color: col('#8a7a6a'), scale: 0.65, herdMin: 3, herdMax: 5, spawnChance: 0.003, biomes: arid }];
-        case 'muscat': case 'mocha': case 'aden':
-          return [{ color: col('#7a6a5a'), scale: 0.7, herdMin: 3, herdMax: 5, spawnChance: 0.003, biomes: arid }];
-        case 'london': case 'amsterdam':
-          return [{ color: col('#e8dcc8'), scale: 0.6, herdMin: 4, herdMax: 8, spawnChance: 0.002, biomes: grass }];
+          return [{ color: col('#a06840'), scale: 0.9, herdMin: 4, herdMax: 7, spawnChance: 0.0025, biomes: lush, kind: 'antelope',
+            species: sp('Impala', 'Aepyceros melampus', 'East African antelope; meat dried for trade with inland caravans.') }];
+        case 'hormuz': case 'muscat': case 'mocha': case 'aden':
+          return [{ color: col('#c8a878'), scale: 1.4, herdMin: 2, herdMax: 4, spawnChance: 0.002, biomes: arid, kind: 'camel',
+            species: sp('Dromedary camel', 'Camelus dromedarius', 'The pack animal that made Arabian ports function — caravans arrive here before their goods do.') }];
+        case 'diu': case 'socotra':
+          return [{ color: col('#8a7a6a'), scale: 0.65, herdMin: 3, herdMax: 5, spawnChance: 0.003, biomes: arid, kind: 'goat',
+            species: sp('Island goat', 'Capra aegagrus hircus', 'Island stock kept for milk and meat; Socotran flocks noted by Ptolemy.') }];
+        case 'london':
+          return [{ color: col('#8a5a3a'), scale: 0.85, herdMin: 3, herdMax: 6, spawnChance: 0.0025, biomes: lush, kind: 'deer',
+            species: sp('Fallow deer', 'Dama dama', 'Kept in royal and noble parks around London; venison a prestige gift.') }];
+        case 'amsterdam':
+          return [{ color: col('#e8dcc8'), scale: 0.6, herdMin: 4, herdMax: 8, spawnChance: 0.002, biomes: grass, kind: 'sheep',
+            species: sp('Sheep', 'Ovis aries', 'Dutch wool and mutton flocks — a staple of the polder economy.') }];
         case 'lisbon': case 'seville':
-          return [{ color: col('#d8c8a8'), scale: 0.65, herdMin: 3, herdMax: 6, spawnChance: 0.002, biomes: grass }];
+          return [{ color: col('#d8c8a8'), scale: 0.65, herdMin: 3, herdMax: 6, spawnChance: 0.002, biomes: grass, kind: 'sheep',
+            species: sp('Merino sheep', 'Ovis aries', 'Iberian fine-wool breed, tightly controlled by the Mesta.') }];
         case 'goa': case 'calicut': case 'surat':
-          return [{ color: col('#4a4a4a'), scale: 1.2, herdMin: 2, herdMax: 3, spawnChance: 0.0015, biomes: wet }];
-        case 'malacca': case 'bantam': case 'macau':
-          return [{ color: col('#5a4a3a'), scale: 1.1, herdMin: 2, herdMax: 3, spawnChance: 0.001, biomes: wet }];
+          return [{ color: col('#4a4a4a'), scale: 1.2, herdMin: 2, herdMax: 3, spawnChance: 0.0015, biomes: wet, kind: 'bovine',
+            species: sp('Water buffalo', 'Bubalus bubalis', 'Yoked for paddy plowing; ghee from its milk is a trade staple.') }];
+        case 'malacca': case 'bantam':
+          return [{ color: col('#5a4a3a'), scale: 1.1, herdMin: 2, herdMax: 3, spawnChance: 0.001, biomes: wet, kind: 'bovine',
+            species: sp('Javan banteng', 'Bos javanicus', 'Wild forest cattle of the archipelago; hide and horn are prized.') }];
+        case 'macau':
+          return [{ color: col('#2a2a28'), scale: 0.75, herdMin: 3, herdMax: 5, spawnChance: 0.0025, biomes: wet, kind: 'pig',
+            species: sp('Chinese pig', 'Sus scrofa domesticus', 'Black-bristled domestic pig, kept by every Cantonese household; main fresh meat for ships at Macau.') }];
         case 'salvador': case 'cartagena':
-          return [{ color: col('#8a6848'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: wet }];
+          return [{ color: col('#8a6848'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: wet, kind: 'capybara',
+            species: sp('Capybara', 'Hydrochoerus hydrochaeris', 'Largest rodent in the world; Portuguese Jesuits classed it as fish for Lent.') }];
         case 'elmina': case 'luanda':
-          return [{ color: col('#9a7050'), scale: 0.85, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: lush }];
+          return [{ color: col('#9a7050'), scale: 1.15, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: lush, kind: 'antelope',
+            species: sp('Duiker', 'Cephalophus sp.', 'Forest antelope of the Guinea coast; smoked meat traded inland for gold.') }];
         case 'havana':
-          return []; // no grazers — iguanas later
+          return [];
         default:
-          return [{ color: col('#b09060'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: grass }];
+          return [{ color: col('#b09060'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: grass, kind: 'antelope',
+            species: sp('Grazing herd', 'Bovidae sp.', 'Common livestock kept for meat, milk, and hide.') }];
       }
     })();
-    const CITY_EXCLUSION_SQ = 90 * 90; // no grazers within 90 units of port center
-    const MAX_GRAZERS = 60;
+    const GRAZER_KIND = GRAZER_VARIANTS[0]?.kind;
+    const GRAZER_SPECIES = GRAZER_VARIANTS[0]?.species;
+    // City exclusion & grazer cap — looser at Cape (Khoikhoi camp, not a walled city)
+    const cityExclusionRadius = portId === 'cape' ? 25 : 90;
+    const CITY_EXCLUSION_SQ = cityExclusionRadius * cityExclusionRadius;
+    const MAX_GRAZERS = portId === 'cape' ? 140 : 60;
+
+    // ── Primate variant config per port ─────────────────────────────────────
+    type PrimateVariant = { color: [number, number, number]; scale: number; troopMin: number; troopMax: number; spawnChance: number; species: SpeciesInfo };
+    const PRIMATE_VARIANTS: PrimateVariant[] = (() => {
+      const col = (hex: string): [number, number, number] => {
+        const c = new THREE.Color(hex);
+        return [c.r, c.g, c.b];
+      };
+      const sp = (name: string, latin: string, info: string): SpeciesInfo => ({ name, latin, info });
+      switch (portId) {
+        case 'goa': case 'calicut': case 'surat':
+          return [{ color: col('#7a5538'), scale: 0.5, troopMin: 4, troopMax: 6, spawnChance: 0.008,
+            species: sp('Bonnet macaque', 'Macaca radiata', 'Temple-dwelling troops raid grain sheds and harbor stores alike.') }];
+        case 'malacca': case 'bantam':
+          return [{ color: col('#8a7a6a'), scale: 0.5, troopMin: 4, troopMax: 6, spawnChance: 0.008,
+            species: sp('Long-tailed macaque', 'Macaca fascicularis', 'Crab-eating monkey of the mangroves — bold around harbors.') }];
+        case 'cape': case 'mombasa':
+          return [{ color: col('#6a6048'), scale: 0.65, troopMin: 3, troopMax: 5, spawnChance: 0.01,
+            species: sp('Chacma baboon', 'Papio ursinus', 'Large aggressive troops; feared by Khoikhoi herders for raiding flocks.') }];
+        case 'zanzibar': case 'elmina':
+          return [{ color: col('#2a2a2a'), scale: 0.55, troopMin: 3, troopMax: 4, spawnChance: 0.008,
+            species: sp('Colobus monkey', 'Colobus guereza', 'Long white fur capes prized by Swahili and later European traders.') }];
+        default:
+          return [];
+      }
+    })();
+    const MAX_PRIMATES = 35;
+    const PRIMATE_SPECIES = PRIMATE_VARIANTS[0]?.species;
+
+    // ── Reptile variant config per port ─────────────────────────────────────
+    type ReptileVariant = { color: [number, number, number]; scale: number; bodyLength: number; spawnChance: number; biomes: Set<string>; maxHeight: number; species: SpeciesInfo };
+    const REPTILE_VARIANTS: ReptileVariant[] = (() => {
+      const col = (hex: string): [number, number, number] => {
+        const c = new THREE.Color(hex);
+        return [c.r, c.g, c.b];
+      };
+      const waterEdge = new Set(['mangrove', 'beach', 'tidal_flat', 'swamp']);
+      const tropicalEdge = new Set(['beach', 'mangrove', 'scrubland', 'forest']);
+      const aridGround = new Set(['scrubland', 'desert', 'grassland', 'arroyo']);
+      const sp = (name: string, latin: string, info: string): SpeciesInfo => ({ name, latin, info });
+      switch (portId) {
+        case 'bantam': case 'malacca':
+          return [{ color: col('#3a4028'), scale: 0.7, bodyLength: 1.1, spawnChance: 0.0006, biomes: waterEdge, maxHeight: 0.6,
+            species: sp('Water monitor', 'Varanus salvator', 'Largest lizard of the archipelago; swims rivers and hunts the mangroves.') }];
+        case 'havana': case 'cartagena':
+          return [{ color: col('#5a7848'), scale: 0.55, bodyLength: 1.0, spawnChance: 0.0012, biomes: tropicalEdge, maxHeight: 4.0,
+            species: sp('Green iguana', 'Iguana iguana', 'Locally eaten ("gallina de palo"); sought by Spanish friars as a Lenten fish-analogue.') }];
+        case 'luanda': case 'salvador': case 'surat':
+          return [{ color: col('#2a3828'), scale: 1.0, bodyLength: 1.4, spawnChance: 0.0004, biomes: waterEdge, maxHeight: 0.4,
+            species: sp('Crocodile', 'Crocodylus sp.', 'A real danger at river-mouth ports — the cause of many lost lascars.') }];
+        case 'socotra':
+          // Body squished short and wide (low bodyLength, larger scale) to approximate a domed shell silhouette
+          return [{ color: col('#3a2e24'), scale: 1.1, bodyLength: 0.55, spawnChance: 0.0008, biomes: aridGround, maxHeight: 6.0,
+            species: sp('Aldabra giant tortoise', 'Aldabrachelys gigantea', 'Loaded alive as fresh meat for long voyages — the reason ship crews prized Indian Ocean islands.') }];
+        default:
+          return [];
+      }
+    })();
+    const MAX_REPTILES = 15;
+    const REPTILE_SPECIES = REPTILE_VARIANTS[0]?.species;
+
+    // ── Wading bird variant config per port ─────────────────────────────────
+    type WadingVariant = {
+      color: [number, number, number]; scale: number; flockMin: number; flockMax: number;
+      spawnChance: number; biomes: Set<string>; species: SpeciesInfo;
+      altitudeBase?: number; radiusBase?: number; heightMax?: number;
+    };
+    const WADING_BIRD_VARIANTS: WadingVariant[] = (() => {
+      const col = (hex: string): [number, number, number] => {
+        const c = new THREE.Color(hex);
+        return [c.r, c.g, c.b];
+      };
+      const shoreline = new Set(['mangrove', 'tidal_flat', 'beach']);
+      const wetMeadow = new Set(['grassland', 'scrubland', 'mangrove', 'tidal_flat']);
+      const runScrub = new Set(['grassland', 'scrubland', 'beach']);
+      const sp = (name: string, latin: string, info: string): SpeciesInfo => ({ name, latin, info });
+      switch (portId) {
+        case 'mombasa': case 'zanzibar': case 'surat':
+          return [{ color: col('#e88a95'), scale: 0.85, flockMin: 6, flockMax: 12, spawnChance: 0.0012, biomes: shoreline,
+            species: sp('Greater flamingo', 'Phoenicopterus roseus', 'Feeds on brine shrimp in coastal shallows; pink from its diet.') }];
+        case 'salvador':
+          return [{ color: col('#c02828'), scale: 0.75, flockMin: 5, flockMax: 8, spawnChance: 0.0015, biomes: shoreline,
+            species: sp('Scarlet ibis', 'Eudocimus ruber', 'The colour astonished Portuguese chroniclers; feathers traded north to Europe.') }];
+        case 'goa': case 'calicut': case 'luanda': case 'elmina':
+          return [{ color: col('#f2f2ee'), scale: 0.65, flockMin: 2, flockMax: 4, spawnChance: 0.0018, biomes: shoreline,
+            species: sp('Great egret', 'Ardea alba', 'Stalks shallow water for fish; nests in mangrove trees.') }];
+        case 'amsterdam': case 'lisbon': case 'seville':
+          return [{ color: col('#f4f0e8'), scale: 0.8, flockMin: 2, flockMax: 4, spawnChance: 0.0016, biomes: wetMeadow, heightMax: 2.5,
+            species: sp('White stork', 'Ciconia ciconia', 'Nests on chimneys and church towers — Iberian and Dutch lowland icon; herald of spring.') }];
+        case 'cape':
+          // Flightless: low altitude, tight orbit — they run in circles rather than lift off.
+          return [{ color: col('#4a4848'), scale: 1.4, flockMin: 2, flockMax: 4, spawnChance: 0.0012, biomes: runScrub, heightMax: 4.0,
+            altitudeBase: 0.3, radiusBase: 4,
+            species: sp('Ostrich', 'Struthio camelus', 'Cannot fly but sprints at 40 mph; plumes traded to Europe for court fashion.') }];
+        default:
+          return [];
+      }
+    })();
+    const MAX_WADING_BIRDS = 60;
+    const WADING_SPECIES = WADING_BIRD_VARIANTS[0]?.species;
     
     // Single port at center: mesh covers the archetype zone + generous ocean margin
     const size = devSoloPort ? 1000 : 900;
@@ -731,6 +880,63 @@ export function World() {
         }
       } // end beach biome
 
+      // ── Reptile spawn (solitary; water-edge gate — stay low by the shore)
+      if (REPTILE_VARIANTS.length > 0 && reptiles.length < MAX_REPTILES && height > SEA_LEVEL + 0.05) {
+        const variant = REPTILE_VARIANTS[0];
+        const belowMaxHeight = height < SEA_LEVEL + variant.maxHeight;
+        if (belowMaxHeight && variant.biomes.has(biome) && rand < variant.spawnChance) {
+          const portCX = portsData[0]?.position[0] ?? 0;
+          const portCZ = portsData[0]?.position[2] ?? 0;
+          const dpx = x - portCX;
+          const dpz = worldZ - portCZ;
+          if (dpx * dpx + dpz * dpz > CITY_EXCLUSION_SQ) {
+            const cv = 0.88 + Math.random() * 0.22;
+            reptiles.push({
+              position: [x, height + 0.05, worldZ],
+              rotation: Math.random() * Math.PI * 2,
+              color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
+              scale: variant.scale * (0.9 + Math.random() * 0.3),
+              speedMult: 0.7 + Math.random() * 0.5,
+              bodyLength: variant.bodyLength * (0.9 + Math.random() * 0.2),
+            });
+          }
+        }
+      }
+
+      // ── Wading bird flock spawning (shoreline biomes) ─────────────────
+      if (WADING_BIRD_VARIANTS.length > 0 && wadingBirds.length < MAX_WADING_BIRDS && height > SEA_LEVEL - 0.1) {
+        const variant = WADING_BIRD_VARIANTS[0];
+        const maxH = variant.heightMax ?? 0.4;
+        if (height < SEA_LEVEL + maxH && variant.biomes.has(biome) && rand < variant.spawnChance) {
+          const portCX = portsData[0]?.position[0] ?? 0;
+          const portCZ = portsData[0]?.position[2] ?? 0;
+          const dpx = x - portCX;
+          const dpz = worldZ - portCZ;
+          if (dpx * dpx + dpz * dpz > CITY_EXCLUSION_SQ) {
+            const flockSize = variant.flockMin + Math.floor(Math.random() * (variant.flockMax - variant.flockMin + 1));
+            // Flock orbits around this seed vertex; birds spread evenly around the circle phase
+            const flockRadius = (variant.radiusBase ?? 9) + Math.random() * 4;
+            const flockAltitude = (variant.altitudeBase ?? 6) + Math.random() * 3;
+            for (let h = 0; h < flockSize && wadingBirds.length < MAX_WADING_BIRDS; h++) {
+              const jx = x + (Math.random() - 0.5) * 5;
+              const jz = worldZ + (Math.random() - 0.5) * 5;
+              const cv = 0.92 + Math.random() * 0.16;
+              wadingBirds.push({
+                position: [jx, Math.max(height, SEA_LEVEL) + 0.05, jz],
+                rotation: Math.random() * Math.PI * 2,
+                color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
+                scale: variant.scale * (0.9 + Math.random() * 0.2),
+                speedMult: 0.85 + Math.random() * 0.3,
+                circleCenter: [x, worldZ],
+                circleRadius: flockRadius * (0.85 + Math.random() * 0.3),
+                circlePhase: (h / flockSize) * Math.PI * 2 + Math.random() * 0.3,
+                maxAltitude: flockAltitude * (0.85 + Math.random() * 0.3),
+              });
+            }
+          }
+        }
+      }
+
       // ── Grazer herd spawning ──────────────────────────────────────────
       if (GRAZER_VARIANTS.length > 0 && grazers.length < MAX_GRAZERS && height > SEA_LEVEL + 0.5) {
         const variant = GRAZER_VARIANTS[0];
@@ -746,10 +952,13 @@ export function World() {
             for (let h = 0; h < herdSize && grazers.length < MAX_GRAZERS; h++) {
               const jx = x + (Math.random() - 0.5) * 12;
               const jz = worldZ + (Math.random() - 0.5) * 12;
+              // Resample terrain at jittered position so animals don't float on water near the coast
+              const jtd = getTerrainData(jx, jz);
+              if (jtd.height < SEA_LEVEL + 0.3) continue;
               // Slight color variation within herd
               const cv = 0.92 + Math.random() * 0.16;
               grazers.push({
-                position: [jx, height + 0.2, jz],
+                position: [jx, jtd.height + 0.2, jz],
                 rotation: Math.random() * Math.PI * 2,
                 color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
                 scale: variant.scale * (0.85 + Math.random() * 0.3),
@@ -803,6 +1012,41 @@ export function World() {
     }
 
     npcs.push(...generateNpcSpawnPositions(portsData, size / 2));
+
+    // ── Primate troop spawning (post-pass over tree positions) ──────────────
+    if (PRIMATE_VARIANTS.length > 0) {
+      const variant = PRIMATE_VARIANTS[0];
+      const portCX = portsData[0]?.position[0] ?? 0;
+      const portCZ = portsData[0]?.position[2] ?? 0;
+      // Pool of refuge trees outside the city zone — primates roost in both palms and cone trees
+      const candidatePool: { x: number; y: number; z: number }[] = [];
+      const considerTree = (x: number, y: number, z: number) => {
+        const dpx = x - portCX;
+        const dpz = z - portCZ;
+        if (dpx * dpx + dpz * dpz > CITY_EXCLUSION_SQ) candidatePool.push({ x, y, z });
+      };
+      palms.forEach(p => considerTree(p.position[0], p.position[1], p.position[2]));
+      trees.forEach(t => considerTree(t.position[0], t.position[1], t.position[2]));
+
+      for (let i = 0; i < candidatePool.length && primates.length < MAX_PRIMATES; i++) {
+        if (Math.random() >= variant.spawnChance) continue;
+        const refugeTree = candidatePool[i];
+        const troopSize = variant.troopMin + Math.floor(Math.random() * (variant.troopMax - variant.troopMin + 1));
+        for (let h = 0; h < troopSize && primates.length < MAX_PRIMATES; h++) {
+          const jx = refugeTree.x + (Math.random() - 0.5) * 6;
+          const jz = refugeTree.z + (Math.random() - 0.5) * 6;
+          const cv = 0.92 + Math.random() * 0.16;
+          primates.push({
+            position: [jx, refugeTree.y + 0.15, jz],
+            rotation: Math.random() * Math.PI * 2,
+            color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
+            scale: variant.scale * (0.85 + Math.random() * 0.3),
+            speedMult: 0.9 + Math.random() * 0.5,
+            refuge: [refugeTree.x, refugeTree.z],
+          });
+        }
+      }
+    }
 
     // Height smoothing pass — average each land vertex with its neighbors for rounder hills
     const stride = segments + 1;
@@ -889,6 +1133,14 @@ export function World() {
       fishShoalData: fishShoals,
       gullData: gulls,
       grazerData: grazers,
+      primateData: primates,
+      reptileData: reptiles,
+      wadingBirdData: wadingBirds,
+      grazerSpecies: GRAZER_SPECIES,
+      grazerKind: GRAZER_KIND,
+      primateSpecies: PRIMATE_SPECIES,
+      reptileSpecies: REPTILE_SPECIES,
+      wadingSpecies: WADING_SPECIES,
       encounterData: encounters,
     };
   }, [currentWorldPortId, waterPaletteId, worldSeed, worldSize, devSoloPort]);
@@ -898,7 +1150,15 @@ export function World() {
     _crabData = crabData;
     _collectedCrabs = new Set();
     _fishShoalData = fishShoalData;
-  }, [crabData, fishShoalData]);
+    _grazerMapData = grazerData;
+    _primateMapData = primateData;
+    _reptileMapData = reptileData;
+    _wadingBirdMapData = wadingBirdData;
+    _grazerSpeciesMap = grazerSpecies;
+    _primateSpeciesMap = primateSpecies;
+    _reptileSpeciesMap = reptileSpecies;
+    _wadingSpeciesMap = wadingSpecies;
+  }, [crabData, fishShoalData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, primateSpecies, reptileSpecies, wadingSpecies]);
 
   useEffect(() => {
     initWorld(generatedPorts);
@@ -2210,7 +2470,10 @@ export function World() {
       {gullData.length > 0 && (
         <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} frustumCulled={false} />
       )}
-      <Grazers data={grazerData} shadowsActive={shadowsActive} />
+      <Grazers data={grazerData} shadowsActive={shadowsActive} species={grazerSpecies} kind={grazerKind} />
+      <Primates data={primateData} shadowsActive={shadowsActive} species={primateSpecies} />
+      <Reptiles data={reptileData} shadowsActive={shadowsActive} species={reptileSpecies} />
+      <WadingBirds data={wadingBirdData} shadowsActive={shadowsActive} species={wadingSpecies} />
 
       {/* Coral Reefs — 3 instanced mesh types rendered below water surface */}
       {coralReefEnabled && (() => {

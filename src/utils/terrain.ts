@@ -1,7 +1,7 @@
 import { createNoise2D } from 'simplex-noise';
 import {
   PortDefinition, ARCHETYPE_RADIUS, getArchetypeShape, getClimateMoisture,
-  reseedArchetypeNoise, setArchetypeMeshHalf,
+  reseedArchetypeNoise, setArchetypeMeshHalf, resolveDirRadians,
   type ClimateProfile,
 } from './portArchetypes';
 import { SEA_LEVEL } from '../constants/world';
@@ -278,7 +278,7 @@ function archetypeHeightFromShape(
   const landDepth = smoothstep(0.24, 0.70, shape);
   const inlandBack = smoothstep(0.50, 0.86, shape);
   const strength = archetypeMountainStrength(archetype);
-  const openAngle = CARDINAL_RADIANS[archetype.openDirection];
+  const openAngle = resolveDirRadians(archetype.openDirection);
   const openX = Math.sin(openAngle);
   const openZ = Math.cos(openAngle);
   const harborSide = localX * openX + localZ * openZ;
@@ -333,7 +333,7 @@ function applyWindwardMoisture(
   moisture: number,
   archetype: PortDefinition,
 ): number {
-  const openAngle = CARDINAL_RADIANS[archetype.openDirection];
+  const openAngle = resolveDirRadians(archetype.openDirection);
   const openX = Math.sin(openAngle);
   const openZ = Math.cos(openAngle);
   // Treat the harbor-facing sea direction as the prevailing source of moist air.

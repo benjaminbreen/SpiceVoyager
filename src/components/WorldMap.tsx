@@ -6,6 +6,8 @@ import { motion } from 'framer-motion';
 import { X, Compass, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
 import { getWaterPalette, resolveWaterPaletteId } from '../utils/waterPalettes';
 import type { WaterPalette, WaterPaletteId } from '../utils/waterPalettes';
+import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
+import { getAnimalMapData } from './World';
 
 const WORLD_HALF = 550;
 const TERRAIN_RESOLUTION = 512; // pixels for the cached terrain texture
@@ -434,6 +436,29 @@ export function WorldMap({ onClose }: WorldMapProps) {
       ctx.setLineDash([]);
     }
 
+    // Draw animal markers — tiny dots colored by template, faded at very low zoom
+    const animals = getAnimalMapData();
+    const animalOpacity = Math.min(1, Math.max(0, (zoom - 0.5) / 0.4));
+    if (animalOpacity > 0.05) {
+      const dotRadius = Math.max(0.8, 1.6 / zoom);
+      const drawLayer = (entries: { position: [number, number, number] }[], fill: string) => {
+        if (!entries || entries.length === 0) return;
+        ctx.fillStyle = fill;
+        for (const a of entries) {
+          const p = worldToCanvas(a.position[0], a.position[2]);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, dotRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      };
+      ctx.globalAlpha = animalOpacity;
+      drawLayer(animals.grazers, '#c8a060');       // tan — grazers/camels/deer
+      drawLayer(animals.primates, '#5a3a28');      // dark brown — primates
+      drawLayer(animals.reptiles, '#6a8048');      // olive — reptiles
+      drawLayer(animals.wadingBirds, '#f0b8c0');   // soft pink — wading birds
+      ctx.globalAlpha = 1;
+    }
+
     // Draw ports
     ports.forEach(port => {
       const isDiscovered = discoveredPorts.includes(port.id);
@@ -662,19 +687,13 @@ export function WorldMap({ onClose }: WorldMapProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.3 }}
+      {...modalBackdropMotion}
       className="absolute inset-0 bg-black/70 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-6 z-40"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
         ref={containerRef}
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        {...modalPanelMotion}
         className="relative w-full max-w-5xl aspect-[4/3] rounded-2xl overflow-hidden
           bg-[#0a0e18]/80 backdrop-blur-xl border border-[#2a2d3a]/50
           shadow-[0_8px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]"
@@ -795,6 +814,30 @@ export function WorldMap({ onClose }: WorldMapProps) {
               <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-white/5">
                 <span className="text-amber-400/80 text-xs font-mono">{dist}u</span>
                 <span className="text-[#6a6d7a] text-xs">bearing {Math.round(bearing)}° {cardinal}</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Wildlife legend (bottom-left) — only when species are actually spawned on this map */}
+        {(() => {
+          const a = getAnimalMapData();
+          const items: { color: string; info?: { name: string } }[] = [];
+          if (a.grazers.length > 0 && a.grazerSpecies) items.push({ color: '#c8a060', info: a.grazerSpecies });
+          if (a.primates.length > 0 && a.primateSpecies) items.push({ color: '#5a3a28', info: a.primateSpecies });
+          if (a.reptiles.length > 0 && a.reptileSpecies) items.push({ color: '#6a8048', info: a.reptileSpecies });
+          if (a.wadingBirds.length > 0 && a.wadingSpecies) items.push({ color: '#f0b8c0', info: a.wadingSpecies });
+          if (items.length === 0) return null;
+          return (
+            <div className="absolute bottom-5 left-5 z-20 bg-[#0a0e18]/80 backdrop-blur-md border border-[#2a2d3a]/50 rounded-xl px-3 py-2 shadow-lg">
+              <div className="text-[10px] uppercase tracking-wider text-[#8a8060] font-semibold mb-1.5">Wildlife</div>
+              <div className="flex flex-col gap-1">
+                {items.map((it, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full" style={{ background: it.color }} />
+                    <span className="text-[11px] text-[#c8bfa8]">{it.info?.name ?? '—'}</span>
+                  </div>
+                ))}
               </div>
             </div>
           );

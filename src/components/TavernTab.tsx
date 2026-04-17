@@ -1,14 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Beer, MessageCircle } from 'lucide-react';
-import { useGameStore } from '../store/gameStore';
-import type { Port } from '../store/gameStore';
+import { Beer, MessageCircle, Send, Loader2 } from 'lucide-react';
+import { useGameStore, getCaptain } from '../store/gameStore';
+import type { Port, Nationality } from '../store/gameStore';
 import type { Commodity } from '../utils/commodities';
 import { COMMODITY_DEFS } from '../utils/commodities';
 import { generateTavernNpcs, type TavernNpc } from '../utils/tavernNpcGenerator';
 import { getEffectiveKnowledge } from '../utils/knowledgeSystem';
 import { sfxCoin, sfxClick, sfxHover, sfxDiscovery } from '../audio/SoundEffects';
 import { ConfigPortrait } from './CrewPortrait';
+import {
+  buildNpcSystemPrompt,
+  buildUserMessage,
+  buildInitialSceneMessage,
+  callGeminiTavern,
+  resetRateLimiter,
+  setCurrentNpcDomain,
+  type ConversationMessage,
+  type SuggestedResponse,
+  type TavernLLMResponse,
+} from '../utils/tavernConversation';
 
 interface TavernTabProps {
   port: Port;
@@ -26,10 +37,14 @@ export function TavernTab({ port }: TavernTabProps) {
   const gold = useGameStore(s => s.gold);
   const cargo = useGameStore(s => s.cargo);
   const crew = useGameStore(s => s.crew);
+  const ship = useGameStore(s => s.ship);
   const timeOfDay = useGameStore(s => s.timeOfDay);
+  const dayCount = useGameStore(s => s.dayCount);
+  const reputation = useGameStore(s => s.reputation);
   const knowledgeState = useGameStore(s => s.knowledgeState);
   const learnAboutCommodity = useGameStore(s => s.learnAboutCommodity);
   const addJournalEntry = useGameStore(s => s.addJournalEntry);
+  const adjustReputation = useGameStore(s => s.adjustReputation);
 
   const [npcs, setNpcs] = useState<TavernNpc[]>([]);
   const [roundsBought, setRoundsBought] = useState(0);
@@ -37,9 +52,17 @@ export function TavernTab({ port }: TavernTabProps) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [pendingApproach, setPendingApproach] = useState<string | null>(null);
   const [revealedGoods, setRevealedGoods] = useState<Set<string>>(new Set());
+  const [isLoading, setIsLoading] = useState(false);
+  const [playerInput, setPlayerInput] = useState('');
+  const [suggestedResponses, setSuggestedResponses] = useState<SuggestedResponse[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
+  const [playerHasIntroduced, setPlayerHasIntroduced] = useState(false);
+  const [npcHasIntroduced, setNpcHasIntroduced] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Generate NPCs on mount
+  // Generate NPCs on mount + reset rate limiter
   useEffect(() => {
     setNpcs(generateTavernNpcs(port, timeOfDay));
     setRoundsBought(0);
@@ -47,12 +70,30 @@ export function TavernTab({ port }: TavernTabProps) {
     setChatMessages([]);
     setPendingApproach(null);
     setRevealedGoods(new Set());
+    setSuggestedResponses([]);
+    setConversationHistory([]);
+    setPlayerHasIntroduced(false);
+    setNpcHasIntroduced(false);
+    setPlayerInput('');
+    resetRateLimiter();
+
+    // Abort any in-flight request on unmount or port change
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [port.id]);
 
   // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  // Focus input when conversation starts
+  useEffect(() => {
+    if (activeNpcId && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [activeNpcId]);
 
   const activeNpc = npcs.find(n => n.id === activeNpcId);
 
@@ -64,9 +105,249 @@ export function TavernTab({ port }: TavernTabProps) {
     }]);
   }, []);
 
+  // ── Process LLM response side effects ──
+  const processLLMResponse = useCallback((response: TavernLLMResponse, npc: TavernNpc) => {
+    // Knowledge reveal
+    if (response.knowledgeReveal) {
+      const { commodityId, level } = response.knowledgeReveal;
+      const effectiveLevel = getEffectiveKnowledge(commodityId, knowledgeState, crew);
+      if (level > effectiveLevel) {
+        learnAboutCommodity(commodityId, level, `a ${npc.role.title} in ${port.name}`);
+        setRevealedGoods(prev => new Set([...prev, commodityId]));
+        sfxDiscovery();
+        addJournalEntry(
+          'commerce',
+          `Through a ${npc.role.title} named ${npc.name} in ${port.name}, we learned about ${commodityId}. ${COMMODITY_DEFS[commodityId as Commodity]?.description ?? ''}`,
+          port.name,
+        );
+      }
+    }
+
+    // Reputation shift
+    if (response.reputationShift) {
+      const { nationality, delta } = response.reputationShift;
+      adjustReputation(nationality as Nationality, delta);
+    }
+
+    // Check if NPC introduced themselves (name mentioned in their own dialogue)
+    if (response.npcDialogue.includes(npc.name)) {
+      setNpcHasIntroduced(true);
+      // Reveal the NPC in the list
+      setNpcs(prev => prev.map(n =>
+        n.id === npc.id ? { ...n, revealed: true } : n
+      ));
+    }
+
+    // Update suggested responses
+    setSuggestedResponses(response.suggestedResponses);
+  }, [knowledgeState, crew, learnAboutCommodity, port.name, addJournalEntry, adjustReputation]);
+
+  // ── Send message to LLM ──
+  const sendToLLM = useCallback(async (
+    npc: TavernNpc,
+    userText: string,
+    showingItem?: Commodity,
+  ) => {
+    setIsLoading(true);
+    setSuggestedResponses([]);
+
+    // Abort any previous in-flight request
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Set NPC domain so the validator can guard knowledge reveals
+    setCurrentNpcDomain(npc.role.knowledgeDomain);
+
+    const systemPrompt = buildNpcSystemPrompt(npc, port, {
+      ship,
+      crew,
+      cargo,
+      knowledgeState,
+      gold,
+      timeOfDay,
+      dayCount,
+      reputation,
+    }, {
+      playerHasIntroduced,
+      npcHasIntroduced,
+      revealedGoods,
+      roundsBought,
+    });
+
+    const message = buildUserMessage(userText, showingItem);
+
+    try {
+      const response = await callGeminiTavern(systemPrompt, conversationHistory, message, controller.signal);
+
+      // If aborted while waiting, don't process
+      if (controller.signal.aborted) return;
+
+      // Add to conversation history (keep last 10 exchanges)
+      setConversationHistory(prev => {
+        const updated = [
+          ...prev,
+          { role: 'user' as const, text: message },
+          { role: 'model' as const, text: response.npcDialogue },
+        ];
+        // Keep last 20 messages (10 exchanges)
+        return updated.slice(-20);
+      });
+
+      // Display the NPC's response
+      addMsg('npc', response.npcDialogue);
+
+      // Process side effects
+      processLLMResponse(response, npc);
+    } catch (err) {
+      // Don't show errors for aborted requests (user switched NPCs or left tavern)
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      console.error('Tavern conversation error:', err);
+      addMsg('npc', 'He seems distracted and does not respond clearly.');
+      setSuggestedResponses([
+        { label: 'Try again', type: 'question' },
+        { label: 'Walk away', type: 'farewell' },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [port, ship, crew, cargo, knowledgeState, gold, timeOfDay, dayCount, reputation,
+      playerHasIntroduced, npcHasIntroduced, revealedGoods, roundsBought,
+      conversationHistory, addMsg, processLLMResponse]);
+
+  // ── Start a conversation with an NPC ──
+  const startConversation = useCallback(async (npc: TavernNpc) => {
+    // Abort any previous in-flight request
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setActiveNpcId(npc.id);
+    setChatMessages([]);
+    setConversationHistory([]);
+    setSuggestedResponses([]);
+    setPlayerHasIntroduced(false);
+    setNpcHasIntroduced(false);
+    setIsLoading(true);
+
+    setCurrentNpcDomain(npc.role.knowledgeDomain);
+
+    const systemPrompt = buildNpcSystemPrompt(npc, port, {
+      ship, crew, cargo, knowledgeState, gold, timeOfDay, dayCount, reputation,
+    }, {
+      playerHasIntroduced: false,
+      npcHasIntroduced: false,
+      revealedGoods,
+      roundsBought,
+    });
+
+    const sceneMessage = buildInitialSceneMessage(npc, port);
+
+    try {
+      const response = await callGeminiTavern(systemPrompt, [], sceneMessage, controller.signal);
+      if (controller.signal.aborted) return;
+
+      // Seed the conversation history
+      setConversationHistory([
+        { role: 'user', text: sceneMessage },
+        { role: 'model', text: response.npcDialogue },
+      ]);
+
+      addMsg('npc', response.npcDialogue);
+
+      if (response.npcDialogue.includes(npc.name)) {
+        setNpcHasIntroduced(true);
+        setNpcs(prev => prev.map(n =>
+          n.id === npc.id ? { ...n, revealed: true } : n
+        ));
+      }
+
+      setSuggestedResponses(response.suggestedResponses);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      console.error('Failed to start conversation:', err);
+      addMsg('npc', npc.approachLine);
+      setSuggestedResponses([
+        { label: '"Who are you?"', type: 'question' },
+        { label: 'Ask about trade in the region', type: 'question' },
+        { label: 'Nod politely', type: 'farewell' },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [port, ship, crew, cargo, knowledgeState, gold, timeOfDay, dayCount, reputation,
+      revealedGoods, roundsBought, addMsg]);
+
+  // ── Handle player actions ──
+
+  const handleSuggestedResponse = async (response: SuggestedResponse) => {
+    if (!activeNpc || isLoading) return;
+    sfxClick();
+
+    if (response.type === 'farewell') {
+      addMsg('player', response.label);
+      addMsg('system', `${activeNpc.revealed ? activeNpc.name : 'The stranger'} nods and returns to their drink.`);
+      setActiveNpcId(null);
+      setSuggestedResponses([]);
+      return;
+    }
+
+    if (response.type === 'buy_drink') {
+      if (gold < 3) {
+        addMsg('system', 'You do not have enough gold.');
+        return;
+      }
+      sfxCoin(3);
+      useGameStore.setState({ gold: gold - 3 });
+      addMsg('player', response.label);
+      await sendToLLM(activeNpc, `[The player buys you a drink, spending 3 gold. React warmly to this gesture.] "${response.label}"`);
+      return;
+    }
+
+    // Check if player is introducing themselves
+    const captain = getCaptain({ crew });
+    if (captain && response.type === 'share_info') {
+      setPlayerHasIntroduced(true);
+    }
+
+    // Show item flow
+    if (response.type === 'show_item' && response.itemId) {
+      const def = COMMODITY_DEFS[response.itemId as Commodity];
+      if (def) {
+        addMsg('player', `I show them the ${def.physicalDescription.toLowerCase()}.`);
+        await sendToLLM(activeNpc, `I show them the ${def.physicalDescription.toLowerCase()}. What is this?`, response.itemId as Commodity);
+        return;
+      }
+    }
+
+    addMsg('player', response.label);
+    await sendToLLM(activeNpc, response.label);
+  };
+
+  const handleFreeTextSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeNpc || !playerInput.trim() || isLoading) return;
+
+    const text = playerInput.trim();
+    setPlayerInput('');
+    sfxClick();
+
+    // Check if the player is introducing themselves
+    const captain = getCaptain({ crew });
+    if (captain) {
+      const nameLower = captain.name.toLowerCase();
+      if (text.toLowerCase().includes(nameLower) || text.toLowerCase().includes('my name is') || text.toLowerCase().includes('i am called')) {
+        setPlayerHasIntroduced(true);
+      }
+    }
+
+    addMsg('player', text);
+    await sendToLLM(activeNpc, text);
+  };
+
   // ── Buy a round ──
   const handleBuyRound = () => {
-    if (gold < 5) return;
+    if (gold < 5 || pendingApproach) return;
     sfxCoin(5);
     useGameStore.setState({ gold: gold - 5 });
     setRoundsBought(r => r + 1);
@@ -74,182 +355,73 @@ export function TavernTab({ port }: TavernTabProps) {
     // Find an NPC who will approach
     const approacher = npcs.find(n => n.willApproach && !n.revealed);
     if (approacher) {
-      // Delay the approach for drama
       setPendingApproach(approacher.id);
       setTimeout(() => {
         setPendingApproach(null);
-        setActiveNpcId(approacher.id);
         setNpcs(prev => prev.map(n =>
           n.id === approacher.id ? { ...n, revealed: true } : n
         ));
-        setChatMessages([{
-          id: Math.random().toString(36).substring(2, 9),
-          sender: 'npc',
-          text: approacher.approachLine,
-        }]);
+        startConversation(approacher);
       }, 1200);
     } else {
-      // No one approaches — pick a random unrevealed NPC, or add ambient text
       const unrevealed = npcs.filter(n => !n.revealed);
       if (unrevealed.length > 0) {
         const chosen = unrevealed[Math.floor(Math.random() * unrevealed.length)];
-        // Mark them as willing to approach next time
         setNpcs(prev => prev.map(n =>
           n.id === chosen.id ? { ...n, willApproach: true } : n
         ));
         setPendingApproach(chosen.id);
         setTimeout(() => {
           setPendingApproach(null);
-          setActiveNpcId(chosen.id);
           setNpcs(prev => prev.map(n =>
             n.id === chosen.id ? { ...n, revealed: true } : n
           ));
-          setChatMessages([{
-            id: Math.random().toString(36).substring(2, 9),
-            sender: 'npc',
-            text: chosen.approachLine,
-          }]);
+          startConversation(chosen);
         }, 1200);
       } else {
-        addMsg('system', 'The room stirs, but no one new approaches.');
+        // All NPCs already revealed — re-engage a random one
+        const randomNpc = npcs[Math.floor(Math.random() * npcs.length)];
+        if (randomNpc) {
+          startConversation(randomNpc);
+        } else {
+          addMsg('system', 'The room stirs, but no one new approaches.');
+        }
       }
     }
   };
 
-  // ── Conversation options ──
-
-  function getConversationOptions(): { label: string; action: () => void }[] {
+  // ── Build dynamic show-item suggestions ──
+  // These are always available in addition to LLM suggestions
+  function getShowItemOptions(): SuggestedResponse[] {
     if (!activeNpc) return [];
-    const options: { label: string; action: () => void }[] = [];
+    const options: SuggestedResponse[] = [];
 
-    // Find unknown goods in cargo that this NPC could identify
     const unknownInCargo = Object.entries(cargo)
       .filter(([c, qty]) => qty > 0 && getEffectiveKnowledge(c, knowledgeState, crew) === 0)
       .map(([c]) => c as Commodity)
+      .filter(c => !revealedGoods.has(c))
       .filter(c => activeNpc.role.knowledgeDomain.includes(c));
 
-    // Find unknown goods at port that NPC knows
-    const unknownAtPort = Object.entries(port.inventory)
-      .filter(([c, qty]) => qty > 0 && getEffectiveKnowledge(c, knowledgeState, crew) === 0)
-      .map(([c]) => c as Commodity)
-      .filter(c => activeNpc.role.knowledgeDomain.includes(c))
-      .filter(c => !unknownInCargo.includes(c));
-
-    if (unknownInCargo.length > 0 && !revealedGoods.has(unknownInCargo[0])) {
-      const good = unknownInCargo[0];
+    for (const good of unknownInCargo.slice(0, 2)) {
       const def = COMMODITY_DEFS[good];
       options.push({
         label: `Show them the ${def.physicalDescription.toLowerCase()}`,
-        action: () => handleIdentifyCargo(good),
+        type: 'show_item',
+        itemId: good,
       });
     }
-
-    if (unknownAtPort.length > 0 && !revealedGoods.has(unknownAtPort[0])) {
-      const good = unknownAtPort[0];
-      const def = COMMODITY_DEFS[good];
-      options.push({
-        label: `Ask about the ${def.physicalDescription.toLowerCase()} in the market`,
-        action: () => handleIdentifyMarketGood(good),
-      });
-    }
-
-    // General conversation
-    const topic = activeNpc.role.conversationTopics[
-      Math.floor(Math.random() * activeNpc.role.conversationTopics.length)
-    ];
-    options.push({
-      label: `Ask about ${topic}`,
-      action: () => handleGeneralChat(topic),
-    });
-
-    if (!activeNpc.revealed || chatMessages.length <= 1) {
-      options.push({
-        label: '"Who are you?"',
-        action: () => handleAskIdentity(),
-      });
-    }
-
-    options.push({
-      label: 'End conversation',
-      action: () => {
-        sfxClick();
-        addMsg('system', `${activeNpc!.revealed ? activeNpc!.name : 'The stranger'} nods and returns to their drink.`);
-        setActiveNpcId(null);
-      },
-    });
 
     return options;
   }
 
-  function handleAskIdentity() {
-    if (!activeNpc) return;
-    sfxClick();
-    addMsg('player', 'Who are you?');
-    setNpcs(prev => prev.map(n =>
-      n.id === activeNpc.id ? { ...n, revealed: true } : n
-    ));
-    setTimeout(() => {
-      const pronoun = activeNpc.isFemale ? 'She' : 'He';
-      addMsg('npc', `${pronoun} introduces ${activeNpc.isFemale ? 'herself' : 'himself'}. "${activeNpc.name}. I am a ${activeNpc.role.title} — been in ${port.name} for some time now."`);
-    }, 400);
-  }
-
-  function handleIdentifyCargo(good: Commodity) {
-    if (!activeNpc) return;
-    sfxClick();
-    const def = COMMODITY_DEFS[good];
-    addMsg('player', `I show them the ${def.physicalDescription.toLowerCase()}.`);
-
-    setTimeout(() => {
-      // 80% chance of correct identification, 20% wrong (tavern gossip is unreliable)
-      const isCorrect = Math.random() < 0.80;
-      if (isCorrect) {
-        const pronoun = activeNpc.isFemale ? 'She' : 'He';
-        addMsg('npc', `${pronoun} turns it over in ${activeNpc.isFemale ? 'her' : 'his'} hands. "Ah, this I know. This is ${good}. ${def.description}"`);
-        learnAboutCommodity(good, 1, `a ${activeNpc.role.title} in ${port.name}`);
-        setRevealedGoods(prev => new Set([...prev, good]));
-        sfxDiscovery();
-      } else {
-        // Misidentification — gives wrong info
-        const wrongGoods = activeNpc.role.knowledgeDomain.filter(g => g !== good);
-        const wrongGood = wrongGoods.length > 0 ? wrongGoods[Math.floor(Math.random() * wrongGoods.length)] : good;
-        const wrongDef = COMMODITY_DEFS[wrongGood];
-        addMsg('npc', `"Yes, yes — I believe this is ${wrongGood}. ${wrongDef.description}" (The identification seems uncertain.)`);
-        setRevealedGoods(prev => new Set([...prev, good]));
-      }
-    }, 600);
-  }
-
-  function handleIdentifyMarketGood(good: Commodity) {
-    if (!activeNpc) return;
-    sfxClick();
-    const def = COMMODITY_DEFS[good];
-    addMsg('player', `"I saw ${def.physicalDescription.toLowerCase()} for sale at the market. Do you know what it is?"`);
-
-    setTimeout(() => {
-      const isCorrect = Math.random() < 0.80;
-      if (isCorrect) {
-        addMsg('npc', `"That would be ${good}. ${def.description} You should consider buying some — it trades well."`);
-        learnAboutCommodity(good, 1, `a ${activeNpc.role.title} in ${port.name}`);
-        setRevealedGoods(prev => new Set([...prev, good]));
-        sfxDiscovery();
-      } else {
-        addMsg('npc', `"Hmm, I am not entirely sure, but I believe that is something from the south. Valuable, they say." (Doesn't seem very confident.)`);
-        setRevealedGoods(prev => new Set([...prev, good]));
-      }
-    }, 600);
-  }
-
-  function handleGeneralChat(topic: string) {
-    if (!activeNpc) return;
-    sfxClick();
-    addMsg('player', `I ask about ${topic}.`);
-
-    setTimeout(() => {
-      const responses = generateTopicResponse(activeNpc, topic, port);
-      addMsg('npc', responses);
-    }, 500);
-  }
+  // Merge LLM suggestions with always-available item options
+  const allSuggestions = (() => {
+    const itemOpts = getShowItemOptions();
+    // Filter out any LLM show_item suggestions (we generate better ones from game state)
+    const llmFiltered = suggestedResponses.filter(r => r.type !== 'show_item');
+    // Put item options first, then LLM suggestions
+    return [...itemOpts, ...llmFiltered].slice(0, 5);
+  })();
 
   return (
     <motion.div
@@ -294,16 +466,10 @@ export function TavernTab({ port }: TavernTabProps) {
                       transition={{ duration: 0.2 }}
                       onMouseEnter={() => sfxHover()}
                       onClick={() => {
-                        if (npc.revealed && !isActive) {
+                        if (isActive) return;
+                        if (npc.revealed) {
                           sfxClick();
-                          setActiveNpcId(npc.id);
-                          if (!chatMessages.length || chatMessages[chatMessages.length - 1]?.sender === 'system') {
-                            setChatMessages([{
-                              id: Math.random().toString(36).substring(2, 9),
-                              sender: 'npc',
-                              text: `"Yes? What do you want?"`,
-                            }]);
-                          }
+                          startConversation(npc);
                         }
                       }}
                       className={`group flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-all ${
@@ -376,7 +542,7 @@ export function TavernTab({ port }: TavernTabProps) {
             <button
               type="button"
               onClick={handleBuyRound}
-              disabled={gold < 5}
+              disabled={gold < 5 || isLoading || !!pendingApproach}
               onMouseEnter={() => sfxHover()}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3 text-[13px] font-bold text-emerald-200/80 transition-all hover:border-emerald-400/35 hover:bg-emerald-400/[0.10] hover:text-emerald-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
             >
@@ -415,7 +581,7 @@ export function TavernTab({ port }: TavernTabProps) {
               </div>
 
               {/* Chat messages */}
-              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 max-h-[45vh] scrollbar-thin scrollbar-thumb-white/10">
+              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 max-h-[40vh] scrollbar-thin scrollbar-thumb-white/10">
                 <AnimatePresence>
                   {chatMessages.map((msg) => (
                     <motion.div
@@ -451,25 +617,81 @@ export function TavernTab({ port }: TavernTabProps) {
                     </motion.div>
                   ))}
                 </AnimatePresence>
+
+                {/* Loading indicator */}
+                {isLoading && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="pr-6"
+                  >
+                    <div className="inline-flex items-center gap-2 rounded-lg rounded-tl-none border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+                      <Loader2 size={14} className="animate-spin text-slate-500" />
+                      <span className="text-[12px] italic text-slate-500">
+                        {activeNpc.revealed ? activeNpc.name : 'The stranger'} considers...
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+
                 <div ref={chatEndRef} />
               </div>
 
-              {/* Response options */}
-              <div className="shrink-0 border-t border-white/[0.04] px-5 py-4">
-                <div className="space-y-2">
-                  {getConversationOptions().map((opt, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onMouseEnter={() => sfxHover()}
-                      onClick={opt.action}
-                      className="group flex w-full items-center gap-2.5 rounded-lg border border-white/[0.04] bg-white/[0.02] px-4 py-2.5 text-left text-[13px] text-slate-400 transition-all hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-slate-200 active:scale-[0.99]"
-                    >
-                      <span className="text-[12px] text-slate-600 group-hover:text-amber-300/50">{'>'}</span>
-                      {opt.label}
-                    </button>
-                  ))}
+              {/* Suggested responses */}
+              {!isLoading && allSuggestions.length > 0 && (
+                <div className="shrink-0 border-t border-white/[0.04] px-5 py-3">
+                  <div className="space-y-1.5">
+                    {allSuggestions.map((opt, i) => (
+                      <button
+                        key={`${opt.label}-${i}`}
+                        type="button"
+                        onMouseEnter={() => sfxHover()}
+                        onClick={() => handleSuggestedResponse(opt)}
+                        disabled={isLoading}
+                        className={`group flex w-full items-center gap-2.5 rounded-lg border px-4 py-2 text-left text-[13px] transition-all active:scale-[0.99] disabled:opacity-40 ${
+                          opt.type === 'show_item'
+                            ? 'border-sky-400/15 bg-sky-400/[0.03] text-sky-300/70 hover:border-sky-400/25 hover:bg-sky-400/[0.06] hover:text-sky-200'
+                            : opt.type === 'farewell'
+                              ? 'border-white/[0.03] bg-transparent text-slate-500 hover:border-white/[0.06] hover:text-slate-400'
+                              : opt.type === 'buy_drink'
+                                ? 'border-emerald-400/15 bg-emerald-400/[0.03] text-emerald-300/70 hover:border-emerald-400/25 hover:bg-emerald-400/[0.06] hover:text-emerald-200'
+                                : 'border-white/[0.04] bg-white/[0.02] text-slate-400 hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-slate-200'
+                        }`}
+                      >
+                        <span className={`text-[12px] ${
+                          opt.type === 'show_item' ? 'text-sky-500/50 group-hover:text-sky-400/60'
+                          : opt.type === 'buy_drink' ? 'text-emerald-500/50 group-hover:text-emerald-400/60'
+                          : 'text-slate-600 group-hover:text-amber-300/50'
+                        }`}>
+                          {opt.type === 'show_item' ? '\u25cb' : opt.type === 'buy_drink' ? '\u25cb' : '>'}
+                        </span>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+              )}
+
+              {/* Free text input */}
+              <div className="shrink-0 border-t border-white/[0.04] px-5 py-3">
+                <form onSubmit={handleFreeTextSubmit} className="flex gap-2">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={playerInput}
+                    onChange={e => setPlayerInput(e.target.value)}
+                    disabled={isLoading}
+                    placeholder={isLoading ? 'Waiting...' : 'Say something...'}
+                    className="flex-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 text-[13px] text-slate-200 placeholder-slate-600 outline-none transition-all focus:border-amber-400/30 focus:bg-white/[0.04] focus:shadow-[0_0_12px_rgba(201,168,76,0.08)] disabled:opacity-40"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isLoading || !playerInput.trim()}
+                    className="flex items-center justify-center rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2.5 text-amber-300/70 transition-all hover:border-amber-400/35 hover:bg-amber-400/[0.10] hover:text-amber-200 active:scale-[0.96] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
+                  >
+                    <Send size={14} />
+                  </button>
+                </form>
               </div>
             </>
           ) : (
@@ -496,75 +718,4 @@ export function TavernTab({ port }: TavernTabProps) {
       </div>
     </motion.div>
   );
-}
-
-// ── Topic response generation ──
-// Procedural responses based on NPC role, topic, and port context.
-
-function generateTopicResponse(npc: TavernNpc, topic: string, port: Port): string {
-  const pronoun = npc.isFemale ? 'She' : 'He';
-  const possessive = npc.isFemale ? 'her' : 'his';
-
-  const portName = port.name;
-
-  const responses: Record<string, string[]> = {
-    'spice prices': [
-      `${pronoun} lowers ${possessive} voice. "Pepper is cheap here but sells for three times the price in the west. The real money is in the fine spices — cloves, nutmeg. If you can get them."`,
-      `"Prices shift with the monsoon. Buy now, before the winds change and the ships from the west arrive. They drive everything up."`,
-      `${pronoun} shrugs. "Everyone wants pepper. But the margins are thin now — too many ships. The wise trader looks to rarer goods."`,
-    ],
-    'trade routes': [
-      `"The route from ${portName} to the west is long but profitable. The trick is knowing when the winds favor you."`,
-      `${pronoun} traces a line on the table with ${possessive} finger. "Follow the coast. The open water is faster but the storms will kill you."`,
-      `"I have heard that the Dutch are pushing into new waters. The old routes may not be safe much longer."`,
-    ],
-    'the monsoon': [
-      `"The southwest monsoon comes soon. After that, no ship sails west for months. Plan accordingly."`,
-      `${pronoun} glances toward the harbor. "The winds are everything. Miss the monsoon and you wait half a year."`,
-    ],
-    'medicinal uses': [
-      `${pronoun} becomes animated. "Half of what they sell at market is useless — or worse, adulterated. You must know what you are buying."`,
-      `"The physicians here use things that would astonish a European doctor. Some of it works. Some of it kills you."`,
-    ],
-    'adulteration': [
-      `${pronoun} scowls. "Trust nothing you buy from a stranger. Saffron cut with safflower, cinnamon that is really cassia. The fraud is everywhere."`,
-      `"I have seen bezoar stones that were nothing but painted clay. The only defense is knowledge — or a trustworthy factor."`,
-    ],
-    'pirates': [
-      `"The waters south of here are dangerous. Ships disappear. The Portuguese claim to patrol, but..." ${pronoun} trails off.`,
-      `${pronoun} drops ${possessive} voice. "There is a captain — I will not say his name — who takes what he wants between here and the straits."`,
-    ],
-    'the sea': [
-      `${pronoun} stares at nothing. "I have sailed these waters for twenty years. The sea takes what it wants."`,
-      `"The currents here shift with the season. What is safe in January will drown you in June."`,
-    ],
-    'distant ports': [
-      `"I was in Hormuz last year. The Persians trade in pearls and rose water — beautiful things, and profitable if you can get them here."`,
-      `"Have you been to Macau? The Chinese goods there — porcelain, silk, medicines — fetch extraordinary prices in the west."`,
-    ],
-    'the garrison': [
-      `${pronoun} glances around. "The garrison is undermanned and underpaid. The soldiers are more interested in trade than defense."`,
-      `"The fort looks strong from the sea, but inside it is rotting. The governor knows, but what can he do without funds?"`,
-    ],
-    'local politics': [
-      `"There are tensions here that a stranger would not see. Be careful whose favor you seek — it may cost you elsewhere."`,
-      `${pronoun} says nothing for a moment. "Power changes hands in this port more often than you think. Stay flexible."`,
-    ],
-    'natural philosophy': [
-      `${pronoun}'s eyes light up. "The materia medica of the East is far richer than anything in Dioscorides. I have seen remedies here that work when European medicine fails."`,
-      `"Classification is the great challenge. The same substance goes by ten names in ten ports. One must learn to see past the name to the thing itself."`,
-    ],
-    'cures': [
-      `"China root — they swear by it for the French disease. Whether it truly works..." ${pronoun} tilts ${possessive} hand uncertainly.`,
-      `"Bezoar stones are the fashion in every court from Isfahan to Lisbon. Supposed to cure any poison. Most of them are fake."`,
-    ],
-  };
-
-  const topicResponses = responses[topic];
-  if (topicResponses) {
-    return topicResponses[Math.floor(Math.random() * topicResponses.length)];
-  }
-
-  // Fallback
-  return `${pronoun} considers the question. "I know a little about ${topic}, but not enough to say anything useful. You might ask someone else."`;
 }

@@ -11,6 +11,7 @@ import { sfxTab, sfxCoin, sfxClose, sfxHover, startTabAmbient, stopTabAmbientLoo
 import { getPortBannerCandidates, getPortIconCandidates } from '../utils/portAssets';
 import { MarketTabLedger } from './MarketTabLedger';
 import { TavernTab } from './TavernTab';
+import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 import {
   X, Coins, Shield, Anchor, ShoppingBag,
   Wrench, Beer, Building, Sailboat,
@@ -607,19 +608,13 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
+      {...modalBackdropMotion}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-2 md:p-4 pointer-events-auto"
       onClick={handleClose}
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        initial={{ scale: 0.96, y: 12, opacity: 0 }}
-        animate={{ scale: 1, y: 0, opacity: 1 }}
-        exit={{ scale: 0.96, y: 12, opacity: 0 }}
-        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        {...modalPanelMotion}
         className="w-full max-w-7xl h-full max-h-[92vh] bg-[#0c1019]/95 backdrop-blur-xl border border-[#2a2d3a]/50 rounded-2xl overflow-hidden flex shadow-[0_16px_64px_rgba(0,0,0,0.6)]"
       >
         {/* ═══════ Left Sidebar (desktop) ═══════ */}
@@ -868,10 +863,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
               {activeTab === 'overview' && (
                 <motion.div
                   key="overview"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
+                  {...modalContentMotion}
                   className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]"
                 >
                   <section>
@@ -980,7 +972,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
               {/* ── Market ── */}
               {activeTab === 'market' && (
-                <motion.div key="market" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                <motion.div key="market" {...modalContentMotion}>
                   <MarketTabLedger
                     port={activePort}
                     cargo={cargo}
@@ -996,7 +988,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
               {/* ── Shipyard ── */}
               {activeTab === 'shipyard' && (
-                <motion.div key="shipyard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
+                <motion.div key="shipyard" {...modalContentMotion}
                   className="space-y-3">
 
                   {/* ── Hull Status & Repair ── */}
@@ -1225,7 +1217,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
               {/* ── Governor ── */}
               {activeTab === 'governor' && (
-                <motion.div key="governor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                <motion.div key="governor" {...modalContentMotion}>
                   <div className="px-4 py-6 rounded-lg border border-white/[0.04] bg-white/[0.015] text-center">
                     <Building size={20} className="mx-auto text-slate-700 mb-3" />
                     <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-600 mb-1.5"

@@ -5,7 +5,6 @@ import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/c
 import { parchment } from '../theme/tokens';
 
 // ── Colors ───────────────────────────────────────────────────────────────────
-// Shared palette lives in src/theme/tokens.ts. Local aliases kept for brevity.
 const GOLD      = parchment.gold;
 const DIM_GOLD  = parchment.dimGold;
 const WARM      = parchment.warm;
@@ -19,10 +18,39 @@ const BRIGHT    = parchment.bright;
 const BG        = parchment.bgPanel;
 
 // ── Inner width: chars between the ║ borders ─────────────────────────────────
-// Total line width = 2 (║ + space) + IW + 2 (space + ║) = IW + 4
-// Base width; on wider screens we use IW_WIDE to create room for the port thumbnail
 const IW = 48;
 const IW_WIDE = 62;
+
+// ── Date formatting ─────────────────────────────────────────────────────────
+const MONTH_NAMES_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatCommissionDate(dayCount: number): { day: string; month: string; year: number } {
+  // Game starts May 1, 1612
+  let month = 4; // May (0-indexed)
+  let day = dayCount;
+  let year = 1612;
+
+  while (day > DAYS_IN_MONTH[month]) {
+    day -= DAYS_IN_MONTH[month];
+    month++;
+    if (month >= 12) {
+      month = 0;
+      year++;
+    }
+  }
+
+  return { day: ordinal(day), month: MONTH_NAMES_FULL[month], year };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function C({ c, children }: { c: string; children: React.ReactNode }) {
@@ -61,7 +89,7 @@ function statBar(value: number, max: number, color: string, width = 12): React.R
 
 // ── Ornamental divider — always exactly `width` chars ────────────────────────
 function Divider({ ornChar, width = IW }: { ornChar: string; width?: number }) {
-  const innerW = width - 2; // leading 2 spaces
+  const innerW = width - 2;
   const leftW = Math.floor((innerW - 1) / 2);
   const rightW = innerW - 1 - leftW;
   const dash = '\u2500';
@@ -120,6 +148,19 @@ function WaveStripAnimated({ width = IW }: { width?: number }) {
   return <span ref={spanRef} />;
 }
 
+// ── Stagger animation wrapper ───────────────────────────────────────────────
+function Stagger({ delay, children }: { delay: number; children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
@@ -129,17 +170,30 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const stats = useGameStore(s => s.stats);
   const ports = useGameStore(s => s.ports);
   const cargo = useGameStore(s => s.cargo);
+  const dayCount = useGameStore(s => s.dayCount);
 
-  const [isWide, setIsWide] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 900);
+  const [screenSize, setScreenSize] = useState(() => {
+    if (typeof window === 'undefined') return 'narrow' as const;
+    return window.innerWidth >= 900 ? 'wide' as const : window.innerWidth < 420 ? 'tiny' as const : 'narrow' as const;
+  });
   useEffect(() => {
-    const onResize = () => setIsWide(window.innerWidth >= 900);
+    const onResize = () => {
+      const w = window.innerWidth;
+      setScreenSize(w >= 900 ? 'wide' : w < 420 ? 'tiny' : 'narrow');
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+  const isWide = screenSize === 'wide';
+  const isTiny = screenSize === 'tiny';
 
   const captain = crew.find(c => c.role === 'Captain');
   const startPort = ports[0];
-  const iw = isWide ? IW_WIDE : IW;
+  const IW_TINY = 36;
+  const iw = isWide ? IW_WIDE : isTiny ? IW_TINY : IW;
+
+  // Format date
+  const dateInfo = formatCommissionDate(dayCount);
 
   // Ornament animation — ref-based to avoid full re-renders
   const ornamentRefs = useRef<(HTMLSpanElement | null)[]>([]);
@@ -187,36 +241,29 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   });
 
   // ── Pre-compute text lines ──
-  const shipDesc = `The ${ship.type.toLowerCase()} `;
-  const portLine = startPort ? `departs ${startPort.name} under the` : 'sets sail under the';
   const captainName = captain?.name ?? 'the Captain';
-  const cmdLine = `command of `;
 
   const divChar = '\u2726';
-
-  // ── Cartouche geometry ──
-  const cartInner = iw - 8; // inner width of the ╭───╮ box (3 margin + 1 border each side)
-  const titleLen = 37; // 'C O M M I S S I O N  O F  V O Y A G E'
-  const titlePadL = Math.floor((cartInner - titleLen) / 2);
-  const titlePadR = cartInner - titleLen - titlePadL;
 
   // ── Table column widths (scale with iw) ──
   const nameW = isWide ? 26 : 19;
   const roleW = isWide ? 18 : 13;
   const skillW = 5;
-  const tblW = nameW + roleW + skillW; // divider rule width
-  // Cargo two-column: each col = icon(1)+sp(1)+name(cargoNameW)+sp(1)+qty(4)+tier(1)
+  const tblW = nameW + roleW + skillW;
   const cargoNameW = isWide ? 19 : 12;
-  const cargoColW = cargoNameW + 8; // per column char count
-  const cargoGap = iw - 4 - cargoColW * 2; // gap between cols
+  const cargoColW = cargoNameW + 8;
+  const cargoGap = iw - 4 - cargoColW * 2;
 
   // ── Godspeed box geometry ──
-  const godW = 26; // inner width of the ┌───┐ box
-  const godBox = godW + 2; // including │ borders
+  const godW = 26;
+  const godBox = godW + 2;
   const godPadL = Math.floor((iw - godBox) / 2);
   const godPadR = iw - godBox - godPadL;
 
   const monoFont = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
+
+  // ── Stagger timing ──
+  const S = { title: 0.15, desc: 0.35, crew: 0.55, stats: 0.8, cargo: 1.0, wave: 1.2, button: 1.35 };
 
   return (
     <motion.div
@@ -225,319 +272,360 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.4 }}
       className="absolute inset-0 z-[60] flex items-center justify-center pointer-events-auto"
-      style={{ backgroundColor: 'rgba(6,5,4,0.88)', backdropFilter: 'blur(4px)' }}
+      style={{
+        backgroundColor: 'rgba(6,5,4,0.6)',
+        backdropFilter: 'blur(2px)',
+      }}
       onClick={onDismiss}
     >
+      {/* Port image as background — fills most of the viewport */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.05 }}
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         onClick={e => e.stopPropagation()}
         className="relative select-none"
         style={{
-          backgroundColor: 'rgba(8,7,5,0.92)',
-          padding: '12px 16px',
-          borderRadius: '4px',
-          boxShadow: '0 0 40px rgba(0,0,0,0.6), 0 0 80px rgba(0,0,0,0.3)',
+          width: '100vw',
+          height: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
           willChange: 'opacity, transform',
         }}
       >
-        {/* ═══ Header with port image background ═══ */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.97 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.0, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+        {/* Port painting as outer background */}
+        <img
+          src={`/ports/${startPort?.id ?? 'bantam'}.png`}
+          alt=""
           style={{
-            position: 'relative',
-            width: 'calc(100% + 32px)',
-            margin: '-12px -16px 0 -16px',
-            height: isWide ? 140 : 110,
-            overflow: 'hidden',
-            borderRadius: '4px 4px 0 0',
-          }}
-        >
-          <img
-            src={`/ports/${startPort?.id ?? 'bantam'}.png`}
-            alt={startPort?.name ?? ''}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              filter: 'sepia(0.3) contrast(1.15) brightness(0.5)',
-            }}
-          />
-          {/* Vignette + bottom fade */}
-          <div style={{
             position: 'absolute',
             inset: 0,
-            background: `
-              radial-gradient(ellipse at center, transparent 25%, rgba(8,7,5,0.8) 100%),
-              linear-gradient(to bottom, rgba(8,7,5,0.2) 0%, transparent 25%, transparent 60%, rgba(8,7,5,0.95) 100%)
-            `,
-            pointerEvents: 'none',
-          }} />
-          {/* Dark banner for title */}
-          <div style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -60%)',
-            background: 'rgba(8,7,5,0.72)',
-            padding: isWide ? '10px 36px' : '8px 24px',
-            borderTop: `1px solid ${DIM_GOLD}`,
-            borderBottom: `1px solid ${DIM_GOLD}`,
-            backdropFilter: 'blur(4px)',
-          }}>
-            <div style={{
-              fontFamily: monoFont,
-              fontSize: isWide ? 13.5 : 10.5,
-              color: GOLD,
-              letterSpacing: '0.15em',
-              textAlign: 'center',
-              whiteSpace: 'pre',
-            }}>
-              {'COMMISSION  OF  VOYAGE'}
-            </div>
-          </div>
-          {/* Port name */}
-          <div style={{
-            position: 'absolute',
-            bottom: isWide ? 12 : 8,
-            left: 0,
-            right: 0,
-            textAlign: 'center',
-            fontFamily: monoFont,
-            fontSize: isWide ? 9 : 7.5,
-            color: DIM_GOLD,
-            letterSpacing: '0.2em',
-            textTransform: 'uppercase',
-          }}>
-            {startPort?.name ?? ''}
-          </div>
-        </motion.div>
-
-        {/* ═══ Ship description — centered ═══ */}
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            transform: 'scale(1.15)',
+            filter: 'sepia(0.2) contrast(1.05) brightness(0.65) saturate(0.85)',
+          }}
+        />
+        {/* Elegant vignette — soft fade at edges, keeps center visible */}
         <div style={{
-          textAlign: 'center',
-          fontFamily: monoFont,
-          fontSize: isWide ? 14.5 : 12,
-          lineHeight: 1.7,
-          color: TXT,
-          padding: isWide ? '14px 24px 10px' : '10px 16px 6px',
-        }}>
-          <span>The {ship.type.toLowerCase()} </span>
-          <span style={{ color: TEAL }}>{ship.name}</span>
-          <br />
-          <span>{startPort ? `departs ${startPort.name} under the` : 'sets sail under the'}</span>
-          <br />
-          <span>command of </span>
-          <span style={{ color: CRIMSON }}>{captainName}</span>
-          <span>.</span>
-        </div>
+          position: 'absolute',
+          inset: 0,
+          background: `
+            radial-gradient(ellipse at center, transparent 35%, rgba(6,5,4,0.45) 70%, rgba(6,5,4,0.85) 100%)
+          `,
+          pointerEvents: 'none',
+        }} />
 
-        <pre
-          className={`${isWide ? 'text-[13px]' : 'text-[10.5px]'} leading-[1.55] whitespace-pre`}
-          style={{ fontFamily: monoFont, color: TXT }}
+        {/* ═══ The document itself — dark panel inside the baroque frame ═══ */}
+        <div
+          className="relative"
+          style={{
+            backgroundColor: 'rgba(8,7,5,0.94)',
+            boxShadow: '0 0 40px rgba(0,0,0,0.6), 0 0 80px rgba(0,0,0,0.3), inset 0 0 30px rgba(0,0,0,0.2)',
+            padding: isWide ? '24px 32px' : isTiny ? '12px 10px' : '16px 20px',
+            maxHeight: '88vh',
+            overflowY: 'auto',
+          }}
         >
-          {/* ═══ Floating ornaments above ═══ */}
-          {'   '}<C c={DIM}>{ornamentSpan(0)}</C>
-          {'        '}<C c={DIM}>{ornamentSpan(1)}</C>
-          {'              '}<C c={DIM}>{ornamentSpan(2)}</C>
-          {'              '}<C c={DIM}>{ornamentSpan(3)}</C>
-          {'        '}<C c={DIM}>{ornamentSpan(4)}</C>{'\n'}
+          <pre
+            className={`${isWide ? 'text-[13px]' : isTiny ? 'text-[8.5px]' : 'text-[10.5px]'} leading-[1.55] whitespace-pre`}
+            style={{ fontFamily: monoFont, color: TXT, margin: 0, padding: 0 }}
+          >
+            {/* ═══ Top rail ═══ */}
+            <Stagger delay={0.05}>
+              <C c={DIM_GOLD}>{'\u2554'}{'\u2550'.repeat(iw + 2)}{'\u2557'}</C>{'\n'}
+              <L><C c={BG}>{sp(iw)}</C></L>
+            </Stagger>
 
-          {/* ═══ Top rail ═══ */}
-          <C c={GOLD}>{ornamentSpan(5)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(iw)}{'\u2500'}</C>
-          <C c={GOLD}>{ornamentSpan(6)}</C>{'\n'}
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Crew table ═══ */}
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={WARM}>{pad('NAME', nameW)}{pad('ROLE', roleW)}{pad('SKILL', skillW)}</C>
-            <C c={BG}>{sp(iw - 4 - tblW)}</C>
-          </L>
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={RULE}>{'\u2500'.repeat(tblW)}</C>
-            <C c={BG}>{sp(iw - 4 - tblW)}</C>
-          </L>
-
-          {crewLines.map((m, i) => {
-            let name = m.name;
-            if (name.length > nameW) name = name.slice(0, nameW - 1) + '\u2026';
-            return (
-              <L key={i}>
-                <C c={BG}>{'    '}</C>
-                <C c={m.isCaptain ? CRIMSON : TXT}>{pad(name, nameW)}</C>
-                <C c={DIM}>{pad(m.role, roleW)}</C>
-                {skillBar(m.skill)}
-                <C c={BG}>{sp(iw - 4 - tblW)}</C>
-              </L>
-            );
-          })}
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-          <L><Divider ornChar={divChar} width={iw} /></L>
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Stats (single line: Gold + Hull) ═══ */}
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={WARM}>{'Gold '}</C>
-            <C c={BRIGHT}>{pad(goldAmount.toLocaleString(), 7)}</C>
-            <C c={BG}>{'  '}</C>
-            <C c={WARM}>{'Hull '}</C>
-            {statBar(stats.hull, stats.maxHull, TEAL)}
-            <C c={DIM}>{` ${stats.hull}/${stats.maxHull}`}</C>
-            <C c={BG}>{sp(iw - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.hull}/${stats.maxHull}`.length)}</C>
-          </L>
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-          <L><Divider ornChar={divChar} width={iw} /></L>
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Cargo manifest with inline capacity ═══ */}
-          {(() => {
-            const totalWeight = Object.entries(cargo).reduce(
-              (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-            );
-            const capStr = `${totalWeight}/${stats.cargoCapacity}`;
-            const headerUsed = 4 + 14 + capStr.length;
-            return (
-              <L>
-                <C c={BG}>{'    '}</C>
-                <C c={WARM}>{'CARGO MANIFEST'}</C>
-                <C c={BG}>{sp(iw - headerUsed)}</C>
-                <C c={DIM}>{capStr}</C>
-              </L>
-            );
-          })()}
-          <L>
-            <C c={BG}>{'    '}</C>
-            <C c={RULE}>{'\u2500'.repeat(iw - 8)}</C>
-            <C c={BG}>{sp(4)}</C>
-          </L>
-
-          {(() => {
-            const items = ALL_COMMODITIES_FULL.filter(c => cargo[c] > 0);
-            if (isWide) {
-              // Two-column layout using dynamic column widths
-              const pairs: [string, string | null][] = [];
-              for (let i = 0; i < items.length; i += 2) {
-                pairs.push([items[i], items[i + 1] ?? null]);
-              }
-              const renderCol = (c: string) => {
-                const def = COMMODITY_DEFS[c as Commodity];
-                const qty = cargo[c as Commodity];
-                const nameStr = c.length > cargoNameW ? c.slice(0, cargoNameW - 1) + '\u2026' : c;
-                const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+            {/* ═══ COMMISSION OF VOYAGE title ═══ */}
+            <Stagger delay={S.title}>
+              {(() => {
+                // Spaced title that fits within iw
+                const title = isWide
+                  ? 'C O M M I S S I O N  O F  V O Y A G E'
+                  : 'COMMISSION OF VOYAGE';
+                const titleLen = title.length;
+                const ruleW = titleLen + 4; // 2 char padding each side
+                const padL = Math.floor((iw - ruleW) / 2);
+                const padR = iw - ruleW - padL;
+                const tPadL = Math.floor((iw - titleLen) / 2);
+                const tPadR = iw - titleLen - tPadL;
                 return (
                   <>
-                    <C c={def.color}>{def.icon}</C>
-                    <C c={BG}>{' '}</C>
-                    <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, cargoNameW)}</C>
-                    <C c={BG}>{' '}</C>
-                    <C c={BRIGHT}>{pad(String(qty), 4)}</C>
-                    <C c={DIM}>{tierTag}</C>
+                    <L><C c={BG}>{sp(iw)}</C></L>
+                    <L>
+                      <C c={BG}>{sp(padL)}</C>
+                      <C c={DIM_GOLD}>{'\u2500'.repeat(ruleW)}</C>
+                      <C c={BG}>{sp(padR)}</C>
+                    </L>
+                    <L>
+                      <C c={BG}>{sp(tPadL)}</C>
+                      <C c={GOLD}>{title}</C>
+                      <C c={BG}>{sp(tPadR)}</C>
+                    </L>
+                    <L>
+                      <C c={BG}>{sp(padL)}</C>
+                      <C c={DIM_GOLD}>{'\u2500'.repeat(ruleW)}</C>
+                      <C c={BG}>{sp(padR)}</C>
+                    </L>
+                    <L><C c={BG}>{sp(iw)}</C></L>
                   </>
                 );
-              };
-              return pairs.map(([left, right], i) => (
-                <L key={i}>
-                  <C c={BG}>{'    '}</C>
-                  {renderCol(left)}
-                  <C c={BG}>{sp(cargoGap)}</C>
-                  {right ? renderCol(right) : <C c={BG}>{sp(cargoColW)}</C>}
-                  <C c={BG}>{sp(iw - 4 - cargoColW - cargoGap - cargoColW)}</C>
-                </L>
-              ));
-            } else {
-              return items.map((c) => {
-                const def = COMMODITY_DEFS[c];
-                const qty = cargo[c];
-                const nameStr = c.length > 22 ? c.slice(0, 21) + '\u2026' : c;
-                const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
-                const usedW = 4 + 1 + 1 + 22 + 1 + 4 + 1;
+              })()}
+            </Stagger>
+
+            {/* ═══ Ship description with date — rendered larger ═══ */}
+            <Stagger delay={S.desc}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+            </Stagger>
+          </pre>
+          {/* Break out of <pre> for larger description text */}
+          <Stagger delay={S.desc}>
+            <div style={{
+              textAlign: 'center',
+              fontFamily: monoFont,
+              fontSize: isWide ? 16 : isTiny ? 11 : 13,
+              lineHeight: 1.85,
+              color: TXT,
+              padding: isWide ? '4px 0 8px' : '2px 0 6px',
+              borderLeft: `3px double ${DIM_GOLD}`,
+              borderRight: `3px double ${DIM_GOLD}`,
+              marginLeft: '0px',
+              marginRight: '0px',
+            }}>
+              <span>The {ship.type.toLowerCase()} </span>
+              <span style={{ color: TEAL }}>{ship.name}</span>
+              <br />
+              <span>{startPort ? `departs ${startPort.name} on the` : 'sets sail on the'}</span>
+              <br />
+              <span style={{ color: WARM }}>{dateInfo.day} of {dateInfo.month}, {dateInfo.year}</span>
+              <br />
+              <span>under the command of </span>
+              <span style={{ color: CRIMSON }}>{captainName}</span>
+              <span>.</span>
+            </div>
+          </Stagger>
+          <pre
+            className={`${isWide ? 'text-[13px]' : isTiny ? 'text-[8.5px]' : 'text-[10.5px]'} leading-[1.55] whitespace-pre`}
+            style={{ fontFamily: monoFont, color: TXT, margin: 0, padding: 0 }}
+          >
+            <Stagger delay={S.desc}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+            </Stagger>
+
+            {/* ═══ Ornamental spacer ═══ */}
+            <Stagger delay={S.crew - 0.05}>
+              <L>
+                {(() => {
+                  // Build a centered ornament line:  ✦    ·    ◇    ·    ✦
+                  const ornLine = 5 + 4 * 4; // 5 ornaments + 4 gaps of 4 spaces = 21 chars
+                  const padL = Math.floor((iw - ornLine) / 2);
+                  const padR = iw - ornLine - padL;
+                  return (
+                    <>
+                      <C c={BG}>{sp(padL)}</C>
+                      <C c={DIM}>{ornamentSpan(0)}</C>{sp(4)}
+                      <C c={DIM}>{ornamentSpan(1)}</C>{sp(4)}
+                      <C c={DIM}>{ornamentSpan(2)}</C>{sp(4)}
+                      <C c={DIM}>{ornamentSpan(3)}</C>{sp(4)}
+                      <C c={DIM}>{ornamentSpan(4)}</C>
+                      <C c={BG}>{sp(padR)}</C>
+                    </>
+                  );
+                })()}
+              </L>
+            </Stagger>
+
+            {/* ═══ Crew table ═══ */}
+            <Stagger delay={S.crew}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+              <L>
+                <C c={BG}>{'    '}</C>
+                <C c={WARM}>{pad('NAME', nameW)}{pad('ROLE', roleW)}{pad('SKILL', skillW)}</C>
+                <C c={BG}>{sp(iw - 4 - tblW)}</C>
+              </L>
+              <L>
+                <C c={BG}>{'    '}</C>
+                <C c={RULE}>{'\u2500'.repeat(tblW)}</C>
+                <C c={BG}>{sp(iw - 4 - tblW)}</C>
+              </L>
+
+              {crewLines.map((m, i) => {
+                let name = m.name;
+                if (name.length > nameW) name = name.slice(0, nameW - 1) + '\u2026';
                 return (
-                  <L key={c}>
+                  <L key={i}>
                     <C c={BG}>{'    '}</C>
-                    <C c={def.color}>{def.icon}</C>
-                    <C c={BG}>{' '}</C>
-                    <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, 22)}</C>
-                    <C c={BG}>{' '}</C>
-                    <C c={BRIGHT}>{pad(String(qty), 4)}</C>
-                    <C c={DIM}>{tierTag}</C>
-                    <C c={BG}>{sp(iw - usedW)}</C>
+                    <C c={m.isCaptain ? CRIMSON : TXT}>{pad(name, nameW)}</C>
+                    <C c={DIM}>{pad(m.role, roleW)}</C>
+                    {skillBar(m.skill)}
+                    <C c={BG}>{sp(iw - 4 - tblW)}</C>
                   </L>
                 );
-              });
-            }
-          })()}
+              })}
+            </Stagger>
 
-          <L><C c={BG}>{sp(iw)}</C></L>
-          <L><WaveStripAnimated width={iw} /></L>
-          <L><C c={BG}>{sp(iw)}</C></L>
+            {/* ═══ Stats divider + Gold/Hull ═══ */}
+            <Stagger delay={S.stats}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+              <L><Divider ornChar={divChar} width={iw} /></L>
+              <L><C c={BG}>{sp(iw)}</C></L>
 
-          {/* ═══ Godspeed button ═══ */}
-          <span
-            onClick={onDismiss}
-            role="button"
-            tabIndex={0}
-            className="cursor-pointer"
-            style={{ transition: 'filter 0.15s ease' }}
-            onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.3)'; }}
-            onMouseLeave={e => { e.currentTarget.style.filter = ''; }}
+              <L>
+                <C c={BG}>{'    '}</C>
+                <C c={WARM}>{'Gold '}</C>
+                <C c={BRIGHT}>{pad(goldAmount.toLocaleString(), 7)}</C>
+                <C c={BG}>{'  '}</C>
+                <C c={WARM}>{'Hull '}</C>
+                {statBar(stats.hull, stats.maxHull, TEAL)}
+                <C c={DIM}>{` ${stats.hull}/${stats.maxHull}`}</C>
+                <C c={BG}>{sp(iw - 4 - 5 - 7 - 2 - 5 - 12 - ` ${stats.hull}/${stats.maxHull}`.length)}</C>
+              </L>
+            </Stagger>
+
+            {/* ═══ Cargo manifest ═══ */}
+            <Stagger delay={S.cargo}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+              <L><Divider ornChar={divChar} width={iw} /></L>
+              <L><C c={BG}>{sp(iw)}</C></L>
+
+              {(() => {
+                const totalWeight = Object.entries(cargo).reduce(
+                  (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+                );
+                const capStr = `${totalWeight}/${stats.cargoCapacity}`;
+                const headerUsed = 4 + 14 + capStr.length;
+                return (
+                  <L>
+                    <C c={BG}>{'    '}</C>
+                    <C c={WARM}>{'CARGO MANIFEST'}</C>
+                    <C c={BG}>{sp(iw - headerUsed)}</C>
+                    <C c={DIM}>{capStr}</C>
+                  </L>
+                );
+              })()}
+              <L>
+                <C c={BG}>{'    '}</C>
+                <C c={RULE}>{'\u2500'.repeat(iw - 8)}</C>
+                <C c={BG}>{sp(4)}</C>
+              </L>
+
+              {(() => {
+                const items = ALL_COMMODITIES_FULL.filter(c => cargo[c] > 0);
+                if (isWide) {
+                  const pairs: [string, string | null][] = [];
+                  for (let i = 0; i < items.length; i += 2) {
+                    pairs.push([items[i], items[i + 1] ?? null]);
+                  }
+                  const renderCol = (c: string) => {
+                    const def = COMMODITY_DEFS[c as Commodity];
+                    const qty = cargo[c as Commodity];
+                    const nameStr = c.length > cargoNameW ? c.slice(0, cargoNameW - 1) + '\u2026' : c;
+                    const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+                    return (
+                      <>
+                        <C c={def.color}>{def.icon}</C>
+                        <C c={BG}>{' '}</C>
+                        <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, cargoNameW)}</C>
+                        <C c={BG}>{' '}</C>
+                        <C c={BRIGHT}>{pad(String(qty), 4)}</C>
+                        <C c={DIM}>{tierTag}</C>
+                      </>
+                    );
+                  };
+                  return pairs.map(([left, right], i) => (
+                    <L key={i}>
+                      <C c={BG}>{'    '}</C>
+                      {renderCol(left)}
+                      <C c={BG}>{sp(cargoGap)}</C>
+                      {right ? renderCol(right) : <C c={BG}>{sp(cargoColW)}</C>}
+                      <C c={BG}>{sp(iw - 4 - cargoColW - cargoGap - cargoColW)}</C>
+                    </L>
+                  ));
+                } else {
+                  return items.map((c) => {
+                    const def = COMMODITY_DEFS[c];
+                    const qty = cargo[c];
+                    const nameStr = c.length > 22 ? c.slice(0, 21) + '\u2026' : c;
+                    const tierTag = def.tier >= 4 ? '\u2726' : def.tier === 3 ? '\u00b7' : ' ';
+                    const usedW = 4 + 1 + 1 + 22 + 1 + 4 + 1;
+                    return (
+                      <L key={c}>
+                        <C c={BG}>{'    '}</C>
+                        <C c={def.color}>{def.icon}</C>
+                        <C c={BG}>{' '}</C>
+                        <C c={def.tier >= 4 ? GOLD : def.tier === 3 ? BRIGHT : TXT}>{pad(nameStr, 22)}</C>
+                        <C c={BG}>{' '}</C>
+                        <C c={BRIGHT}>{pad(String(qty), 4)}</C>
+                        <C c={DIM}>{tierTag}</C>
+                        <C c={BG}>{sp(iw - usedW)}</C>
+                      </L>
+                    );
+                  });
+                }
+              })()}
+            </Stagger>
+
+            {/* ═══ Wave + Godspeed button ═══ */}
+            <Stagger delay={S.wave}>
+              <L><C c={BG}>{sp(iw)}</C></L>
+              <L><WaveStripAnimated width={iw} /></L>
+              <L><C c={BG}>{sp(iw)}</C></L>
+            </Stagger>
+
+            <Stagger delay={S.button}>
+              <span
+                onClick={onDismiss}
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer"
+                style={{ transition: 'filter 0.15s ease' }}
+                onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.3)'; }}
+                onMouseLeave={e => { e.currentTarget.style.filter = ''; }}
+              >
+                <L>
+                  {sp(godPadL)}
+                  <C c={GOLD}>{'\u250c'}{'\u2500'.repeat(godW)}{'\u2510'}</C>
+                  {sp(godPadR)}
+                </L>
+                <L>
+                  {sp(godPadL)}
+                  <C c={GOLD}>{'\u2502  \u25b6 '}</C>
+                  <C c={BRIGHT}>{'G O D S P E E D'}</C>
+                  <C c={GOLD}>{sp(godW - 4 - 15)}{'\u2502'}</C>
+                  {sp(godPadR)}
+                </L>
+                <L>
+                  {sp(godPadL)}
+                  <C c={GOLD}>{'\u2514'}{'\u2500'.repeat(godW)}{'\u2518'}</C>
+                  {sp(godPadR)}
+                </L>
+              </span>
+
+              <L><C c={BG}>{sp(iw)}</C></L>
+
+              {/* ═══ Bottom rail ═══ */}
+              <C c={DIM_GOLD}>{'\u255a'}{'\u2550'.repeat(iw + 2)}{'\u255d'}</C>{'\n'}
+            </Stagger>
+          </pre>
+        </div>
+
+        {/* ═══ Animated hint — outside the frame ═══ */}
+        <Stagger delay={S.button + 0.15}>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.6, 0.4, 0.6] }}
+            transition={{ duration: 2, repeat: Infinity, delay: S.button + 0.3 }}
+            className="text-center mt-2 text-[9px] tracking-[0.25em] uppercase relative"
+            style={{ color: DIM }}
           >
-            <L>
-              {sp(godPadL)}
-              <C c={GOLD}>{'\u250c'}{'\u2500'.repeat(godW)}{'\u2510'}</C>
-              {sp(godPadR)}
-            </L>
-            <L>
-              {sp(godPadL)}
-              <C c={GOLD}>{'\u2502  \u25b6 '}</C>
-              <C c={BRIGHT}>{'G O D S P E E D'}</C>
-              <C c={GOLD}>{sp(godW - 4 - 15)}{'\u2502'}</C>
-              {sp(godPadR)}
-            </L>
-            <L>
-              {sp(godPadL)}
-              <C c={GOLD}>{'\u2514'}{'\u2500'.repeat(godW)}{'\u2518'}</C>
-              {sp(godPadR)}
-            </L>
-          </span>
-
-          <L><C c={BG}>{sp(iw)}</C></L>
-
-          {/* ═══ Bottom rail ═══ */}
-          <C c={GOLD}>{ornamentSpan(7)}</C>
-          <C c={DIM_GOLD}>{'\u2500'}{'\u2550'.repeat(iw)}{'\u2500'}</C>
-          <C c={GOLD}>{ornamentSpan(8)}</C>{'\n'}
-
-          {/* ═══ Floating ornaments below ═══ */}
-          {'   '}<C c={DIM}>{ornamentSpan(9)}</C>
-          {'        '}<C c={DIM}>{ornamentSpan(10)}</C>
-          {'              '}<C c={DIM}>{ornamentSpan(11)}</C>
-          {'              '}<C c={DIM}>{ornamentSpan(12)}</C>
-          {'        '}<C c={DIM}>{ornamentSpan(13)}</C>
-        </pre>
-
-        {/* ═══ Animated hint ═══ */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: [0, 0.6, 0.4, 0.6] }}
-          transition={{ duration: 2, repeat: Infinity }}
-          className="text-center mt-1 text-[9px] tracking-[0.25em] uppercase"
-          style={{ color: DIM }}
-        >
-          press enter
-        </motion.div>
+            press enter
+          </motion.div>
+        </Stagger>
       </motion.div>
     </motion.div>
   );

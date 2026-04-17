@@ -510,3 +510,197 @@ New World and European goods to support the expanded map:
 4. **Phase M4 — World map zoom**: Replace fixed-center D3 projection with `d3.zoom()` pan/zoom. Add region quick-jump buttons. Recenter default to show player's current region.
 5. **Phase M5 — New commodities**: Add ~13 new commodities to `commodities.ts`. Define trade profiles for new ports. Wire into market generation.
 6. **Phase M6 — New POIs**: Add POI definitions for the 10 new ports. Wire into POI system (depends on Knowledge System Phase 4).
+
+## Building Style System
+
+Visual differentiation of ports that share a `culture`. Lisbon, Amsterdam, and London are all `European` culture but should not look alike. Culture remains the *gameplay* label (markets, NPCs, flags, awning dyes, language); `buildingStyle` is a separate *visual* layer.
+
+### Core principle
+
+Keep primitives minimal — box, cylinder, cone, sphere — and drive differentiation through **palette + proportion + weighted variant mix**. No per-facade detail, no tiles, no textures. A full visual style is typically: a wall-color palette, a roof-color/profile palette, a weighted list of house variants with scale multipliers and optional feature flags. Three new cheap primitives cover the features worth adding: **stilts**, **wind-catcher**, **veranda**.
+
+### Data model (additions to `portArchetypes.ts`)
+
+```typescript
+type BuildingStyle =
+  | 'iberian'            // Lisbon, Seville
+  | 'dutch-brick'        // Amsterdam
+  | 'english-tudor'      // London (pre-1666 half-timber)
+  | 'luso-colonial'      // Goa, Diu, Macau
+  | 'swahili-coral'      // Mombasa, Zanzibar
+  | 'arab-cubic'         // Aden, Mocha, Socotra, Muscat
+  | 'persian-gulf'       // Hormuz (wind-catchers)
+  | 'malabar-hindu'      // Calicut
+  | 'mughal-gujarati'    // Surat
+  | 'malay-stilted'      // Malacca, Bantam
+  | 'west-african-round' // Elmina, Luanda
+  | 'luso-brazilian'     // Salvador
+  | 'spanish-caribbean'  // Havana, Cartagena
+  | 'khoikhoi-minimal';  // Cape (no real settlement)
+
+interface PortLandmark {
+  id: string;                // e.g. 'tower-of-london', 'torre-de-belem'
+  slot: 'citadel' | 'hilltop' | 'waterfront' | 'bridge' | 'custom';
+  anchor?: [number, number]; // local-map coords if slot is 'custom'
+}
+
+// Added to PortDefinition
+buildingStyle?: BuildingStyle;   // falls back to culture default when absent
+landmarks?: PortLandmark[];      // data-only scaffold; renderer is future work
+```
+
+### Style registry shape (in `ProceduralCity.tsx`)
+
+```typescript
+interface BuildingStyleDef {
+  wallPalette: [number, number, number][];      // repeat colors to weight them
+  roofPalette: { color: [number, number, number]; geo: 'box' | 'cone'; h: number }[];
+  houseVariants: HouseVariant[];                // weighted mix within a single port
+  shutterPalette?: [number, number, number][];  // European-derived styles
+  densityBias?: number;                         // >1 tighter, <1 spread
+}
+
+interface HouseVariant {
+  weight: number;
+  scaleMul?: [number, number, number];  // multiplier on base [w,h,d]
+  roofGeoOverride?: 'box' | 'cone';
+  roofHMul?: number;
+  features?: {
+    stilts?: boolean;              // 4 thin posts below main box
+    roundHut?: boolean;            // cylinder walls + cone roof
+    flatRoofParapet?: boolean;     // flat roof with slight lip, no cone
+    deepEaves?: boolean;           // cone base wider than wall footprint
+    windCatcher?: boolean;         // small upright box on top
+    veranda?: boolean;             // thin slab porch extending from front
+    upturnedEave?: boolean;        // Chinese shophouse flare (Manila Parián — reserved for future)
+  };
+}
+```
+
+### Port-to-style map
+
+| Style | Ports | Signature |
+|---|---|---|
+| `iberian` | Lisbon, Seville | whitewash + terracotta, shallower pitched roofs, wider footprints |
+| `dutch-brick` | Amsterdam | red-brown brick palette, tall narrow scale `[2, 4, 2.5]`, steep dark tile |
+| `english-tudor` | London | dark timber + cream plaster palette, steep thatch-brown cones |
+| `luso-colonial` | Goa, Diu, Macau | Portuguese whites + cream + Goa yellow + Macau pink, iconic painted shutters |
+| `swahili-coral` | Mombasa, Zanzibar | whitewash + flat-roof parapets (box roofs), low horizontal proportions |
+| `arab-cubic` | Aden, Mocha, Socotra, Muscat | whitewash + mud, tall narrow scale, 90 % flat roofs |
+| `persian-gulf` | Hormuz | sun-beaten mud palette, flat roofs, ~25 % get a wind-catcher |
+| `malabar-hindu` | Calicut | laterite earth tones + deep-eave palm thatch |
+| `mughal-gujarati` | Surat | warm stucco + tile, medium density |
+| `malay-stilted` | Malacca, Bantam | bahay-kubo: stilt posts + pyramidal palm thatch |
+| `west-african-round` | Elmina, Luanda | round mud hut + cone thatch (existing behavior, now formalized) |
+| `luso-brazilian` | Salvador | Iberian palette + wide squat solar houses + ground-floor veranda, ~15 % thatch mix |
+| `spanish-caribbean` | Havana, Cartagena | whitewash + tile core + 30–40 % bohío palm-thatch mix |
+| `khoikhoi-minimal` | Cape | no real settlement; reduced count, earth tones only |
+
+### New primitive components
+
+Three additions cover every style:
+
+1. **Stilts**: four thin box posts (~0.1 × 1 × 0.1) centered below the house base. Reused by `malay-stilted` and the existing Indian Ocean shack branch.
+2. **Wind-catcher (badgir)**: a small upright box (~0.6 × 1.2 × 0.6) above the roof. Unique to `persian-gulf` for now.
+3. **Veranda**: a thin flat slab (~1.0 deep × 0.15 tall × wall-width) extending from the front face at ground level, optionally with two thin post cylinders. Used by `luso-brazilian` and some `spanish-caribbean` / `luso-colonial` estates.
+
+Everything else — Amsterdam's tall-narrow silhouette, London's steep-thatch look, Swahili flat roofs, Malabar deep eaves — is achieved via palette swap + scale multiplier + roof-profile parameters. No extra meshes.
+
+### Scope boundaries
+
+- `culture` still drives: fort wall material, market shelter geometry, fort flag color, awning dye palette, shack wall palette, and all gameplay (NPCs, markets, reputation). **Unchanged.**
+- `buildingStyle` drives only: house / warehouse / estate / farmhouse wall + roof + variant selection + feature flags. This is the main visual differentiator players see walking through a port.
+- `landmarks` is scaffolding only. The renderer is a future phase. When implemented, `cityGenerator.ts` should reserve those grid cells before placing generic buildings, and a new renderer module handles the unique POI meshes.
+
+### Future: Manila (`manila-hybrid`) and Lima (`spanish-andean`)
+
+When Manila and Lima/Callao are added, introduce two more styles:
+- `spanish-andean`: warm adobe palette, max-2-story earthquake-conscious scale, deep-eave cones, arcaded plaza POI slot.
+- `manila-hybrid`: weighted mix of `luso-colonial`-like stone (30 %), `malay-stilted` bahay kubo (40 %), Chinese shophouse with upturned eave (20 %), native thatch (10 %). Demonstrates the weighted-variant system at full stretch — no new primitives needed beyond the three listed above (plus `upturnedEave` when Manila ships).
+
+## Wildlife / Animal System
+
+Procedurally spawned animals on land, rendered as instanced meshes for performance. Each animal type is a **template** — a single geometry + behavior pattern reused across ports with different colors, scales, and spawn biomes.
+
+### Architecture
+
+- Each template is its own React component (e.g. `Grazers.tsx`, `Primates.tsx`) receiving spawn data + `shadowsActive` as props.
+- **Spawn data** is generated inside the terrain vertex loop in `World.tsx`'s useMemo, alongside trees/crabs/gulls. Port-specific variant configs (color, scale, herd size, allowed biomes) are selected via a switch on `portId`.
+- **City exclusion**: Animals don't spawn within 90 units of port center (`CITY_EXCLUSION_SQ`).
+- **Instanced mesh**: All animals of a template share one `InstancedMesh` with per-instance color. Geometry is merged from simple primitives (spheres, cylinders, cones).
+- **Animation range**: Only animate instances within `ANIM_RANGE_SQ` (120²) of the player. Distant animals freeze for performance.
+- **Max count**: Each template capped (e.g. 60 grazers) to bound draw calls.
+
+### Behavior Patterns
+
+Four core behaviors, reused across templates:
+
+1. **Ground scatter** (grazers): Mutable offset array tracks per-instance displacement. When player enters scatter radius (~22 units), animals flee radially away. Velocity decays and animals drift back to spawn when player leaves. Facing rotates to direction of travel during flee.
+2. **Tree scatter** (primates): Similar to ground scatter but flee targets nearby tree positions. Spawn biased toward tree-dense biomes.
+3. **Slow waddle** (reptiles): Like ground scatter but lower flee speed and longer return time. Solitary, no herd clustering.
+4. **Fly-away** (wading birds): On scatter, animate upward (increasing Y) and outward, then circle at altitude before descending back. Reuses gull-style circular orbit for the airborne phase. Spawn at water-edge (shoreline / shallow inlets).
+
+### Templates
+
+#### 1. Grazer — `src/components/Grazers.tsx` ✅ DONE
+
+Geometry: body ellipsoid + head sphere + 4 cylinder legs + cone tail nub. Ground scatter behavior.
+
+| Variant | Ports | Color | Scale | Herd Size | Biomes |
+|---------|-------|-------|-------|-----------|--------|
+| Springbok | Cape | `#c8a060` tan | 1.0 | 5–9 | grassland, scrubland |
+| Antelope | Mombasa, Zanzibar | `#a06840` reddish | 0.9 | 4–7 | grassland, forest, scrubland |
+| Goat | Hormuz, Diu, Socotra, Muscat, Mocha, Aden | `#8a7a6a` grey-brown | 0.65–0.7 | 3–5 | scrubland, desert, arroyo |
+| Sheep | London, Amsterdam, Lisbon, Seville | `#e8dcc8` cream | 0.6–0.65 | 3–8 | grassland, scrubland |
+| Water buffalo | Goa, Calicut, Surat | `#4a4a4a` dark | 1.2 | 2–3 | grassland, swamp, scrubland |
+| Capybara | Salvador, Cartagena | `#8a6848` brown | 0.8 | 3–5 | grassland, swamp, scrubland |
+| Generic grazer | Malacca, Bantam, Macau, Elmina, Luanda, fallback | various | 0.85–1.1 | 2–5 | various |
+| *(none)* | Havana | — | — | — | *(iguanas via reptile template instead)* |
+
+#### 2. Primate — `src/components/Primates.tsx` ☐ TODO
+
+Geometry: upright-ish body + round head + long tail + 4 limbs. Tree scatter behavior — spawn near trees, flee toward nearest tree cluster.
+
+| Variant | Ports | Color | Troop Size |
+|---------|-------|-------|------------|
+| Macaque | Goa, Calicut, Surat | brown | 4–6 |
+| Long-tailed macaque | Malacca, Bantam | grey | 4–6 |
+| Baboon | Cape, Mombasa | olive-grey, larger | 3–5 |
+| Colobus monkey | Zanzibar, Elmina | black w/ white patches | 3–4 |
+
+#### 3. Wading Bird — `src/components/WadingBirds.tsx` ☐ TODO
+
+Geometry: long thin legs + body + curved neck + beak. Fly-away scatter — flock lifts off, circles, returns.
+
+| Variant | Ports | Color | Flock Size |
+|---------|-------|-------|------------|
+| Flamingo | Mombasa, Zanzibar, Surat | pink/salmon | 6–12 |
+| Scarlet ibis | Salvador | bright red | 5–8 |
+| Heron/egret | Goa, Calicut, Luanda, Elmina | white | 2–4 |
+
+#### 4. Reptile — `src/components/Reptiles.tsx` ☐ TODO
+
+Geometry: low long body + 4 stubby legs + long tail. Slow waddle-away, solitary. Spawn near water edges.
+
+| Variant | Ports | Color | Count |
+|---------|-------|-------|-------|
+| Monitor lizard | Bantam, Malacca | dark olive | 1–2 |
+| Iguana | Havana, Cartagena | green | 2–3 |
+| Crocodile | Luanda, Salvador, Surat | dark brown-green | 1 |
+
+### Hunting Mechanic — ☐ TODO (Phase 2)
+
+Reuse swivel gun combat mode: F to enter fight mode, mouse/trackpad aim, spacebar fire. Hit animal → provisions or trade goods (hides, ivory). Not yet implemented — requires:
+- Extending `combatState.ts` hit detection to check animal instanced meshes
+- Loot table per animal type (provisions for most, rare drops for some)
+- Animals should scatter more aggressively / permanently when shot at
+
+### Implementation Checklist
+
+- [x] **Grazers**: Component, geometry, spawn logic, scatter animation, port variants
+- [ ] **Primates**: Component + tree-proximity spawn + erratic flee paths
+- [ ] **Wading Birds**: Component + fly-away scatter + landing behavior
+- [ ] **Reptiles**: Component + slow flee + water-edge spawn
+- [ ] **Hunting mechanic**: Swivel gun hit detection on animal meshes, loot drops
+- [ ] **Sound effects**: Scatter sounds per template (hoofbeats, bird wings, splashing)
+- [ ] **Notifications**: Click-to-identify like crabs/fish (species name + flavor text)

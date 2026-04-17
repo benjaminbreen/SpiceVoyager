@@ -15,6 +15,7 @@ import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPo
 import {
   syncLiveShipTransform,
   syncLiveWalkingTransform,
+  syncLivePlayerMode,
 } from '../utils/livePlayerTransform';
 import {
   type Commodity, ALL_COMMODITIES, ALL_COMMODITIES_FULL, COMMODITY_DEFS,
@@ -86,6 +87,7 @@ export interface Port {
   name: string;
   culture: Culture;
   scale: PortScale;
+  buildingStyle?: string;
   position: [number, number, number];
   inventory: Record<Commodity, number>;
   baseInventory: Record<Commodity, number>; // initial stock levels for supply/demand calc
@@ -773,7 +775,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       playerVelocity: vel,
     });
   },
-  setPlayerMode: (mode) => set({ playerMode: mode }),
+  setPlayerMode: (mode) => {
+    syncLivePlayerMode(mode);
+    set({ playerMode: mode });
+  },
   setWalkingPos: (pos) => {
     const state = get();
     syncLiveWalkingTransform(pos, state.walkingRot);

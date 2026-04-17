@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useGameStore, Port } from '../store/gameStore';
-import type { CrewMember, Language } from '../store/gameStore';
+import { useGameStore, Port, WEAPON_DEFS } from '../store/gameStore';
+import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
+import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
   Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight
@@ -21,7 +22,9 @@ import { CrewPortraitSquare } from './CrewPortrait';
 import { OpeningASCII } from './OpeningASCII';
 import { EventModalASCII } from './EventModalASCII';
 import { ASCIIToast } from './ASCIIToast';
+import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
+import { floatingPanelMotion } from '../utils/uiMotion';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
@@ -319,19 +322,26 @@ export function UI() {
       setRequestWorldMap(false);
     }
   }, [requestWorldMap, setRequestWorldMap]);
-  const [showDashboard, setShowDashboard] = useState(false);
+  const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string } | null>(null);
+  const showDashboard = !!dashboardState;
+  const setShowDashboard = (v: boolean) => setDashboardState(v ? {} : null);
+  const [expandedStat, setExpandedStat] = useState<'hull' | 'morale' | 'cargo' | null>(null);
   const paused = useGameStore(s => s.paused);
   const setPaused = useGameStore(s => s.setPaused);
   const [showJournal, setShowJournal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWind, setShowWind] = useState(false);
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
+  const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
   const [loadingReady, setLoadingReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hailWasPausedRef = useRef(false);
+  const previousHullRef = useRef(stats.hull);
+  const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission;
 
   // Collision warning banner state
@@ -349,6 +359,34 @@ export function UI() {
     return () => {
       window.removeEventListener('ship-collision-warning', handleCollisionWarning);
       if (collisionTimerRef.current) clearTimeout(collisionTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const previousHull = previousHullRef.current;
+    if (stats.hull < previousHull) {
+      const damage = previousHull - stats.hull;
+      const severity = Math.min(1, Math.max(0.35, damage / Math.max(1, stats.maxHull) * 4));
+
+      setHullDamagePulse((current) => ({
+        key: (current?.key ?? 0) + 1,
+        severity,
+      }));
+
+      if (hullDamagePulseTimerRef.current) {
+        clearTimeout(hullDamagePulseTimerRef.current);
+      }
+      hullDamagePulseTimerRef.current = setTimeout(() => setHullDamagePulse(null), 520);
+    }
+
+    previousHullRef.current = stats.hull;
+  }, [stats.hull, stats.maxHull]);
+
+  useEffect(() => {
+    return () => {
+      if (hullDamagePulseTimerRef.current) {
+        clearTimeout(hullDamagePulseTimerRef.current);
+      }
     };
   }, []);
 
@@ -597,14 +635,43 @@ export function UI() {
     return () => window.removeEventListener('keydown', handleHotkey);
   }, [showInstructions, showSettings, activePort, hailNpc, paused, setPaused, cycleViewMode, toggleWorldMap]);
 
+  const hullDamageSeverity = hullDamagePulse?.severity ?? 0;
+  const hullDamageHudMotion = hullDamagePulse && !reduceMotion
+    ? {
+        x: [0, -4 * hullDamageSeverity, 3 * hullDamageSeverity, -2 * hullDamageSeverity, 0],
+        y: [0, 1.5 * hullDamageSeverity, -1 * hullDamageSeverity, 0],
+      }
+    : { x: 0, y: 0 };
+
   return (
     <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none">
+      <AnimatePresence>
+        {hullDamagePulse && (
+          <motion.div
+            key={hullDamagePulse.key}
+            className="absolute inset-0 z-30 pointer-events-none"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.75 * hullDamageSeverity, 0.18 * hullDamageSeverity, 0] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.52, ease: 'easeOut' }}
+            style={{
+              background: 'radial-gradient(circle at center, rgba(127,29,29,0) 48%, rgba(220,38,38,0.18) 78%, rgba(127,29,29,0.46) 100%)',
+              boxShadow: `inset 0 0 ${90 + hullDamageSeverity * 80}px rgba(220,38,38,${0.28 + hullDamageSeverity * 0.18})`,
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Top Bar */}
       <div className="flex justify-between items-start">
-        <div className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto shadow-card">
+        <motion.div
+          animate={hullDamageHudMotion}
+          transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
+          className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto
+            shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]"
+        >
           {/* Top row: captain, gold, time, crew */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-[#3a3530]/30">
             {(() => {
               // Ring color reflects captain's current expression/mood
               const ringColor = captainExpression === 'Friendly' ? '#22c55e'
@@ -622,10 +689,21 @@ export function UI() {
               return (
                 <button
                   onClick={() => { sfxOpen(); setShowDashboard(true); }}
+                  onMouseEnter={(e) => {
+                    sfxHover();
+                    const btn = e.currentTarget;
+                    btn.style.borderColor = ringColor;
+                    btn.style.boxShadow = `inset 0 2px 4px rgba(0,0,0,0.4), 0 0 18px ${ringColor}50, 0 0 6px ${ringColor}30`;
+                    btn.style.transform = 'scale(1.06)';
+                  }}
+                  onMouseLeave={(e) => {
+                    const btn = e.currentTarget;
+                    btn.style.borderColor = ringColor;
+                    btn.style.boxShadow = `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`;
+                    btn.style.transform = 'scale(1)';
+                  }}
                   className="w-[72px] h-[72px] rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
-                    transition-all duration-500 active:scale-95
-                    hover:scale-110 hover:brightness-125
-                    outline outline-0 hover:outline-[3px] outline-amber-500 outline-offset-1"
+                    transition-all duration-300 active:scale-95"
                   style={{
                     border: `3px solid ${ringColor}`,
                     boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`,
@@ -643,36 +721,42 @@ export function UI() {
 
             <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
               <div className="flex items-center gap-1.5 text-amber-400 font-bold text-lg tabular-nums">
-                <Coins size={18} className="text-amber-500" /> {gold.toLocaleString()}
+                <Coins size={18} className="text-amber-500" />
+                <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
+                  {gold.toLocaleString()}
+                </ValueFlash>
               </div>
-              <div className="flex items-center gap-1 text-[10px] text-emerald-400/70 -mt-0.5">
-                <Fish size={10} className="text-emerald-500/60" />
-                <span>{provisions} food</span>
+              <div className="flex items-center gap-1.5 text-[11px] text-emerald-400/80 -mt-0.5">
+                <Fish size={11} className="text-emerald-500/70" />
+                <ValueFlash value={provisions} upColor="#86efac" downColor="#f87171">
+                  {provisions}
+                </ValueFlash>
+                <span className="text-emerald-400/60">food</span>
               </div>
             </div>
 
-            <div className="h-5 w-px bg-white/[0.08]" />
+            <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
 
             <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <div className="text-[12px] text-slate-300 font-medium">
-                {formatTime(timeOfDay)} <span className="text-slate-600">·</span> <span className="text-slate-500">Day {dayCount}</span>
+              <div className="text-[13px] text-slate-300 font-medium">
+                {formatTime(timeOfDay)} <span className="text-slate-600">·</span> <span className="text-slate-400">Day {dayCount}</span>
               </div>
-              <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500">
+              <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-500">
                 {formatDate(dayCount)}
               </div>
             </div>
 
-            <div className="h-5 w-px bg-white/[0.08]" />
+            <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
 
             <button
               onClick={() => setShowDashboard(true)}
-              className="flex flex-col items-start text-[12px] text-slate-400 hover:text-amber-300 transition-colors"
+              className="flex flex-col items-start text-[13px] text-slate-400 hover:text-amber-300 transition-colors duration-200"
               title="View crew roster"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
             >
-              <span className="flex items-center gap-1.5 leading-none mb-0.5">
-                <FactionFlag nationality={ship.flag} size={16} />
-                <span className="text-[9px] font-medium tracking-[0.08em] uppercase text-slate-500">{ship.name}</span>
+              <span className="flex items-center gap-1.5 leading-none mb-1">
+                <FactionFlag nationality={ship.flag} size={18} />
+                <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-slate-400">{ship.name}</span>
               </span>
               <span><span className="font-bold text-slate-300">{crew.length}</span> crew</span>
             </button>
@@ -680,11 +764,37 @@ export function UI() {
 
           {/* Bottom row: stat bars */}
           <div className="flex items-center gap-5 px-4 py-2.5">
-            <StatBar icon={<Shield size={15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull} />
-            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale} />
-            <StatBar icon={<Anchor size={15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo} />
+            <StatBar icon={<Shield size={15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull}
+              active={expandedStat === 'hull'} onClick={() => setExpandedStat(expandedStat === 'hull' ? null : 'hull')} />
+            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
+              active={expandedStat === 'morale'} onClick={() => setExpandedStat(expandedStat === 'morale' ? null : 'morale')} />
+            <StatBar icon={<Anchor size={15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo}
+              active={expandedStat === 'cargo'} onClick={() => setExpandedStat(expandedStat === 'cargo' ? null : 'cargo')} />
           </div>
-        </div>
+
+          {/* Expandable stat detail panels */}
+          <AnimatePresence>
+            {expandedStat && (
+              <motion.div
+                key={expandedStat}
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ type: 'spring', damping: 28, stiffness: 350 }}
+                className="overflow-hidden"
+              >
+                <div className="border-t border-[#3a3530]/30">
+                  {expandedStat === 'hull' && <HullDetailPanel stats={stats} ship={ship}
+                    onOpenDashboard={() => { setExpandedStat(null); setDashboardState({ tab: 'ship' }); }} />}
+                  {expandedStat === 'morale' && <MoraleDetailPanel crew={crew}
+                    onSelectCrew={(crewId) => { setExpandedStat(null); setDashboardState({ tab: 'crew', crewId }); }} />}
+                  {expandedStat === 'cargo' && <CargoDetailPanel cargo={cargo} capacity={stats.cargoCapacity}
+                    onOpenDashboard={() => { setExpandedStat(null); setDashboardState({ tab: 'cargo' }); }} />}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
 
         {/* Minimap (top-right) — click to open full map */}
         <div className="flex flex-col gap-3 pointer-events-auto items-end">
@@ -795,7 +905,7 @@ export function UI() {
 
       {/* Ship Dashboard Modal */}
       <AnimatePresence>
-        <ASCIIDashboard open={showDashboard} onClose={() => setShowDashboard(false)} />
+        <ASCIIDashboard open={showDashboard} onClose={() => setDashboardState(null)} initialTab={dashboardState?.tab} initialCrewId={dashboardState?.crewId} />
       </AnimatePresence>
 
       <AnimatePresence>
@@ -1346,30 +1456,296 @@ function ActionBarButton({ icon, label, hotkey, accentColor = '#b0a880', glowCol
   );
 }
 
-function StatBar({ icon, label, value, max, color }: { icon: React.ReactNode; label: string; value: number; max: number; color: string }) {
+// ═══════════════════════════════════════════════════════════════════════════
+// Slide-down stat detail panels
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SHIP_TYPE_INFO: Record<string, { crew: number; speed: string; desc: string }> = {
+  Carrack:  { crew: 8,  speed: 'Medium',  desc: 'Sturdy trading vessel, good cargo capacity' },
+  Galleon:  { crew: 12, speed: 'Slow',    desc: 'Heavy warship, massive hold and gun decks' },
+  Dhow:     { crew: 4,  speed: 'Fast',    desc: 'Lateen-rigged coaster, nimble in shallow waters' },
+  Junk:     { crew: 6,  speed: 'Medium',  desc: 'Chinese deep-sea trader, balanced and reliable' },
+  Pinnace:  { crew: 4,  speed: 'Fast',    desc: 'Small, swift scout vessel, limited cargo' },
+};
+
+function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; ship: ShipInfo; onOpenDashboard: () => void }) {
+  const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
+  const sailPct = Math.round((stats.sails / stats.maxSails) * 100);
+  const typeInfo = SHIP_TYPE_INFO[ship.type] ?? { crew: 6, speed: 'Medium', desc: '' };
+
+  const conditionLabel = (pct: number) =>
+    pct >= 90 ? 'Excellent' : pct >= 70 ? 'Good' : pct >= 50 ? 'Fair' : pct >= 25 ? 'Poor' : 'Critical';
+  const conditionColor = (pct: number) =>
+    pct >= 70 ? '#34d399' : pct >= 40 ? '#fbbf24' : '#f87171';
+
+  const armamentSummary = stats.armament.reduce<Record<string, number>>((acc, w) => {
+    const name = WEAPON_DEFS[w].name;
+    acc[name] = (acc[name] || 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <div
+      className="px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors duration-200"
+      style={{ fontFamily: '"DM Sans", sans-serif' }}
+      onClick={() => { sfxOpen(); onOpenDashboard(); }}
+    >
+      {/* Ship type header */}
+      <div className="flex items-center justify-between mb-2.5">
+        <div>
+          <span className="text-[10px] font-bold tracking-[0.12em] uppercase" style={{ color: '#22d3ee90' }}>Ship Condition</span>
+          <div className="text-[13px] font-semibold text-slate-200 mt-0.5">{ship.type} <span className="text-slate-500 font-normal">— {typeInfo.desc}</span></div>
+        </div>
+        <span className="text-[9px] text-slate-600 tracking-wider uppercase">Details →</span>
+      </div>
+
+      <div className="flex gap-4">
+        {/* Left: ship specs */}
+        <div className="flex-1 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Cargo capacity</span>
+            <span className="text-[11px] font-mono text-slate-300">{stats.cargoCapacity}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Crew berths</span>
+            <span className="text-[11px] font-mono text-slate-300">{typeInfo.crew}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Speed</span>
+            <span className="text-[11px] font-mono text-slate-300">{typeInfo.speed}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Armament</span>
+            <span className="text-[11px] font-mono text-slate-300">{Object.entries(armamentSummary).map(([n, c]) => `${c}× ${n}`).join(', ')}</span>
+          </div>
+        </div>
+
+        {/* Right: condition */}
+        <div className="flex-1 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Hull</span>
+            <span className="text-[11px] font-mono" style={{ color: conditionColor(hullPct) }}>{conditionLabel(hullPct)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Sails</span>
+            <span className="text-[11px] font-mono" style={{ color: conditionColor(sailPct) }}>{conditionLabel(sailPct)}</span>
+          </div>
+          {hullPct < 100 && (
+            <div className="mt-1.5 text-[10px] italic text-slate-500" style={{ fontFamily: '"Fraunces", serif' }}>
+              {hullPct < 30 ? 'Taking on water — seek repairs urgently'
+                : hullPct < 60 ? 'Hull showing battle scars — repairs advised'
+                : 'Minor wear, seaworthy'}
+            </div>
+          )}
+          {hullPct < 100 && (
+            <div className="text-[10px] text-cyan-400/60 mt-0.5">
+              Repair est. ~{Math.ceil((stats.maxHull - stats.hull) * 1.5)} gold
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoraleDetailPanel({ crew, onSelectCrew }: { crew: CrewMember[]; onSelectCrew: (crewId: string) => void }) {
+  const sorted = [...crew].sort((a, b) => {
+    if (a.role === 'Captain') return -1;
+    if (b.role === 'Captain') return 1;
+    return b.morale - a.morale;
+  });
+  const lowest = sorted.length > 1 ? sorted[sorted.length - 1] : null;
+  const avg = crew.length > 0 ? Math.round(crew.reduce((s, c) => s + c.morale, 0) / crew.length) : 0;
+
+  const healthIcon = (h: string) =>
+    h === 'healthy' ? '♥' : h === 'sick' ? '♥' : h === 'injured' ? '♥' : h === 'scurvy' ? '♥' : '♥';
+  const healthColor = (h: string) =>
+    h === 'healthy' ? '#34d399' : h === 'sick' ? '#fbbf24' : h === 'injured' ? '#f87171' : h === 'scurvy' ? '#a78bfa' : '#f97316';
+
+  const ROLE_COLORS: Record<string, string> = {
+    Captain: 'text-amber-400 border-amber-400/30 bg-amber-400/10',
+    Navigator: 'text-cyan-400 border-cyan-400/30 bg-cyan-400/10',
+    Gunner: 'text-red-400 border-red-400/30 bg-red-400/10',
+    Sailor: 'text-slate-400 border-slate-500/30 bg-slate-400/10',
+    Factor: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10',
+    Surgeon: 'text-pink-400 border-pink-400/30 bg-pink-400/10',
+  };
+
+  return (
+    <div className="px-4 py-3" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-bold tracking-[0.12em] uppercase" style={{ color: '#34d39990' }}>Crew Roster</span>
+        <span className="text-[10px] text-slate-500">{crew.length} aboard</span>
+      </div>
+
+      <div className="space-y-0">
+        {sorted.map((member) => {
+          const moralePct = Math.min(100, Math.round(member.morale));
+          const moraleColor = moralePct >= 60 ? '#34d399' : moralePct >= 30 ? '#fbbf24' : '#f87171';
+          return (
+            <div
+              key={member.id}
+              className="flex items-center gap-2.5 py-[5px] border-b border-white/[0.04] last:border-b-0
+                cursor-pointer rounded-sm hover:bg-white/[0.04] transition-colors duration-150 px-1 -mx-1"
+              onClick={() => { sfxOpen(); onSelectCrew(member.id); }}
+              onMouseEnter={() => sfxHover()}
+            >
+              {/* Portrait */}
+              <div className="w-[22px] h-[22px] rounded-full overflow-hidden shrink-0 bg-[#1a1e2e]">
+                <CrewPortraitSquare member={member} size={22} />
+              </div>
+              {/* Name + role */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-300 truncate">{member.name}</span>
+                  <span className={`text-[8px] font-bold tracking-[0.08em] uppercase px-1.5 py-0.5 rounded-full border ${ROLE_COLORS[member.role] ?? ROLE_COLORS.Sailor}`}>
+                    {member.role}
+                  </span>
+                </div>
+              </div>
+              {/* Morale bar */}
+              <div className="w-[60px] shrink-0">
+                <div className="h-[3px] w-full bg-white/[0.06] rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${moralePct}%`, backgroundColor: moraleColor }} />
+                </div>
+              </div>
+              <span className="text-[10px] font-mono w-[24px] text-right shrink-0" style={{ color: moraleColor }}>{moralePct}</span>
+              {/* Health */}
+              <span className="text-[10px] shrink-0" style={{ color: healthColor(member.health) }} title={member.health}>
+                {healthIcon(member.health)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {lowest && lowest.morale < 50 && (
+        <div className="mt-2 text-[10px] italic text-slate-500" style={{ fontFamily: '"Fraunces", serif' }}>
+          Lowest: {lowest.name} ({lowest.morale} — {lowest.health !== 'healthy' ? lowest.health : 'discontented'})
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CargoDetailPanel({ cargo, capacity, onOpenDashboard }: { cargo: Record<string, number>; capacity: number; onOpenDashboard: () => void }) {
+  const entries = Object.entries(cargo).filter(([, qty]) => qty > 0).sort((a, b) => b[1] - a[1]);
+  const totalUnits = entries.reduce((s, [, qty]) => s + qty, 0);
+  const pct = capacity > 0 ? Math.min(100, Math.round((totalUnits / capacity) * 100)) : 0;
+
+  const estimateValue = (commodity: string, qty: number) => {
+    const def = COMMODITY_DEFS[commodity as Commodity];
+    if (!def) return 0;
+    return Math.round(((def.basePrice[0] + def.basePrice[1]) / 2) * qty);
+  };
+
+  const totalValue = entries.reduce((s, [c, q]) => s + estimateValue(c, q), 0);
+
+  return (
+    <div
+      className="px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors duration-200"
+      style={{ fontFamily: '"DM Sans", sans-serif' }}
+      onClick={() => { sfxOpen(); onOpenDashboard(); }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-bold tracking-[0.12em] uppercase" style={{ color: '#fbbf2490' }}>Ship&apos;s Hold</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-slate-500">{totalUnits} / {capacity} units</span>
+          <span className="text-[9px] text-slate-600 tracking-wider uppercase">Details →</span>
+        </div>
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="text-[11px] italic text-slate-600 py-2" style={{ fontFamily: '"Fraunces", serif' }}>
+          The hold is empty.
+        </div>
+      ) : (
+        <div className="space-y-0">
+          {entries.map(([commodity, qty]) => {
+            const def = COMMODITY_DEFS[commodity as Commodity];
+            const est = estimateValue(commodity, qty);
+            return (
+              <div key={commodity} className="flex items-center gap-2 py-[5px] border-b border-white/[0.04] last:border-b-0">
+                {/* Icon image or fallback */}
+                {def?.iconImage ? (
+                  <img src={def.iconImage} alt="" className="w-[20px] h-[20px] rounded object-cover shrink-0 opacity-80" />
+                ) : (
+                  <span className="w-[20px] h-[20px] rounded bg-white/[0.04] flex items-center justify-center text-[10px] shrink-0">{def?.icon ?? '?'}</span>
+                )}
+                {/* Name */}
+                <span className="text-[11px] text-slate-300 flex-1 min-w-0 truncate" style={{ fontFamily: '"Fraunces", serif' }}>{commodity}</span>
+                {/* Qty */}
+                <span className="text-[11px] font-mono text-slate-300 shrink-0 w-[36px] text-right">{qty}</span>
+                {/* Est value */}
+                <span className="text-[10px] text-amber-400/50 shrink-0 w-[50px] text-right">~{est}g</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Capacity bar + total */}
+      {entries.length > 0 && (
+        <div className="mt-2.5 flex items-center gap-3">
+          <div className="flex-1 h-[4px] bg-white/[0.06] rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all duration-500" style={{
+              width: `${pct}%`,
+              backgroundColor: pct > 90 ? '#f87171' : '#fbbf24',
+              boxShadow: `0 0 6px ${pct > 90 ? '#f8717140' : '#fbbf2440'}`,
+            }} />
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">{pct}%</span>
+          <span className="text-[10px] text-amber-400/60">~{totalValue.toLocaleString()}g total</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatBar({ icon, label, value, max, color, active, onClick }: { icon: React.ReactNode; label: string; value: number; max: number; color: string; active?: boolean; onClick?: () => void }) {
   const pct = Math.min(100, Math.round((value / max) * 100));
   const low = pct < 30;
   const barColor = low ? statColors.danger : color;
+  const downColor = label === 'Hull' ? '#f87171' : label === 'Morale' ? '#f59e0b' : '#38bdf8';
+  const upColor = label === 'Hull' ? '#67e8f9' : label === 'Morale' ? '#c4b5fd' : '#fbbf24';
+
   return (
-    <div className="flex items-center gap-2.5 min-w-0">
+    <button
+      onClick={() => { sfxClick(); onClick?.(); }}
+      onMouseEnter={() => sfxHover()}
+      className={`flex items-center gap-2.5 min-w-0 rounded-md px-1.5 py-1 -mx-1.5 -my-1 transition-all duration-200 ${
+        active
+          ? 'bg-white/[0.06]'
+          : 'hover:bg-white/[0.04]'
+      }`}
+      style={active ? { boxShadow: `inset 2px 0 0 ${barColor}` } : undefined}
+    >
       <div className="shrink-0" style={{ color: barColor }}>{icon}</div>
-      <div className="flex flex-col gap-0.5 min-w-[88px]">
+      <div className="flex flex-col gap-0.5 min-w-[92px]">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>{label}</span>
-          <span className="text-[10px] font-mono text-slate-400">{value}/{max}</span>
+          <span className="text-[11px] font-bold tracking-[0.08em] uppercase text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+            {label}
+            {active && <span className="ml-1 text-[8px] text-slate-600">▾</span>}
+          </span>
+          <span className="text-[11px] font-mono text-slate-400">
+            <ValueFlash value={value} upColor={upColor} downColor={downColor}>
+              {value}
+            </ValueFlash>
+            <span className="text-slate-600">/{max}</span>
+          </span>
         </div>
-        <div className="h-[4px] w-full bg-white/[0.06] rounded-full overflow-hidden">
+        <div className="h-[5px] w-full bg-white/[0.06] rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-500"
             style={{
               width: `${pct}%`,
               backgroundColor: barColor,
-              boxShadow: `0 0 6px ${barColor}40`,
+              boxShadow: `0 0 8px ${barColor}40`,
             }}
           />
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1629,10 +2005,7 @@ function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={{ duration: 0.16 }}
+      {...floatingPanelMotion}
       className="absolute bottom-24 left-1/2 z-40 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto"
     >
       <div className="bg-[#050812]/78 backdrop-blur-md border border-[#2a2d3a]/45 rounded-xl px-4 py-3 shadow-[0_10px_34px_rgba(0,0,0,0.45)]">

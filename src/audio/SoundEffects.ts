@@ -1782,3 +1782,112 @@ export function sfxShipHail(language: string) {
   const bEnd = bStart + p.duration + 0.05;
   lfo1.stop(bEnd); lfo2.stop(bEnd); intonLfo.stop(bEnd); src.stop(bEnd);
 }
+
+/** Herd hoofbeats — rapid soft thumps as grazers scatter. */
+export function sfxHoofbeats() {
+  const ac = getCtx();
+  const v = masterVolume * 0.32;
+  const t = ac.currentTime;
+  // 6 rapid low thuds with jitter — overlapping hooves
+  for (let i = 0; i < 6; i++) {
+    const start = t + i * 0.055 + Math.random() * 0.02;
+    const len = ac.sampleRate * 0.05;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < len; j++) data[j] = (Math.random() * 2 - 1) * (1 - j / len);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 180 + Math.random() * 80;
+    filt.Q.value = 2;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(v * (0.5 + Math.random() * 0.5), start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.08);
+    src.connect(filt).connect(gain).connect(ac.destination);
+    src.start(start);
+    src.stop(start + 0.1);
+  }
+}
+
+/** Flock takeoff — sweeping wing flap whoosh. */
+export function sfxBirdFlap() {
+  const ac = getCtx();
+  const v = masterVolume * 0.28;
+  const t = ac.currentTime;
+  // Three stacked flap bursts — filtered noise sweeping low→high→low
+  for (let i = 0; i < 3; i++) {
+    const start = t + i * 0.12;
+    const len = ac.sampleRate * 0.25;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < len; j++) data[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.setValueAtTime(400, start);
+    filt.frequency.linearRampToValueAtTime(1200, start + 0.12);
+    filt.frequency.linearRampToValueAtTime(500, start + 0.24);
+    filt.Q.value = 1.5;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.001, start);
+    gain.gain.linearRampToValueAtTime(v * 0.7, start + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.24);
+    src.connect(filt).connect(gain).connect(ac.destination);
+    src.start(start);
+    src.stop(start + 0.25);
+  }
+}
+
+/** Reptile scrabble — short scratchy noise as a lizard lurches away. */
+export function sfxReptileScrabble() {
+  const ac = getCtx();
+  const v = masterVolume * 0.25;
+  const t = ac.currentTime;
+  // Short rasping noise, filtered mid-high
+  const len = ac.sampleRate * 0.2;
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (0.5 + 0.5 * Math.sin(i * 0.08));
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const filt = ac.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.value = 1800;
+  filt.Q.value = 4;
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(0.001, t);
+  gain.gain.linearRampToValueAtTime(v * 0.7, t + 0.03);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  src.connect(filt).connect(gain).connect(ac.destination);
+  src.start(t);
+  src.stop(t + 0.22);
+}
+
+/** Primate alarm chatter — short high-pitched yelps. */
+export function sfxPrimateChatter() {
+  const ac = getCtx();
+  const v = masterVolume * 0.22;
+  const t = ac.currentTime;
+  // Three quick chirps of varying pitch
+  const pitches = [1400, 1700, 1550];
+  for (let i = 0; i < pitches.length; i++) {
+    const start = t + i * 0.08 + Math.random() * 0.03;
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(pitches[i], start);
+    osc.frequency.linearRampToValueAtTime(pitches[i] * 0.7, start + 0.09);
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = pitches[i];
+    filt.Q.value = 6;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.001, start);
+    gain.gain.linearRampToValueAtTime(v * 0.6, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+    osc.connect(filt).connect(gain).connect(ac.destination);
+    osc.start(start);
+    osc.stop(start + 0.14);
+  }
+}

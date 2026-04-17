@@ -22,6 +22,16 @@ const liveWalkingTransform: WalkingTransform = {
   rot: 0,
 };
 
+let livePlayerMode: 'ship' | 'walking' = 'ship';
+
+export function syncLivePlayerMode(mode: 'ship' | 'walking') {
+  livePlayerMode = mode;
+}
+
+export function getActivePlayerPos(): LiveVec3 {
+  return livePlayerMode === 'walking' ? liveWalkingTransform.pos : liveShipTransform.pos;
+}
+
 function writeVec3(target: LiveVec3, source: readonly number[]) {
   target[0] = source[0];
   target[1] = source[1];

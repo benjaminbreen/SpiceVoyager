@@ -23,6 +23,7 @@ import {
   type WorldRegion,
 } from '../utils/worldPorts';
 import TravelModalB from './TravelModalB';
+import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 
 interface WorldMapModalProps {
   onClose: () => void;
@@ -65,6 +66,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const [topoData, setTopoData] = useState<any>(null);
   const [activeRegion, setActiveRegion] = useState<WorldRegion | 'world'>('world');
   const [expandedRegions, setExpandedRegions] = useState<Set<WorldRegion>>(new Set());
+  const [devMode, setDevMode] = useState(false);
 
   const dayCount = useGameStore(s => s.dayCount);
   const fastTravel = useGameStore(s => s.fastTravel);
@@ -89,12 +91,13 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
 
   // Calculate travel info for selected port
   const travelInfo = useMemo(() => {
-    if (!selectedPort || selectedPort === nearestPortId || !canDirectlySail(nearestPortId, selectedPort)) return null;
+    if (!selectedPort || selectedPort === nearestPortId) return null;
+    if (!devMode && !canDirectlySail(nearestPortId, selectedPort)) return null;
     const port = getWorldPortById(selectedPort);
     const voyage = estimateSeaTravel(nearestPortId, selectedPort);
     if (!port || !voyage) return null;
     return { ...voyage, port };
-  }, [selectedPort, nearestPortId]);
+  }, [selectedPort, nearestPortId, devMode]);
 
   // Initialize expanded regions — player's region starts expanded
   useEffect(() => {
@@ -102,12 +105,13 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   }, [playerRegion]);
 
   useEffect(() => {
+    if (devMode) return;
     setSelectedPort((current) => {
       if (current === nearestPortId) return current;
       if (current && canDirectlySail(nearestPortId, current)) return current;
       return nearestPortId;
     });
-  }, [nearestPortId, reachablePortIds]);
+  }, [nearestPortId, reachablePortIds, devMode]);
 
   // Load TopoJSON
   useEffect(() => {
@@ -298,7 +302,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       const isSelected = selectedPort === port.id;
       const isPlayer = port.id === nearestPortId;
       const isReachable = reachablePortIds.includes(port.id);
-      const isInteractive = isPlayer || isReachable;
+      const isInteractive = devMode || isPlayer || isReachable;
 
       const portG = portGroup.append('g')
         .attr('class', `port-${port.id}`)
@@ -334,7 +338,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       }
 
       // Port marker — shape varies by scale
-      const dotColor = isPlayer ? '#60a5fa' : isSelected ? '#fbbf24' : isReachable ? '#e2c87a' : 'rgba(148,163,184,0.4)';
+      const dotColor = isPlayer ? '#60a5fa' : isSelected ? '#fbbf24' : (isReachable || devMode) ? '#e2c87a' : 'rgba(148,163,184,0.4)';
       const strokeColor = isInteractive ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.12)';
 
       if (port.scale === 'Very Large') {
@@ -390,7 +394,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
         .attr('data-y', projected[1])
         .attr('x', projected[0] + 10)
         .attr('y', projected[1] + 4)
-        .attr('fill', isPlayer ? '#93bbfc' : isSelected ? '#fbbf24' : isReachable ? 'rgba(226,200,122,0.7)' : 'rgba(148,163,184,0.42)')
+        .attr('fill', isPlayer ? '#93bbfc' : isSelected ? '#fbbf24' : (isReachable || devMode) ? 'rgba(226,200,122,0.7)' : 'rgba(148,163,184,0.42)')
         .attr('font-size', '11px')
         .attr('font-weight', '600')
         .attr('letter-spacing', '0.01em')
@@ -459,10 +463,11 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
     const initialTransform = getRegionTransform(playerRegion, width, height);
     svg.call(zoom.transform, initialTransform);
 
-  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, getBaseProjection, getRegionTransform]);
+  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, getBaseProjection, getRegionTransform, devMode]);
 
   const handleSetSail = () => {
-    if (!selectedPort || !canDirectlySail(nearestPortId, selectedPort)) return;
+    if (!selectedPort) return;
+    if (!devMode && !canDirectlySail(nearestPortId, selectedPort)) return;
     const travel = estimateSeaTravel(nearestPortId, selectedPort);
     const fromName = getWorldPortById(nearestPortId)?.name ?? nearestPortId;
     const toName = getWorldPortById(selectedPort)?.name ?? selectedPort;
@@ -493,11 +498,14 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
 
   // Keyboard
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handleDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'Shift') setDevMode(prev => !prev);
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keydown', handleDown);
+    return () => {
+      window.removeEventListener('keydown', handleDown);
+    };
   }, [onClose]);
 
   const nearestPort = getWorldPortById(nearestPortId);
@@ -514,18 +522,12 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
+      {...modalBackdropMotion}
       className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-4 z-40"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.95, opacity: 0 }}
-        transition={{ type: 'spring', damping: 30, stiffness: 400 }}
+        {...modalPanelMotion}
         className="relative w-full max-w-6xl h-[80vh] rounded-2xl overflow-hidden flex
           bg-[#0a0e18]/90 backdrop-blur-xl border border-[#2a2d3a]/50
           shadow-[0_8px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]"
@@ -563,7 +565,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
             {hoveredPort && hoveredPort !== selectedPort && (() => {
               const port = getWorldPortById(hoveredPort);
               if (!port) return null;
-              const isReachable = reachablePortIds.includes(hoveredPort);
+              const isReachable = devMode || reachablePortIds.includes(hoveredPort);
               const travel = isReachable ? estimateSeaTravel(nearestPortId, hoveredPort) : null;
               return (
                 <motion.div
@@ -583,6 +585,14 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
               );
             })()}
           </AnimatePresence>
+
+          {/* Dev mode indicator */}
+          {devMode && (
+            <div className="absolute top-3 right-3 px-2.5 py-1 rounded bg-red-500/20 border border-red-500/40
+              text-red-300 text-[10px] font-bold tracking-widest uppercase pointer-events-none z-10">
+              DEV MODE
+            </div>
+          )}
 
           {/* Vignette */}
           <div
@@ -649,14 +659,15 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                     const isSelected = selectedPort === port.id;
                     const isPlayer = port.id === nearestPortId;
                     const isReachable = reachablePortIds.includes(port.id);
-                    const travel = isReachable ? estimateSeaTravel(nearestPortId, port.id) : null;
+                    const isClickable = devMode || isPlayer || isReachable;
+                    const travel = (isReachable || devMode) ? estimateSeaTravel(nearestPortId, port.id) : null;
                     return (
                       <button
                         key={port.id}
                         onMouseEnter={() => sfxHover()}
                         aria-selected={isSelected}
                         onClick={() => {
-                          if (!isPlayer && !isReachable) return;
+                          if (!isClickable) return;
                           sfxClick();
                           setSelectedPort(isSelected ? null : port.id);
                         }}
@@ -666,7 +677,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                             : isPlayer
                               ? 'border-l-2 border-blue-500/50 bg-blue-500/[0.05]'
                               : 'border-l-2 border-transparent hover:bg-white/[0.03]'
-                        } ${!isPlayer && !isReachable ? 'opacity-40 cursor-default' : 'cursor-pointer'}`}
+                        } ${!isClickable ? 'opacity-40 cursor-default' : 'cursor-pointer'}`}
                       >
                         <div className="flex items-center gap-2">
                           <div className={`w-1.5 h-1.5 rounded-full ${
@@ -702,10 +713,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
               {travelInfo && selectedPort !== nearestPortId ? (
                 <motion.div
                   key={selectedPort}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.15 }}
+                  {...modalContentMotion}
                 >
                   {/* Stats row */}
                   <div className="flex items-center gap-3 mb-3">
@@ -746,7 +754,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
                   <Anchor size={12} />
                   <span>You are here</span>
                 </motion.div>
-              ) : selectedPort ? (
+              ) : selectedPort && !devMode ? (
                 <motion.div
                   key="not-direct"
                   initial={{ opacity: 0 }}

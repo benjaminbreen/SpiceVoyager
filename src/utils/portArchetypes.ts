@@ -9,6 +9,12 @@ const DIR_RADIANS: Record<CardinalDir, number> = {
   S: Math.PI, SW: (5 * Math.PI) / 4, W: (3 * Math.PI) / 2, NW: (7 * Math.PI) / 4,
 };
 
+/** Resolve a CardinalDir or numeric degrees (0=N, 90=E, clockwise) to radians. */
+export function resolveDirRadians(dir: CardinalDir | number): number {
+  if (typeof dir === 'number') return (dir * Math.PI) / 180;
+  return DIR_RADIANS[dir];
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 export type GeographicArchetype =
   | 'archipelago'        // current default — pure noise, scattered islands
@@ -23,6 +29,35 @@ export type GeographicArchetype =
   | 'continental_coast'; // straight coastline (Calicut)
 
 export type ClimateProfile = 'tropical' | 'arid' | 'temperate' | 'monsoon' | 'mediterranean';
+
+/** Visual style family for procedural buildings. Separate from `culture` (gameplay). */
+export type BuildingStyle =
+  | 'iberian'              // Lisbon, Seville
+  | 'dutch-brick'          // Amsterdam
+  | 'english-tudor'        // London (pre-1666 half-timber)
+  | 'luso-colonial'        // Goa, Diu, Macau
+  | 'swahili-coral'        // Mombasa, Zanzibar
+  | 'arab-cubic'           // Aden, Mocha, Socotra, Muscat
+  | 'persian-gulf'         // Hormuz (wind-catchers)
+  | 'malabar-hindu'        // Calicut
+  | 'mughal-gujarati'      // Surat
+  | 'malay-stilted'        // Malacca, Bantam
+  | 'west-african-round'   // Elmina, Luanda
+  | 'luso-brazilian'       // Salvador da Bahia
+  | 'spanish-caribbean'    // Havana, Cartagena
+  | 'khoikhoi-minimal';    // Cape of Good Hope (no permanent settlement)
+
+/**
+ * Scaffold for future unique POI buildings (Tower of London, Torre de Belém, etc).
+ * Data-only for now — renderer is a planned future phase. When implemented,
+ * `cityGenerator.ts` should reserve these grid cells before generic placement.
+ */
+export interface PortLandmark {
+  id: string;
+  slot: 'citadel' | 'hilltop' | 'waterfront' | 'bridge' | 'custom';
+  /** Local-map coords when slot is 'custom'. */
+  anchor?: [number, number];
+}
 
 /** Island shape sub-classifications for realistic silhouettes */
 export type IslandShape =
@@ -45,6 +80,27 @@ export interface Headland {
   side: 'left' | 'right';  // which flank (relative to open direction)
   size: number;             // 0.1-0.8, how far toward open water it extends
   width: number;            // 0.1-0.5, lateral width of the headland
+  /** Lateral shift along the coast (mesh-normalized). + shifts away from center. */
+  offset?: number;
+  /** Curl toward (+) or away from (-) the harbor center as the headland extends. */
+  curl?: number;
+  /** Rotation of the headland's long axis from straight out-to-sea, in degrees. */
+  axisAngle?: number;
+  /** Per-headland coastal noise multiplier (1 = default, >1 = more jagged). */
+  ruggedness?: number;
+}
+
+/** A satellite feature — a named offshore island, rock, or outcrop placed at explicit coords. */
+export interface SatelliteFeature {
+  /** Offset from port center in mesh-normalized coords (roughly -1..1). */
+  dx: number;
+  dz: number;
+  /** Radius in mesh-normalized coords (typical 0.05 - 0.25). */
+  size: number;
+  aspectRatio?: number;       // length:width ratio
+  orientation?: number;       // degrees, long axis relative to N
+  shape?: 'ovoid' | 'elongated' | 'rugged';
+  ruggedness?: number;        // coastal noise multiplier
 }
 
 export interface PortDefinition {
@@ -55,7 +111,7 @@ export interface PortDefinition {
   culture: Culture;
   scale: PortScale;
   description: string;
-  openDirection: CardinalDir;     // primary water-facing direction
+  openDirection: CardinalDir | number;     // primary water-facing direction; number = degrees (0=N, 90=E)
   /** Where the city sits relative to center (opposite of open direction by default) */
   cityDirection?: CardinalDir;
   /** Archetype-specific params */
@@ -63,6 +119,37 @@ export interface PortDefinition {
   channelTaper?: number;          // 0 = uniform width, 0.5 = narrows to half at one end (rivers)
   landmassSize?: number;          // legacy island size multiplier (use islandCoverage instead)
   coastCurvature?: number;        // bay curvature (0.3 - 1.0)
+  /** Global multiplier on coastal noise (jaggedness). 1 = default, 1.5 = rocky, 0.6 = smooth. */
+  coastRuggedness?: number;
+  /**
+   * Harbor/cove carved into the coastline. Works on `bay` (always), and on
+   * `continental_coast` / `estuary` when any of harborWidth/harborDepth is set.
+   *
+   * - harborWidth: half-width of harbor mouth in rotated local coords (~0.15 small, 0.5 wide).
+   * - harborDepth: how far the water cuts inland (~0.08 shallow shelf, 0.3 deep). Overrides
+   *   the legacy `coastCurvature * 0.35` derivation when explicitly set.
+   * - harborOffset: lateral shift along the coast (-1..1). 0 = centered.
+   * - harborShape: 'parabolic' (default, smooth round), 'semicircle' (flatter bottom),
+   *   'scalloped' (noisy edge).
+   */
+  harborWidth?: number;
+  harborDepth?: number;
+  harborOffset?: number;
+  harborShape?: 'parabolic' | 'semicircle' | 'scalloped';
+  /** Named offshore features: islands, rocks, outcrops placed at explicit offsets. */
+  satellites?: SatelliteFeature[];
+  /**
+   * Estuary river knobs (all in mesh-normalized coords).
+   * - riverMouthWidth: half-width at the coast (default ~0.18). Tagus-scale = 0.35+.
+   * - riverInlandWidth: half-width well inland, before final taper (default 0.06). Never zero,
+   *   so the channel stays connected instead of breaking into puddles.
+   * - riverLength: how far inland the river extends before it fully tapers (default 0.5).
+   * - riverSinuosity: lateral meander amplitude (0 = straight, 0.1 = gentle, 0.2 = strong).
+   */
+  riverMouthWidth?: number;
+  riverInlandWidth?: number;
+  riverLength?: number;
+  riverSinuosity?: number;
   /** Island shape sub-classification system */
   islandShape?: IslandShape;      // silhouette type (default: 'ovoid')
   islandCoverage?: number;        // target fraction of map as land (0.10 - 0.50)
@@ -73,6 +160,10 @@ export interface PortDefinition {
   /** Land-based coastline shaping */
   headlands?: Headland[];         // land protrusions flanking harbor/coast
   enclosure?: number;             // 0-1: how much coast wraps around water (0=flat, 1=enclosed)
+  /** Visual building style. Falls back to a culture default when absent. */
+  buildingStyle?: BuildingStyle;
+  /** Future POI slots (data-only scaffold, renderer TBD). */
+  landmarks?: PortLandmark[];
 }
 
 // ── The Dozen Core Ports ───────────────────────────────────────────────────────
@@ -83,14 +174,46 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'inlet',
     climate: 'tropical',
     culture: 'European',
+    buildingStyle: 'luso-colonial',
     scale: 'Large',
     description: 'Portuguese-held tropical port on the Malabar coast. A narrow inlet cuts east from the Arabian Sea, sheltering the harbor.',
     openDirection: 'W',
-    channelWidth: 0.8,
-    enclosure: 0.5,              // moderate enclosure — Mandovi estuary flanked by land
+    channelWidth: 0.85,
+    enclosure: 0.4,              // Mandovi estuary flanked by land but open to sea
+    coastRuggedness: 0.95,       // low laterite banks, not too jagged
     headlands: [
-      { side: 'left', size: 0.55, width: 0.25 },   // Cabo headland (north bank)
-      { side: 'right', size: 0.45, width: 0.2 },    // Mormugao headland (south bank)
+      // Cabo / Bardez peninsula (north bank) — smaller, with gentle southward curl
+      {
+        side: 'left',
+        size: 0.48,
+        width: 0.22,
+        offset: 0.06,
+        curl: 0.25,              // mild hook south toward the river mouth
+        axisAngle: -8,
+        ruggedness: 0.9,
+      },
+      // Mormugao peninsula (south bank) — the dominant headland, hooks north across the mouth
+      {
+        side: 'right',
+        size: 0.7,
+        width: 0.28,
+        offset: 0.04,
+        curl: 0.5,               // prominent northward hook
+        axisAngle: 14,
+        ruggedness: 1.1,
+      },
+    ],
+    satellites: [
+      // Chorão / Divar — an estuarine island upriver of the mouth
+      {
+        dx: 0.1,
+        dz: 0.08,
+        size: 0.07,
+        aspectRatio: 1.9,
+        orientation: 95,
+        shape: 'ovoid',
+        ruggedness: 0.8,
+      },
     ],
   },
   {
@@ -99,6 +222,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'island',
     climate: 'arid',
     culture: 'Indian Ocean',
+    buildingStyle: 'persian-gulf',
     scale: 'Medium',
     description: 'Barren island fortress guarding the entrance to the Persian Gulf. Strategic chokepoint for the spice trade.',
     openDirection: 'S',
@@ -113,6 +237,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'strait',
     climate: 'tropical',
     culture: 'Indian Ocean',
+    buildingStyle: 'malay-stilted',
     scale: 'Very Large',
     description: 'Great emporium on the strait between Sumatra and the Malay peninsula. Gateway between the Indian Ocean and the South China Sea.',
     openDirection: 'E',
@@ -124,13 +249,55 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'crater_harbor',
     climate: 'arid',
     culture: 'Indian Ocean',
+    buildingStyle: 'arab-cubic',
     scale: 'Medium',
     description: 'Ancient port built within the crater of an extinct volcano. Guards the entrance to the Red Sea.',
     openDirection: 'S',
-    enclosure: 0.4,              // Shamsan crater partially encloses the harbor
+    enclosure: 0.55,             // Shamsan crater wraps strongly around the harbor
+    coastRuggedness: 1.7,        // jagged volcanic cliffs
     headlands: [
-      { side: 'left', size: 0.4, width: 0.3 },   // Jebel Shamsan western arm
-      { side: 'right', size: 0.35, width: 0.25 }, // eastern volcanic ridge
+      // Jebel Shamsan — massive hooked western arm, dominates the harbor
+      {
+        side: 'left',
+        size: 0.65,
+        width: 0.28,
+        offset: 0.04,
+        curl: 0.45,              // strong hook east toward the harbor mouth
+        axisAngle: 12,
+        ruggedness: 1.4,
+      },
+      // Eastern volcanic ridge — much smaller, lower, less curled
+      {
+        side: 'right',
+        size: 0.32,
+        width: 0.18,
+        offset: 0.06,
+        curl: 0.2,
+        axisAngle: -6,
+        ruggedness: 1.1,
+      },
+    ],
+    satellites: [
+      // Sira Island — small rocky islet guarding the harbor entrance
+      {
+        dx: 0.05,
+        dz: 0.22,
+        size: 0.055,
+        aspectRatio: 1.4,
+        orientation: 20,
+        shape: 'rugged',
+        ruggedness: 1.6,
+      },
+      // Little Aden (Jebel Ihsan) — large volcanic peninsula across the bay to the SW
+      {
+        dx: -0.65,
+        dz: 0.55,
+        size: 0.22,
+        aspectRatio: 1.5,
+        orientation: 60,
+        shape: 'rugged',
+        ruggedness: 1.3,
+      },
     ],
   },
   {
@@ -139,6 +306,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'island',
     climate: 'tropical',
     culture: 'Indian Ocean',
+    buildingStyle: 'swahili-coral',
     scale: 'Small',
     description: 'Lush tropical island off the East African coast. Center of the clove trade and Swahili culture.',
     openDirection: 'W',
@@ -157,13 +325,47 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'peninsula',
     climate: 'temperate',
     culture: 'European',
+    buildingStyle: 'luso-colonial',
     scale: 'Medium',
     description: 'Portuguese trading post on a narrow peninsula in the Pearl River estuary. Gateway to the China trade.',
     openDirection: 'S',
     aspectRatio: 2.2,            // narrow peninsula, longer than wide
-    coastCurvature: 0.7,        // moderate mainland curve
+    coastCurvature: 0.7,         // moderate mainland curve
+    coastRuggedness: 1.1,        // granite hills, moderately jagged
     harbors: [
       { side: 'E', position: 0.5, depth: 0.25, width: 0.4 },  // Praia Grande bay
+    ],
+    satellites: [
+      // Taipa — closer island SE of the peninsula tip (separate from Macau in 1612)
+      {
+        dx: 0.14,
+        dz: 0.42,
+        size: 0.1,
+        aspectRatio: 1.5,
+        orientation: 70,
+        shape: 'ovoid',
+        ruggedness: 1.1,
+      },
+      // Coloane — larger, hillier island further south
+      {
+        dx: 0.05,
+        dz: 0.62,
+        size: 0.14,
+        aspectRatio: 1.7,
+        orientation: 85,
+        shape: 'rugged',
+        ruggedness: 1.2,
+      },
+      // Lappa / small islet W of the peninsula in the Pearl River channel
+      {
+        dx: -0.25,
+        dz: 0.2,
+        size: 0.07,
+        aspectRatio: 1.3,
+        orientation: 20,
+        shape: 'ovoid',
+        ruggedness: 0.9,
+      },
     ],
   },
   {
@@ -172,6 +374,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'coastal_island',
     climate: 'monsoon',
     culture: 'Indian Ocean',
+    buildingStyle: 'swahili-coral',
     scale: 'Medium',
     description: 'Swahili port on a coral island in a coastal creek system. Fort Jesus guards the harbor. Tudor Creek and Kilindini Harbour flank the island.',
     openDirection: 'E',
@@ -188,6 +391,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'continental_coast',
     climate: 'monsoon',
     culture: 'Indian Ocean',
+    buildingStyle: 'malabar-hindu',
     scale: 'Large',
     description: 'The Zamorin\'s capital on the Malabar coast. First landfall of Vasco da Gama. Rich in pepper and spices.',
     openDirection: 'W',
@@ -202,10 +406,15 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'estuary',
     climate: 'monsoon',
     culture: 'Indian Ocean',
+    buildingStyle: 'mughal-gujarati',
     scale: 'Large',
     description: 'Mughal Empire\'s great western port at the mouth of the Tapti River. Hub of the Gujarat textile trade.',
     openDirection: 'W',
     enclosure: 0.25,             // river banks create partial shelter
+    riverMouthWidth: 0.2,
+    riverInlandWidth: 0.08,
+    riverLength: 0.7,
+    riverSinuosity: 0.14,        // Tapti meanders moderately
     headlands: [
       { side: 'left', size: 0.35, width: 0.2 },   // Dumas point (north bank)
     ],
@@ -216,14 +425,60 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'bay',
     climate: 'arid',
     culture: 'Indian Ocean',
+    buildingStyle: 'arab-cubic',
     scale: 'Medium',
     description: 'Omani port nestled between jagged mountains, its harbor sheltered by rocky headlands.',
-    openDirection: 'N',
-    coastCurvature: 0.9,
-    enclosure: 0.7,              // deeply enclosed — dramatic headlands nearly close the harbor
+    openDirection: 15,           // harbor faces roughly NNE (real: ~10-20°)
+    coastCurvature: 0.75,
+    enclosure: 0.45,             // partial enclosure — the eastern flank is mostly open
+    harborOffset: -0.08,         // harbor sits slightly west of center
+    harborWidth: 0.28,           // narrow mouth, not a wide scallop
+    harborDepth: 0.22,           // deep natural inlet behind the flanking forts
+    harborShape: 'scalloped',    // irregular rocky rim
+    coastRuggedness: 1.55,       // jagged volcanic coastline
     headlands: [
-      { side: 'left', size: 0.65, width: 0.2 },   // al-Jalali fort headland
-      { side: 'right', size: 0.6, width: 0.18 },   // Mutrah corniche headland
+      // Ras Mascat / al-Jalali — large, strongly hooked peninsula curling east around the harbor
+      {
+        side: 'left',
+        size: 0.72,
+        width: 0.22,
+        offset: 0.05,           // pulled slightly toward center so it dominates the bay
+        curl: 0.55,             // strong hook toward the harbor mouth
+        axisAngle: 18,          // long axis tilts east from straight out
+        ruggedness: 1.4,
+      },
+      // Mutrah side — softer, smaller, less curled
+      {
+        side: 'right',
+        size: 0.38,
+        width: 0.14,
+        offset: 0.12,
+        curl: 0.15,
+        axisAngle: -8,
+        ruggedness: 0.9,
+      },
+    ],
+    satellites: [
+      // Ras Sirah — elongated rocky island NE of the harbor, running N-S
+      {
+        dx: 0.55,
+        dz: -0.45,
+        size: 0.13,
+        aspectRatio: 3.2,
+        orientation: 10,
+        shape: 'elongated',
+        ruggedness: 1.3,
+      },
+      // Small guard rock SE of the harbor entrance (East Fort islet)
+      {
+        dx: 0.22,
+        dz: -0.18,
+        size: 0.05,
+        aspectRatio: 1.3,
+        orientation: 40,
+        shape: 'rugged',
+        ruggedness: 1.6,
+      },
     ],
   },
   {
@@ -232,9 +487,19 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'continental_coast',
     climate: 'arid',
     culture: 'Indian Ocean',
+    buildingStyle: 'arab-cubic',
     scale: 'Small',
     description: 'Yemen\'s coffee port on the Red Sea coast. The finest Arabian coffee passes through its warehouses.',
     openDirection: 'S',
+    harborWidth: 0.55,           // broad semicircular roadstead
+    harborDepth: 0.14,           // shallow — it was a roadstead, not a deep inlet
+    harborShape: 'semicircle',   // flatter-bottomed curve, not a sharp parabola
+    coastRuggedness: 0.7,        // low sandy coast, not jagged
+    headlands: [
+      // Low flanking points of land — small and soft, no strong curl
+      { side: 'left',  size: 0.22, width: 0.16, offset: 0.08, curl: 0.05, ruggedness: 0.6 },
+      { side: 'right', size: 0.20, width: 0.16, offset: -0.08, curl: 0.05, ruggedness: 0.6 },
+    ],
   },
   {
     id: 'bantam',
@@ -242,6 +507,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'bay',
     climate: 'tropical',
     culture: 'Indian Ocean',
+    buildingStyle: 'malay-stilted',
     scale: 'Medium',
     description: 'Javanese pepper port on a sheltered bay at the western tip of Java. Contested by English, Dutch, and local sultans.',
     openDirection: 'N',
@@ -257,6 +523,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'island',
     climate: 'arid',
     culture: 'Indian Ocean',
+    buildingStyle: 'arab-cubic',
     scale: 'Small',
     description: 'Remote island at the mouth of the Gulf of Aden, famous for its dragon\'s blood trees and aloe. A waystation between Africa and India, coveted by the Portuguese.',
     openDirection: 'S',
@@ -275,6 +542,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'island',
     climate: 'arid',
     culture: 'European',
+    buildingStyle: 'luso-colonial',
     scale: 'Small',
     description: 'Tiny fortified island off the southern tip of Gujarat. Site of the great Portuguese naval victory of 1509 that secured their dominance of the Indian Ocean.',
     openDirection: 'S',
@@ -294,10 +562,16 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'estuary',
     climate: 'mediterranean',
     culture: 'European',
+    buildingStyle: 'iberian',
     scale: 'Very Large',
     description: 'The Tagus estuary opens wide below the city, crowded with carracks and smaller craft. The Casa da Índia warehouses line the Ribeira waterfront, where stevedores unload pepper, cinnamon, and Chinese porcelain under the eye of customs agents. The streets climbing the hills behind are narrow and steep. Lisbon has been under the Spanish Habsburgs since 1580, and the Carreira da Índia is fraying, but the pepper still flows.',
     openDirection: 'W',
     enclosure: 0.2,
+    riverMouthWidth: 0.4,        // Tagus is very wide at Lisbon
+    riverInlandWidth: 0.26,      // Mar da Palha inner basin stays wide
+    riverLength: 0.9,            // long reach well inland
+    riverSinuosity: 0.05,        // relatively straight in this stretch
+    coastRuggedness: 0.9,
     headlands: [
       { side: 'right', size: 0.35, width: 0.2 },  // southern bank headland
     ],
@@ -308,11 +582,17 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'estuary',
     climate: 'temperate',
     culture: 'European',
-    scale: 'Large',
+    buildingStyle: 'dutch-brick',
+    scale: 'Very Large',
     description: 'The IJ waterfront is all activity — cranes swinging bales from lighters into canal-side warehouses, VOC clerks tallying inventories, shipwrights caulking hulls in the yards. The city is flat and wet, and smells of tar and herring. The new Bourse is barely a year old but already thick with merchants trading pepper futures and Baltic grain contracts. Sephardic refugees from Iberia have settled along the canals, and their networks reach from Antwerp to Goa. Even in summer the wind off the Zuiderzee cuts through the rigging.',
     openDirection: 'N',
     channelWidth: 0.7,
     enclosure: 0.15,
+    riverMouthWidth: 0.32,       // IJ + Zuiderzee — wide flat water
+    riverInlandWidth: 0.18,
+    riverLength: 0.75,
+    riverSinuosity: 0.04,        // mostly straight channels
+    coastRuggedness: 0.5,        // flat marshy banks
   },
   {
     id: 'seville',
@@ -320,11 +600,16 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'estuary',
     climate: 'mediterranean',
     culture: 'European',
+    buildingStyle: 'iberian',
     scale: 'Large',
     description: 'The river is shallow — ocean-going ships unload downstream at Sanlúcar de Barrameda, and flat-bottomed barges ferry cargo up the Guadalquivir to the city. The Torre del Oro marks the old river quay where goods from the Americas are landed and tallied by the Casa de Contratación. Genoese bankers have offices near the cathedral, converting Potosí silver into credit. The streets smell of olive oil, tobacco smoke, and orange blossom. Merchants grumble that Cádiz would be better, but the monopoly stays.',
     openDirection: 'S',
     channelWidth: 0.6,
     enclosure: 0.2,
+    riverMouthWidth: 0.14,       // Guadalquivir is narrower than other estuaries
+    riverInlandWidth: 0.07,
+    riverLength: 0.95,           // extends far inland — Seville is well upstream
+    riverSinuosity: 0.2,         // famously meandering
   },
   {
     id: 'london',
@@ -332,7 +617,8 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'strait',
     climate: 'temperate',
     culture: 'European',
-    scale: 'Large',
+    buildingStyle: 'english-tudor',
+    scale: 'Very Large',
     description: 'The Thames at low tide exposes mudflats and timber pilings below warehouses packed tight along both banks. Lighters and wherries crowd the river — London Bridge blocks larger vessels, so ocean-going ships moor downstream at Deptford and Wapping. The East India Company is barely twelve years old, still fitting out modest voyages. Apothecaries on Bucklersbury sell pepper and nutmeg at steep markups, and Virginia tobacco has just started appearing in the pipes of gentlemen. Sea coal smoke hangs over the rooftops on still days.',
     openDirection: 'E',
     channelWidth: 0.5,
@@ -346,6 +632,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'continental_coast',
     climate: 'tropical',
     culture: 'West African',
+    buildingStyle: 'west-african-round',
     scale: 'Small',
     description: 'São Jorge da Mina rises white and angular above the rocky headland, its walls stained with tropical damp. Akan traders arrive from the forest interior with gold dust wrapped in leaves, exchanging it for Indian textiles, Venetian beads, and iron bars in the courtyard below the keep. Fishing canoes line the beach on either side of the fortress. The Portuguese garrison is small and nervous — Dutch ships have been probing the coast more often. The forest behind the settlement is dense, pressing up to the cleared ground.',
     openDirection: 'S',
@@ -360,11 +647,28 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'bay',
     climate: 'tropical',
     culture: 'West African',
+    buildingStyle: 'west-african-round',
     scale: 'Small',
     description: 'The Ilha de Luanda — a long, low sand spit — shelters the bay from the open Atlantic. The settlement is sparse: a fortress, a Jesuit college, a few streets of stone buildings in dry heat. This is a slaving port — pombeiros march coffles down from the interior to holding pens near the beach, where captives wait for ships bound to Bahia and Pernambuco. Nzimbu shells harvested from the island circulate as currency. The Benguela Current keeps the coast surprisingly cool and arid.',
     openDirection: 'W',
-    coastCurvature: 0.5,
-    enclosure: 0.3,
+    coastCurvature: 0.4,
+    enclosure: 0.2,              // mainland coast is mostly straight — shelter comes from the spit
+    harborWidth: 0.45,           // broad anchorage behind the spit
+    harborDepth: 0.12,           // shallow — the sheltered water is narrow
+    harborShape: 'semicircle',
+    coastRuggedness: 0.6,        // low sandy coast
+    satellites: [
+      // Ilha de Luanda — the defining feature: a long, thin N-S sand spit just offshore
+      {
+        dx: -0.35,
+        dz: 0.05,
+        size: 0.2,
+        aspectRatio: 5.5,        // very long and thin
+        orientation: 5,          // runs nearly N-S, slight tilt
+        shape: 'elongated',
+        ruggedness: 0.4,         // smooth sandy edges
+      },
+    ],
   },
 
   // ── Atlantic American Ports ──────────────────────────────────────────────────
@@ -374,14 +678,59 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'bay',
     climate: 'tropical',
     culture: 'Atlantic',
+    buildingStyle: 'luso-brazilian',
     scale: 'Large',
     description: 'The city divides between the upper town on the bluff — churches, the governor\'s palace, Jesuit college — and the lower town at the waterline, where warehouses, slave markets, and chandlers\' shops crowd the quay. The Baía de Todos os Santos is enormous, its shores lined with sugar engenhos and tobacco farms. Enslaved Africans far outnumber the Portuguese. The harbor is always busy with coasting vessels bringing sugar chests down from the Recôncavo, and the smell of boiling cane carries across the water before the city comes into view.',
-    openDirection: 'E',
-    coastCurvature: 0.7,
-    enclosure: 0.4,
+    // City's port quays face west into the Baía de Todos os Santos, not the Atlantic
+    openDirection: 'W',
+    coastCurvature: 0.65,
+    enclosure: 0.35,
+    harborWidth: 0.7,            // enormous natural harbor (~1000 km² in reality)
+    harborDepth: 0.22,
+    harborShape: 'semicircle',   // broad bowl rather than narrow cove
+    coastRuggedness: 1.0,
     headlands: [
-      { side: 'left', size: 0.4, width: 0.25 },   // Ponta de Santo Antônio
-      { side: 'right', size: 0.3, width: 0.2 },
+      // Ponta de Santo Antônio — the city's bluff, a substantial peninsula north of the harbor
+      {
+        side: 'right',
+        size: 0.48,
+        width: 0.22,
+        offset: 0.08,
+        curl: 0.3,
+        axisAngle: -12,
+        ruggedness: 1.0,
+      },
+      // Southern rim of the bay — gentler, less developed coast
+      {
+        side: 'left',
+        size: 0.32,
+        width: 0.2,
+        offset: 0.1,
+        curl: 0.15,
+        ruggedness: 0.85,
+      },
+    ],
+    satellites: [
+      // Itaparica — large island in the middle-south of the bay, a defining feature
+      {
+        dx: -0.55,
+        dz: 0.15,
+        size: 0.24,
+        aspectRatio: 2.4,
+        orientation: 15,
+        shape: 'elongated',
+        ruggedness: 0.8,
+      },
+      // Ilha dos Frades / smaller bay island to the north
+      {
+        dx: -0.38,
+        dz: -0.35,
+        size: 0.08,
+        aspectRatio: 1.3,
+        orientation: 40,
+        shape: 'ovoid',
+        ruggedness: 0.9,
+      },
     ],
   },
   {
@@ -390,14 +739,35 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'inlet',
     climate: 'tropical',
     culture: 'Atlantic',
+    buildingStyle: 'spanish-caribbean',
     scale: 'Large',
     description: 'The entrance is narrow — the channel passes directly beneath the guns of Morro Castle on one side and La Punta fortress on the other, then opens into a wide, deep harbor. The treasure fleet assembles here each summer before the Atlantic crossing, and the waterfront is loud with shipwrights and caulkers refitting galleons. Mexican silver, Cuban tobacco, and hides fill the customs warehouses. The fortifications are the strongest in the Americas — Drake raided the city in 1585, and the Spanish have been building walls ever since.',
     openDirection: 'N',
-    channelWidth: 0.6,
-    enclosure: 0.6,
+    channelWidth: 0.9,           // wide interior basin (inlet widens inland here)
+    enclosure: 0.75,             // deeply enclosed bocachica
+    coastRuggedness: 1.1,        // limestone coast, moderate ruggedness
     headlands: [
-      { side: 'left', size: 0.5, width: 0.2 },    // Morro Castle headland
-      { side: 'right', size: 0.45, width: 0.18 },  // La Punta
+      // Morro Castle — east side of the mouth (right flank for openDirection N)
+      // Strong inward curl nearly closes the entrance
+      {
+        side: 'right',
+        size: 0.55,
+        width: 0.16,
+        offset: -0.1,            // pulled toward center to pinch the mouth
+        curl: 0.7,               // aggressive hook west across the channel
+        axisAngle: -15,
+        ruggedness: 1.1,
+      },
+      // La Punta — west side, slightly smaller, also strongly curled
+      {
+        side: 'left',
+        size: 0.45,
+        width: 0.14,
+        offset: -0.08,
+        curl: 0.6,
+        axisAngle: 15,
+        ruggedness: 1.0,
+      },
     ],
   },
   {
@@ -406,14 +776,49 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'bay',
     climate: 'tropical',
     culture: 'Atlantic',
+    buildingStyle: 'spanish-caribbean',
     scale: 'Medium',
     description: 'The bay is nearly landlocked — ships enter through a narrow bocachica between low headlands fortified with batteries. Inside, the water is calm and deep. The Inquisition established a tribunal here just two years ago, and its agents are visible in the streets. Emeralds from Muzo, pearls from the Venezuelan coast, and silver transshipped overland from Portobelo pass through guarded warehouses. It is also one of the largest slave markets in the Americas, with thousands of captives arriving annually under the asiento.',
     openDirection: 'W',
-    coastCurvature: 0.8,
-    enclosure: 0.55,
+    coastCurvature: 0.95,        // strongly concave
+    enclosure: 0.7,              // nearly landlocked
+    harborWidth: 0.22,           // narrow bocachica mouth
+    harborDepth: 0.3,            // deep bay penetration
+    harborShape: 'parabolic',
+    coastRuggedness: 0.85,       // low tropical coast, not particularly jagged
     headlands: [
-      { side: 'left', size: 0.45, width: 0.2 },
-      { side: 'right', size: 0.4, width: 0.18 },
+      // Walled-city peninsula (north side of the bay mouth) — larger, more hooked
+      {
+        side: 'right',
+        size: 0.58,
+        width: 0.2,
+        offset: -0.05,
+        curl: 0.55,              // hooks south toward bocachica
+        axisAngle: -10,
+        ruggedness: 1.0,
+      },
+      // Barú peninsula side (south of the mouth) — smaller, gentler
+      {
+        side: 'left',
+        size: 0.4,
+        width: 0.18,
+        offset: -0.03,
+        curl: 0.3,
+        axisAngle: 6,
+        ruggedness: 0.9,
+      },
+    ],
+    satellites: [
+      // Tierrabomba — large island sitting inside the bay near the entrance
+      {
+        dx: -0.4,
+        dz: -0.05,
+        size: 0.17,
+        aspectRatio: 1.6,
+        orientation: 160,
+        shape: 'ovoid',
+        ruggedness: 0.7,
+      },
     ],
   },
 
@@ -424,6 +829,7 @@ export const CORE_PORTS: PortDefinition[] = [
     geography: 'continental_coast',
     climate: 'mediterranean',
     culture: 'Indian Ocean',
+    buildingStyle: 'khoikhoi-minimal',
     scale: 'Small',
     description: 'Table Mountain rises flat-topped above a wide, exposed anchorage in Table Bay. There is no settlement here, no quay — just a stony beach where ships send boats ashore to fill water casks from a stream running off the mountain\'s slopes. Khoikhoi herders sometimes drive cattle down to trade for iron and tobacco, though encounters can turn hostile without warning. The southeast wind blows relentlessly in summer, and ships that linger too long risk dragging anchor onto the rocks.',
     openDirection: 'S',
@@ -462,8 +868,8 @@ function smoothstep(edge0: number, edge1: number, x: number) {
 }
 
 /** Rotate local coordinates by the open direction so "open" always faces local -Y */
-function rotateToOpen(lx: number, lz: number, openDir: CardinalDir): [number, number] {
-  const angle = DIR_RADIANS[openDir];
+function rotateToOpen(lx: number, lz: number, openDir: CardinalDir | number): [number, number] {
+  const angle = resolveDirRadians(openDir);
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   return [lx * cos + lz * sin, -lx * sin + lz * cos];
@@ -539,28 +945,36 @@ function coastlineBase(
   // ── Headlands: tongues of land protruding toward open water ──
   if (def.headlands) {
     for (const h of def.headlands) {
-      // Position headland on left or right flank
       const hx = h.side === 'left' ? -1 : 1;
-      // Center of headland base along the coast
-      const centerX = hx * (0.2 + h.width * 0.6);
-      // Distance across the headland (lateral)
-      const dx = (wrx - centerX) / h.width;
-      // How far the headland extends toward open water (negative wrz)
+      const baseCenterX = hx * (0.2 + h.width * 0.6) + (h.offset ?? 0);
       const extent = h.size * 0.9;
-      // Headland profile: extends from coastline toward open water
-      // Tapers from full width at base to point at tip
-      const intoWater = -wrz + coastPos;  // how far past the coastline (positive = in water)
-      const headlandT = intoWater / extent; // 0 at coast, 1 at tip
+      const axisAngle = ((h.axisAngle ?? 0) * Math.PI) / 180;
+      const curl = h.curl ?? 0;
+      const rugg = h.ruggedness ?? 1.0;
+
+      // Anchor the headland at (baseCenterX, coastPos) on the coastline. Local frame:
+      //   u = along-axis distance into water (0 at coast, extent at tip)
+      //   v = perpendicular to axis (lateral width)
+      // When axisAngle = 0, u = intoWater and v = wrx - baseCenterX (old behavior).
+      const dxP = wrx - baseCenterX;
+      const dzP = wrz - coastPos;
+      const cosA = Math.cos(axisAngle);
+      const sinA = Math.sin(axisAngle);
+      const u = dxP * sinA + (-dzP) * cosA;
+      const vRaw = dxP * cosA + dzP * sinA;
+
+      const headlandT = u / extent;
       if (headlandT > 0 && headlandT < 1.0) {
-        // Width narrows toward the tip
+        // Curl: bend the headland toward (+) or away from (-) the harbor center.
+        // "Toward harbor" means opposite of the flank side.
+        const curlShift = -hx * curl * headlandT * headlandT * 0.35;
+        const v = vRaw - curlShift;
         const narrowing = 1 - headlandT * 0.6;
-        const lateralDist = Math.abs(dx) / narrowing;
-        // Smooth headland shape: Gaussian cross-section that tapers to tip
+        const lateralDist = Math.abs(v) / (h.width * narrowing);
         const crossSection = Math.exp(-lateralDist * lateralDist * 3);
         const tipFade = 1 - smoothstep(0.75, 1.0, headlandT);
         const headlandStr = crossSection * tipFade * 0.85;
-        // Noisy edge
-        const edgeNoise = cn * 0.3 * headlandT;
+        const edgeNoise = cn * 0.3 * headlandT * rugg;
         landStrength = Math.max(landStrength, headlandStr - edgeNoise);
       }
     }
@@ -569,6 +983,58 @@ function coastlineBase(
   // ── Apply radial fade ──
   const fade = radialFade(wrx, wrz, 0.45);
   return landStrength * fade;
+}
+
+/**
+ * Carve a harbor/cove into a land-strength field. Returns reduction amount to subtract.
+ * - rx: rotated local x in archetype-normalized coords (-1..1 at archetype radius)
+ * - wrz: rotated mesh-normalized z (negative = open water side)
+ * - localX, localZ: world-space coords (for noise sampling)
+ * - R, MESH_HALF: to convert between coord spaces
+ * Returns a value in [0, ~0.5] representing how much to subtract from landStrength.
+ */
+function carveHarbor(
+  rx: number,
+  wrz: number,
+  localX: number,
+  localZ: number,
+  def: PortDefinition,
+  R: number,
+  MESH_HALF: number,
+): number {
+  const width = def.harborWidth ?? 0.4;
+  const offset = def.harborOffset ?? 0;
+  // Depth: explicit override, or fall back to curvature-derived value
+  const depth = def.harborDepth ?? (def.coastCurvature ?? 0.6) * 0.35;
+  const shape = def.harborShape ?? 'parabolic';
+
+  const rxH = rx - offset;
+  if (Math.abs(rxH) >= width) return 0;
+
+  const t = rxH / width; // -1..1
+  let profile: number;
+  switch (shape) {
+    case 'semicircle':
+      // Circular-ish arc: sqrt profile gives a flatter bottom
+      profile = Math.sqrt(Math.max(0, 1 - t * t));
+      break;
+    case 'scalloped': {
+      // Parabolic with noise modulation on the rim
+      const rim = _coastNoise(localX * 0.04 + 77, localZ * 0.04 + 77) * 0.25;
+      profile = Math.max(0, (1 - t * t) * (1 + rim));
+      break;
+    }
+    case 'parabolic':
+    default:
+      profile = 1 - t * t;
+      break;
+  }
+
+  const coveIndent = depth * profile;
+  const carveStrength = coveIndent * (R / MESH_HALF) * 2.5;
+  // Only carve near the coastline, not deep inland
+  const nearCoast = smoothstep(0.3, -0.1, wrz) * smoothstep(-0.6, -0.2, wrz);
+  return carveStrength * nearCoast;
 }
 
 /** Interior ridge/valley modulation for terrain height variety */
@@ -617,8 +1083,8 @@ export function getArchetypeShape(
   const wz = localZ / MESH_HALF;
   const [wrx, wrz] = rotateToOpen(wx, wz, def.openDirection);
 
-  // Multi-octave coastal noise at this position
-  const cn = coastNoise(localX, localZ);
+  // Multi-octave coastal noise at this position, scaled per-port
+  const cn = coastNoise(localX, localZ) * (def.coastRuggedness ?? 1.0);
 
   let shape: number;
 
@@ -645,18 +1111,8 @@ export function getArchetypeShape(
       // Continental coastline with a curved harbor indentation.
       // Uses coastlineBase for the land + headland shape, then carves a cove.
       const landBase = coastlineBase(wrx, wrz, cn, def);
-      // Cove carved into the coastline center
-      const curvature = def.coastCurvature ?? 0.6;
-      const coveDepth = curvature * 0.35;
-      const coveWidth = 0.4;
-      const coveIndent = Math.abs(rx) < coveWidth
-        ? coveDepth * (1 - (rx / coveWidth) ** 2)
-        : 0;
-      // Convert indent to mesh-space and carve from land
-      const carveStrength = coveIndent * (R / MESH_HALF) * 2.5;
-      // Only carve near the coastline, not deep inland
-      const nearCoast = smoothstep(0.3, -0.1, wrz) * smoothstep(-0.6, -0.2, wrz);
-      shape = landBase - carveStrength * nearCoast - 0.05;
+      const carve = carveHarbor(rx, wrz, localX, localZ, def, R, MESH_HALF);
+      shape = landBase - carve - 0.05;
       break;
     }
 
@@ -868,7 +1324,7 @@ export function getArchetypeShape(
       if (def.harbors) {
         for (const h of def.harbors) {
           const hAngle = DIR_RADIANS[h.side];
-          const hRad = hAngle - DIR_RADIANS[def.openDirection];
+          const hRad = hAngle - resolveDirRadians(def.openDirection);
           const hDirX = Math.sin(hRad);
           // Position along the island (mapped to wrx since island sits between creeks)
           const hPosX = (h.position - 0.5) * 2 * spreadAngle;
@@ -919,7 +1375,7 @@ export function getArchetypeShape(
           const dAlong = (t - hT) / h.width;
           const bayStr = Math.exp(-dAlong * dAlong * 4) * h.depth;
           // Determine which side of the peninsula
-          const hAngle = DIR_RADIANS[h.side] - DIR_RADIANS[def.openDirection];
+          const hAngle = DIR_RADIANS[h.side] - resolveDirRadians(def.openDirection);
           const hSide = Math.sin(hAngle);
           // Only indent from the correct side
           if ((hSide > 0 && wrx > 0) || (hSide < 0 && wrx < 0) || hSide === 0) {
@@ -939,22 +1395,35 @@ export function getArchetypeShape(
     }
 
     case 'estuary': {
-      // Continental coast with a river mouth fanning out into a delta.
-      // Uses coastlineBase for the land + headland shape, then carves the river.
+      // Continental coast with a meandering river.
+      // The river has a mouth width and a minimum inland width, so it stays
+      // connected instead of breaking into puddles. Centerline shifts with
+      // low-frequency noise for sinuosity.
       const landBase = coastlineBase(wrx, wrz, cn, def);
-      // River: widens toward the mouth, tapers to nothing inland
-      const inlandTaper = 1 - smoothstep(0.1, 0.4, wrz);
-      const riverWidth = (0.08 + Math.max(0, -wrz) * 0.22) * inlandTaper;
-      const riverNoise = _coastNoise(localX * 0.02, localZ * 0.015) * 0.03;
-      const rw = riverWidth + riverNoise;
-      const riverStrength = rw > 0.005 && Math.abs(wrx) < rw
-        ? smoothstep(rw, rw * 0.15, Math.abs(wrx))
+      const mouthW = def.riverMouthWidth ?? 0.18;
+      const inlandW = def.riverInlandWidth ?? 0.06;
+      const riverLen = def.riverLength ?? 0.5;
+      const sinuosity = def.riverSinuosity ?? 0.08;
+
+      // Width profile: mouthW at coast (wrz = coastPos ≈ 0), lerp to inlandW at wrz ≈ 0.3,
+      // then final taper to zero over riverLen.
+      const tWidth = smoothstep(-0.1, 0.35, wrz);
+      let rw = mouthW * (1 - tWidth) + inlandW * tWidth;
+      // Hard final taper beyond riverLength so the channel ends cleanly
+      const endTaper = 1 - smoothstep(riverLen - 0.12, riverLen, wrz);
+      rw *= endTaper;
+      // Subtle width noise (keeps banks irregular without breaking continuity)
+      rw += _coastNoise(localX * 0.02, localZ * 0.015) * 0.02;
+
+      // Meandering centerline: low-frequency lateral shift, stronger further inland
+      const meander = _coastNoise(localX * 0.006 + 500, localZ * 0.008 + 500) * sinuosity * smoothstep(-0.1, 0.4, wrz);
+      const dFromCenter = Math.abs(wrx - meander);
+
+      const riverStrength = rw > 0.005 && dFromCenter < rw
+        ? smoothstep(rw, rw * 0.25, dFromCenter)
         : 0;
-      // Delta islands near the mouth
-      const deltaX = rx * 7, deltaZ = (rz + 0.3) * 5;
-      const deltaNoise = Math.sin(deltaX * 2.1) * Math.cos(deltaZ * 1.7) * 0.25;
-      const nearMouth = wrz < -0.1 && wrz > -0.5 ? deltaNoise * smoothstep(-0.5, -0.2, wrz) : 0;
-      shape = landBase - riverStrength * 1.2 + nearMouth;
+
+      shape = landBase - riverStrength * 1.3;
       break;
     }
 
@@ -984,7 +1453,13 @@ export function getArchetypeShape(
     case 'continental_coast': {
       // Coastline with noise — land on one side, ocean on the other.
       // Uses coastlineBase which now handles headlands and enclosure.
-      shape = coastlineBase(wrx, wrz, cn, def) * 0.85 - 0.08;
+      const baseLand = coastlineBase(wrx, wrz, cn, def) * 0.85;
+      // Opt-in harbor carve when any harbor knob is set
+      const hasHarbor = def.harborWidth !== undefined
+        || def.harborDepth !== undefined
+        || def.harborOffset !== undefined;
+      const carve = hasHarbor ? carveHarbor(rx, wrz, localX, localZ, def, R, MESH_HALF) : 0;
+      shape = baseLand - carve - 0.08;
       break;
     }
   }
@@ -995,6 +1470,40 @@ export function getArchetypeShape(
   // Offshore features: small islands and rocky outcrops near coastlines
   const offshore = offshoreFeatures(localX, localZ, shape);
   if (offshore > 0) shape = Math.max(shape, offshore);
+
+  // Named satellite features: explicit offshore islands/rocks
+  if (def.satellites && def.satellites.length > 0) {
+    const MESH_HALF2 = _archetypeMeshHalf;
+    const wx2 = localX / MESH_HALF2;
+    const wz2 = localZ / MESH_HALF2;
+    for (const s of def.satellites) {
+      const ldx = wx2 - s.dx;
+      const ldz = wz2 - s.dz;
+      const oRad = ((s.orientation ?? 0) * Math.PI) / 180;
+      const cosO = Math.cos(oRad);
+      const sinO = Math.sin(oRad);
+      const ix = ldx * cosO + ldz * sinO;
+      const iz = -ldx * sinO + ldz * cosO;
+      const ar = s.aspectRatio ?? 1.0;
+      const semiLong = s.size * Math.sqrt(ar);
+      const semiShort = s.size / Math.sqrt(ar);
+      const rugg = s.ruggedness ?? 1.0;
+      const sn = _coastNoise(localX * 0.04 + s.dx * 200, localZ * 0.04 + s.dz * 200) * 0.22 * rugg;
+      const shapeType = s.shape ?? 'ovoid';
+      let d: number;
+      if (shapeType === 'elongated') {
+        const px = Math.abs(ix / semiShort);
+        const pz = Math.abs(iz / semiLong);
+        d = Math.pow(Math.pow(px, 2.5) + Math.pow(pz, 2.5), 1 / 2.5);
+      } else if (shapeType === 'rugged') {
+        d = Math.sqrt((ix / semiShort) ** 2 + (iz / semiLong) ** 2) + sn * 1.8;
+      } else {
+        d = Math.sqrt((ix / semiShort) ** 2 + (iz / semiLong) ** 2);
+      }
+      const satStrength = smoothstep(1.0 + sn, 0.4, d) * 0.75;
+      if (satStrength > 0.02) shape = Math.max(shape, satStrength);
+    }
+  }
 
   return shape;
 }

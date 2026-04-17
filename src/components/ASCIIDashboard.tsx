@@ -7,6 +7,7 @@ import { CrewPortraitSquare } from './CrewPortrait';
 import { PortraitModal } from './PortraitModal';
 import { FACTIONS } from '../constants/factions';
 import { sfxClick } from '../audio/SoundEffects';
+import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 import {
   ASCII_COLORS as CLR,
   C,
@@ -292,7 +293,15 @@ function reputationTier(rep: number): { label: string; color: string } {
 }
 
 function OverviewTab() {
-  const { ship, stats, crew, cargo, gold, provisions, ports, playerPos, getReputation } = useGameStore();
+  const ship = useGameStore(s => s.ship);
+  const stats = useGameStore(s => s.stats);
+  const crew = useGameStore(s => s.crew);
+  const cargo = useGameStore(s => s.cargo);
+  const gold = useGameStore(s => s.gold);
+  const provisions = useGameStore(s => s.provisions);
+  const ports = useGameStore(s => s.ports);
+  const playerPos = useGameStore(s => s.playerPos);
+  const getReputation = useGameStore(s => s.getReputation);
   const captain = crew.find(c => c.role === 'Captain') ?? crew[0];
   const sparkle = useSparkle();
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
@@ -641,7 +650,9 @@ for (const [portId, faction] of Object.entries(PORT_FACTION)) {
 }
 
 function ReputationTab() {
-  const { ship, reputation, getReputation } = useGameStore();
+  const ship = useGameStore(s => s.ship);
+  const reputation = useGameStore(s => s.reputation);
+  const getReputation = useGameStore(s => s.getReputation);
   const sparkle = useSparkle();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -982,9 +993,10 @@ const QUALITY_STYLE: Record<CrewQuality, { label: string; color: string; bg: str
   legendary: { label: 'Legendary', color: '#a78bfa', bg: 'rgba(167,139,250,0.06)', border: 'rgba(167,139,250,0.25)' },
 };
 
-function CrewTab() {
-  const { crew, setCrewRole } = useGameStore();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+function CrewTab({ initialCrewId }: { initialCrewId?: string }) {
+  const crew = useGameStore(s => s.crew);
+  const setCrewRole = useGameStore(s => s.setCrewRole);
+  const [selectedId, setSelectedId] = useState<string | null>(initialCrewId ?? null);
 
   const selectedMember = selectedId ? crew.find(c => c.id === selectedId) : null;
 
@@ -1018,7 +1030,8 @@ const ROLE_SORT_ORDER: Record<string, number> = {
 };
 
 function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: string) => void }) {
-  const { setCrewRole, dayCount } = useGameStore();
+  const setCrewRole = useGameStore(s => s.setCrewRole);
+  const dayCount = useGameStore(s => s.dayCount);
   const avgSkill = Math.round(crew.reduce((a, c) => a + c.skill, 0) / (crew.length || 1));
   const avgMorale = Math.round(crew.reduce((a, c) => a + c.morale, 0) / (crew.length || 1));
   const healthyCrew = crew.filter(c => c.health === 'healthy').length;
@@ -1979,7 +1992,9 @@ function ConditionStripe({ hullPct, sailsPct, avgMorale, crewHealthPct }: {
 // ── Ship tab main ────────────────────────────────────────────────────────
 
 function ShipTab() {
-  const { ship, stats, crew } = useGameStore();
+  const ship = useGameStore(s => s.ship);
+  const stats = useGameStore(s => s.stats);
+  const crew = useGameStore(s => s.crew);
   const sparkle = useSparkle();
 
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
@@ -2217,7 +2232,8 @@ function ShipStatRow({ label, value, pct, color }: { label: string; value: strin
 // CARGO TAB
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { ALL_COMMODITIES_FULL, ALL_COMMODITIES, COMMODITY_DEFS, TIER_LABELS, type Commodity, type CommodityTier } from '../utils/commodities';
+import { COMMODITY_HISTORICAL_NOTES } from '../utils/commodityHistoricalNotes';
 
 // Derive colors and icons from the central commodity definitions
 const COMMODITY_COLORS: Record<string, string> = Object.fromEntries(
@@ -2228,17 +2244,13 @@ const COMMODITY_ICONS: Record<string, string> = Object.fromEntries(
 );
 
 function CargoTab() {
-  const { cargo, stats, provisions, crew, ports, playerPos, activePort } = useGameStore();
-  const sparkle = useSparkle();
+  const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(null);
+  const cargo = useGameStore(s => s.cargo);
+  const ports = useGameStore(s => s.ports);
+  const activePort = useGameStore(s => s.activePort);
+  const playerPos = useGameStore(s => s.playerPos);
+  const stats = useGameStore(s => s.stats);
 
-  const currentCargo = Object.entries(cargo).reduce(
-    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-  );
-  const freeCargo = stats.cargoCapacity - currentCargo;
-  const usedPct = Math.round((currentCargo / stats.cargoCapacity) * 100);
-  const isEmpty = currentCargo === 0;
-
-  // Find nearest port for price estimates
   const nearPort = activePort ?? ports.reduce<typeof ports[0] | null>((best, p) => {
     const dx = playerPos[0] - p.position[0];
     const dz = playerPos[2] - p.position[2];
@@ -2247,11 +2259,49 @@ function CargoTab() {
     return best;
   }, null);
 
-  // Provisions: estimate days remaining
+  // Build list of held commodities for prev/next navigation
+  const heldCommodities = ALL_COMMODITIES.filter(c => (cargo[c as keyof typeof cargo] ?? 0) > 0);
+
+  if (selectedCommodity) {
+    const currentIndex = heldCommodities.indexOf(selectedCommodity);
+    return (
+      <CargoDetailView
+        commodity={selectedCommodity}
+        onBack={() => setSelectedCommodity(null)}
+        onPrev={currentIndex > 0 ? () => { sfxClick(); setSelectedCommodity(heldCommodities[currentIndex - 1]); } : undefined}
+        onNext={currentIndex < heldCommodities.length - 1 ? () => { sfxClick(); setSelectedCommodity(heldCommodities[currentIndex + 1]); } : undefined}
+        nearPort={nearPort}
+      />
+    );
+  }
+
+  return (
+    <CargoManifest
+      onSelect={(c) => { sfxClick(); setSelectedCommodity(c); }}
+      nearPort={nearPort}
+    />
+  );
+}
+
+// ── Cargo manifest (list view) ────────────────────────────────────────────
+
+function CargoManifest({ onSelect, nearPort }: {
+  onSelect: (c: Commodity) => void;
+  nearPort: ReturnType<typeof useGameStore.getState>['ports'][0] | null;
+}) {
+  const cargo = useGameStore(s => s.cargo);
+  const stats = useGameStore(s => s.stats);
+  const provisions = useGameStore(s => s.provisions);
+  const crew = useGameStore(s => s.crew);
+
+  const currentCargo = Object.entries(cargo).reduce(
+    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+  );
+  const freeCargo = stats.cargoCapacity - currentCargo;
+  const usedPct = Math.round((currentCargo / stats.cargoCapacity) * 100);
+  const isEmpty = currentCargo === 0;
   const dailyConsumption = Math.max(1, Math.ceil(crew.length * 0.5));
   const daysRemaining = dailyConsumption > 0 ? Math.floor(provisions / dailyConsumption) : 999;
-
-  // Total estimated sell value at nearest port
   const totalValue = nearPort
     ? ALL_COMMODITIES_FULL.reduce((sum, c) => sum + (cargo[c as keyof typeof cargo] ?? 0) * Math.floor((nearPort.prices[c as keyof typeof nearPort.prices] ?? 0) * 0.8), 0)
     : null;
@@ -2379,6 +2429,7 @@ function CargoTab() {
           const icon = COMMODITY_ICONS[c];
           const sellPrice = nearPort ? Math.floor((nearPort.prices[c as keyof typeof nearPort.prices] ?? 0) * 0.8) : null;
           const lineValue = sellPrice !== null && qty > 0 ? qty * sellPrice : null;
+          const isClickable = qty > 0;
 
           return (
             <motion.div
@@ -2386,11 +2437,12 @@ function CargoTab() {
               initial={{ opacity: 0, x: -6 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.25, delay: 0.22 + i * 0.04 }}
-              className="flex items-center gap-2 px-3 py-2.5 border-b transition-colors"
+              className={`flex items-center gap-2 px-3 py-2.5 border-b transition-colors ${isClickable ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
               style={{
                 borderColor: CLR.rule + '20',
                 opacity: qty > 0 ? 1 : 0.35,
               }}
+              onClick={isClickable ? () => onSelect(c) : undefined}
             >
               {/* Icon + name */}
               <span className="text-[13px] w-[18px] text-center" style={{ color, fontFamily: MONO }}>{icon}</span>
@@ -2543,6 +2595,331 @@ function CargoTab() {
   );
 }
 
+// ── Cargo detail view (Materia Medica style) ─────────────────────────────
+
+function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
+  commodity: Commodity;
+  onBack: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  nearPort: ReturnType<typeof useGameStore.getState>['ports'][0] | null;
+}) {
+  const cargo = useGameStore(s => s.cargo);
+  const stats = useGameStore(s => s.stats);
+  const ports = useGameStore(s => s.ports);
+
+  const def = COMMODITY_DEFS[commodity];
+  const qty = cargo[commodity as keyof typeof cargo] ?? 0;
+  const totalWeight = qty * def.weight;
+  const holdPct = stats.cargoCapacity > 0 ? Math.round((totalWeight / stats.cargoCapacity) * 100) : 0;
+  const color = def.color;
+  const tierLabel = TIER_LABELS[def.tier];
+  const historicalNote = COMMODITY_HISTORICAL_NOTES[commodity];
+
+  // Gather known prices across ports
+  const portPrices = ports
+    .map(p => ({
+      name: p.name,
+      price: Math.floor((p.prices[commodity as keyof typeof p.prices] ?? 0) * 0.8),
+      isCurrent: nearPort?.name === p.name,
+    }))
+    .filter(p => p.price > 0)
+    .sort((a, b) => a.price - b.price);
+
+  const bestPort = portPrices.length > 0 ? portPrices[portPrices.length - 1] : null;
+  const sellHere = nearPort ? Math.floor((nearPort.prices[commodity as keyof typeof nearPort.prices] ?? 0) * 0.8) : null;
+  const bestProfit = bestPort && qty > 0 ? qty * bestPort.price : null;
+
+  // Arrow key navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' && onPrev) { e.preventDefault(); onPrev(); }
+      if (e.key === 'ArrowDown' && onNext) { e.preventDefault(); onNext(); }
+      if (e.key === 'Escape') { e.preventDefault(); onBack(); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onPrev, onNext, onBack]);
+
+  // Risk summary text
+  const risks: string[] = [];
+  if (def.spoilable) risks.push('Spoilable');
+  if (def.breakable) risks.push('Fragile');
+  if (def.fraudRisk > 0) risks.push(`Fraud ${Math.round(def.fraudRisk * 100)}%`);
+  const riskSummary = risks.length > 0 ? risks.join(' \u00b7 ') : 'Stable \u00b7 No spoilage';
+
+  return (
+    <motion.div
+      key={`cargo-detail-${commodity}`}
+      initial={{ opacity: 0, x: 12 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -12 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="flex flex-col items-center w-full"
+    >
+      {/* Breadcrumb */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="w-full max-w-xl px-2 md:px-4 mt-1"
+      >
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => { sfxClick(); onBack(); }}
+            className="text-[11px] tracking-[0.12em] uppercase hover:underline underline-offset-2 transition-colors"
+            style={{ color: CLR.tabCargo, fontFamily: SANS, fontWeight: 500 }}
+          >
+            Cargo
+          </button>
+          <span className="text-[11px]" style={{ color: CLR.dim }}>&rsaquo;</span>
+          <span
+            className="text-[11px] tracking-[0.08em]"
+            style={{ color: CLR.bright, fontFamily: SANS, fontWeight: 500 }}
+          >
+            {commodity}
+          </span>
+        </div>
+      </motion.div>
+
+      {/* Large commodity image */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.05 }}
+        className="mt-3 w-full max-w-2xl px-3 md:px-6 flex flex-col items-center"
+      >
+        <div
+          className="w-[130px] h-[130px] md:w-[150px] md:h-[150px] rounded-full overflow-hidden flex items-center justify-center"
+          style={{
+            backgroundColor: `color-mix(in srgb, ${color} 12%, #d4cbb8)`,
+            boxShadow: `0 2px 16px rgba(0,0,0,0.15), 0 0 40px ${color}08`,
+          }}
+        >
+          {def.iconImage ? (
+            <img
+              src={def.iconImage}
+              alt={commodity}
+              className="w-[85%] h-[85%] object-cover rounded-full"
+              style={{ imageRendering: 'auto' }}
+            />
+          ) : (
+            <span className="text-[56px] md:text-[64px]" style={{ color: `color-mix(in srgb, ${color} 70%, #3a2a1a)`, fontFamily: MONO }}>{def.icon}</span>
+          )}
+        </div>
+
+        {/* Name */}
+        <h2
+          className="text-[20px] md:text-[24px] tracking-[0.2em] uppercase mt-3"
+          style={{ color: CLR.bright, fontFamily: MONO }}
+        >
+          {commodity}
+        </h2>
+
+        {/* Tier + category line */}
+        <p className="text-[12px] mt-1 tracking-[0.08em]" style={{ color: CLR.dim, fontFamily: SANS }}>
+          Tier {def.tier} &middot; {tierLabel}
+          {def.weight > 1 && <> &middot; Weight: {def.weight} units</>}
+        </p>
+
+        {/* Description */}
+        <p
+          className="text-[13px] mt-2 text-center max-w-md"
+          style={{ color: CLR.txt, fontFamily: SANS }}
+        >
+          {def.description}
+        </p>
+
+        {/* Physical description */}
+        <p
+          className="text-[15px] md:text-[16px] mt-1.5 text-center leading-relaxed max-w-md"
+          style={{ color: CLR.txt, fontFamily: SERIF, fontStyle: 'italic' }}
+        >
+          &ldquo;{def.physicalDescription}&rdquo;
+        </p>
+      </motion.div>
+
+      {/* In Hold card */}
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15 }}
+        className="mt-3 w-full max-w-2xl px-3 md:px-6"
+      >
+        <div
+          className="px-4 py-3 rounded-lg"
+          style={{ backgroundColor: color + '08', border: `1px solid ${color}20` }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+              In Hold
+            </span>
+            <span className="text-[14px] tabular-nums" style={{ color: CLR.bright, fontFamily: MONO }}>
+              {qty} unit{qty !== 1 ? 's' : ''}
+              {sellHere !== null && qty > 0 && (
+                <span className="text-[11px] ml-2" style={{ color: CLR.gold }}>
+                  estimated {(qty * sellHere).toLocaleString()}g
+                </span>
+              )}
+            </span>
+          </div>
+
+          {/* Hold share bar */}
+          <div className="h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
+            <motion.div
+              className="h-full rounded-full"
+              initial={{ width: 0 }}
+              animate={{ width: `${holdPct}%` }}
+              transition={{ duration: 0.5, delay: 0.22 }}
+              style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}30` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[10px]" style={{ color: CLR.dim, fontFamily: SANS }}>
+              {riskSummary}
+            </span>
+            <span className="text-[10px] tabular-nums" style={{ color: CLR.dim, fontFamily: MONO }}>
+              {holdPct}% of hold
+            </span>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Known Prices */}
+      {portPrices.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mt-3 w-full max-w-2xl px-3 md:px-6"
+        >
+          <span className="text-[10px] tracking-[0.15em] uppercase block mb-1.5 px-1" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+            Known Prices
+          </span>
+          <div
+            className="rounded-lg overflow-hidden"
+            style={{ border: `1px solid ${CLR.rule}20` }}
+          >
+            {portPrices.map((p, i) => {
+              const isBest = bestPort && p.name === bestPort.name;
+              const maxPrice = bestPort?.price ?? 1;
+              const barPct = Math.round((p.price / maxPrice) * 100);
+              return (
+                <div
+                  key={p.name}
+                  className="flex items-center gap-2 px-3 py-1.5"
+                  style={{
+                    backgroundColor: p.isCurrent ? CLR.tabCargo + '08' : i % 2 === 0 ? 'transparent' : CLR.rule + '06',
+                    borderBottom: i < portPrices.length - 1 ? `1px solid ${CLR.rule}15` : 'none',
+                  }}
+                >
+                  <span className="text-[12px] w-[90px] md:w-[120px] truncate" style={{ color: p.isCurrent ? CLR.bright : CLR.txt, fontFamily: SANS }}>
+                    {p.name}
+                    {p.isCurrent && <span className="text-[9px] ml-1" style={{ color: CLR.tabCargo }}>&larr;</span>}
+                  </span>
+                  {/* Price bar */}
+                  <div className="flex-1 h-[4px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '30' }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${barPct}%`,
+                        backgroundColor: isBest ? CLR.gold : color,
+                        boxShadow: isBest ? `0 0 6px ${CLR.gold}30` : 'none',
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="text-[12px] tabular-nums w-[40px] text-right"
+                    style={{ color: isBest ? CLR.gold : CLR.txt, fontFamily: MONO, fontWeight: isBest ? 600 : 400 }}
+                  >
+                    {p.price}g
+                  </span>
+                  {isBest && <span className="text-[10px]" style={{ color: CLR.gold }}>&#9733;</span>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Profit callout */}
+          {bestPort && bestProfit !== null && bestProfit > 0 && (
+            <p className="text-[11px] mt-1.5 px-1" style={{ color: CLR.gold, fontFamily: SANS }}>
+              Profit if sold at {bestPort.name}: <span style={{ fontFamily: MONO, fontWeight: 600 }}>{bestProfit.toLocaleString()}g</span>
+            </p>
+          )}
+        </motion.div>
+      )}
+
+      {/* Historical Note */}
+      {historicalNote && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.28 }}
+          className="mt-3 w-full max-w-2xl px-3 md:px-6 mb-2"
+        >
+          <div className="h-[1px] mb-3" style={{ background: `linear-gradient(90deg, transparent, ${CLR.rule}40, transparent)` }} />
+          <div
+            className="px-4 py-3 md:px-5 md:py-4 rounded-lg"
+            style={{ backgroundColor: CLR.warm + '06', border: `1px solid ${CLR.warm}15` }}
+          >
+            <span className="text-[10px] tracking-[0.15em] uppercase block mb-2.5" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+              Historical Note
+            </span>
+            <p
+              className="text-[14px] md:text-[15px] leading-[1.75]"
+              style={{ color: CLR.txt, fontFamily: SERIF }}
+            >
+              {historicalNote.text}
+            </p>
+            {historicalNote.sources.length > 0 && (
+              <div className="mt-3 pt-2.5" style={{ borderTop: `1px solid ${CLR.rule}20` }}>
+                <span className="text-[10px] tracking-[0.12em] uppercase block mb-1.5" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+                  Further Reading
+                </span>
+                {historicalNote.sources.map((src, i) => (
+                  <p key={i} className="text-[12px] leading-normal mb-0.5" style={{ color: CLR.dim, fontFamily: SERIF, fontStyle: 'italic' }}>
+                    <span style={{ color: CLR.rule }}>&#9675;</span> {src}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Prev / Next navigation */}
+      {(onPrev || onNext) && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, delay: 0.35 }}
+          className="mt-2 mb-3 w-full max-w-2xl px-4 md:px-6 flex items-center justify-between"
+        >
+          {onPrev ? (
+            <button
+              onClick={onPrev}
+              className="text-[11px] tracking-[0.1em] hover:underline underline-offset-2 transition-colors"
+              style={{ color: CLR.tabCargo, fontFamily: SANS, fontWeight: 500 }}
+            >
+              &laquo; Prev
+            </button>
+          ) : <span />}
+          {onNext ? (
+            <button
+              onClick={onNext}
+              className="text-[11px] tracking-[0.1em] hover:underline underline-offset-2 transition-colors"
+              style={{ color: CLR.tabCargo, fontFamily: SANS, fontWeight: 500 }}
+            >
+              Next &raquo;
+            </button>
+          ) : <span />}
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // STUB TABS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2630,7 +3007,7 @@ function ASCIITabBar({ active, onChange }: { active: DashTab; onChange: (tab: Da
 // MAIN DASHBOARD COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function ASCIIDashboard({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId }: { open: boolean; onClose: () => void; initialTab?: string; initialCrewId?: string }) {
   const [tab, setTab] = useState<DashTab>('overview');
   const activeAccent = TABS.find(t => t.id === tab)?.accent ?? CLR.tabOverview;
 
@@ -2644,29 +3021,26 @@ export function ASCIIDashboard({ open, onClose }: { open: boolean; onClose: () =
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
-  // Reset to overview on open
+  // Reset to requested tab on open (or overview by default)
   useEffect(() => {
-    if (open) setTab('overview');
-  }, [open]);
+    if (open) {
+      const valid: DashTab[] = ['overview', 'ship', 'crew', 'cargo', 'reputation'];
+      setTab(valid.includes(initialTab as DashTab) ? (initialTab as DashTab) : 'overview');
+    }
+  }, [open, initialTab]);
 
   if (!open) return null;
 
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
+        {...modalBackdropMotion}
         className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-6 pointer-events-auto"
         style={{ backgroundColor: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(4px)' }}
         onClick={(e) => { if (e.target === e.currentTarget) { sfxClose(); onClose(); } }}
       >
         <motion.div
-          initial={{ scale: 0.96, y: 16 }}
-          animate={{ scale: 1, y: 0 }}
-          exit={{ scale: 0.96, y: 16 }}
-          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          {...modalPanelMotion}
           className="relative w-full max-w-4xl h-full max-h-[88vh] overflow-hidden flex flex-col"
           style={{
             background: 'linear-gradient(180deg, #0e0d0a 0%, #0a0908 40%, #080807 100%)',
@@ -2705,7 +3079,7 @@ export function ASCIIDashboard({ open, onClose }: { open: boolean; onClose: () =
             <AnimatePresence mode="wait">
               {tab === 'overview' && <OverviewTab />}
               {tab === 'ship' && <ShipTab />}
-              {tab === 'crew' && <CrewTab />}
+              {tab === 'crew' && <CrewTab initialCrewId={initialCrewId} />}
               {tab === 'cargo' && <CargoTab />}
               {tab === 'reputation' && <ReputationTab />}
             </AnimatePresence>
