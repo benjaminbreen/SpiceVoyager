@@ -1,128 +1,221 @@
-import { useState, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
 import { useGameStore, Building, Port } from '../store/gameStore';
-import { mouseWorldPos } from '../utils/combatState';
+import { mouseWorldPos, mouseRay } from '../utils/combatState';
+import { createWorldLabelTexture, worldHeightForScreenPixels } from '../utils/worldLabelTextures';
+import { useWaterOverlayLayer } from '../utils/waterOverlayLayer';
 
-const HOVER_RADIUS = 4; // world units — how close the cursor must be
-const CHECK_INTERVAL = 0.08; // seconds between spatial lookups
-const PORT_RANGE = 80; // only check buildings if mouse is within this range of a port
+const HOVER_MIN_RADIUS = 4;
+const HOVER_BUFFER = 1.6;
+const CHECK_INTERVAL = 0.12;
+const PORT_RANGE = 80;
+const FADE_IN_SEC = 0.14;
+const FADE_OUT_SEC = 0.22;
+
+const BASE_WORLD_HEIGHT = 4.1;
+const MAX_WORLD_HEIGHT = 18;
+const MIN_READABLE_SCREEN_PX = 64;
+
+// Glow overlay: additive-blended box around the hovered building
+const GLOW_COLOR = '#ffd89a';
+const GLOW_MAX_OPACITY = 0.32;
+const GLOW_X_PAD = 1.06;
+const GLOW_Y_PAD = 1.35; // taller than building so roofs/towers stay within
+const GLOW_Z_PAD = 1.06;
+const GLOW_PULSE_RATE = 2.4;  // radians/sec
+const GLOW_PULSE_AMP = 0.12;  // fraction of max opacity
 
 export function BuildingTooltip() {
   const ports = useGameStore(s => s.ports);
-  const [hovered, setHovered] = useState<Building | null>(null);
-  const timerRef = useRef(0);
-  const prevIdRef = useRef<string | null>(null);
+  const { camera, size } = useThree();
+  const [displayed, setDisplayed] = useState<Building | null>(null);
+  const detectedRef = useRef<Building | null>(null);
+  const checkTimerRef = useRef(0);
+  const opacityRef = useRef(0);
+  const pulseRef = useRef(0);
+  const materialRef = useRef<THREE.SpriteMaterial>(null);
+  const spriteRef = useRef<THREE.Sprite>(null);
+  const glowMeshRef = useRef<THREE.Mesh>(null);
+  const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const positionRef = useMemo(() => new THREE.Vector3(), []);
+
+  // Keep both sprite and glow out of water reflections
+  useWaterOverlayLayer(spriteRef);
+  useWaterOverlayLayer(glowMeshRef);
+
+  const label = useMemo(() => createWorldLabelTexture({
+    title: displayed?.label ?? '',
+    subtitle: displayed?.labelSub,
+    accent: '#c9a84c',
+    variant: 'building',
+  }), [displayed?.label, displayed?.labelSub]);
+
+  useEffect(() => () => label.texture.dispose(), [label]);
 
   useFrame((_, delta) => {
-    timerRef.current += delta;
-    if (timerRef.current < CHECK_INTERVAL) return;
-    timerRef.current = 0;
-
-    if (!mouseWorldPos.valid) {
-      if (prevIdRef.current !== null) {
-        prevIdRef.current = null;
-        setHovered(null);
-      }
-      return;
+    checkTimerRef.current += delta;
+    if (checkTimerRef.current >= CHECK_INTERVAL) {
+      checkTimerRef.current = 0;
+      detectedRef.current = detectHoveredBuilding(ports);
     }
 
-    const mx = mouseWorldPos.x;
-    const mz = mouseWorldPos.z;
+    const active = detectedRef.current;
+    const current = displayed;
+    const sameBuilding = !!active && !!current && active.id === current.id;
+    const target = sameBuilding ? 1 : 0;
 
-    // Find which port (if any) the mouse is near
-    let nearPort: Port | null = null;
-    for (const p of ports) {
-      const dx = p.position[0] - mx;
-      const dz = p.position[2] - mz;
-      if (dx * dx + dz * dz < PORT_RANGE * PORT_RANGE) {
-        nearPort = p;
-        break;
-      }
+    const rate = target > opacityRef.current ? 1 / FADE_IN_SEC : 1 / FADE_OUT_SEC;
+    const step = delta * rate;
+    if (opacityRef.current < target) {
+      opacityRef.current = Math.min(target, opacityRef.current + step);
+    } else if (opacityRef.current > target) {
+      opacityRef.current = Math.max(target, opacityRef.current - step);
     }
 
-    if (!nearPort) {
-      if (prevIdRef.current !== null) {
-        prevIdRef.current = null;
-        setHovered(null);
-      }
-      return;
+    // Once fully faded out, swap to the new detection (or unmount)
+    if (opacityRef.current <= 0.001 && active !== current) {
+      setDisplayed(active);
     }
 
-    let closest: Building | null = null;
-    let closestDist = HOVER_RADIUS;
-
-    for (const b of nearPort.buildings) {
-      if (!b.label) continue; // skip roads and unlabeled
-      const dx = b.position[0] - mx;
-      const dz = b.position[2] - mz;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = b;
-      }
+    if (materialRef.current) {
+      materialRef.current.opacity = opacityRef.current;
     }
 
-    const newId = closest?.id ?? null;
-    if (newId !== prevIdRef.current) {
-      prevIdRef.current = newId;
-      setHovered(closest);
+    if (glowMatRef.current) {
+      pulseRef.current += delta * GLOW_PULSE_RATE;
+      const pulse = 1 + Math.sin(pulseRef.current) * GLOW_PULSE_AMP;
+      glowMatRef.current.opacity = opacityRef.current * GLOW_MAX_OPACITY * pulse;
+    }
+
+    // Clamp world-size so the sprite stays readable when zoomed out
+    const sprite = spriteRef.current;
+    if (sprite && current) {
+      positionRef.set(
+        current.position[0],
+        current.position[1] + current.scale[1] + 2.5,
+        current.position[2],
+      );
+      const minReadable = worldHeightForScreenPixels(
+        camera,
+        size.height,
+        positionRef,
+        MIN_READABLE_SCREEN_PX,
+      );
+      const worldHeight = THREE.MathUtils.clamp(
+        Math.max(BASE_WORLD_HEIGHT, minReadable),
+        BASE_WORLD_HEIGHT,
+        MAX_WORLD_HEIGHT,
+      );
+      sprite.scale.set(worldHeight * label.aspect, worldHeight, 1);
     }
   });
 
-  if (!hovered || !hovered.label) return null;
+  if (!displayed || !displayed.label) return null;
 
-  // Position tooltip above the building's roof
-  const tooltipY = hovered.position[1] + hovered.scale[1] + 2.5;
+  const tooltipY = displayed.position[1] + displayed.scale[1] + 2.5;
+  const glowY = displayed.position[1] + displayed.scale[1] * 0.55;
 
   return (
-    <Html
-      position={[hovered.position[0], tooltipY, hovered.position[2]]}
-      center
-      sprite
-      zIndexRange={[20, 0]}
-      style={{
-        pointerEvents: 'none',
-        transition: 'opacity 0.2s ease',
-      }}
-    >
-      <div
-        style={{
-          background: 'rgba(12, 10, 8, 0.88)',
-          border: '1px solid rgba(180, 150, 90, 0.35)',
-          borderRadius: '3px',
-          padding: '5px 10px',
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-          fontFamily: '"DM Sans", "Segoe UI", sans-serif',
-          maxWidth: '220px',
-        }}
+    <>
+      <mesh
+        ref={glowMeshRef}
+        position={[displayed.position[0], glowY, displayed.position[2]]}
+        rotation={[0, displayed.rotation, 0]}
+        scale={[
+          displayed.scale[0] * GLOW_X_PAD,
+          displayed.scale[1] * GLOW_Y_PAD,
+          displayed.scale[2] * GLOW_Z_PAD,
+        ]}
+        renderOrder={998}
+        raycast={() => null}
       >
-        <div
-          style={{
-            fontSize: '10px',
-            fontWeight: 600,
-            letterSpacing: '0.06em',
-            color: 'rgba(235, 225, 205, 0.95)',
-            lineHeight: 1.3,
-          }}
-        >
-          {hovered.label}
-        </div>
-        {hovered.labelSub && (
-          <div
-            style={{
-              fontSize: '8px',
-              letterSpacing: '0.1em',
-              color: 'rgba(180, 155, 100, 0.7)',
-              textTransform: 'uppercase',
-              marginTop: '2px',
-            }}
-          >
-            {hovered.labelSub}
-          </div>
-        )}
-      </div>
-    </Html>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial
+          ref={glowMatRef}
+          color={GLOW_COLOR}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <sprite
+        ref={spriteRef}
+        position={[displayed.position[0], tooltipY, displayed.position[2]]}
+        scale={[BASE_WORLD_HEIGHT * label.aspect, BASE_WORLD_HEIGHT, 1]}
+        renderOrder={1001}
+        raycast={() => null}
+      >
+        <spriteMaterial
+          ref={materialRef}
+          map={label.texture}
+          transparent
+          opacity={0}
+          depthTest={false}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </sprite>
+    </>
   );
+}
+
+function detectHoveredBuilding(ports: Port[]): Building | null {
+  if (!mouseWorldPos.valid || !mouseRay.valid) return null;
+
+  // Closest port via water-plane hit (ports sit near sea level — this is fine)
+  const wx = mouseWorldPos.x;
+  const wz = mouseWorldPos.z;
+  let nearPort: Port | null = null;
+  let nearPortDistSq = PORT_RANGE * PORT_RANGE;
+  for (const p of ports) {
+    const dx = p.position[0] - wx;
+    const dz = p.position[2] - wz;
+    const d = dx * dx + dz * dz;
+    if (d < nearPortDistSq) {
+      nearPortDistSq = d;
+      nearPort = p;
+    }
+  }
+  if (!nearPort) return null;
+
+  // For buildings, project the mouse ray to each one's own mid-height so the
+  // cursor lines up with the roof the player actually sees, not the water
+  // plane behind it.
+  const ox = mouseRay.origin.x;
+  const oy = mouseRay.origin.y;
+  const oz = mouseRay.origin.z;
+  const dx = mouseRay.direction.x;
+  const dy = mouseRay.direction.y;
+  const dz = mouseRay.direction.z;
+  if (Math.abs(dy) < 1e-5) return null;
+
+  let best: Building | null = null;
+  let bestScore = Infinity;
+  for (const b of nearPort.buildings) {
+    if (!b.label) continue;
+    const planeY = b.position[1] + b.scale[1] * 0.5;
+    const t = (planeY - oy) / dy;
+    if (t <= 0) continue;
+    const hx = ox + dx * t;
+    const hz = oz + dz * t;
+    const ddx = b.position[0] - hx;
+    const ddz = b.position[2] - hz;
+    const distSq = ddx * ddx + ddz * ddz;
+    const halfFootprint = Math.max(b.scale[0], b.scale[2]) * 0.5;
+    const effRadius = Math.max(HOVER_MIN_RADIUS, halfFootprint + HOVER_BUFFER);
+    const effRadiusSq = effRadius * effRadius;
+    if (distSq < effRadiusSq) {
+      // Rank by how "deep" the cursor sits inside the hover zone, so small
+      // buildings overlapping a big one still win when you point at them.
+      const score = distSq / effRadiusSq;
+      if (score < bestScore) {
+        bestScore = score;
+        best = b;
+      }
+    }
+  }
+  return best;
 }

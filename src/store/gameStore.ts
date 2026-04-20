@@ -63,12 +63,46 @@ export const PORT_FACTION: Record<string, Nationality> = {
   salvador: 'Portuguese',   // capital of Portuguese Brazil
   havana: 'Spanish',        // treasure fleet base
   cartagena: 'Spanish',     // fortified colonial port
+  jamestown: 'English',     // Virginia Company colony, ~300 settlers in 1612
   // Cape route
   cape: 'Portuguese',       // no permanent settlement but Portuguese-claimed
 };
 
-export type Culture = 'Indian Ocean' | 'European' | 'Caribbean' | 'West African' | 'Atlantic';
-export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
+// Cultural region of the built environment — separate from controlling nationality.
+// Used for building labels, market names, family names, etc. A Portuguese-ruled port
+// (Goa, Malacca, Mombasa, Macau) still has a local Malabari/Malay/Swahili/Chinese
+// street-level culture. Forts and administrative warehouses may still read Portuguese
+// at the gameplay layer — see PORT_FACTION for that.
+export type CulturalRegion = 'Arab' | 'Swahili' | 'Gujarati' | 'Malabari' | 'Malay' | 'Chinese';
+
+export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
+  // Arab
+  aden: 'Arab',
+  hormuz: 'Arab',       // Persian island but Arab-Hormuzi trading culture
+  muscat: 'Arab',       // Omani
+  socotra: 'Arab',      // Mahri/Arab
+  // Swahili coast
+  mombasa: 'Swahili',
+  zanzibar: 'Swahili',
+  kilwa: 'Swahili',
+  mogadishu: 'Swahili',
+  // Gujarati
+  surat: 'Gujarati',
+  diu: 'Gujarati',
+  // Malabari (Kerala / Konkani coast)
+  calicut: 'Malabari',
+  cochin: 'Malabari',
+  goa: 'Malabari',      // Konkani — closest match in this taxonomy
+  // Malay / insular SE Asia
+  malacca: 'Malay',
+  aceh: 'Malay',
+  bantam: 'Malay',
+  // Chinese
+  macau: 'Chinese',
+};
+
+export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
+export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
 
 export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market';
 
@@ -82,18 +116,30 @@ export interface Building {
   labelSub?: string;
 }
 
+export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
+
+export interface Road {
+  id: string;
+  tier: RoadTier;
+  /** Polyline of world-space points (x, terrainHeight, z). */
+  points: [number, number, number][];
+}
+
 export interface Port {
   id: string;
   name: string;
   culture: Culture;
   scale: PortScale;
   buildingStyle?: string;
+  flagColor?: [number, number, number];
+  landmark?: string;
   position: [number, number, number];
   inventory: Record<Commodity, number>;
   baseInventory: Record<Commodity, number>; // initial stock levels for supply/demand calc
   basePrices: Record<Commodity, number>;    // base prices before supply/demand adjustment
   prices: Record<Commodity, number>;        // current effective prices
   buildings: Building[];
+  roads?: Road[];
 }
 
 // ── Armament system ──
@@ -382,6 +428,14 @@ export interface CrewStats {
   luck: number;        // 1-20, fortune — random events, loot, survival
 }
 
+export interface Humours {
+  sanguine: number;    // 1-10, sociability, optimism, morale recovery
+  choleric: number;    // 1-10, drive, initiative, but conflict risk
+  melancholic: number; // 1-10, introspection, perception, but fragile morale
+  phlegmatic: number;  // 1-10, steadiness, loyalty, crew harmony
+  curiosity: number;   // 1-10, openness, language learning, adaptability
+}
+
 export interface CrewHistoryEntry {
   day: number;         // game day count
   event: string;       // short description
@@ -400,6 +454,7 @@ export interface CrewMember {
   health: HealthFlag;
   quality: CrewQuality;
   stats: CrewStats;
+  humours: Humours;
   backstory: string;
   history: CrewHistoryEntry[];
   hireDay: number;     // game day when they joined the crew
@@ -607,7 +662,7 @@ interface GameState {
   resetRenderDebug: () => void;
   learnAboutCommodity: (commodityId: string, newLevel: KnowledgeLevel, source: string) => void;
   collectCrab: () => void;
-  fastTravel: (portId: string) => void;
+  fastTravel: (portId: string, opts?: { force?: boolean }) => void;
   setPaused: (paused: boolean) => void;
   setAnchored: (anchored: boolean) => void;
   setCombatMode: (combatMode: boolean) => void;
@@ -631,7 +686,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   advancedWater: true,
   shipWake: true,
   algae: true,
-  coralReefs: true,
+  coralReefs: false,
   wildlifeMotion: true,
 };
 
@@ -665,9 +720,41 @@ export function updateCrewMember(
   return crew.map(c => c.id === id ? updater(c) : c);
 }
 
+/** Grant XP to a crew member, handling level-ups with skill bumps.
+ *  Returns { crew, levelledUp } where levelledUp is the member's name if they levelled. */
+export function grantCrewXp(
+  crew: CrewMember[], memberId: string, xp: number
+): { crew: CrewMember[]; levelledUp: string | null; newLevel: number } {
+  let levelledUp: string | null = null;
+  let newLevel = 0;
+  const updated = crew.map(c => {
+    if (c.id !== memberId) return c;
+    const totalXp = c.xp + xp;
+    if (totalXp >= c.xpToNext) {
+      // Level up — bump skill by 2-4 points and a random stat by 1
+      const skillBump = 2 + Math.floor(Math.random() * 3);
+      const statKeys: (keyof CrewStats)[] = ['strength', 'perception', 'charisma', 'luck'];
+      const bumpStat = statKeys[Math.floor(Math.random() * statKeys.length)];
+      levelledUp = c.name;
+      newLevel = c.level + 1;
+      return {
+        ...c,
+        xp: totalXp - c.xpToNext,
+        level: c.level + 1,
+        xpToNext: Math.floor(c.xpToNext * 1.5),
+        skill: Math.min(100, c.skill + skillBump),
+        stats: { ...c.stats, [bumpStat]: Math.min(20, c.stats[bumpStat] + 1) },
+      };
+    }
+    return { ...c, xp: totalXp };
+  });
+  return { crew: updated, levelledUp, newLevel };
+}
+
 // Generate crew first so we can read captain's luck for cargo generation
 const _startingFaction: Nationality = 'English';
-const _startingCrew = generateStartingCrew(_startingFaction, 6);
+const _startingCrewSize = 4 + Math.floor(Math.random() * 3); // 4-6
+const _startingCrew = generateStartingCrew(_startingFaction, _startingCrewSize);
 const _captainLuck = _startingCrew.find(c => c.role === 'Captain')?.stats.luck ?? 10;
 const _startingCargoCapacity = 100;
 
@@ -682,8 +769,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     maxHull: 100,
     sails: 100,
     maxSails: 100,
-    speed: 15,
-    turnSpeed: 1.5,
+    speed: 22,
+    turnSpeed: 2.0,
     cargoCapacity: _startingCargoCapacity,
     cannons: 0,
     armament: ['swivelGun'],
@@ -919,6 +1006,21 @@ export const useGameStore = create<GameState>((set, get) => ({
         get().addJournalEntry('navigation', portDiscoverTemplate(port.name), port.name);
         get().setCaptainExpression('Curious', 4000);
         sfxDiscovery();
+        // Navigator and captain gain XP for discovery
+        const nav = state.crew.find(c => c.role === 'Navigator');
+        const cap = getCaptain(state);
+        let crew = state.crew;
+        if (nav) {
+          const r = grantCrewXp(crew, nav.id, 15 + Math.floor(Math.random() * 10));
+          crew = r.crew;
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+        }
+        if (cap && cap.id !== nav?.id) {
+          const r = grantCrewXp(crew, cap.id, 10);
+          crew = r.crew;
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+        }
+        set({ crew });
       }
     }
   },
@@ -1014,7 +1116,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       const faction = PORT_FACTION[port.id];
       if (faction) get().adjustReputation(faction, 2);
       const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
-      if (factor) get().addCrewHistory(factor.id, `Negotiated purchase of ${amount} ${displayName} at ${port.name}`);
+      if (factor) {
+        get().addCrewHistory(factor.id, `Negotiated purchase of ${amount} ${displayName} at ${port.name}`);
+        const tradeXp = 3 + Math.floor(totalCost / 100);
+        const r = grantCrewXp(get().crew, factor.id, tradeXp);
+        set({ crew: r.crew });
+        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+      }
     } else {
       get().addNotification('Not enough gold or port inventory!', 'error');
     }
@@ -1072,7 +1180,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       const faction = PORT_FACTION[port.id];
       if (faction) get().adjustReputation(faction, 2);
       const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
-      if (factor) get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
+      if (factor) {
+        get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
+        const tradeXp = 3 + Math.floor(totalGain / 80);
+        const r = grantCrewXp(get().crew, factor.id, tradeXp);
+        set({ crew: r.crew });
+        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+      }
       // Captain reacts to profitable sale
       get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
     }
@@ -1144,6 +1258,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       // Update crew health & morale
       let deadCrewId: string | null = null;
       let deadCause = '';
+      let healedBySurgeon = false;
       const updatedCrew = state.crew.map(c => {
         if (deadCrewId) return c; // only one death per day
 
@@ -1175,6 +1290,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         // Surgeon heals one sick crew member per day (not starvation-related)
         if (hasSurgeon && health !== 'healthy' && !starving && Math.random() < 0.2) {
           health = 'healthy';
+          healedBySurgeon = true;
         }
 
         // Natural morale recovery when well-fed and healthy
@@ -1193,6 +1309,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       });
 
       set({ provisions: newProvisions, crew: updatedCrew });
+
+      // Surgeon gains XP for healing
+      if (healedBySurgeon) {
+        const surgeon = get().crew.find(c => c.role === 'Surgeon');
+        if (surgeon) {
+          const r = grantCrewXp(get().crew, surgeon.id, 8 + Math.floor(Math.random() * 5));
+          set({ crew: r.crew });
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+        }
+      }
 
       // Starvation warning
       if (starving && state.provisions > 0) {
@@ -1277,13 +1403,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     sfxCrabCollect();
     playLootSfx(loot.tier);
   },
-  fastTravel: (portId) => {
+  fastTravel: (portId, opts) => {
     const state = get();
     const port = getWorldPortById(portId);
     if (!port) return;
     const currentPortId = resolveCampaignPortId(state);
     if (portId === currentPortId) return;
-    if (!canDirectlySail(currentPortId, portId)) {
+    if (!opts?.force && !canDirectlySail(currentPortId, portId)) {
       get().addNotification(`No direct sea lane to ${port.name} from this harbor.`, 'warning');
       return;
     }
@@ -1410,20 +1536,33 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
       }
     }
-    // XP reward — awarded to the captain crew member
-    const xpGain = 20 + Math.floor(Math.random() * 30);
-    const captain = getCaptain(state);
+    // XP reward — captain and gunner both gain combat XP, all crew get a small share
+    const captainXp = 20 + Math.floor(Math.random() * 30);
+    const combatXp = 15 + Math.floor(Math.random() * 20);
+    const crewXp = 5 + Math.floor(Math.random() * 10);
     let updatedCrew = state.crew;
-    let levelUpLevel = 0;
+    const levelUps: string[] = [];
+
+    // Captain XP
+    const captain = getCaptain(state);
     if (captain) {
-      const newXp = captain.xp + xpGain;
-      const levelUp = newXp >= captain.xpToNext;
-      updatedCrew = updateCrewMember(state.crew, captain.id, (c) =>
-        levelUp
-          ? { ...c, xp: newXp - c.xpToNext, level: c.level + 1, xpToNext: Math.floor(c.xpToNext * 1.5) }
-          : { ...c, xp: newXp }
-      );
-      if (levelUp) levelUpLevel = captain.level + 1;
+      const r = grantCrewXp(updatedCrew, captain.id, captainXp);
+      updatedCrew = r.crew;
+      if (r.levelledUp) levelUps.push(`${r.levelledUp} (Lvl ${r.newLevel})`);
+    }
+    // Gunner gets combat XP
+    const gunnerMember = updatedCrew.find(c => c.role === 'Gunner');
+    if (gunnerMember) {
+      const r = grantCrewXp(updatedCrew, gunnerMember.id, combatXp);
+      updatedCrew = r.crew;
+      if (r.levelledUp) levelUps.push(`${r.levelledUp} (Lvl ${r.newLevel})`);
+    }
+    // All other crew get a small XP share
+    for (const c of updatedCrew) {
+      if (c.id === captain?.id || c.id === gunnerMember?.id) continue;
+      const r = grantCrewXp(updatedCrew, c.id, crewXp);
+      updatedCrew = r.crew;
+      if (r.levelledUp) levelUps.push(`${r.levelledUp} (Lvl ${r.newLevel})`);
     }
 
     set({ gold: state.gold + goldReward, cargo: currentCargo, crew: updatedCrew });
@@ -1432,7 +1571,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     // Notifications
     const salvagedStr = salvaged.length > 0 ? ` Salvaged: ${salvaged.join(', ')}.` : '';
     get().addNotification(`Sank the ${shipName}! +${goldReward} gold.${salvagedStr}`, 'success', { size: 'grand', subtitle: 'SHIP DEFEATED' });
-    if (levelUpLevel) get().addNotification(`Captain leveled up to level ${levelUpLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+    for (const lu of levelUps) get().addNotification(`${lu} leveled up!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
     // Captain savors victory
     get().setCaptainExpression('Smug', 5000);
     // Journal

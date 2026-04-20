@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, Port, WEAPON_DEFS } from '../store/gameStore';
 import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
@@ -11,12 +11,8 @@ import {
 import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
-import { PortModal } from './PortModal';
-import { ASCIIDashboard } from './ASCIIDashboard';
-import { JournalPanel } from './Journal';
-import { SettingsModal } from './SettingsModal';
-import { WorldMap, startTerrainPreRender } from './WorldMap';
-import { WorldMapModal } from './WorldMapModal';
+import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
+import { ArrivalCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { CrewPortraitSquare } from './CrewPortrait';
 import { OpeningASCII } from './OpeningASCII';
@@ -33,6 +29,13 @@ import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 // import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
+
+const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
+const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
+const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
+const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const WorldMap = lazy(() => import('./WorldMap').then((module) => ({ default: module.WorldMap })));
+const WorldMapModal = lazy(() => import('./WorldMapModal').then((module) => ({ default: module.WorldMapModal })));
 
 const PORT_RADIUS_SQ = 20 * 20;
 const WALKING_PORT_SEARCH_RADIUS_SQ = 120 * 120;
@@ -312,6 +315,22 @@ export function UI() {
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
   const [showInstructions, setShowInstructions] = useState(true);
+  const [arrivalCurtainPort, setArrivalCurtainPort] = useState<string | null>(null);
+
+  // Voyage arrival → cinematic curtain that masks the world-map → port swap.
+  // Caller passes the destination port name and the swap closure (fastTravel +
+  // close world map). We fade the curtain in, run the swap under cover, then
+  // fade out to reveal the new port.
+  const handleArrival = useCallback(async (portName: string, swap: () => void) => {
+    setArrivalCurtainPort(portName);
+    // Wait for curtain to reach opaque (fade-in is 550ms) before swapping
+    // the world map → port underneath.
+    await new Promise(r => setTimeout(r, 600));
+    swap();
+    // Brief hold so the new port has a frame to mount before we reveal it.
+    await new Promise(r => setTimeout(r, 550));
+    setArrivalCurtainPort(null);
+  }, []);
 
   // Ship hitting map edge can request the world map be opened
   const requestWorldMap = useGameStore(s => s.requestWorldMap);
@@ -322,7 +341,7 @@ export function UI() {
       setRequestWorldMap(false);
     }
   }, [requestWorldMap, setRequestWorldMap]);
-  const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string } | null>(null);
+  const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string; commodity?: string } | null>(null);
   const showDashboard = !!dashboardState;
   const setShowDashboard = (v: boolean) => setDashboardState(v ? {} : null);
   const [expandedStat, setExpandedStat] = useState<'hull' | 'morale' | 'cargo' | null>(null);
@@ -688,7 +707,7 @@ export function UI() {
                 : 'transparent';
               return (
                 <button
-                  onClick={() => { sfxOpen(); setShowDashboard(true); }}
+                  onClick={() => { sfxOpen(); setDashboardState({ tab: 'crew', crewId: captain?.id }); }}
                   onMouseEnter={(e) => {
                     sfxHover();
                     const btn = e.currentTarget;
@@ -789,7 +808,8 @@ export function UI() {
                   {expandedStat === 'morale' && <MoraleDetailPanel crew={crew}
                     onSelectCrew={(crewId) => { setExpandedStat(null); setDashboardState({ tab: 'crew', crewId }); }} />}
                   {expandedStat === 'cargo' && <CargoDetailPanel cargo={cargo} capacity={stats.cargoCapacity}
-                    onOpenDashboard={() => { setExpandedStat(null); setDashboardState({ tab: 'cargo' }); }} />}
+                    onOpenDashboard={() => { setExpandedStat(null); setDashboardState({ tab: 'cargo' }); }}
+                    onSelectCommodity={(commodity) => { setExpandedStat(null); setDashboardState({ tab: 'cargo', commodity }); }} />}
                 </div>
               </motion.div>
             )}
@@ -895,17 +915,23 @@ export function UI() {
       </AnimatePresence>
 
       {/* Port Trading Modal */}
-      {!startupOverlayActive && (
-        <PortModal onDismiss={() => {
-          openedFromToastPortRef.current = null;
-          if (activePort) dismissedPortRef.current = activePort.id;
-          setActivePort(null);
-        }} />
+      {!startupOverlayActive && activePort && (
+        <Suspense fallback={null}>
+          <PortModal onDismiss={() => {
+            openedFromToastPortRef.current = null;
+            if (activePort) dismissedPortRef.current = activePort.id;
+            setActivePort(null);
+          }} />
+        </Suspense>
       )}
 
       {/* Ship Dashboard Modal */}
       <AnimatePresence>
-        <ASCIIDashboard open={showDashboard} onClose={() => setDashboardState(null)} initialTab={dashboardState?.tab} initialCrewId={dashboardState?.crewId} />
+        {showDashboard && (
+          <Suspense fallback={null}>
+            <ASCIIDashboard open={showDashboard} onClose={() => setDashboardState(null)} initialTab={dashboardState?.tab} initialCrewId={dashboardState?.crewId} initialCommodity={dashboardState?.commodity} />
+          </Suspense>
+        )}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -946,12 +972,30 @@ export function UI() {
 
       {/* Fullscreen Map Overlay */}
       <AnimatePresence>
-        {showLocalMap && <WorldMap onClose={() => setShowLocalMap(false)} />}
-        {showWorldMap && <WorldMapModal onClose={() => setShowWorldMap(false)} />}
+        {showLocalMap && (
+          <Suspense fallback={null}>
+            <WorldMap onClose={() => setShowLocalMap(false)} />
+          </Suspense>
+        )}
+        {showWorldMap && (
+          <Suspense fallback={null}>
+            <WorldMapModal
+              onClose={() => setShowWorldMap(false)}
+              onArrival={handleArrival}
+            />
+          </Suspense>
+        )}
       </AnimatePresence>
 
+      {/* Arrival curtain — masks the world-map → port swap after a voyage */}
+      <ArrivalCurtain portName={arrivalCurtainPort} />
+
       {/* Journal Panel (compact, above button) */}
-      <JournalPanel open={showJournal} onClose={() => setShowJournal(false)} />
+      {showJournal && (
+        <Suspense fallback={null}>
+          <JournalPanel open={showJournal} onClose={() => setShowJournal(false)} />
+        </Suspense>
+      )}
 
       {/* Journal Button — lower left, separate */}
       <div className="absolute bottom-4 left-4 pointer-events-auto">
@@ -1011,7 +1055,11 @@ export function UI() {
       </div>
 
       {/* Settings Modal */}
-      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
 
       {/* Instructions Overlay — swap OpeningASCII / OpeningPamphlet here */}
       <AnimatePresence>
@@ -1628,7 +1676,7 @@ function MoraleDetailPanel({ crew, onSelectCrew }: { crew: CrewMember[]; onSelec
   );
 }
 
-function CargoDetailPanel({ cargo, capacity, onOpenDashboard }: { cargo: Record<string, number>; capacity: number; onOpenDashboard: () => void }) {
+function CargoDetailPanel({ cargo, capacity, onOpenDashboard, onSelectCommodity }: { cargo: Record<string, number>; capacity: number; onOpenDashboard: () => void; onSelectCommodity: (commodity: string) => void }) {
   const entries = Object.entries(cargo).filter(([, qty]) => qty > 0).sort((a, b) => b[1] - a[1]);
   const totalUnits = entries.reduce((s, [, qty]) => s + qty, 0);
   const pct = capacity > 0 ? Math.min(100, Math.round((totalUnits / capacity) * 100)) : 0;
@@ -1665,12 +1713,24 @@ function CargoDetailPanel({ cargo, capacity, onOpenDashboard }: { cargo: Record<
             const def = COMMODITY_DEFS[commodity as Commodity];
             const est = estimateValue(commodity, qty);
             return (
-              <div key={commodity} className="flex items-center gap-2 py-[5px] border-b border-white/[0.04] last:border-b-0">
+              <div
+                key={commodity}
+                className="group flex items-center gap-2 py-[7px] border-b border-white/[0.04] last:border-b-0 cursor-pointer rounded-sm transition-colors hover:bg-white/[0.03]"
+                onClick={(e) => { e.stopPropagation(); sfxClick(); onSelectCommodity(commodity); }}
+              >
                 {/* Icon image or fallback */}
                 {def?.iconImage ? (
-                  <img src={def.iconImage} alt="" className="w-[20px] h-[20px] rounded object-cover shrink-0 opacity-80" />
+                  <span
+                    className="w-[28px] h-[28px] rounded-md overflow-hidden shrink-0 border border-white/[0.06] bg-white/[0.025] flex items-center justify-center transition-all duration-200 group-hover:border-white/[0.18] group-hover:bg-white/[0.05] group-hover:scale-[1.35] group-hover:z-10 relative"
+                    style={{ transformOrigin: 'center' }}
+                  >
+                    <img src={def.iconImage} alt="" className="w-[110%] h-[110%] object-cover transition-all duration-200 group-hover:drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]" />
+                  </span>
                 ) : (
-                  <span className="w-[20px] h-[20px] rounded bg-white/[0.04] flex items-center justify-center text-[10px] shrink-0">{def?.icon ?? '?'}</span>
+                  <span
+                    className="w-[28px] h-[28px] rounded-md bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-[12px] shrink-0 transition-all duration-200 group-hover:border-white/[0.18] group-hover:scale-[1.35] group-hover:z-10 relative"
+                    style={{ color: def?.color, transformOrigin: 'center' }}
+                  >{def?.icon ?? '?'}</span>
                 )}
                 {/* Name */}
                 <span className="text-[11px] text-slate-300 flex-1 min-w-0 truncate" style={{ fontFamily: '"Fraunces", serif' }}>{commodity}</span>

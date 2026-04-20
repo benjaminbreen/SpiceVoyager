@@ -29,6 +29,7 @@ export const WORLD_PORT_COORDS: Record<string, [number, number]> = {
   salvador: [-38.51, -12.97],
   havana: [-82.36, 23.14],
   cartagena: [-75.51, 10.39],
+  jamestown: [-76.78, 37.21],
   // Cape route
   cape: [18.42, -33.93],
 };
@@ -70,6 +71,7 @@ export const PORT_REGIONS: Record<string, WorldRegion> = {
   salvador: 'atlantic',
   havana: 'atlantic',
   cartagena: 'atlantic',
+  jamestown: 'atlantic',
 };
 
 /** Preset zoom views for the region quick-nav buttons */
@@ -132,11 +134,15 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador'],
   amsterdam: ['elmina', 'lisbon', 'london'],
   seville: ['lisbon', 'london', 'havana', 'cartagena'],
-  london: ['amsterdam', 'lisbon', 'seville'],
+  london: ['amsterdam', 'lisbon', 'seville', 'jamestown'],
   // Atlantic Americas
   salvador: ['luanda', 'elmina', 'lisbon', 'havana'],
   havana: ['salvador', 'seville', 'cartagena'],
   cartagena: ['havana', 'seville'],
+  // Jamestown is deliberately reachable only from London — this models the
+  // Virginia Company monopoly on English Virginia trade (chartered 1606).
+  // No other port has 'jamestown' in its adjacency.
+  jamestown: ['london'],
 };
 
 export function getWorldPortById(portId: string | null): WorldPortSummary | null {
@@ -233,6 +239,10 @@ const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
   'havana:salvador': [[-38, -8], [-42, 0], [-55, 8], [-68, 15], [-78, 20]],
   // Luanda → Salvador: straight across the South Atlantic (actually fairly direct)
   'luanda:salvador': [[5, -10], [-10, -12], [-25, -13]],
+  // London → Jamestown: 1612 English crossings used the southern route (down
+  // past the Canaries, west with the trade winds, then north up the Atlantic
+  // coast of North America). Return via the Gulf Stream back north.
+  'jamestown:london': [[-5, 48], [-12, 36], [-25, 28], [-50, 24], [-65, 28], [-75, 35]],
 
   // ── Indian Ocean long-haul routes ────────────────────────────────
   // Calicut → Zanzibar: across the western Indian Ocean

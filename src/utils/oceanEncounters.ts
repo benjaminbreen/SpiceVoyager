@@ -91,7 +91,7 @@ const TURTLE_LOOT: (() => EncounterLoot)[] = [
 
 const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   () => {
-    const commodity = pick(['Black Pepper', 'Cinnamon', 'Tea', 'Coffee', 'Cotton Textiles'] as Commodity[]);
+    const commodity = pick(['Black Pepper', 'Cinnamon', 'Tea', 'Coffee'] as Commodity[]);
     return {
       gold: randInt(10, 50),
       provisions: randInt(0, 3),

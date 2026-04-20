@@ -9,13 +9,13 @@ export type Commodity =
   | 'Ginger' | 'Cloves' | 'Nutmeg' | 'Saffron' | 'Tobacco'
   // Tier 2: Exotic Drugs & Medicines
   | 'Opium' | 'Camphor' | 'Benzoin' | 'Frankincense' | 'Myrrh'
-  | 'Rhubarb' | 'China Root' | 'Cassia Fistula' | 'Aloes'
+  | 'Rhubarb' | 'China Root' | 'Cassia Fistula' | 'Aloes' | 'Sassafras'
   | 'Musk' | 'Quicksilver' | 'Tamarind'
   // Tier 3: Staples & Trade Goods
-  | 'Cotton Textiles' | 'Indigo' | 'Iron' | 'Timber' | 'Sugar'
+  | 'Indigo' | 'Iron' | 'Timber' | 'Sugar'
   | 'Ivory' | 'Chinese Porcelain' | 'Pearls' | 'Red Coral' | 'Rose Water'
   // Tier 4: Precious Rarities
-  | 'Ambergris' | 'Bezoar Stones' | 'Bhang' | "Dragon's Blood"
+  | 'Ambergris' | 'Bezoar Stones' | 'Bhang' | "Dragon's Blood" | 'Virginia Tobacco'
   // Tier 5: Extraordinary
   | 'Mumia' | 'Lapis de Goa'
   // Non-tradable (provisions/supplies, not shown in market)
@@ -76,6 +76,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Mocha monopoly. Demand rising rapidly across the Indian Ocean world.',
     physicalDescription: 'Dark roasted berries with a bitter, stimulating smell',
     color: '#5d4037', icon: '♨',
+    iconImage: '/wares/coffee_icon.png',
   },
   'Tea': {
     id: 'Tea', tier: 1,
@@ -84,6 +85,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Chinese leaf, funneled through Macau.',
     physicalDescription: 'Dried, tightly rolled leaves with a grassy scent',
     color: '#66bb6a', icon: '♣',
+    iconImage: '/wares/tea_icon.png',
   },
   'Ginger': {
     id: 'Ginger', tier: 1,
@@ -220,6 +222,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Tibetan musk deer pods. Perfumery and medicine. Often faked.',
     physicalDescription: 'Leathery dried pods containing a dark, powerfully scented paste',
     color: '#9c27b0', icon: '❋',
+    iconImage: '/wares/musk_icon.png',
   },
   'Quicksilver': {
     id: 'Quicksilver', tier: 2,
@@ -229,6 +232,15 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'A heavy sealed flask of shimmering liquid metal',
     color: '#b0bec5', icon: '☿',
     iconImage: '/wares/quicksilver_icon.png',
+  },
+  'Sassafras': {
+    id: 'Sassafras', tier: 2,
+    basePrice: [14, 38], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.04,
+    description: 'Aromatic root bark from Virginia. Sold in European apothecaries as a treatment for syphilis and a general tonic. The main export of early Jamestown.',
+    physicalDescription: 'Reddish-brown dried root bark with a sweet, rooty smell',
+    color: '#9a5b3a', icon: '⚶',
+    iconImage: '/wares/sassafras_icon.png',
   },
   'Tamarind': {
     id: 'Tamarind', tier: 2,
@@ -241,14 +253,6 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
 
   // ── Tier 3: Staples & Trade Goods ──
-  'Cotton Textiles': {
-    id: 'Cotton Textiles', tier: 3,
-    basePrice: [5, 12], weight: 1,
-    spoilable: true, breakable: false, fraudRisk: 0,
-    description: 'Gujarati calicoes and chintzes. Functions as currency in East Africa.',
-    physicalDescription: 'Bolts of printed cloth with intricate patterns',
-    color: '#e8dcc8', icon: '⚑',
-  },
   'Indigo': {
     id: 'Indigo', tier: 3,
     basePrice: [18, 45], weight: 1,
@@ -256,6 +260,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Gujarat dye. Insatiable European demand.',
     physicalDescription: 'Dense cakes of deep blue dye that stain the fingers',
     color: '#3f51b5', icon: '◆',
+    iconImage: '/wares/indigo_icon.png',
   },
   'Iron': {
     id: 'Iron', tier: 3,
@@ -264,6 +269,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Bar iron and steel. High demand in East Africa and Southeast Asia.',
     physicalDescription: 'Rough bars of grey metal',
     color: '#7a8a9a', icon: '⚒',
+    iconImage: '/wares/iron_icon.png',
   },
   'Timber': {
     id: 'Timber', tier: 3,
@@ -272,6 +278,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Teak and hardwoods from Malabar. Essential for ship repair.',
     physicalDescription: 'Heavy planks of dark, close-grained wood',
     color: '#8B6914', icon: '≡',
+    iconImage: '/wares/timber_icon.png',
   },
   'Sugar': {
     id: 'Sugar', tier: 3,
@@ -289,6 +296,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'East African elephant tusks. Heavy but always in demand.',
     physicalDescription: 'Heavy curved tusks of creamy white bone-like material',
     color: '#faf0e6', icon: '⌒',
+    iconImage: '/wares/ivory_icon.png',
   },
   'Chinese Porcelain': {
     id: 'Chinese Porcelain', tier: 3,
@@ -297,6 +305,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Blue-and-white kraak ware from Jingdezhen. Fragile cargo.',
     physicalDescription: 'Delicate vessels of thin white ceramic painted in blue',
     color: '#4fc3f7', icon: '⚱',
+    iconImage: '/wares/chinese_porcelain_icon.png',
   },
   'Pearls': {
     id: 'Pearls', tier: 3,
@@ -305,6 +314,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Persian Gulf pearls. Hormuz and Muscat specialties.',
     physicalDescription: 'Lustrous white spheres harvested from oyster shells',
     color: '#e0d6cc', icon: '○',
+    iconImage: '/wares/pearls_icon.png',
   },
   'Red Coral': {
     id: 'Red Coral', tier: 3,
@@ -351,6 +361,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Cannabis preparation. Appears unpredictably at market.',
     physicalDescription: 'A pungent green paste made from crushed leaves and flowers',
     color: '#558b2f', icon: '✽',
+    iconImage: '/wares/bhang_icon.png',
   },
   "Dragon's Blood": {
     id: "Dragon's Blood", tier: 4,
@@ -361,6 +372,15 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     color: '#b71c1c', icon: '⬥',
     iconImage: '/wares/dragons_blood_icon.png',
   },
+  'Virginia Tobacco': {
+    id: 'Virginia Tobacco', tier: 4,
+    basePrice: [60, 160], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0.05,
+    description: 'Rolfe\'s experimental Spanish-seed crop, first planted at Jamestown in 1612. Milder and sweeter than Caribbean leaf; a curiosity in London apothecaries.',
+    physicalDescription: 'Small bundles of cured leaves, paler and finer than common tobacco',
+    color: '#a78a5c', icon: '⌘',
+    iconImage: '/wares/virginia_tobacco_icon.png',
+  },
 
   // ── Tier 5: Extraordinary ──
   'Mumia': {
@@ -370,6 +390,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: '"Egyptian mummy" — prized drug in European and Islamic medicine. Most is fake bitumen.',
     physicalDescription: 'Dark, tarry substance sold as ancient embalming material',
     color: '#4e342e', icon: '☥',
+    iconImage: '/wares/mumia_icon.png',
   },
   'Lapis de Goa': {
     id: 'Lapis de Goa', tier: 5,
@@ -378,6 +399,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Artificial bezoar made by Jesuits. Gold leaf, gemstone dust, and secret ingredients.',
     physicalDescription: 'A gilded ball stamped with a cross, said to cure any poison',
     color: '#ffd700', icon: '✧',
+    iconImage: '/wares/lapis_de_goa_icon.png',
   },
 
   // ── Non-tradable (provisions/supplies, not shown in market) ──
@@ -406,13 +428,13 @@ export const ALL_COMMODITIES: Commodity[] = [
   'Cloves', 'Nutmeg', 'Saffron', 'Tobacco',
   // Tier 2: Exotic Drugs & Medicines
   'Opium', 'Camphor', 'Benzoin', 'Frankincense', 'Myrrh',
-  'Rhubarb', 'China Root', 'Cassia Fistula', 'Aloes',
+  'Rhubarb', 'China Root', 'Cassia Fistula', 'Aloes', 'Sassafras',
   'Musk', 'Quicksilver', 'Tamarind',
   // Tier 3: Staples & Trade Goods
-  'Cotton Textiles', 'Indigo', 'Iron', 'Timber', 'Sugar',
+  'Indigo', 'Iron', 'Timber', 'Sugar',
   'Ivory', 'Chinese Porcelain', 'Pearls', 'Red Coral', 'Rose Water',
   // Tier 4: Precious Rarities
-  'Ambergris', 'Bezoar Stones', 'Bhang', "Dragon's Blood",
+  'Ambergris', 'Bezoar Stones', 'Bhang', "Dragon's Blood", 'Virginia Tobacco',
   // Tier 5: Extraordinary
   'Mumia', 'Lapis de Goa',
 ];
@@ -449,27 +471,27 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
   calicut: {
     produces: ['Black Pepper', 'Cardamom', 'Cinnamon', 'Timber', 'Rice', 'Ginger',
                'Tamarind', 'Cassia Fistula'],
-    trades:   ['Cotton Textiles', 'Iron', 'Aloes', 'Tea', 'Munitions', 'Sugar'],
+    trades:   ['Iron', 'Aloes', 'Tea', 'Munitions', 'Sugar'],
     demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Pearls', 'Musk', 'Ivory',
                'Red Coral', 'Rose Water', 'Quicksilver', 'Saffron'],
   },
   goa: {
     produces: ['Lapis de Goa', 'Black Pepper', 'Rice'],
-    trades:   ['Opium', 'Iron', 'Munitions', 'Indigo', 'Cinnamon', 'Cotton Textiles', 'Timber',
+    trades:   ['Opium', 'Iron', 'Munitions', 'Indigo', 'Cinnamon', 'Timber',
                'Bezoar Stones', 'Cardamom', 'Ginger', 'Tamarind', 'Cassia Fistula',
                'Tobacco', 'Quicksilver', 'Red Coral', 'Sugar'],
     demands:  ['Cloves', 'Nutmeg', 'Chinese Porcelain', 'Musk', 'Tea',
                'Ambergris', 'Mumia', 'Camphor', 'Saffron', 'Rhubarb', 'China Root'],
   },
   surat: {
-    produces: ['Cotton Textiles', 'Indigo', 'Opium', 'Rice', 'Sugar'],
+    produces: ['Indigo', 'Opium', 'Rice', 'Sugar'],
     trades:   ['Iron', 'Black Pepper', 'Cardamom', 'Munitions', 'Timber', 'Bezoar Stones',
                'Ginger', 'Saffron', 'Rose Water', 'Tamarind'],
     demands:  ['Cloves', 'Nutmeg', 'Chinese Porcelain', 'Tea', 'Musk', 'Ivory', 'Coffee',
                'Camphor', 'Rhubarb', 'China Root', 'Frankincense'],
   },
   diu: {
-    produces: ['Cotton Textiles', 'Indigo'],
+    produces: ['Indigo'],
     trades:   ['Opium', 'Iron', 'Munitions', 'Black Pepper', 'Rice', 'Sugar',
                'Rose Water'],
     demands:  ['Cloves', 'Nutmeg', 'Chinese Porcelain', 'Tea', 'Pearls', 'Coffee',
@@ -477,7 +499,7 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
   },
   hormuz: {
     produces: ['Pearls', 'Rose Water'],
-    trades:   ['Iron', 'Cotton Textiles', 'Black Pepper', 'Cinnamon', 'Indigo', 'Munitions',
+    trades:   ['Iron', 'Black Pepper', 'Cinnamon', 'Indigo', 'Munitions',
                'Musk', 'Opium', 'Bezoar Stones', 'Coffee', 'Ambergris',
                'Saffron', 'Frankincense', 'Myrrh', 'Red Coral', 'Rhubarb'],
     demands:  ['Timber', 'Rice', 'Cloves', 'Nutmeg', 'Chinese Porcelain', 'Ivory',
@@ -485,7 +507,7 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
   },
   muscat: {
     produces: ['Pearls', 'Ambergris', 'Frankincense'],
-    trades:   ['Iron', 'Cotton Textiles', 'Aloes', 'Munitions', 'Coffee',
+    trades:   ['Iron', 'Aloes', 'Munitions', 'Coffee',
                'Rose Water', 'Myrrh'],
     demands:  ['Black Pepper', 'Cloves', 'Chinese Porcelain', 'Timber', 'Rice', 'Ivory',
                'Saffron', 'Camphor', 'Rhubarb'],
@@ -494,49 +516,49 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
     produces: ['Coffee'],
     trades:   ['Mumia', 'Ambergris', 'Iron', 'Aloes', 'Frankincense', 'Myrrh',
                'Red Coral'],
-    demands:  ['Cotton Textiles', 'Black Pepper', 'Cloves', 'Chinese Porcelain', 'Rice',
+    demands:  ['Black Pepper', 'Cloves', 'Chinese Porcelain', 'Rice',
                'Indigo', 'Nutmeg', 'Ivory', 'Munitions', 'Sugar', 'Tobacco',
                'Saffron', 'Camphor'],
   },
   aden: {
     produces: ['Coffee', 'Frankincense', 'Myrrh'],
     trades:   ['Mumia', 'Ivory', 'Iron', 'Aloes', 'Ambergris'],
-    demands:  ['Cotton Textiles', 'Black Pepper', 'Cloves', 'Chinese Porcelain', 'Rice',
+    demands:  ['Black Pepper', 'Cloves', 'Chinese Porcelain', 'Rice',
                'Indigo', 'Nutmeg', 'Munitions', 'Musk', 'Sugar', 'Tobacco',
                'Camphor', 'Rhubarb'],
   },
   zanzibar: {
     produces: ['Ivory', 'Ambergris'],
     trades:   ['Aloes', 'Rice', 'Tamarind', 'Frankincense'],
-    demands:  ['Cotton Textiles', 'Iron', 'Munitions', 'Black Pepper', 'Chinese Porcelain',
+    demands:  ['Iron', 'Munitions', 'Black Pepper', 'Chinese Porcelain',
                'Bezoar Stones', 'Opium', 'Cloves', 'Sugar', 'Tobacco',
                'Red Coral', 'Quicksilver'],
   },
   mombasa: {
     produces: ['Ivory'],
     trades:   ['Iron', 'Rice', 'Ambergris', 'Aloes', 'Frankincense', 'Myrrh'],
-    demands:  ['Cotton Textiles', 'Munitions', 'Chinese Porcelain', 'Black Pepper',
+    demands:  ['Munitions', 'Chinese Porcelain', 'Black Pepper',
                'Cloves', 'Opium', 'Bezoar Stones', 'Sugar', 'Tobacco',
                'Red Coral', 'Quicksilver'],
   },
   socotra: {
     produces: ['Aloes', 'Ambergris', "Dragon's Blood"],
     trades:   ['Frankincense', 'Myrrh'],
-    demands:  ['Rice', 'Iron', 'Cotton Textiles', 'Munitions', 'Black Pepper', 'Tea',
+    demands:  ['Rice', 'Iron', 'Munitions', 'Black Pepper', 'Tea',
                'Sugar'],
   },
   malacca: {
     produces: ['Cloves', 'Nutmeg', 'Aloes', 'Timber', 'Camphor', 'Benzoin'],
     trades:   ['Black Pepper', 'Tea', 'Rice', 'Iron', 'Munitions', 'Opium', 'Bhang',
                'Ginger', 'Sugar', 'Tobacco', 'China Root'],
-    demands:  ['Cotton Textiles', 'Indigo', 'Bezoar Stones', 'Ivory', 'Coffee',
+    demands:  ['Indigo', 'Bezoar Stones', 'Ivory', 'Coffee',
                'Pearls', 'Musk', 'Saffron', 'Red Coral', 'Quicksilver',
                'Frankincense', 'Rose Water'],
   },
   bantam: {
     produces: ['Cloves', 'Nutmeg', 'Rice', 'Timber', 'Camphor', 'Benzoin', 'Sugar'],
     trades:   ['Black Pepper', 'Aloes', 'Iron', 'Bhang', 'Ginger', 'Tobacco'],
-    demands:  ['Cotton Textiles', 'Indigo', 'Chinese Porcelain', 'Opium', 'Munitions',
+    demands:  ['Indigo', 'Chinese Porcelain', 'Opium', 'Munitions',
                'Ivory', 'Pearls', 'Musk', 'Coffee', 'Saffron', 'Red Coral',
                'Quicksilver', 'Frankincense', 'Rose Water'],
   },
@@ -544,9 +566,28 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
     produces: ['Chinese Porcelain', 'Tea', 'Musk', 'Rhubarb', 'China Root'],
     trades:   ['Bhang', 'Iron', 'Munitions', 'Aloes', 'Nutmeg', 'Sugar',
                'Tobacco', 'Quicksilver', 'Camphor'],
-    demands:  ['Black Pepper', 'Cloves', 'Opium', 'Bezoar Stones', 'Cotton Textiles',
+    demands:  ['Black Pepper', 'Cloves', 'Opium', 'Bezoar Stones',
                'Cinnamon', 'Ivory', 'Coffee', 'Ambergris', 'Saffron',
                'Frankincense', 'Red Coral', 'Rose Water'],
+  },
+  // ── European terminal markets ──
+  london: {
+    produces: ['Iron', 'Timber'],
+    trades:   ['Indigo', 'Munitions', 'Rice', 'Aloes'],
+    demands:  ['Black Pepper', 'Cloves', 'Nutmeg', 'Cinnamon', 'Chinese Porcelain',
+               'Tea', 'Coffee', 'Tobacco', 'Virginia Tobacco', 'Sugar',
+               'Sassafras', 'Opium', 'Ambergris', 'Musk', 'Saffron', 'Pearls',
+               'Rose Water', 'Mumia'],
+  },
+  // ── Jamestown — 1612 English colony, accessible only from London ──
+  // Tiny, precarious, ~300 people. Rolfe's first tobacco crop planted this year;
+  // sassafras is the main existing export. Demands everything.
+  jamestown: {
+    produces: ['Sassafras', 'Timber', 'Virginia Tobacco', 'Tobacco'],
+    trades:   [],
+    demands:  ['Iron', 'Munitions', 'Sugar', 'Rice',
+               'Cinnamon', 'Black Pepper', 'Aloes', 'Quicksilver',
+               'Indigo', 'Rose Water'],
   },
 };
 
@@ -685,17 +726,17 @@ const FACTION_CARGO_POOLS: Record<string, Commodity[]> = {
   English: [
     'Iron', 'Munitions', 'Rice', 'Timber',
     'Black Pepper', 'Cinnamon', 'Ginger', 'Tea',
-    'Cloves', 'Nutmeg', 'Cotton Textiles', 'Indigo',
+    'Cloves', 'Nutmeg', 'Indigo',
   ],
   Dutch: [
     'Iron', 'Munitions', 'Rice', 'Timber',
     'Black Pepper', 'Cloves', 'Nutmeg', 'Cinnamon',
-    'Cotton Textiles', 'Indigo', 'Sugar', 'Camphor',
+    'Indigo', 'Sugar', 'Camphor',
   ],
   Portuguese: [
     'Munitions', 'Iron', 'Rice', 'Timber',
     'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
-    'Opium', 'Red Coral', 'Quicksilver', 'Cotton Textiles',
+    'Opium', 'Red Coral', 'Quicksilver',
     'Cassia Fistula', 'Tobacco',
   ],
   Spanish: [
@@ -706,38 +747,38 @@ const FACTION_CARGO_POOLS: Record<string, Commodity[]> = {
   French: [
     'Iron', 'Munitions', 'Rice', 'Timber',
     'Black Pepper', 'Cinnamon', 'Coffee', 'Sugar',
-    'Cotton Textiles', 'Indigo',
+    'Indigo',
   ],
   Danish: [
     'Iron', 'Munitions', 'Rice', 'Timber',
-    'Black Pepper', 'Tea', 'Cotton Textiles', 'Sugar',
+    'Black Pepper', 'Tea', 'Sugar',
   ],
   Gujarati: [
-    'Cotton Textiles', 'Rice', 'Indigo', 'Sugar',
+    'Rice', 'Indigo', 'Sugar',
     'Black Pepper', 'Cardamom', 'Ginger', 'Tamarind', 'Cassia Fistula',
     'Opium', 'Bezoar Stones', 'Rose Water', 'Saffron',
   ],
   Mughal: [
-    'Cotton Textiles', 'Rice', 'Indigo', 'Iron', 'Sugar',
+    'Rice', 'Indigo', 'Iron', 'Sugar',
     'Black Pepper', 'Cardamom', 'Opium', 'Saffron',
     'Rose Water', 'Bezoar Stones',
   ],
   Ottoman: [
     'Coffee', 'Rice', 'Iron', 'Munitions',
     'Frankincense', 'Myrrh', 'Rose Water', 'Saffron',
-    'Cotton Textiles', 'Red Coral',
+    'Red Coral',
   ],
   Persian: [
     'Rose Water', 'Saffron', 'Pearls', 'Rice',
-    'Cotton Textiles', 'Iron', 'Coffee',
+    'Iron', 'Coffee',
     'Frankincense', 'Myrrh', 'Bezoar Stones',
   ],
   Omani: [
     'Frankincense', 'Pearls', 'Rice', 'Iron',
-    'Coffee', 'Myrrh', 'Ambergris', 'Cotton Textiles',
+    'Coffee', 'Myrrh', 'Ambergris',
   ],
   Swahili: [
-    'Ivory', 'Rice', 'Iron', 'Cotton Textiles',
+    'Ivory', 'Rice', 'Iron',
     'Ambergris', 'Aloes', 'Frankincense', 'Tamarind',
   ],
   Malay: [
@@ -772,7 +813,7 @@ const FACTION_CARGO_POOLS: Record<string, Commodity[]> = {
 
 // Default pool for factions not explicitly listed
 const DEFAULT_CARGO_POOL: Commodity[] = [
-  'Rice', 'Iron', 'Timber', 'Munitions', 'Cotton Textiles',
+  'Rice', 'Iron', 'Timber', 'Munitions',
   'Black Pepper', 'Cinnamon', 'Sugar',
 ];
 
@@ -801,7 +842,11 @@ export function generateStartingCargo(
   const targetWeight = Math.floor(cargoCapacity * 0.5);
   const pool = FACTION_CARGO_POOLS[faction] ?? DEFAULT_CARGO_POOL;
 
-  // Always start with some Rice and Munitions
+  // Starting hold size varies: 2-8 distinct commodity stacks
+  const targetStacks = 2 + Math.floor(Math.random() * 7);
+  const stackCount = () => Object.values(cargo).filter(v => v > 0).length;
+
+  // Always start with some Rice and Munitions (these count toward targetStacks)
   cargo['Rice'] = Math.min(5, targetWeight);
   cargo['Munitions'] = 8;
   let currentWeight = cargo['Rice'] * COMMODITY_DEFS['Rice'].weight
@@ -837,7 +882,7 @@ export function generateStartingCargo(
   // Fill cargo with random draws
   const maxDraws = 12; // prevent infinite loops on edge cases
   let draws = 0;
-  while (currentWeight < targetWeight && draws < maxDraws) {
+  while (currentWeight < targetWeight && draws < maxDraws && stackCount() < targetStacks) {
     const commodity = pickFromPool();
     const def = COMMODITY_DEFS[commodity];
 
@@ -858,7 +903,7 @@ export function generateStartingCargo(
   }
 
   // Lucky captain bonus: guaranteed exotic drug (tier 2)
-  if (captainLuck >= 11 && currentWeight < targetWeight + 4) {
+  if (captainLuck >= 11 && currentWeight < targetWeight + 4 && stackCount() < targetStacks) {
     const drugPool = pool.filter(c => {
       const d = COMMODITY_DEFS[c];
       return d && d.tier === 2 && cargo[c] === 0;
@@ -870,7 +915,7 @@ export function generateStartingCargo(
   }
 
   // Very lucky captain: chance of a rarity (tier 4)
-  if (captainLuck >= 16) {
+  if (captainLuck >= 16 && stackCount() < targetStacks) {
     const rarityPool = pool.filter(c => {
       const d = COMMODITY_DEFS[c];
       return d && d.tier === 4 && cargo[c] === 0;

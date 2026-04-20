@@ -140,7 +140,7 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
           const mapY = MAP_SIZE/2 + (dz / unitsPerPixel);
           
           // Port size based on scale
-          const scaleMap: Record<string, number> = { 'Small': 3, 'Medium': 4, 'Large': 5, 'Very Large': 6 };
+          const scaleMap: Record<string, number> = { 'Small': 3, 'Medium': 4, 'Large': 5, 'Very Large': 6, 'Huge': 7 };
           const portRadius = scaleMap[port.scale] || 4;
 
           // Draw port marker

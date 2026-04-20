@@ -1,14 +1,15 @@
 import { getTerrainData, setPlacedArchetypes } from './terrain';
 import { generateCity } from './cityGenerator';
 import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
+import { PORT_FACTION, PORT_CULTURAL_REGION } from '../store/gameStore';
 import {
   PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
   resolveDirRadians,
 } from './portArchetypes';
 
-export type Culture = 'Indian Ocean' | 'European' | 'Caribbean' | 'West African' | 'Atlantic';
-export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large';
+export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
+export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
 
 export interface PortOverride {
   id: string;
@@ -16,7 +17,10 @@ export interface PortOverride {
   culture: Culture;
   scale: PortScale;
   buildingStyle?: string;
+  flagColor?: [number, number, number];
+  landmark?: string;
   forcedPosition?: [number, number, number];
+  bridgeCount?: number;
 }
 
 export interface MapConfig {
@@ -35,6 +39,9 @@ function corePortsToOverrides(): PortOverride[] {
     culture: p.culture,
     scale: p.scale,
     buildingStyle: p.buildingStyle,
+    flagColor: p.flagColor,
+    landmark: p.landmark,
+    bridgeCount: p.bridgeCount,
   }));
 }
 
@@ -56,6 +63,9 @@ export function focusedPortConfig(portId: string, seed: number, worldSize: numbe
       culture: port.culture,
       scale: port.scale,
       buildingStyle: port.buildingStyle,
+      flagColor: port.flagColor,
+      landmark: port.landmark,
+      bridgeCount: port.bridgeCount,
     }],
     soloPort: port.id,
   };
@@ -274,12 +284,17 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       culture: override.culture,
       scale: override.scale,
       buildingStyle: override.buildingStyle,
+      flagColor: override.flagColor,
+      landmark: override.landmark,
       position: [portX, 0.5, portZ] as [number, number, number],
       inventory: { ...baseInventory },
       baseInventory,
       basePrices,
       prices,
-      buildings: generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx, override.name),
+      ...(() => {
+        const city = generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx, override.name, PORT_FACTION[override.id], PORT_CULTURAL_REGION[override.id], override.bridgeCount ?? 0);
+        return { buildings: city.buildings, roads: city.roads };
+      })(),
     });
   }
 

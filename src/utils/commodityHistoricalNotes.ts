@@ -171,13 +171,6 @@ export const COMMODITY_HISTORICAL_NOTES: Partial<Record<Commodity, HistoricalNot
       'Pires, Suma Oriental (c. 1515)',
     ],
   },
-  'Cotton Textiles': {
-    text: 'Indian cotton textiles were arguably the most important trade good in the entire Indian Ocean system — more important, in aggregate, than any spice. Gujarati calicoes and chintzes functioned as a de facto currency in East Africa, where they were exchanged directly for gold, ivory, and slaves. The variety was staggering: coarse everyday cloth, fine muslins, painted chintzes, and embroidered luxury fabrics all traveled different trade routes to different markets.',
-    sources: [
-      'Riello, Cotton: The Fabric that Made the Modern World (2013)',
-      'Chaudhuri, Trade and Civilisation in the Indian Ocean (1985)',
-    ],
-  },
   'Indigo': {
     text: 'Indigo dye, produced primarily in Gujarat, was in insatiable demand in Europe, where it competed with (and was gradually replacing) the local woad plant. European dyers\' guilds fought hard against indigo imports, and several German states banned it as "the devil\'s dye." But the superior color and lower cost of Indian indigo made its triumph inevitable. The production process — fermenting indigo leaves in vats, then oxidizing and drying the sediment — was labor-intensive and foul-smelling.',
     sources: [

@@ -189,3 +189,16 @@ export const FACTIONS: Record<Nationality, FactionInfo> = {
 
 /** Ordered list for UI dropdowns, etc. */
 export const NATIONALITY_LIST: Nationality[] = Object.keys(FACTIONS) as Nationality[];
+
+/**
+ * Pick a legible pennant / accent color from a nationality's flag palette.
+ * Prefers the charge color (index 1); falls back to the background when the
+ * charge is white, so the pennant doesn't disappear against a sky backdrop.
+ */
+export function pickFlagColor(flag?: Nationality | string): string | undefined {
+  if (!flag) return undefined;
+  const cs = FACTIONS[flag as Nationality]?.colors;
+  if (!cs) return undefined;
+  const charge = cs[1];
+  return /^#f+$/i.test(charge.replace('#', '')) ? cs[0] : charge;
+}

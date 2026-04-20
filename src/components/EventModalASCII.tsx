@@ -19,7 +19,7 @@ const BG        = parchment.bgPanel;
 
 // ── Inner width: chars between the ║ borders ─────────────────────────────────
 const IW = 48;
-const IW_WIDE = 62;
+const IW_WIDE = 64;
 
 // ── Date formatting ─────────────────────────────────────────────────────────
 const MONTH_NAMES_FULL = [
@@ -246,11 +246,11 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
   const divChar = '\u2726';
 
   // ── Table column widths (scale with iw) ──
-  const nameW = isWide ? 26 : 19;
+  const nameW = isWide ? 32 : 19;
   const roleW = isWide ? 18 : 13;
   const skillW = 5;
   const tblW = nameW + roleW + skillW;
-  const cargoNameW = isWide ? 19 : 12;
+  const cargoNameW = isWide ? 18 : 12;
   const cargoColW = cargoNameW + 8;
   const cargoGap = iw - 4 - cargoColW * 2;
 
@@ -307,7 +307,7 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             height: '100%',
             objectFit: 'cover',
             transform: 'scale(1.15)',
-            filter: 'sepia(0.2) contrast(1.05) brightness(0.65) saturate(0.85)',
+            filter: 'sepia(0.15) contrast(1.05) brightness(0.6) saturate(1.1)',
           }}
         />
         {/* Elegant vignette — soft fade at edges, keeps center visible */}
@@ -325,9 +325,9 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
           className="relative"
           style={{
             backgroundColor: 'rgba(8,7,5,0.94)',
-            boxShadow: '0 0 40px rgba(0,0,0,0.6), 0 0 80px rgba(0,0,0,0.3), inset 0 0 30px rgba(0,0,0,0.2)',
-            padding: isWide ? '24px 32px' : isTiny ? '12px 10px' : '16px 20px',
-            maxHeight: '88vh',
+            boxShadow: '0 0 40px rgba(0,0,0,0.8), 0 0 80px rgba(0,0,0,0.35), inset 0 0 30px rgba(0,0,0,0.2)',
+            padding: isWide ? '20px 30px' : isTiny ? '12px 10px' : '16px 20px',
+            maxHeight: '90vh',
             overflowY: 'auto',
           }}
         >
@@ -346,10 +346,10 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
               {(() => {
                 // Spaced title that fits within iw
                 const title = isWide
-                  ? 'C O M M I S S I O N  O F  V O Y A G E'
+                  ? 'C O M M I S S I O N   O F   V O Y A G E'
                   : 'COMMISSION OF VOYAGE';
                 const titleLen = title.length;
-                const ruleW = titleLen + 4; // 2 char padding each side
+                const ruleW = titleLen + 1; // 2 char padding each side
                 const padL = Math.floor((iw - ruleW) / 2);
                 const padR = iw - ruleW - padL;
                 const tPadL = Math.floor((iw - titleLen) / 2);
@@ -388,10 +388,10 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
             <div style={{
               textAlign: 'center',
               fontFamily: monoFont,
-              fontSize: isWide ? 16 : isTiny ? 11 : 13,
-              lineHeight: 1.85,
+              fontSize: isWide ? 15 : isTiny ? 11 : 13,
+              lineHeight: 1.4,
               color: TXT,
-              padding: isWide ? '4px 0 8px' : '2px 0 6px',
+              padding: isWide ? '0px 0 0px' : '2px 0 6px',
               borderLeft: `3px double ${DIM_GOLD}`,
               borderRight: `3px double ${DIM_GOLD}`,
               marginLeft: '0px',
@@ -595,7 +595,7 @@ export function EventModalASCII({ onDismiss }: { onDismiss: () => void }) {
                 <L>
                   {sp(godPadL)}
                   <C c={GOLD}>{'\u2502  \u25b6 '}</C>
-                  <C c={BRIGHT}>{'G O D S P E E D'}</C>
+                  <C c={BRIGHT}>{' S E T  S A I L'}</C>
                   <C c={GOLD}>{sp(godW - 4 - 15)}{'\u2502'}</C>
                   {sp(godPadR)}
                 </L>

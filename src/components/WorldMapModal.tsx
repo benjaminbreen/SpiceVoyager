@@ -27,6 +27,7 @@ import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../ut
 
 interface WorldMapModalProps {
   onClose: () => void;
+  onArrival?: (portName: string, swap: () => void) => Promise<void>;
 }
 
 /** Group ports by region, sorted with the player's region first */
@@ -58,7 +59,7 @@ const REGION_NAV_LABELS: Record<string, string> = {
   atlantic: 'Atlantic',
 };
 
-export function WorldMapModal({ onClose }: WorldMapModalProps) {
+export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [hoveredPort, setHoveredPort] = useState<string | null>(null);
@@ -79,7 +80,6 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const reachablePortIds = useMemo(() => getReachableWorldPortIds(nearestPortId), [nearestPortId]);
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
-  const ship = useGameStore(s => s.ship);
   const [travelModal, setTravelModal] = useState<{
     fromPort: string;
     toPort: string;
@@ -87,6 +87,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
     targetPortId: string;
     fromPortId: string;
     toPortId: string;
+    force: boolean;
   } | null>(null);
 
   // Calculate travel info for selected port
@@ -341,7 +342,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       const dotColor = isPlayer ? '#60a5fa' : isSelected ? '#fbbf24' : (isReachable || devMode) ? '#e2c87a' : 'rgba(148,163,184,0.4)';
       const strokeColor = isInteractive ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.12)';
 
-      if (port.scale === 'Very Large') {
+      if (port.scale === 'Huge' || port.scale === 'Very Large') {
         // Very Large: filled dot + outer ring (double indicator)
         const outerR = 7;
         const innerR = 3.5;
@@ -387,7 +388,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       }
 
       // Label — font-size and offset are counter-scaled in the zoom handler
-      const isLarge = port.scale === 'Large' || port.scale === 'Very Large';
+      const isLarge = port.scale === 'Large' || port.scale === 'Very Large' || port.scale === 'Huge';
       portG.append('text')
         .attr('class', `port-label ${isLarge || isPlayer ? 'major' : 'minor'}`)
         .attr('data-x', projected[0])
@@ -479,21 +480,31 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       targetPortId: selectedPort,
       fromPortId: nearestPortId,
       toPortId: selectedPort,
+      force: devMode && !canDirectlySail(nearestPortId, selectedPort),
     });
+  };
+
+  const finishVoyage = (modal: NonNullable<typeof travelModal>) => {
+    const swap = () => {
+      fastTravel(modal.targetPortId, { force: modal.force });
+      setTravelModal(null);
+      onClose();
+    };
+    if (onArrival) {
+      void onArrival(modal.toPort, swap);
+    } else {
+      swap();
+    }
   };
 
   const handleTravelComplete = () => {
     if (!travelModal) return;
-    fastTravel(travelModal.targetPortId);
-    setTravelModal(null);
-    onClose();
+    finishVoyage(travelModal);
   };
 
   const handleTravelSkip = () => {
     if (!travelModal) return;
-    fastTravel(travelModal.targetPortId);
-    setTravelModal(null);
-    onClose();
+    finishVoyage(travelModal);
   };
 
   // Keyboard
@@ -787,8 +798,6 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
           fromPort={travelModal.fromPort}
           toPort={travelModal.toPort}
           totalDays={travelModal.totalDays}
-          shipType={ship.type}
-          shipName={ship.name}
           fromPortId={travelModal.fromPortId}
           toPortId={travelModal.toPortId}
           onComplete={handleTravelComplete}

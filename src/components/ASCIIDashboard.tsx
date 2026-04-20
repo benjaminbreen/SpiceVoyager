@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useGameStore, WEAPON_DEFS, PORT_FACTION, type Nationality, type CrewRole, type CrewMember, type CrewQuality } from '../store/gameStore';
-import { sfxTab, sfxClose } from '../audio/SoundEffects';
+import { useGameStore, WEAPON_DEFS, PORT_FACTION, type Nationality, type CrewRole, type CrewMember, type CrewQuality, type Humours } from '../store/gameStore';
+import { sfxTab, sfxClose, sfxHover } from '../audio/SoundEffects';
 import { FactionFlag } from './FactionFlag';
 import { CrewPortraitSquare } from './CrewPortrait';
 import { PortraitModal } from './PortraitModal';
-import { FACTIONS } from '../constants/factions';
+import { FACTIONS, pickFlagColor } from '../constants/factions';
 import { sfxClick } from '../audio/SoundEffects';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 import {
@@ -15,6 +15,7 @@ import {
   hullColor, moraleColor, cargoColor,
   BaroqueBorder,
 } from './ascii-ui-kit';
+import { ShipView } from './ShipView';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ASCII Dashboard — baroque-framed game UI with tabbed panels
@@ -52,6 +53,169 @@ const ROLE_COLOR: Record<string, string> = {
   Factor:    CLR.teal,
   Surgeon:   '#ec4899',
 };
+
+// ── Crew dialogue lines (keyed by role × morale band × region) ──────────
+
+type MoraleBand = 'high' | 'mid' | 'low';
+type RegionKey = 'european' | 'indian' | 'southeast_asian' | 'east_asian' | 'african';
+
+const NATIONALITY_REGION: Record<string, RegionKey> = {
+  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european',
+  Mughal: 'indian', Gujarati: 'indian', Persian: 'indian',
+  Ottoman: 'indian', Omani: 'indian',
+  Swahili: 'african',
+  Malay: 'southeast_asian', Acehnese: 'southeast_asian', Javanese: 'southeast_asian', Moluccan: 'southeast_asian', Siamese: 'southeast_asian',
+  Japanese: 'east_asian', Chinese: 'east_asian',
+};
+
+const CREW_DIALOGUE: Record<string, Record<MoraleBand, Record<RegionKey, string[]>>> = {
+  Captain: {
+    high: {
+      european: ["The wind favours the bold today.", "I can smell profit on the breeze.", "A fine day to be at sea, wouldn't you say?"],
+      indian: ["The monsoon is with us. God is generous.", "I have sailed these waters since I was a boy — they welcome us.", "Fortune smiles. Let us not waste her favour."],
+      southeast_asian: ["The straits are calm. We move swiftly.", "I know these channels like the lines on my palm.", "A good omen — the sea eagles circle high."],
+      east_asian: ["The currents flow in our favour.", "Steady hands, steady course — we will prosper.", "The heavens align for profitable trade."],
+      african: ["The coast speaks well of our coming.", "I have traded along these shores many times. We are welcome.", "A strong tide carries us forward."],
+    },
+    mid: {
+      european: ["We press on. There's nothing else for it.", "I've seen worse seas than these.", "Keep your wits about you. The ocean has moods."],
+      indian: ["The sea tests us. We must be patient.", "Not every voyage is blessed, but we endure.", "These waters are fickle. Stay alert."],
+      southeast_asian: ["Watch the shallows. Many a ship has come to grief here.", "We are not the only ones on these waters. Stay wary.", "The heat weighs on us all, but we carry on."],
+      east_asian: ["The sea neither helps nor hinders. We rely on ourselves.", "A captain's burden is to choose well and wait.", "Discipline will see us through."],
+      african: ["The shore offers little shelter here. We press on.", "I know these currents. Patience is required.", "We have enough to continue. That will suffice."],
+    },
+    low: {
+      european: ["If we don't find port soon, I fear the worst.", "This venture may be my last. God help us.", "The crew grows restless. I cannot blame them."],
+      indian: ["We are far from home and the ship suffers.", "I pray to God we see land before the water runs dry.", "The men look at me with hollow eyes. I have no comfort to give."],
+      southeast_asian: ["These waters will swallow us if we are not careful.", "I have led us into misfortune. I must find a way out.", "The crew whispers of turning back. Perhaps they are right."],
+      east_asian: ["Even the strongest vessel has its limits.", "We have strayed too far. I feel it in my bones.", "The silence among the crew troubles me more than any storm."],
+      african: ["This coast is unforgiving to the desperate.", "I did not come this far to perish, but the sea cares nothing for resolve.", "We must find harbour. There is no other choice."],
+    },
+  },
+  Navigator: {
+    high: {
+      european: ["The charts are clear and the stars are bright.", "I've plotted a course that will shave two days off our passage.", "Excellent visibility. Even a blind man could navigate today."],
+      indian: ["I know these constellations well. We are exactly where we should be.", "The Pole Star guides us true tonight.", "My calculations put us ahead of schedule."],
+      southeast_asian: ["The islands ahead match my charts perfectly.", "I've navigated these straits a dozen times. Trust the heading.", "The reef lines up with my markings. We pass safely."],
+      east_asian: ["The compass holds steady. A good sign.", "These waters are well-charted. We will not stray.", "By my reckoning, we arrive within the week."],
+      african: ["The coastline confirms our position. All is well.", "I've studied these currents for years. We are on course.", "The stars and the shore agree — we make good progress."],
+    },
+    mid: {
+      european: ["Cloud cover is making the stars difficult tonight.", "The charts disagree with what I see. I'm recalculating.", "We should be cautious. These waters aren't well mapped."],
+      indian: ["Monsoon clouds obscure the heavens. I navigate by instinct.", "The currents have shifted. I'm adjusting our heading.", "I've seen these waters behave strangely before."],
+      southeast_asian: ["Too many islands, too few landmarks. I must be careful.", "The shallows here are treacherous. I need silence to concentrate.", "My charts show open water where I see reefs. Troubling."],
+      east_asian: ["The fog makes it difficult to sight land.", "I am uncertain of our longitude. We must wait for clear skies.", "The magnetic compass wavers near these shores."],
+      african: ["The coast here all looks the same. I must study the depth.", "An unfamiliar current pushes us. I'm compensating.", "I will need to take soundings before we proceed."],
+    },
+    low: {
+      european: ["I confess I no longer know precisely where we are.", "The charts are useless here. We sail blind.", "If I've miscalculated, we are in grave danger."],
+      indian: ["The stars hide from us, and so does our course.", "I fear we have drifted far from any safe route.", "I cannot find our position. The sea has swallowed every landmark."],
+      southeast_asian: ["These reefs could tear the hull apart. I need better charts.", "I am lost. The islands all blur together.", "One wrong heading and we run aground. I need rest to think clearly."],
+      east_asian: ["The compass spins without reason. I cannot explain it.", "We are adrift in unknown waters.", "I have failed in my duty. I cannot find the way."],
+      african: ["The coastline here is not on any chart I possess.", "I fear we have passed our destination days ago.", "Every heading leads to more open water. I see no landfall."],
+    },
+  },
+  Gunner: {
+    high: {
+      european: ["The powder is dry and the cannons gleam. Let them come.", "I've drilled the gun crews until they can fire in their sleep.", "A broadside from this ship would ruin any pirate's day."],
+      indian: ["Our guns are loaded and ready. No corsair will catch us unaware.", "I have seen battle and I do not fear it. We are prepared.", "The weapons are in fine order. I am proud of my work."],
+      southeast_asian: ["Pirates think twice before approaching a well-armed ship.", "I've faced Malay raiders before. Our guns outmatch theirs.", "Every cannon is cleaned and loaded. We are ready for anything."],
+      east_asian: ["The weapons are maintained to perfection.", "I keep the powder dry and the shot sorted. Discipline wins battles.", "Let the pirates come. They will find us prepared."],
+      african: ["These waters breed corsairs, but we are well armed.", "I've rigged the swivel guns for close quarters. Nothing gets through.", "Our firepower is our shield. I keep it sharp."],
+    },
+    mid: {
+      european: ["We're running low on good powder. I'll make do.", "The guns need maintenance, but they'll fire when needed.", "I wish we had more shot, but what we have will serve."],
+      indian: ["The humidity is ruining the powder stores. I do what I can.", "We could use fresh supplies, but the guns still work.", "I keep the crew ready, but they need more practice."],
+      southeast_asian: ["Salt air eats at the iron. I'm fighting a losing battle with rust.", "We have enough powder for a fight, but not a war.", "The heat warps the carriages. I patch what I can."],
+      east_asian: ["Supplies are adequate but not ideal.", "I would prefer more powder, but we will manage.", "The guns function. That is all I can promise."],
+      african: ["The damp gets into everything. I keep the powder raised above the bilge.", "We are armed, but barely. I would not seek a fight.", "One engagement is all our stores will support."],
+    },
+    low: {
+      european: ["The cannons are in a sorry state. I'd be surprised if half of them fire.", "We have almost no powder left. We're defenceless.", "If pirates find us now, God help us. The guns won't."],
+      indian: ["The weapons are corroded beyond my ability to repair.", "I cannot promise these guns will fire. The powder is damp.", "We are a merchant ship with the teeth of a kitten."],
+      southeast_asian: ["The guns are little more than decoration at this point.", "Rust has claimed two cannons already. The rest may follow.", "I have nothing to work with. No powder, no shot, no hope of a fight."],
+      east_asian: ["I am ashamed of the state of our armaments.", "The guns cannot fire. We must rely on speed alone.", "Even pirates would pity our defences."],
+      african: ["The cannons are seized with rust. We are unarmed in hostile waters.", "I have failed to keep the weapons ready. I accept the blame.", "If we are attacked, all I can offer is a cutlass and a prayer."],
+    },
+  },
+  Sailor: {
+    high: {
+      european: ["Fair winds and following seas — what more could a sailor ask?", "The rigging is tight and the sails are full. A good day's work.", "I've served on worse ships. This one handles well."],
+      indian: ["The ship sings when the sails catch the monsoon.", "A strong vessel and honest work. I am content.", "The sea provides for those who respect her."],
+      southeast_asian: ["These warm waters are kind to a working man.", "The ship moves well. I take pride in my part of that.", "Good weather, good crew. It is enough."],
+      east_asian: ["The sails are mended and the deck is clean.", "Honest labour under an open sky. I ask for nothing more.", "The ship is in good order. The crew works well together."],
+      african: ["The wind carries us true. I trust this ship.", "I know the ropes and they know me. All is well.", "A sailor's life is hard but fair. Today it is fair."],
+    },
+    mid: {
+      european: ["Another watch, another league. The sea doesn't care about tired bones.", "Could use a proper meal and a dry hammock, but I'll manage.", "The work is hard but steady. I've known worse."],
+      indian: ["The heat makes the ropes burn. My hands are raw.", "We work and we wait. Such is a sailor's lot.", "I miss the shore, but the ship needs me."],
+      southeast_asian: ["The humidity makes everything twice as heavy.", "I do my work and keep my head down. That's all one can do.", "The days blur together out here."],
+      east_asian: ["The routine continues. I do not complain.", "There is always something to mend, something to haul.", "Work keeps the dark thoughts at bay."],
+      african: ["The salt stings the eyes, but we carry on.", "I have known harder voyages than this.", "The watch is long tonight. I keep my eyes open."],
+    },
+    low: {
+      european: ["How much longer must we suffer on this cursed voyage?", "The food is rotten and the water tastes of bilge.", "I didn't sign on for this. None of us did."],
+      indian: ["My hands bleed and my belly is empty. Is this what I left home for?", "The ship groans and so do we.", "Some of the men talk of mutiny. I say nothing."],
+      southeast_asian: ["The heat is killing us faster than any enemy could.", "I dream of solid ground and shade.", "We are worked like mules and fed like dogs."],
+      east_asian: ["This voyage has taken everything from us.", "I cannot remember the last time I slept a full night.", "The crew is broken. We need port or we need a miracle."],
+      african: ["Every day on this ship is worse than the last.", "I did not think I would die at sea, but now I wonder.", "There is nothing left in us. Only habit keeps us moving."],
+    },
+  },
+  Factor: {
+    high: {
+      european: ["The ledgers balance perfectly. We stand to make a handsome profit.", "I've found buyers willing to pay twice what we paid for this cargo.", "Markets favour the prepared. And we are very well prepared."],
+      indian: ["The spice prices are excellent. Our timing could not be better.", "I have contacts at the next port who will deal fairly with us.", "Every crate in the hold represents profit. I've ensured it."],
+      southeast_asian: ["Cloves and nutmeg at these prices? We'll be rich men.", "The trading houses here know quality when they see it.", "I've negotiated terms that would make a Venetian weep with envy."],
+      east_asian: ["Silk and porcelain — the margins are extraordinary.", "My calculations show a return of three hundred percent on this cargo.", "The merchants here are shrewd, but I am shrewder."],
+      african: ["Gold and ivory at fair prices. The hold is full of fortune.", "I know the value of every item aboard. We are wealthy men.", "The trade networks here are ancient and reliable. We profit from them."],
+    },
+    mid: {
+      european: ["The margins are thin but we'll turn a profit. Barely.", "I've seen better markets, but also worse. We'll manage.", "The competition is fierce. Everyone wants the same goods."],
+      indian: ["Prices have shifted since we loaded. I must recalculate.", "The brokers here drive a hard bargain. I hold my ground.", "Some of the cargo has spoiled. Our profits suffer."],
+      southeast_asian: ["The local traders are suspicious of outsiders. It takes time.", "We'll sell, but not at the price I hoped for.", "Tariffs eat into everything. The customs officers are relentless."],
+      east_asian: ["The market is saturated with goods like ours.", "I am negotiating, but progress is slow.", "We will break even. That is the best I can promise."],
+      african: ["The exchange rates here are unfavourable.", "I must find the right buyer. It requires patience.", "Our goods are desired, but no one wants to pay what they're worth."],
+    },
+    low: {
+      european: ["We are haemorrhaging money. This cargo is worth less than the wood it sits on.", "I cannot sell these goods at any price. The market has collapsed.", "We should have stayed in port. This voyage is a financial disaster."],
+      indian: ["The spices have spoiled. Months of investment, ruined.", "No one will trade with us. Our reputation precedes us, it seems.", "I cannot make coin from nothing, yet that is what I am asked to do."],
+      southeast_asian: ["The customs officials have seized half our cargo.", "We owe more in port fees than we can earn from what remains.", "This is ruin. There is no other word for it."],
+      east_asian: ["The merchants here will not deal with us at all.", "Every calculation I make ends in loss.", "I have failed the ship. The numbers do not lie."],
+      african: ["There is no market for what we carry. We sail for nothing.", "Spoilage, theft, and bad luck have emptied our coffers.", "I would resign my post if there were anywhere to go."],
+    },
+  },
+  Surgeon: {
+    high: {
+      european: ["The crew is in excellent health. My medicines are well stocked.", "No fevers, no scurvy. I run a clean ship, medically speaking.", "I've treated a blister and a splinter today. If only every day were so easy."],
+      indian: ["I've learned remedies from the local physicians that European doctors would envy.", "The crew's health is my pride. Every man is fit for duty.", "Good food, clean water, and proper rest — the best medicine there is."],
+      southeast_asian: ["The tropical herbs here are remarkable. I've restocked my supplies.", "Heat sickness is the main concern, but I've prepared for it.", "A healthy crew is a happy crew. I keep both."],
+      east_asian: ["I've studied the local medical texts. Fascinating and practical.", "The crew's constitution is strong. I monitor them closely.", "Prevention is my art. When I do my job well, no one notices."],
+      african: ["I have salves and tinctures enough for any malady.", "The crew is strong and well-fed. My work is easy.", "I keep a watchful eye. Disease is easier to prevent than to cure."],
+    },
+    mid: {
+      european: ["A few men are feeling poorly. Nothing serious yet, but I'm watching closely.", "My supplies are adequate, though I could use fresh lemon juice.", "The usual ailments — blisters, strains, the odd tooth. Manageable."],
+      indian: ["The tropical heat breeds fevers. I do what I can to keep them at bay.", "We need fresh provisions. Dried meat and biscuit won't keep scurvy away forever.", "I've treated three men this week. The work is steady."],
+      southeast_asian: ["Infections spread fast in this humidity. I must be vigilant.", "Several men show early signs of scurvy. I need citrus fruit.", "The mosquitoes here carry sickness. I've prepared poultices, but they're crude."],
+      east_asian: ["The damp quarters breed illness. I've ordered the berths aired out.", "My supplies are running low. I ration what remains.", "A surgeon without medicines is just a man with a knife. I need to restock."],
+      african: ["Fevers are the enemy here. I fight them with what little I have.", "Two men are bedridden. I expect they'll recover, but slowly.", "I need quinine. Without it, the fevers will only get worse."],
+    },
+    low: {
+      european: ["Half the crew is sick and my medicine chest is empty.", "I cannot cure what I cannot treat. We need port immediately.", "Men are dying and I can do nothing but watch. It is unbearable."],
+      indian: ["The fever has taken hold. I've lost two men already.", "I have nothing left — no laudanum, no quinine, no salves. Just prayers.", "The ship has become a hospital. And a poor one at that."],
+      southeast_asian: ["Tropical disease is ravaging the crew. My remedies are exhausted.", "I amputated a man's leg this morning with a carpenter's saw. This is not medicine.", "We are dying by degrees. Only landfall can save us now."],
+      east_asian: ["The sickness spreads faster than I can treat it.", "I mix water and hope and call it medicine. It fools no one.", "If we do not find port within days, I will lose more men."],
+      african: ["The fevers are beyond my skill to treat. I am overwhelmed.", "My hands shake from exhaustion. I have not slept in three days.", "There is a sickness aboard that I do not recognize. God help us all."],
+    },
+  },
+};
+
+function getCrewDialogue(member: CrewMember): string {
+  const band: MoraleBand = member.morale > 60 ? 'high' : member.morale > 30 ? 'mid' : 'low';
+  const region = NATIONALITY_REGION[member.nationality] ?? 'european';
+  const lines = CREW_DIALOGUE[member.role]?.[band]?.[region];
+  if (!lines || lines.length === 0) return 'I have nothing to say.';
+  return lines[Math.floor(Math.random() * lines.length)];
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ANIMATED WAVE DIVIDER (from EventModalASCII pattern)
@@ -128,9 +292,21 @@ function StatGauge({ label, value, numericValue, max, color, suffix, delay = 0 }
       >
         {label}
       </span>
-      <div className="flex-1 h-[6px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '60' }}>
+      <div
+        className="relative flex-1 h-[6px] rounded-full overflow-hidden"
+        style={{
+          backgroundColor: 'rgba(0,0,0,0.45)',
+          boxShadow: `inset 0 1px 2px rgba(0,0,0,0.5)`,
+        }}
+      >
+        {/* 50% tick */}
+        <div
+          aria-hidden
+          className="absolute top-0 bottom-0 w-[1px] z-[1]"
+          style={{ left: '50%', backgroundColor: CLR.rule + '70' }}
+        />
         <motion.div
-          className="h-full rounded-full"
+          className="h-full rounded-full relative z-[2]"
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 0.7, delay: delay + 0.1, ease: [0.22, 1, 0.36, 1] }}
@@ -147,6 +323,64 @@ function StatGauge({ label, value, numericValue, max, color, suffix, delay = 0 }
         <span className="text-[10px] shrink-0" style={{ color: CLR.dim, fontFamily: SANS }}>{suffix}</span>
       )}
     </motion.div>
+  );
+}
+
+// ── Shared section header: uppercase label left, optional stat right ─────
+
+function SectionHeader({ label, stat, accent = CLR.dimGold }: {
+  label: string; stat?: string; accent?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between mb-2">
+      <h3
+        className="text-[13px] tracking-[0.2em] uppercase"
+        style={{ color: accent, fontFamily: SANS, fontWeight: 600 }}
+      >
+        {label}
+      </h3>
+      {stat && (
+        <span className="text-[11px]" style={{ color: CLR.dim, fontFamily: SANS }}>
+          {stat}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Tiered alert panel ──────────────────────────────────────────────────
+
+function AlertPanel({ tier, alerts }: { tier: 'critical' | 'warning'; alerts: string[] }) {
+  const color = tier === 'critical' ? CLR.red : CLR.yellow;
+  const heading = tier === 'critical' ? 'Critical' : 'Warnings';
+  const bg = tier === 'critical' ? `${color}10` : `${color}08`;
+  return (
+    <div
+      className="rounded-lg p-3"
+      style={{
+        backgroundColor: bg,
+        border: `1px solid ${color}${tier === 'critical' ? '55' : '2a'}`,
+        boxShadow: tier === 'critical' ? `0 0 14px ${color}18, inset 0 1px 0 ${color}15` : undefined,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[11px]" style={{ color }}>{tier === 'critical' ? '\u26a0' : '\u25b2'}</span>
+        <span
+          className="text-[10px] tracking-[0.2em] uppercase"
+          style={{ color, fontFamily: SANS, fontWeight: 700 }}
+        >
+          {heading}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {alerts.map((msg, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <span className="text-[10px] mt-[2px] shrink-0" style={{ color: color + 'b0' }}>&bull;</span>
+            <span className="text-[12px] leading-snug" style={{ color: CLR.bright, fontFamily: SANS }}>{msg}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -227,25 +461,32 @@ function CrewRow({ member, delay }: {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, delay }}
-      className="flex items-center gap-2.5 py-[6px] border-b"
+      onMouseEnter={(e) => {
+        sfxHover();
+        e.currentTarget.style.backgroundColor = CLR.bright + '06';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = 'transparent';
+      }}
+      className="group flex items-center gap-2.5 py-[7px] px-2 -mx-2 rounded-md border-b transition-colors duration-150"
       style={{ borderColor: CLR.rule + '30' }}
     >
       {/* Portrait */}
       <div
-        className="w-[36px] h-[36px] rounded-full shrink-0 overflow-hidden flex items-center justify-center"
+        className="w-[44px] h-[44px] rounded-full shrink-0 overflow-hidden flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-110"
         style={{
           border: `2px solid ${roleColor}60`,
           backgroundColor: roleColor + '10',
           boxShadow: `inset 0 1px 3px rgba(0,0,0,0.4), 0 0 6px ${roleColor}15`,
         }}
       >
-        <CrewPortraitSquare member={member} size={36} />
+        <CrewPortraitSquare member={member} size={44} />
       </div>
       {/* Name + flag */}
       <div className="flex items-center gap-1.5 flex-1 min-w-0">
         <span
           className="text-[13px] truncate"
-          style={{ color: CLR.bright, fontFamily: SANS }}
+          style={{ color: CLR.bright, fontFamily: SANS, fontWeight: 500 }}
         >
           {name}
         </span>
@@ -255,20 +496,20 @@ function CrewRow({ member, delay }: {
       </div>
       {/* Role */}
       <span
-        className="text-[11px] w-[72px] shrink-0"
-        style={{ color: roleColor, fontFamily: SANS, fontWeight: 500 }}
+        className="text-[12px] w-[76px] shrink-0"
+        style={{ color: roleColor, fontFamily: SANS, fontWeight: 600 }}
       >
         {role}
       </span>
       {/* Health */}
       <span
-        className="text-[10px] w-[48px] shrink-0 text-right"
+        className="text-[11px] w-[52px] shrink-0 text-right"
         style={{ color: hs.color, fontFamily: SANS, fontWeight: 600 }}
       >
         {hs.label}
       </span>
       {/* Morale mini bar */}
-      <div className="w-[40px] h-[4px] rounded-full overflow-hidden shrink-0" style={{ backgroundColor: CLR.rule + '50' }}>
+      <div className="w-[42px] h-[4px] rounded-full overflow-hidden shrink-0" style={{ backgroundColor: CLR.rule + '50' }}>
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{ width: `${morale}%`, backgroundColor: moraleColor_ }}
@@ -343,22 +584,29 @@ function OverviewTab() {
     count > 1 ? `${count}\u00d7 ${name}` : name
   ).join(', ') || 'Unarmed';
 
-  // Alerts
-  const alerts: { msg: string; color: string }[] = [];
-  if (stats.hull < stats.maxHull * 0.5) {
-    alerts.push({ msg: `Hull critical \u2014 ${stats.maxHull - stats.hull} pts repair needed`, color: CLR.red });
+  // Alerts — tiered into critical vs warning
+  type Alert = { msg: string; tier: 'critical' | 'warning' };
+  const alerts: Alert[] = [];
+  if (stats.hull < stats.maxHull * 0.2) {
+    alerts.push({ msg: `Hull critical \u2014 ${stats.maxHull - stats.hull} pts repair needed`, tier: 'critical' });
+  } else if (stats.hull < stats.maxHull * 0.5) {
+    alerts.push({ msg: `Hull damaged \u2014 ${stats.maxHull - stats.hull} pts repair needed`, tier: 'warning' });
   } else if (stats.hull < stats.maxHull) {
-    alerts.push({ msg: `Hull damaged \u2014 ${stats.maxHull - stats.hull} pts repair needed`, color: CLR.yellow });
+    alerts.push({ msg: `Hull scuffed \u2014 ${stats.maxHull - stats.hull} pts repair needed`, tier: 'warning' });
   }
-  if (provisions < 10) {
-    alerts.push({ msg: `Provisions dangerously low: ${provisions} remaining`, color: CLR.red });
+  if (provisions < 5) {
+    alerts.push({ msg: `Starvation imminent: ${provisions} provisions remaining`, tier: 'critical' });
+  } else if (provisions < 10) {
+    alerts.push({ msg: `Provisions dangerously low: ${provisions} remaining`, tier: 'warning' });
   }
   sickCrew.forEach(c => {
-    alerts.push({ msg: `${c.name}: ${c.health}`, color: c.health === 'injured' ? CLR.red : CLR.yellow });
+    alerts.push({ msg: `${c.name}: ${c.health}`, tier: c.health === 'injured' || c.health === 'fevered' ? 'critical' : 'warning' });
   });
   if (stats.sails < stats.maxSails * 0.5) {
-    alerts.push({ msg: `Sails damaged \u2014 ${stats.maxSails - stats.sails} pts repair needed`, color: CLR.yellow });
+    alerts.push({ msg: `Sails damaged \u2014 ${stats.maxSails - stats.sails} pts repair needed`, tier: 'warning' });
   }
+  const criticalAlerts = alerts.filter(a => a.tier === 'critical');
+  const warningAlerts = alerts.filter(a => a.tier === 'warning');
 
   return (
     <motion.div
@@ -411,10 +659,10 @@ function OverviewTab() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5, delay: 0.2 }}
-        className="mt-4 w-full max-w-2xl"
+        className="mt-4 w-full max-w-3xl"
       >
         {/* Desktop: three-column — stats | ship | stats */}
-        <div className="hidden md:grid grid-cols-[1fr_auto_1fr] gap-6 items-center">
+        <div className="hidden md:grid grid-cols-[1fr_auto_1fr] gap-10 items-center px-4">
           {/* Left column stats */}
           <div className="space-y-3">
             <StatGauge label="Hull" value={`${stats.hull}/${stats.maxHull}`} numericValue={stats.hull} max={stats.maxHull} color={hullColor(hullPct)} delay={0.25} />
@@ -422,14 +670,25 @@ function OverviewTab() {
             <StatGauge label="Speed" value={`${stats.speed}`} numericValue={stats.speed} max={25} color={CLR.cyan} delay={0.35} />
           </div>
 
-          {/* Center: ship schematic */}
+          {/* Center: ship schematic — live procedural renderer */}
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.2 }}
             className="flex flex-col items-center px-4"
           >
-            <MiniShipSchematic shipType={ship.type} />
+            <ShipView
+              shipType={ship.type}
+              hull={stats.hull}
+              maxHull={stats.maxHull}
+              sails={stats.sails}
+              maxSails={stats.maxSails}
+              wind={0.6}
+              flagColor={pickFlagColor(ship.flag as Nationality)}
+              size="small"
+              view="exterior"
+              showToggle={false}
+            />
             <div className="mt-1">
               <WaveDivider width={30} />
             </div>
@@ -445,7 +704,18 @@ function OverviewTab() {
 
         {/* Mobile: ship on top, stats below */}
         <div className="md:hidden flex flex-col items-center">
-          <MiniShipSchematic shipType={ship.type} />
+          <ShipView
+            shipType={ship.type}
+            hull={stats.hull}
+            maxHull={stats.maxHull}
+            sails={stats.sails}
+            maxSails={stats.maxSails}
+            wind={0.6}
+            flagColor={pickFlagColor(ship.flag as Nationality)}
+            size="small"
+            view="exterior"
+            showToggle={false}
+          />
           <div className="mt-1 w-full">
             <WaveDivider width={36} />
           </div>
@@ -581,17 +851,10 @@ function OverviewTab() {
         transition={{ duration: 0.3, delay: 0.5 }}
         className="mt-3 w-full max-w-lg px-2 md:px-4"
       >
-        <div className="flex items-center justify-between mb-2">
-          <h3
-            className="text-[11px] tracking-[0.2em] uppercase"
-            style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}
-          >
-            Crew &middot; {crew.length} Souls
-          </h3>
-          <span className="text-[10px]" style={{ color: CLR.dim, fontFamily: SANS }}>
-            Avg morale {avgMorale}%
-          </span>
-        </div>
+        <SectionHeader
+          label={`Crew \u00b7 ${crew.length} Souls`}
+          stat={`Avg morale ${avgMorale}%`}
+        />
 
         {crew.map((c, i) => (
           <CrewRow
@@ -608,19 +871,14 @@ function OverviewTab() {
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.65 }}
-          className="mt-4 w-full max-w-lg px-2 md:px-4"
+          className="mt-4 w-full max-w-lg px-2 md:px-4 space-y-2"
         >
-          <div
-            className="rounded-lg p-3 space-y-1.5"
-            style={{ backgroundColor: 'rgba(120,60,30,0.08)', border: `1px solid ${CLR.rule}40` }}
-          >
-            {alerts.map((a, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="text-[12px]" style={{ color: a.color }}>{'\u26a0'}</span>
-                <span className="text-[12px]" style={{ color: a.color, fontFamily: SANS }}>{a.msg}</span>
-              </div>
-            ))}
-          </div>
+          {criticalAlerts.length > 0 && (
+            <AlertPanel tier="critical" alerts={criticalAlerts.map(a => a.msg)} />
+          )}
+          {warningAlerts.length > 0 && (
+            <AlertPanel tier="warning" alerts={warningAlerts.map(a => a.msg)} />
+          )}
         </motion.div>
       )}
 
@@ -1178,34 +1436,99 @@ function SummaryStat({ label, value, color }: { label: string; value: string; co
 
 // ── Captain card ─────────────────────────────────────────────────────────
 
-// ── Shared: D&D stat block ───────────────────────────────────────────────
+// ── Shared: Abilities (strength/perception/charisma/luck) ────────────────
 
-const STAT_LABELS: { key: keyof import('../store/gameStore').CrewStats; label: string; abbr: string; color: string }[] = [
-  { key: 'strength', label: 'Strength', abbr: 'STR', color: '#f87171' },
-  { key: 'perception', label: 'Perception', abbr: 'PER', color: '#60a5fa' },
-  { key: 'charisma', label: 'Charisma', abbr: 'CHA', color: '#fbbf24' },
-  { key: 'luck', label: 'Luck', abbr: 'LCK', color: '#a78bfa' },
+const ABILITY_LABELS: { key: keyof import('../store/gameStore').CrewStats; label: string; color: string }[] = [
+  { key: 'strength', label: 'Strength', color: '#f87171' },
+  { key: 'perception', label: 'Perception', color: '#60a5fa' },
+  { key: 'charisma', label: 'Charisma', color: '#fbbf24' },
+  { key: 'luck', label: 'Luck', color: '#a78bfa' },
 ];
 
-function StatBlock({ stats }: { stats: import('../store/gameStore').CrewStats }) {
+function AbilityBlock({ stats }: { stats: import('../store/gameStore').CrewStats }) {
   return (
-    <div className="grid grid-cols-4 gap-2">
-      {STAT_LABELS.map(({ key, abbr, color }) => (
-        <div key={key} className="flex flex-col items-center">
-          <span className="text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            {abbr}
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+      {ABILITY_LABELS.map(({ key, label, color }) => (
+        <div key={key} className="flex items-center gap-2">
+          <span className="text-[11px] w-[76px] text-right" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+            {label}
           </span>
-          <span className="text-[16px] tabular-nums mt-0.5" style={{ color, fontFamily: MONO, fontWeight: 600 }}>
-            {stats[key]}
-          </span>
-          <div className="w-full h-[3px] rounded-full mt-1 overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
+          <div className="flex-1 h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
             <div
               className="h-full rounded-full"
-              style={{ width: `${(stats[key] / 20) * 100}%`, backgroundColor: color, opacity: 0.7 }}
+              style={{ width: `${(stats[key] / 20) * 100}%`, backgroundColor: color, opacity: 0.8 }}
             />
           </div>
+          <span className="text-[12px] tabular-nums w-[20px]" style={{ color, fontFamily: MONO, fontWeight: 600 }}>
+            {stats[key]}
+          </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Temperament (humours) display ────────────────────────────────────────
+
+const HUMOUR_INFO: Record<keyof Humours, { label: string; color: string; description: string }> = {
+  sanguine:    { label: 'Sanguine',    color: '#f59e0b', description: 'warm-blooded, sociable, optimistic' },
+  choleric:    { label: 'Choleric',    color: '#ef4444', description: 'hot-tempered, ambitious, decisive' },
+  melancholic: { label: 'Melancholic', color: '#6366f1', description: 'thoughtful, perceptive, cautious' },
+  phlegmatic:  { label: 'Phlegmatic',  color: '#22d3ee', description: 'steady, loyal, patient' },
+  curiosity:   { label: 'Curious',     color: '#a3e635', description: 'open-minded, adaptable, inquisitive' },
+};
+
+const DEFAULT_HUMOURS: Humours = { sanguine: 5, choleric: 5, melancholic: 5, phlegmatic: 5, curiosity: 5 };
+
+function TemperamentBlock({ humours }: { humours?: Humours }) {
+  const h = humours ?? DEFAULT_HUMOURS;
+  const entries = (Object.keys(HUMOUR_INFO) as (keyof Humours)[])
+    .map(k => ({ key: k, value: h[k], ...HUMOUR_INFO[k] }))
+    .sort((a, b) => b.value - a.value);
+  const dominant = entries[0];
+  const secondary = entries[1].value >= 6 ? entries[1] : null;
+
+  const temperamentLabel = secondary
+    ? `${dominant.label} & ${secondary.label}`
+    : dominant.label;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+          Temperament
+        </span>
+        <span className="text-[13px]" style={{ color: dominant.color, fontFamily: SERIF, fontWeight: 600 }}>
+          {temperamentLabel}
+        </span>
+      </div>
+      <p className="text-[12px] mb-3" style={{ color: CLR.txt, fontFamily: SANS }}>
+        {secondary
+          ? `${dominant.description} — with a ${secondary.description} streak`
+          : dominant.description
+        }
+      </p>
+      <div className="space-y-1.5">
+        {entries.map(({ key, label, color, value }) => (
+          <div key={key} className="flex items-center gap-2">
+            <span className="text-[10px] w-[72px] text-right" style={{ color: CLR.dim, fontFamily: SANS }}>
+              {label}
+            </span>
+            <div className="flex gap-[3px]">
+              {Array.from({ length: 10 }, (_, i) => (
+                <div
+                  key={i}
+                  className="w-[6px] h-[10px] rounded-sm"
+                  style={{
+                    backgroundColor: i < value ? color : CLR.rule + '30',
+                    opacity: i < value ? 0.8 : 1,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1270,7 +1593,10 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
           border: `1px solid ${isCaptain ? CLR.gold + '22' : 'transparent'}`,
           boxShadow: isCaptain ? `0 2px 12px ${CLR.gold}08` : undefined,
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isCaptain ? CLR.gold + '12' : CLR.bright + '08'; }}
+        onMouseEnter={(e) => {
+          sfxHover();
+          e.currentTarget.style.backgroundColor = isCaptain ? CLR.gold + '16' : CLR.bright + '0c';
+        }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isCaptain ? CLR.gold + '0a' : stripeBg; }}
         onClick={onClick}
       >
@@ -1278,7 +1604,7 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
         <div className="flex items-center gap-3">
           {/* Portrait */}
           <div
-            className={`${isCaptain ? 'w-[64px] h-[64px]' : 'w-[48px] h-[48px]'} rounded-full shrink-0 overflow-hidden flex items-center justify-center`}
+            className={`${isCaptain ? 'w-[88px] h-[88px]' : 'w-[64px] h-[64px]'} rounded-full shrink-0 overflow-hidden flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.08]`}
             style={{
               border: `${isCaptain ? '3' : '2.5'}px solid ${isCaptain ? CLR.gold + '80' : roleColor + '50'}`,
               backgroundColor: (isCaptain ? CLR.gold : roleColor) + '0a',
@@ -1287,7 +1613,7 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
                 : member.quality === 'legendary' ? `0 0 10px ${CLR.purple}25` : member.quality === 'rare' ? `0 0 8px ${CLR.teal}18` : `inset 0 2px 4px rgba(0,0,0,0.35)`,
             }}
           >
-            <CrewPortraitSquare member={member} size={isCaptain ? 64 : 48} />
+            <CrewPortraitSquare member={member} size={isCaptain ? 88 : 64} />
           </div>
 
           {/* Name + flag + quality */}
@@ -1404,7 +1730,7 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
 
         {/* Captain extras: traits + XP bar */}
         {isCaptain && (
-          <div className="mt-2 ml-[64px] flex items-center gap-3 flex-wrap">
+          <div className="mt-2 ml-[100px] flex items-center gap-3 flex-wrap">
             {/* Traits */}
             {member.traits.map(t => (
               <span
@@ -1457,6 +1783,8 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
   onNext?: () => void;
 }) {
   const [portraitModalOpen, setPortraitModalOpen] = useState(false);
+  const [dialogue, setDialogue] = useState<string | null>(null);
+  const [portraitEnlarged, setPortraitEnlarged] = useState(false);
   const sparkle = useSparkle();
 
   // Arrow key navigation between crew members
@@ -1514,70 +1842,200 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
         transition={{ duration: 0.35, delay: 0.05 }}
         className="mt-5 w-full max-w-xl px-2 md:px-4 flex flex-col items-center"
       >
-        {/* Large portrait circle — click to open full modal */}
-        <div className="relative">
-          <div
-            className="w-[100px] h-[100px] rounded-full overflow-hidden flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95"
-            style={{
-              border: `3px solid ${isCaptain ? CLR.gold : roleColor}60`,
-              backgroundColor: (isCaptain ? CLR.gold : roleColor) + '0c',
-              boxShadow: `inset 0 3px 8px rgba(0,0,0,0.5), 0 0 20px ${(isCaptain ? CLR.gold : roleColor)}15`,
-            }}
-            onClick={(e) => { e.stopPropagation(); setPortraitModalOpen(true); }}
-            title="Click to view full portrait"
-          >
-            <CrewPortraitSquare member={member} size={100} />
-          </div>
-          {/* Quality glow */}
-          {member.quality === 'legendary' && (
-            <span className="absolute -top-1 -right-1 text-[12px]" style={{ color: CLR.purple + '80' }}>
-              {sparkle(0)}
+        {/* Role/Level/Traits — Portrait — (empty right for balance) */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 w-full">
+          {/* Left column: Role + Level + Traits */}
+          <div className="flex flex-col items-end gap-1.5">
+            <span
+              className="text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 rounded"
+              style={{
+                color: roleColor,
+                backgroundColor: roleColor + '15',
+                border: `1px solid ${roleColor}30`,
+                fontFamily: SANS,
+                fontWeight: 600,
+              }}
+            >
+              {member.role}
             </span>
-          )}
+            <span className="text-[11px] tabular-nums" style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: MONO, fontWeight: 600 }}>
+              Lvl {member.level}
+            </span>
+            {member.quality !== 'normal' && (
+              <span
+                className="text-[9px] tracking-wider uppercase px-1.5 py-0.5 rounded"
+                style={{ color: qs.color, backgroundColor: qs.bg, border: `1px solid ${qs.border}`, fontFamily: SANS, fontWeight: 600 }}
+              >
+                {qs.label}
+              </span>
+            )}
+            {/* Traits & Abilities */}
+            {member.traits.map(t => (
+              <span
+                key={t}
+                className="text-[9px] tracking-wide px-2 py-0.5 rounded text-right"
+                style={{ color: CLR.teal, backgroundColor: CLR.teal + '12', border: `1px solid ${CLR.teal}20`, fontFamily: SANS, fontWeight: 500 }}
+              >
+                {t}
+              </span>
+            ))}
+            {member.abilities.map(a => (
+              <span
+                key={a}
+                className="text-[9px] tracking-wide px-2 py-0.5 rounded text-right"
+                style={{ color: CLR.gold, backgroundColor: CLR.gold + '12', border: `1px solid ${CLR.gold}20`, fontFamily: SANS, fontWeight: 500 }}
+              >
+                {a}
+              </span>
+            ))}
+          </div>
+
+          {/* Center column: Portrait — click to speak */}
+          <div className="relative">
+            <motion.div
+              animate={{ scale: portraitEnlarged ? 1.12 : 1 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            >
+              <div
+                className="w-[128px] h-[128px] rounded-full overflow-hidden flex items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95"
+                style={{
+                  border: `3px solid ${isCaptain ? CLR.gold : roleColor}60`,
+                  backgroundColor: (isCaptain ? CLR.gold : roleColor) + '0c',
+                  boxShadow: `inset 0 3px 8px rgba(0,0,0,0.5), 0 0 20px ${(isCaptain ? CLR.gold : roleColor)}15`,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  sfxClick();
+                  const line = getCrewDialogue(member);
+                  setDialogue(line);
+                  setPortraitEnlarged(true);
+                  setTimeout(() => setPortraitEnlarged(false), 600);
+                }}
+                title="Click to hear from this crew member"
+              >
+                <CrewPortraitSquare member={member} size={128} />
+              </div>
+            </motion.div>
+            {/* Quality glow */}
+            {member.quality === 'legendary' && (
+              <span className="absolute -top-1 -right-1 text-[12px]" style={{ color: CLR.purple + '80' }}>
+                {sparkle(0)}
+              </span>
+            )}
+          </div>
+
+          {/* Right column: Dialogue bubble (desktop) */}
+          <div className="hidden md:block">
+            <AnimatePresence mode="wait">
+              {dialogue && (
+                <motion.div
+                  key="dialogue"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="w-[200px] z-10"
+                >
+                  <div
+                    className="relative px-4 py-3 rounded-lg"
+                    style={{
+                      backgroundColor: CLR.bg + 'f0',
+                      border: `1px solid ${roleColor}40`,
+                      boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 0 8px ${roleColor}15`,
+                    }}
+                  >
+                    {/* Speech triangle pointing left */}
+                    <div
+                      className="absolute top-1/2 -left-[6px] -translate-y-1/2 w-0 h-0"
+                      style={{
+                        borderTop: '6px solid transparent',
+                        borderBottom: '6px solid transparent',
+                        borderRight: `6px solid ${roleColor}40`,
+                      }}
+                    />
+                    <p
+                      className="text-[15px] leading-relaxed"
+                      style={{ color: CLR.bright, fontFamily: SERIF, fontStyle: 'italic' }}
+                    >
+                      &ldquo;{dialogue}&rdquo;
+                    </p>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDialogue(null); }}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-[9px] hover:opacity-80"
+                      style={{ backgroundColor: CLR.bg, color: CLR.dim, border: `1px solid ${CLR.rule}` }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        {/* Name + badges */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap justify-center">
+        {/* Dialogue bubble — mobile only (below portrait) */}
+        <div className="md:hidden w-full">
+          <AnimatePresence mode="wait">
+            {dialogue && (
+              <motion.div
+                key="dialogue-mobile"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="mt-3 w-full max-w-sm mx-auto z-10"
+              >
+                <div
+                  className="relative px-4 py-3 rounded-lg"
+                  style={{
+                    backgroundColor: CLR.bg + 'f0',
+                    border: `1px solid ${roleColor}40`,
+                    boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 0 8px ${roleColor}15`,
+                  }}
+                >
+                  {/* Speech triangle pointing up */}
+                  <div
+                    className="absolute -top-[6px] left-1/2 -translate-x-1/2 w-0 h-0"
+                    style={{
+                      borderLeft: '6px solid transparent',
+                      borderRight: '6px solid transparent',
+                      borderBottom: `6px solid ${roleColor}40`,
+                    }}
+                  />
+                  <p
+                    className="text-[15px] leading-relaxed text-center"
+                    style={{ color: CLR.bright, fontFamily: SERIF, fontStyle: 'italic' }}
+                  >
+                    &ldquo;{dialogue}&rdquo;
+                  </p>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDialogue(null); }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-[9px] hover:opacity-80"
+                    style={{ backgroundColor: CLR.bg, color: CLR.dim, border: `1px solid ${CLR.rule}` }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Name + flag — clicking name opens portrait modal */}
+        <div className="flex items-center gap-2.5 mt-4 flex-wrap justify-center">
           <h2
-            className="text-[20px] md:text-[22px]"
-            style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: SANS, fontWeight: 600 }}
+            className="text-[26px] md:text-[28px] cursor-pointer hover:underline underline-offset-4 decoration-1 transition-colors"
+            style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: SANS, fontWeight: 600, textDecorationColor: (isCaptain ? CLR.gold : CLR.bright) + '40' }}
+            onClick={() => setPortraitModalOpen(true)}
+            title="View full portrait"
           >
             {member.name}
           </h2>
-          <FactionFlag nationality={member.nationality} size={18} />
-        </div>
-
-        {/* Role + Quality badges */}
-        <div className="flex items-center gap-2 mt-1.5">
-          <span
-            className="text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 rounded"
-            style={{
-              color: roleColor,
-              backgroundColor: roleColor + '15',
-              border: `1px solid ${roleColor}30`,
-              fontFamily: SANS,
-              fontWeight: 600,
-            }}
-          >
-            {member.role}
-          </span>
-          {member.quality !== 'normal' && (
-            <span
-              className="text-[9px] tracking-wider uppercase px-1.5 py-0.5 rounded"
-              style={{ color: qs.color, backgroundColor: qs.bg, border: `1px solid ${qs.border}`, fontFamily: SANS, fontWeight: 600 }}
-            >
-              {qs.label}
-            </span>
-          )}
-          {isCaptain && (
-            <span className="text-[10px] tabular-nums" style={{ color: CLR.gold, fontFamily: MONO }}>
-              Lvl {member.level}
-            </span>
-          )}
+          <FactionFlag nationality={member.nationality} size={20} />
         </div>
 
         {/* Bio line */}
-        <p className="text-[12px] mt-2" style={{ color: CLR.dim, fontFamily: SANS }}>
+        <p className="text-[15px] mt-2" style={{ color: CLR.dim, fontFamily: SANS }}>
           {member.nationality} &middot; Age {member.age} &middot; {member.birthplace}
         </p>
       </motion.div>
@@ -1590,7 +2048,7 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
         className="mt-4 w-full max-w-xl px-4 md:px-6"
       >
         <p
-          className="text-[13px] leading-relaxed text-center"
+          className="text-[17px] leading-relaxed text-center"
           style={{ color: CLR.txt, fontFamily: SERIF, fontStyle: 'italic' }}
         >
           &ldquo;{member.backstory}&rdquo;
@@ -1607,36 +2065,7 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
         <WaveDivider width={48} />
       </motion.div>
 
-      {/* Traits & Abilities */}
-      {(member.traits.length > 0 || member.abilities.length > 0) && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.25, delay: 0.2 }}
-          className="mt-3 w-full max-w-xl px-2 md:px-4"
-        >
-          <div className="flex items-center gap-2 flex-wrap">
-            {member.traits.map(t => (
-              <span
-                key={t}
-                className="text-[10px] tracking-wide px-2.5 py-1 rounded"
-                style={{ color: CLR.teal, backgroundColor: CLR.teal + '12', border: `1px solid ${CLR.teal}20`, fontFamily: SANS, fontWeight: 500 }}
-              >
-                {t}
-              </span>
-            ))}
-            {member.abilities.map(a => (
-              <span
-                key={a}
-                className="text-[10px] tracking-wide px-2.5 py-1 rounded"
-                style={{ color: CLR.gold, backgroundColor: CLR.gold + '12', border: `1px solid ${CLR.gold}20`, fontFamily: SANS, fontWeight: 500 }}
-              >
-                {a}
-              </span>
-            ))}
-          </div>
-        </motion.div>
-      )}
+      {/* (Traits & Abilities now shown in left column beside portrait) */}
 
       {/* Stats section */}
       <motion.div
@@ -1645,7 +2074,7 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
         transition={{ duration: 0.3, delay: 0.22 }}
         className="mt-4 w-full max-w-xl px-2 md:px-4"
       >
-        {/* Skill + Morale + Level/XP row */}
+        {/* Experience + Morale row */}
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div
             className="p-3 rounded-lg"
@@ -1653,12 +2082,21 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-                Skill
+                Experience
               </span>
-              <span className="text-[14px] tabular-nums" style={{ color: CLR.cyan, fontFamily: MONO, fontWeight: 600 }}>{member.skill}</span>
+              <span className="text-[12px] tabular-nums" style={{ color: CLR.gold, fontFamily: MONO }}>
+                {member.xp}/{member.xpToNext} XP
+              </span>
             </div>
             <div className="h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
-              <div className="h-full rounded-full" style={{ width: `${member.skill}%`, backgroundColor: CLR.cyan, boxShadow: `0 0 6px ${CLR.cyan}30` }} />
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${Math.min(100, (member.xp / member.xpToNext) * 100)}%`,
+                  backgroundColor: CLR.gold,
+                  boxShadow: `0 0 6px ${CLR.gold}30`,
+                }}
+              />
             </div>
           </div>
           <div
@@ -1677,42 +2115,23 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
           </div>
         </div>
 
-        {/* XP bar (for captain or leveled crew) */}
-        {member.level > 1 || isCaptain ? (
-          <div
-            className="p-3 rounded-lg mb-4"
-            style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-                Experience
-              </span>
-              <span className="text-[12px] tabular-nums" style={{ color: CLR.gold, fontFamily: MONO }}>
-                Lvl {member.level} &middot; {member.xp}/{member.xpToNext} XP
-              </span>
-            </div>
-            <div className="h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
-              <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{
-                  width: `${Math.min(100, (member.xp / member.xpToNext) * 100)}%`,
-                  backgroundColor: CLR.gold,
-                  boxShadow: `0 0 6px ${CLR.gold}30`,
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
+        {/* Temperament (humours) */}
+        <div
+          className="p-3 rounded-lg mb-4"
+          style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
+        >
+          <TemperamentBlock humours={member.humours} />
+        </div>
 
-        {/* D&D Stats */}
+        {/* Abilities */}
         <div
           className="p-3 rounded-lg"
           style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
         >
           <span className="text-[10px] tracking-[0.15em] uppercase block mb-2" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Attributes
+            Abilities
           </span>
-          <StatBlock stats={member.stats} />
+          <AbilityBlock stats={member.stats} />
         </div>
       </motion.div>
 
@@ -1995,6 +2414,9 @@ function ShipTab() {
   const ship = useGameStore(s => s.ship);
   const stats = useGameStore(s => s.stats);
   const crew = useGameStore(s => s.crew);
+  const cargo = useGameStore(s => s.cargo);
+  const provisions = useGameStore(s => s.provisions);
+  const windSpeed = useGameStore(s => s.windSpeed);
   const sparkle = useSparkle();
 
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
@@ -2003,6 +2425,14 @@ function ShipTab() {
   const healthyCrew = crew.filter(c => c.health === 'healthy').length;
   const crewHealthPct = Math.round((healthyCrew / (crew.length || 1)) * 100);
   const shipDesc = SHIP_DESCRIPTIONS[ship.type] ?? SHIP_DESCRIPTIONS.Carrack;
+
+  const cargoUsed = Object.entries(cargo).reduce(
+    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
+  );
+  // Rough estimate: a crew berth for each hired crew member plus a few spares.
+  const berthsMax = Math.max(crew.length + 2, 6);
+  // Powder fill scales with how armed the ship is.
+  const powderPct = stats.cannons > 0 ? 0.7 : stats.armament.length > 1 ? 0.4 : 0.15;
 
   // Weapon summary
   const weaponCounts: Record<string, { count: number; weapon: typeof WEAPON_DEFS[keyof typeof WEAPON_DEFS] }> = {};
@@ -2047,14 +2477,33 @@ function ShipTab() {
         </p>
       </motion.div>
 
-      {/* Large schematic */}
+      {/* Large schematic — procedural renderer with exterior / cutaway toggle */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, delay: 0.12 }}
-        className="mt-4"
+        className="mt-4 w-full flex justify-center"
       >
-        <LargeShipSchematic shipType={ship.type} hullPct={hullPct} armament={stats.armament} />
+        <div className="w-full max-w-4xl px-2">
+          <ShipView
+            shipType={ship.type}
+            hull={stats.hull}
+            maxHull={stats.maxHull}
+            sails={stats.sails}
+            maxSails={stats.maxSails}
+            wind={Math.max(0.2, Math.min(1, windSpeed))}
+            flagColor={pickFlagColor(ship.flag as Nationality)}
+            cargoUsed={cargoUsed}
+            cargoMax={stats.cargoCapacity}
+            crewCount={crew.length}
+            berthsMax={berthsMax}
+            powderPct={powderPct}
+            provisions={provisions}
+            provisionsMax={60}
+            size="large"
+            showToggle
+          />
+        </div>
       </motion.div>
 
       {/* Damage segments */}
@@ -2243,8 +2692,10 @@ const COMMODITY_ICONS: Record<string, string> = Object.fromEntries(
   ALL_COMMODITIES_FULL.map(c => [c, COMMODITY_DEFS[c].icon])
 );
 
-function CargoTab() {
-  const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(null);
+function CargoTab({ initialCommodity }: { initialCommodity?: string }) {
+  const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(
+    (initialCommodity && ALL_COMMODITIES.includes(initialCommodity as Commodity)) ? (initialCommodity as Commodity) : null
+  );
   const cargo = useGameStore(s => s.cargo);
   const ports = useGameStore(s => s.ports);
   const activePort = useGameStore(s => s.activePort);
@@ -2690,22 +3141,28 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
         className="mt-3 w-full max-w-2xl px-3 md:px-6 flex flex-col items-center"
       >
         <div
-          className="w-[130px] h-[130px] md:w-[150px] md:h-[150px] rounded-full overflow-hidden flex items-center justify-center"
+          className="relative w-[160px] h-[160px] md:w-[190px] md:h-[190px] rounded-full overflow-hidden flex items-center justify-center"
           style={{
-            backgroundColor: `color-mix(in srgb, ${color} 12%, #d4cbb8)`,
-            boxShadow: `0 2px 16px rgba(0,0,0,0.15), 0 0 40px ${color}08`,
+            background: `radial-gradient(circle at 35% 30%, color-mix(in srgb, ${color} 22%, #ece2cc) 0%, color-mix(in srgb, ${color} 14%, #d4cbb8) 55%, color-mix(in srgb, ${color} 8%, #b8ad94) 100%)`,
+            boxShadow: `inset 0 1px 2px rgba(255,255,255,0.35), inset 0 -2px 8px rgba(0,0,0,0.18), 0 4px 22px rgba(0,0,0,0.28), 0 0 48px ${color}18`,
           }}
         >
           {def.iconImage ? (
             <img
               src={def.iconImage}
               alt={commodity}
-              className="w-[85%] h-[85%] object-cover rounded-full"
-              style={{ imageRendering: 'auto' }}
+              className="w-[124%] h-[124%] object-cover"
+              style={{ imageRendering: 'auto', transform: 'scale(1.02)' }}
             />
           ) : (
-            <span className="text-[56px] md:text-[64px]" style={{ color: `color-mix(in srgb, ${color} 70%, #3a2a1a)`, fontFamily: MONO }}>{def.icon}</span>
+            <span className="text-[68px] md:text-[80px]" style={{ color: `color-mix(in srgb, ${color} 70%, #3a2a1a)`, fontFamily: MONO }}>{def.icon}</span>
           )}
+          {/* inner ring for definition */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-full"
+            style={{ boxShadow: `inset 0 0 0 1px ${color}30, inset 0 0 0 2px rgba(255,255,255,0.06)` }}
+          />
         </div>
 
         {/* Name */}
@@ -2961,36 +3418,70 @@ function TabStub({ tabKey, title, subtitle, accent, description }: {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function ASCIITabBar({ active, onChange }: { active: DashTab; onChange: (tab: DashTab) => void }) {
+  const [hovered, setHovered] = useState<DashTab | null>(null);
   return (
     <div className="flex items-end justify-center gap-0 select-none px-2">
       {TABS.map(t => {
         const isActive = t.id === active;
+        const isHovered = hovered === t.id;
         return (
           <button
             key={t.id}
             onClick={() => { sfxTab(); onChange(t.id); }}
+            onMouseEnter={() => setHovered(t.id)}
+            onMouseLeave={() => setHovered(null)}
             className="relative transition-all duration-150 active:scale-[0.97] px-0.5"
           >
             {isActive ? (
               <div
-                className="px-4 md:px-5 py-2 rounded-t-lg border border-b-0 transition-colors"
+                className="relative px-4 md:px-5 py-2 rounded-t-lg border border-b-0 transition-colors"
                 style={{
-                  borderColor: t.accent + '40',
-                  backgroundColor: t.accent + '0a',
+                  borderColor: t.accent + '55',
+                  backgroundColor: t.accent + '10',
+                  boxShadow: `0 -1px 14px ${t.accent}22, inset 0 1px 0 ${t.accent}20`,
                 }}
               >
+                {/* Corner glyphs keyed to accent */}
+                <span
+                  aria-hidden
+                  className="absolute -top-[1px] -left-[1px] text-[9px] leading-none"
+                  style={{ color: t.accent + 'cc', fontFamily: MONO }}
+                >
+                  ╭
+                </span>
+                <span
+                  aria-hidden
+                  className="absolute -top-[1px] -right-[1px] text-[9px] leading-none"
+                  style={{ color: t.accent + 'cc', fontFamily: MONO }}
+                >
+                  ╮
+                </span>
                 <span
                   className="text-[11px] md:text-[12px] tracking-[0.15em] uppercase"
-                  style={{ color: t.accent, fontFamily: SANS, fontWeight: 600 }}
+                  style={{
+                    color: t.accent,
+                    fontFamily: SANS,
+                    fontWeight: 600,
+                    textShadow: `0 0 8px ${t.accent}55`,
+                  }}
                 >
                   {t.label}
                 </span>
               </div>
             ) : (
-              <div className="px-4 md:px-5 py-2 border-b" style={{ borderColor: CLR.rule + '40' }}>
+              <div
+                className="px-4 md:px-5 py-2 border-b transition-colors"
+                style={{
+                  borderColor: isHovered ? t.accent + '70' : CLR.rule + '40',
+                }}
+              >
                 <span
-                  className="text-[11px] md:text-[12px] tracking-[0.12em] uppercase transition-colors hover:text-[#9a9080]"
-                  style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}
+                  className="text-[11px] md:text-[12px] tracking-[0.12em] uppercase transition-colors"
+                  style={{
+                    color: isHovered ? t.accent + 'cc' : CLR.dim,
+                    fontFamily: SANS,
+                    fontWeight: 500,
+                  }}
                 >
                   {t.label}
                 </span>
@@ -3007,7 +3498,7 @@ function ASCIITabBar({ active, onChange }: { active: DashTab; onChange: (tab: Da
 // MAIN DASHBOARD COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId }: { open: boolean; onClose: () => void; initialTab?: string; initialCrewId?: string }) {
+export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId, initialCommodity }: { open: boolean; onClose: () => void; initialTab?: string; initialCrewId?: string; initialCommodity?: string }) {
   const [tab, setTab] = useState<DashTab>('overview');
   const activeAccent = TABS.find(t => t.id === tab)?.accent ?? CLR.tabOverview;
 
@@ -3041,7 +3532,7 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId }: { o
       >
         <motion.div
           {...modalPanelMotion}
-          className="relative w-full max-w-4xl h-full max-h-[88vh] overflow-hidden flex flex-col"
+          className="relative w-full max-w-5xl h-full max-h-[88vh] overflow-hidden flex flex-col"
           style={{
             background: 'linear-gradient(180deg, #0e0d0a 0%, #0a0908 40%, #080807 100%)',
             boxShadow: `0 30px 100px rgba(0,0,0,0.8), inset 0 1px 0 ${activeAccent}15, 0 0 1px ${activeAccent}20`,
@@ -3061,10 +3552,29 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId }: { o
           {/* Close button */}
           <button
             onClick={() => { sfxClose(); onClose(); }}
-            className="absolute top-3 right-4 z-30 flex items-center gap-1.5 px-2 py-1 rounded transition-all hover:bg-white/[0.04]"
+            className="absolute top-3 right-4 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-all group"
+            style={{
+              borderColor: activeAccent + '30',
+              backgroundColor: activeAccent + '08',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = activeAccent + '80';
+              e.currentTarget.style.backgroundColor = activeAccent + '18';
+              e.currentTarget.style.boxShadow = `0 0 10px ${activeAccent}30`;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = activeAccent + '30';
+              e.currentTarget.style.backgroundColor = activeAccent + '08';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
           >
-            <span className="text-[10px] tracking-widest uppercase" style={{ color: CLR.dim, fontFamily: SANS }}>ESC</span>
-            <span className="text-[14px]" style={{ color: CLR.dim }}>&times;</span>
+            <span
+              className="text-[10px] tracking-[0.18em] uppercase transition-colors"
+              style={{ color: activeAccent + 'b0', fontFamily: SANS, fontWeight: 600 }}
+            >
+              ESC
+            </span>
+            <span className="text-[14px] leading-none transition-colors" style={{ color: activeAccent + 'b0' }}>&times;</span>
           </button>
 
           {/* Tab bar */}
@@ -3080,7 +3590,7 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId }: { o
               {tab === 'overview' && <OverviewTab />}
               {tab === 'ship' && <ShipTab />}
               {tab === 'crew' && <CrewTab initialCrewId={initialCrewId} />}
-              {tab === 'cargo' && <CargoTab />}
+              {tab === 'cargo' && <CargoTab initialCommodity={initialCommodity} />}
               {tab === 'reputation' && <ReputationTab />}
             </AnimatePresence>
           </div>

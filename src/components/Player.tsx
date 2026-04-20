@@ -4,15 +4,18 @@ import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getTerrainData } from '../utils/terrain';
 import { getCrabData, getCollectedCrabs, collectCrabAt } from './World';
-import { sfxFootstep } from '../audio/SoundEffects';
+import { sfxFootstep, sfxThud } from '../audio/SoundEffects';
 import {
   getLiveWalkingTransform,
   syncLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
 import { spawnSplash } from '../utils/splashState';
+import { resolveObstaclePush } from '../utils/obstacleGrid';
+import { PLAYER_RADIUS } from '../utils/animalBump';
 
 const CRAB_COLLECT_RADIUS_SQ = 1.5 * 1.5; // 1.5 units
 const STORE_SYNC_INTERVAL = 1 / 12;
+const THUD_COOLDOWN = 0.22; // seconds between thuds — prevents sliding-along-trunk chatter
 
 export function Player() {
   const group = useRef<THREE.Group>(null);
@@ -36,6 +39,7 @@ export function Player() {
   const waterWarningStage = useRef(0); // 0=none, 1=entered, 2=urgent, 3=final
   const lastFootstepSign = useRef(1); // tracks walk cycle for footstep sounds
   const storeSyncAccum = useRef(0);
+  const lastThud = useRef(0);
   const _camForward = useRef(new THREE.Vector3());
   const _camRight = useRef(new THREE.Vector3());
 
@@ -153,8 +157,31 @@ export function Player() {
       group.current.rotation.y = newRot;
 
       // Update position
-      const newX = walkingPos[0] + moveX;
-      const newZ = walkingPos[2] + moveZ;
+      let newX = walkingPos[0] + moveX;
+      let newZ = walkingPos[2] + moveZ;
+
+      // Tree / rock collision — eject out of any overlap and, if the player is
+      // actively pressing into the obstacle, play a debounced thud.
+      const push = resolveObstaclePush(newX, newZ, PLAYER_RADIUS);
+      if (push.hit) {
+        newX += push.px;
+        newZ += push.pz;
+        // Positive dot means the input motion was heading into the obstacle,
+        // i.e. the push opposed it — a real collision, not incidental overlap.
+        const inwardDot = -(moveX * push.px + moveZ * push.pz);
+        if (inwardDot > 0 && push.depth > 0.04) {
+          const now = state.clock.elapsedTime;
+          if (now - lastThud.current > THUD_COOLDOWN) {
+            lastThud.current = now;
+            sfxThud();
+          }
+          // Small extra bounce so the character visibly rebounds rather than
+          // sliding flush against the trunk.
+          newX += push.px * 0.25;
+          newZ += push.pz * 0.25;
+        }
+      }
+
       const terrainY = getTerrainHeight(newX, newZ);
 
       // While jumping, allow movement over water

@@ -15,6 +15,15 @@ export interface Projectile {
 // Mouse world position on the water plane (y=0), updated by CameraController raycaster
 export const mouseWorldPos = { x: 0, z: 0, valid: false };
 
+// Full mouse ray (camera origin + normalized direction), updated each frame.
+// Needed when the cursor is over an elevated object — water-plane hit is offset
+// from the object's actual screen position by the camera tilt × object height.
+export const mouseRay = {
+  origin: new THREE.Vector3(),
+  direction: new THREE.Vector3(),
+  valid: false,
+};
+
 // Swivel gun aim angle in world space (radians)
 export let swivelAimAngle = 0;
 

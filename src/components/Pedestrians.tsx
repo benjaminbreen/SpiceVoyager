@@ -106,34 +106,6 @@ const CLOTHING: Record<Culture, Record<FigureType, ClothingEntry[]>> = {
     ],
   },
 
-  // ── CARIBBEAN (Taíno, Spanish colonists, early African diaspora) ──────
-  // Indigenous: cotton mantas, bark cloth. Spanish: imported European textiles.
-  // Enslaved/free Africans: rough osnaburg, undyed cotton rations.
-  // Dyes: annatto (achiote), logwood (Campeche), indigenous plant dyes.
-  'Caribbean': {
-    man: [
-      { color: [0.72, 0.62, 0.48], weight: 3 },  // natural cotton manta
-      { color: [0.55, 0.42, 0.28], weight: 3 },  // bark cloth brown
-      { color: [0.82, 0.76, 0.64], weight: 2 },  // rough undyed linen (European import)
-      { color: [0.40, 0.34, 0.26], weight: 2 },  // dark brown (logwood light dye)
-      { color: [0.78, 0.52, 0.22], weight: 1 },  // annatto orange-red (indigenous)
-      { color: [0.22, 0.20, 0.32], weight: 1 },  // logwood dark purple-black (Spanish)
-    ],
-    woman: [
-      { color: [0.70, 0.60, 0.46], weight: 3 },  // natural cotton
-      { color: [0.58, 0.46, 0.32], weight: 3 },  // bark cloth
-      { color: [0.80, 0.74, 0.62], weight: 2 },  // undyed linen
-      { color: [0.74, 0.48, 0.20], weight: 1 },  // annatto dyed
-      { color: [0.45, 0.22, 0.18], weight: 1 },  // brazilwood red
-      { color: [0.18, 0.22, 0.38], weight: 1 },  // indigo (traded from mainland)
-    ],
-    child: [
-      { color: [0.74, 0.64, 0.50], weight: 4 },  // natural cotton
-      { color: [0.68, 0.58, 0.44], weight: 3 },  // faded bark cloth
-      { color: [0.80, 0.72, 0.58], weight: 2 },  // undyed linen
-    ],
-  },
-
   // ── WEST AFRICAN (Akan, Fante, coastal West Africa) ──────────────────
   // Kente-adjacent woven cloth, bark cloth, imported European textiles.
   // Dyes: indigo, camwood (red), kola nut (brown). Gold adornment common.
@@ -203,13 +175,6 @@ const SKIN_TONES: Record<Culture, { color: [number, number, number]; weight: num
     { color: [0.45, 0.35, 0.26], weight: 2 },  // East African (Swahili coast)
     { color: [0.72, 0.56, 0.40], weight: 1 },  // Arab/Persian traders
     { color: [0.38, 0.28, 0.20], weight: 1 },  // very dark (Dravidian, African)
-  ],
-  'Caribbean': [
-    { color: [0.68, 0.48, 0.30], weight: 3 },  // Taíno/indigenous
-    { color: [0.60, 0.42, 0.28], weight: 2 },  // indigenous
-    { color: [0.45, 0.32, 0.22], weight: 2 },  // African
-    { color: [0.38, 0.27, 0.18], weight: 2 },  // darker African
-    { color: [0.78, 0.64, 0.50], weight: 1 },  // Spanish colonist
   ],
   'West African': [
     // Akan, Fante, and other coastal West African peoples
@@ -306,6 +271,7 @@ export function Pedestrians() {
   const dummy = useRef(new THREE.Object3D());
   const systemRef = useRef<PedestrianSystemState | null>(null);
   const colorsNeedInit = useRef(true); // flag: colors not yet assigned to meshes
+  const animAccumRef = useRef(0);
 
   const manGeo = useMemo(() => createManGeometry(), []);
   const womanGeo = useMemo(() => createWomanGeometry(), []);
@@ -336,7 +302,7 @@ export function Pedestrians() {
     colorsNeedInit.current = true; // mark for color assignment in useFrame
   }, [ports, worldSeed]);
 
-  // Per-frame animation
+  // Per-frame animation — throttled to ~20fps (matches animal systems)
   useFrame((state, delta) => {
     const system = systemRef.current;
     if (!system || !manRef.current || !womanRef.current || !childRef.current) return;
@@ -368,9 +334,14 @@ export function Pedestrians() {
       }
     }
 
+    animAccumRef.current += delta;
+    if (animAccumRef.current < 1 / 20) return;
+    const dt = Math.min(0.1, animAccumRef.current);
+    animAccumRef.current = 0;
+
     const time = state.clock.elapsedTime;
     const hour = timeOfDay;
-    const activeCount = updatePedestrians(system, time, delta, hour);
+    const activeCount = updatePedestrians(system, time, dt, hour);
     const d = dummy.current;
 
     // Night check

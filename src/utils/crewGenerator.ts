@@ -1,4 +1,4 @@
-import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, HealthFlag, Language } from '../store/gameStore';
+import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, Humours, HealthFlag, Language } from '../store/gameStore';
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -347,6 +347,62 @@ function rollStats(role: CrewRole, quality: CrewQuality): CrewStats {
   };
 }
 
+// ── Humour generation (historicized Big 5 personality) ──────────────────
+
+type HumourKey = keyof Humours;
+
+// Role tendencies: what temperaments are drawn to each profession
+const ROLE_HUMOUR_BIAS: Record<CrewRole, Partial<Record<HumourKey, number>>> = {
+  Captain:   { choleric: 2, sanguine: 1 },
+  Navigator: { melancholic: 2, curiosity: 2 },
+  Gunner:    { choleric: 2, phlegmatic: 1 },
+  Sailor:    { phlegmatic: 2, sanguine: 1 },
+  Factor:    { sanguine: 2, curiosity: 1 },
+  Surgeon:   { melancholic: 1, phlegmatic: 1, curiosity: 2 },
+};
+
+// Regional tendencies — stereotypes of the era (how Europeans and others perceived each other)
+type RegionKey = 'european' | 'indian' | 'southeast_asian' | 'east_asian' | 'african';
+const NAT_REGION: Record<Nationality, RegionKey> = {
+  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european',
+  Mughal: 'indian', Gujarati: 'indian', Persian: 'indian', Ottoman: 'indian', Omani: 'indian',
+  Swahili: 'african',
+  Malay: 'southeast_asian', Acehnese: 'southeast_asian', Javanese: 'southeast_asian', Moluccan: 'southeast_asian', Siamese: 'southeast_asian',
+  Japanese: 'east_asian', Chinese: 'east_asian',
+};
+
+const REGION_HUMOUR_BIAS: Record<RegionKey, Partial<Record<HumourKey, number>>> = {
+  european:       { choleric: 1, curiosity: 1 },
+  indian:         { phlegmatic: 1, sanguine: 1 },
+  southeast_asian:{ sanguine: 1, phlegmatic: 1 },
+  east_asian:     { melancholic: 1, phlegmatic: 1 },
+  african:        { sanguine: 1, curiosity: 1 },
+};
+
+function rollHumours(role: CrewRole, nationality: Nationality, stats: CrewStats): Humours {
+  const clamp = (v: number) => Math.max(1, Math.min(10, v));
+  const base = () => randInt(2, 7);
+  const roleBias = ROLE_HUMOUR_BIAS[role];
+  const regionBias = REGION_HUMOUR_BIAS[NAT_REGION[nationality]] ?? {};
+
+  // Stats influence humours slightly
+  const statNudge = {
+    sanguine: Math.floor((stats.charisma - 10) / 4),
+    choleric: Math.floor((stats.strength - 10) / 4),
+    melancholic: Math.floor((stats.perception - 10) / 4),
+    phlegmatic: Math.floor((20 - stats.strength) / 6), // inverse of strength
+    curiosity: Math.floor((stats.perception + stats.charisma - 20) / 6),
+  };
+
+  return {
+    sanguine:    clamp(base() + (roleBias.sanguine ?? 0) + (regionBias.sanguine ?? 0) + statNudge.sanguine),
+    choleric:    clamp(base() + (roleBias.choleric ?? 0) + (regionBias.choleric ?? 0) + statNudge.choleric),
+    melancholic: clamp(base() + (roleBias.melancholic ?? 0) + (regionBias.melancholic ?? 0) + statNudge.melancholic),
+    phlegmatic:  clamp(base() + (roleBias.phlegmatic ?? 0) + (regionBias.phlegmatic ?? 0) + statNudge.phlegmatic),
+    curiosity:   clamp(base() + (roleBias.curiosity ?? 0) + (regionBias.curiosity ?? 0) + statNudge.curiosity),
+  };
+}
+
 // ── Backstory generation ─────────────────────────────
 
 const BACKSTORY_TEMPLATES: Record<CrewRole, string[]> = {
@@ -397,21 +453,130 @@ const BACKSTORY_TEMPLATES: Record<CrewRole, string[]> = {
 const REGION_NAMES = ['Indian Ocean', 'Arabian Sea', 'Bay of Bengal', 'South China Sea', 'Strait of Malacca', 'East African coast', 'Red Sea'];
 const TRAIT_ADJECTIVES = ['steady judgment', 'bold tactics', 'careful planning', 'shrewd diplomacy', 'fierce loyalty', 'relentless ambition'];
 
-function generateBackstory(role: CrewRole, nationality: Nationality, birthplace: string, age: number, quality: CrewQuality): string {
+// Personality sentences keyed to dominant humour
+const HUMOUR_CHARACTER_LINES: Record<HumourKey, string[]> = {
+  sanguine: [
+    'Quick to laugh and generous with drink, a welcome presence in any company.',
+    'Possesses an easy warmth that puts strangers at ease.',
+    'Known for an infectious good humor that lifts the spirits of those nearby.',
+    'A sociable soul who collects friends as readily as some collect debts.',
+    'Rarely without a smile, even in difficult circumstances.',
+  ],
+  choleric: [
+    'Driven by a restless energy that tolerates neither delay nor half-measures.',
+    'Possessed of a fierce will that brooks little argument.',
+    'Ambitious and impatient, always pushing for the next advantage.',
+    'A hard taskmaster, but one who demands no less of himself.',
+    'Hot-tempered when provoked, but channels that fire into action.',
+  ],
+  melancholic: [
+    'Given to long silences and careful observation of the world around him.',
+    'A brooding temperament, prone to solitary reflection.',
+    'Sees what others miss, though the seeing sometimes weighs on him.',
+    'Cautious and deliberate, trusting experience over optimism.',
+    'Carries a quiet gravity that commands respect without raising his voice.',
+  ],
+  phlegmatic: [
+    'Steady as the tides and about as easily provoked.',
+    'A calming presence aboard ship, rarely troubled by what alarms others.',
+    'Patient and methodical, preferring routine to improvisation.',
+    'Loyal to the bone, once trust is given it is not easily withdrawn.',
+    'Content to do his duty without complaint or fanfare.',
+  ],
+  curiosity: [
+    'Fascinated by foreign customs, forever asking questions of strangers.',
+    'Collects words in other tongues the way a magpie collects bright things.',
+    'Drawn to the unfamiliar, happiest when learning something new.',
+    'Studies the natural world with the eye of a self-taught philosopher.',
+    'Adapts to foreign ports more readily than most, finding wonder where others find only strangeness.',
+  ],
+};
+
+// Incident sentences keyed to role + stat highlights
+const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: string[]; high_strength: string[]; high_perception: string[]; default: string[] }> = {
+  Captain: {
+    high_luck: ['Once narrowly escaped a shipwreck that claimed two other vessels.', 'Survived a mutiny through an extraordinary stroke of fortune.'],
+    high_charisma: ['Talked down a hostile port garrison with nothing but words and nerve.', 'Once convinced a pirate captain to release his ship without a shot fired.'],
+    high_strength: ['Personally led a boarding action that decided a battle at sea.', 'Hauled a drowning man from the sea in a storm that should have killed them both.'],
+    high_perception: ['Spotted a hidden reef that would have torn the hull apart.', 'Noticed the signs of a coming storm a full day before it struck.'],
+    default: ['Has weathered more than one crisis of command at sea.', 'Carries the quiet confidence of a man who has faced the worst and endured.'],
+  },
+  Navigator: {
+    high_luck: ['Once found a passage through uncharted waters that saved the entire voyage.'],
+    high_charisma: ['Learned secret routes from a local pilot through patient friendship.'],
+    high_strength: ['Swam to shore through heavy surf to take bearings when the ship could not approach.'],
+    high_perception: ['Can determine latitude by starlight alone with uncanny accuracy.'],
+    default: ['Has guided ships safely through waters that have wrecked lesser navigators.'],
+  },
+  Gunner: {
+    high_luck: ['Survived an explosion in the powder magazine that killed three others.'],
+    high_charisma: ['Keeps the gun crew loyal and sharp through rough humour and steady praise.'],
+    high_strength: ['Can single-handedly shift a cannon that normally requires four men.'],
+    high_perception: ['Landed a shot on a distant target that seasoned gunners called impossible.'],
+    default: ['Has seen action enough to know the cost of both good and poor gunnery.'],
+  },
+  Sailor: {
+    high_luck: ['Fell from the rigging in a storm and landed in the sea, only to be hauled back alive.'],
+    high_charisma: ['The other hands look to him when spirits are low.'],
+    high_strength: ['Can climb the mainmast faster than any man aboard.'],
+    high_perception: ['Has a gift for reading the wind before it shifts.'],
+    default: ['An experienced hand who knows the ways of rope and canvas.'],
+  },
+  Factor: {
+    high_luck: ['Once bought a cargo of indigo at a pittance that later tripled in value.'],
+    high_charisma: ['Has contacts in ports spanning three oceans.'],
+    high_strength: ['Survived a robbery in a foreign port by fighting off the assailants.'],
+    high_perception: ['Can spot adulterated spices by smell alone.'],
+    default: ['Has a merchant\'s instinct for where profit lies and where danger hides.'],
+  },
+  Surgeon: {
+    high_luck: ['Once cured a fever with a remedy he mixed by guesswork, having lost his medical chest overboard.'],
+    high_charisma: ['Has a bedside manner that reassures even the most frightened patient.'],
+    high_strength: ['Performed an amputation at sea in heavy weather without losing his footing or the patient.'],
+    high_perception: ['Diagnoses ailments with an almost uncanny swiftness.'],
+    default: ['Has treated enough wounds and fevers to know that nature is the true physician.'],
+  },
+};
+
+function generateBackstory(role: CrewRole, nationality: Nationality, birthplace: string, age: number, quality: CrewQuality, humours: Humours, stats: CrewStats): string {
+  // 1. Origin sentence (role template)
   const templates = BACKSTORY_TEMPLATES[role];
-  let text = pick(templates);
+  let origin = pick(templates);
+  origin = origin.replace('{place}', birthplace);
+  origin = origin.replace('{nationality}', nationality);
+  origin = origin.replace('{region}', pick(REGION_NAMES));
+  origin = origin.replace('{count}', randInt(3, 12).toString());
+  origin = origin.replace('{trait}', pick(TRAIT_ADJECTIVES));
 
-  text = text.replace('{place}', birthplace);
-  text = text.replace('{nationality}', nationality);
-  text = text.replace('{region}', pick(REGION_NAMES));
-  text = text.replace('{count}', randInt(3, 12).toString());
-  text = text.replace('{trait}', pick(TRAIT_ADJECTIVES));
+  // 2. Character sentence (dominant humour)
+  const humourEntries: [HumourKey, number][] = [
+    ['sanguine', humours.sanguine], ['choleric', humours.choleric],
+    ['melancholic', humours.melancholic], ['phlegmatic', humours.phlegmatic],
+    ['curiosity', humours.curiosity],
+  ];
+  humourEntries.sort((a, b) => b[1] - a[1]);
+  const dominant = humourEntries[0][0];
+  const character = pick(HUMOUR_CHARACTER_LINES[dominant]);
 
-  // Add quality flavor
+  // 3. Incident sentence (stat-based, for rare+ quality or high stats)
+  let incident = '';
+  if (quality === 'legendary' || quality === 'rare' || Math.random() < 0.4) {
+    const incidents = INCIDENT_LINES[role];
+    const highest = Math.max(stats.strength, stats.perception, stats.charisma, stats.luck);
+    if (stats.luck === highest && stats.luck >= 12) incident = pick(incidents.high_luck);
+    else if (stats.charisma === highest && stats.charisma >= 12) incident = pick(incidents.high_charisma);
+    else if (stats.strength === highest && stats.strength >= 12) incident = pick(incidents.high_strength);
+    else if (stats.perception === highest && stats.perception >= 12) incident = pick(incidents.high_perception);
+    else incident = pick(incidents.default);
+  }
+
+  // Combine
+  let text = origin + ' ' + character;
+  if (incident) text += ' ' + incident;
+
+  // Quality suffix
   if (quality === 'legendary') {
     text += ' Spoken of with reverence by those who\'ve sailed with them.';
-  } else if (quality === 'rare') {
-    text += ' Has a reputation that precedes them in many ports.';
   } else if (quality === 'dud') {
     text += ' Though somewhat unreliable, they were the best available.';
   }
@@ -437,13 +602,28 @@ export function generateCrewMember(
   const birthplace = pick(pool.birthplaces);
   const quality = rollCrewQuality(skill, morale);
   const stats = rollStats(role, quality);
-  const backstory = generateBackstory(role, nationality, birthplace, age, quality);
+  const humours = rollHumours(role, nationality, stats);
+  const backstory = generateBackstory(role, nationality, birthplace, age, quality, humours, stats);
+
+  // Randomize starting level (1-3) with weighted distribution
+  // Higher quality and older crew are more likely to be experienced
+  const levelRoll = Math.random();
+  const ageBonus = age > 35 ? 0.15 : age > 25 ? 0.05 : 0;
+  const qualityBonus = quality === 'legendary' ? 0.3 : quality === 'rare' ? 0.15 : quality === 'dud' ? -0.15 : 0;
+  const lvl3Chance = 0.1 + ageBonus + qualityBonus;
+  const lvl2Chance = 0.3 + ageBonus + qualityBonus;
+  const startLevel = levelRoll < lvl3Chance ? 3 : levelRoll < lvl3Chance + lvl2Chance ? 2 : 1;
+  // XP toward next level — random progress
+  const xpToNext = startLevel === 1 ? 100 : startLevel === 2 ? 150 : 225;
+  const xp = randInt(0, Math.floor(xpToNext * 0.7));
+  // Skill bump for higher starting levels
+  const levelSkillBonus = (startLevel - 1) * randInt(2, 4);
 
   return {
     id: generateId(),
     name: `${first} ${last}`,
     role,
-    skill,
+    skill: Math.min(100, skill + levelSkillBonus),
     morale,
     age,
     nationality,
@@ -452,14 +632,15 @@ export function generateCrewMember(
     health: 'healthy' as HealthFlag,
     quality,
     stats,
+    humours,
     backstory,
     history: [{ day: hireDay, event: `Joined the crew as ${role}` }],
     hireDay,
     traits: [],
     abilities: [],
-    level: 1,
-    xp: 0,
-    xpToNext: 100,
+    level: startLevel,
+    xp,
+    xpToNext,
   };
 }
 
@@ -487,6 +668,19 @@ export function generateStartingCrew(
     const role = i < officerRoles.length ? officerRoles[i] : 'Sailor';
     const nat = weightedPick(mix);
     crew.push(generateCrewMember(nat, role));
+  }
+
+  // Ensure captain is always the highest level in the group
+  const maxCrewLevel = Math.max(...crew.filter(c => c.role !== 'Captain').map(c => c.level));
+  if (captain.level < maxCrewLevel) {
+    captain.level = maxCrewLevel + (Math.random() < 0.5 ? 1 : 0);
+    if (captain.level > 3) captain.level = 3;
+    captain.xpToNext = captain.level === 1 ? 100 : captain.level === 2 ? 150 : 225;
+    captain.xp = randInt(0, Math.floor(captain.xpToNext * 0.7));
+    captain.skill = Math.min(100, captain.skill + (captain.level - 1) * randInt(2, 4));
+  } else if (captain.level === maxCrewLevel && Math.random() < 0.7) {
+    // Give captain more XP progress if tied
+    captain.xp = Math.max(captain.xp, randInt(Math.floor(captain.xpToNext * 0.4), Math.floor(captain.xpToNext * 0.8)));
   }
 
   return crew;

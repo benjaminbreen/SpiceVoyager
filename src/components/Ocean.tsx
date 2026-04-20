@@ -20,6 +20,7 @@ const SHALLOW_TINT_OFFSET = .32;
 const ALGAE_SURFACE_OFFSET = 0.035;
 const CAUSTIC_SURFACE_OFFSET = 0.005;
 const WATER_SURFACE_ALPHA = 0.75;
+const WATER_NORMALS_PATH = '/textures/waternormals.jpg';
 
 type ReflectionTuning = {
   reflectanceBase: number;
@@ -92,7 +93,7 @@ function ShallowWaterTint() {
   const { geometry, material } = useMemo(() => {
     const baseSize = devSoloPort ? 1000 : 900;
     const size = baseSize + 250;
-    const segments = Math.min(192, Math.max(72, Math.round(size * 0.12)));
+    const segments = Math.min(128, Math.max(64, Math.round(size * 0.09)));
     const geo = new THREE.PlaneGeometry(size, size, segments, segments);
     const position = geo.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(position.count * 3);
@@ -611,34 +612,27 @@ function WaterCaustics() {
 export function Ocean() {
   const waterRef = useRef<Water | null>(null);
   const advancedWaterEnabled = useGameStore((state) => state.renderDebug.advancedWater);
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
   const algaeEnabled = useGameStore((state) => state.renderDebug.algae);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
   const reflectionTuning = useMemo(() => getReflectionTuning(waterPaletteId), [waterPaletteId]);
 
-  const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
-  const sunH = Math.sin(sunAngle);
   const showAdvancedWater = advancedWaterEnabled;
 
-  // Load the standard three.js water normals texture for realistic distortion
-  const waterNormals = useLoader(
-    THREE.TextureLoader,
-    'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/waternormals.jpg'
-  );
+  const waterNormals = useLoader(THREE.TextureLoader, WATER_NORMALS_PATH);
   waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
 
   const water = useMemo(() => {
     const geometry = new THREE.PlaneGeometry(10000, 10000);
     const w = new Water(geometry, {
-      textureWidth: 412,
-      textureHeight: 412,
+      textureWidth: 1012,
+      textureHeight: 1012,
       waterNormals,
       sunDirection: new THREE.Vector3(1, 0, 0).normalize(),
       sunColor: 0xffff,
       waterColor: waterPalette.surface.fallbackHex,
       alpha: WATER_SURFACE_ALPHA,
-      distortionScale: 1.7,
+      distortionScale: 1,
       clipBias: 1.5,
       fog: true,
     });
@@ -675,7 +669,7 @@ export function Ocean() {
       )
       .replace(
         'vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;',
-        'vec2 distortion = surfaceNormal.xz * ( 0.0018 + 1.0 / distance ) * distortionScale;'
+        'vec2 distortion = surfaceNormal.xz * ( 0.001 + 0.4 / distance ) * smoothstep(350.0, 80.0, distance) * distortionScale;'
       )
       .replace(
         'vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );',
@@ -683,7 +677,8 @@ export function Ocean() {
 				float reflDistFade = mix(${distanceFadeFloor}, 1.0, 1.0 - smoothstep(120.0, 350.0, distance));
 				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);
 				`
-      );
+      )
+      ;
     waterMaterial.needsUpdate = true;
 
     waterRef.current = w;
@@ -692,6 +687,9 @@ export function Ocean() {
 
   useFrame((_, delta) => {
     if (!waterRef.current) return;
+    const timeOfDay = useGameStore.getState().timeOfDay;
+    const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
+    const sunH = Math.sin(sunAngle);
     const mat = waterRef.current.material as THREE.ShaderMaterial;
     mat.uniforms.time.value += delta * 0.5;
 

@@ -227,42 +227,79 @@ export function SplashSystem() {
 
       varying vec2 vWorldXZ;
 
+      // Each splash emits a dispersive wave packet: crests and troughs
+      // travel outward at the phase velocity while the envelope moves at
+      // the slower group velocity (classic deep-water dispersion).  We
+      // render the signed wave height as a pair of light/dark bands
+      // rather than white rings — this reads as surface tilt catching
+      // and shedding light, not as painted foam.  A small foam core is
+      // only added back for fresh, high-intensity impacts (anchor drops,
+      // cannonballs); turn-ripples with low intensity stay pure bands.
       void main() {
-        float totalRipple = 0.0;
+        float crest = 0.0;
+        float trough = 0.0;
+        float foam = 0.0;
 
         for (int i = 0; i < 4; i++) {
           vec4 sp = uSplashOrigins[i];
           float age = uTime - sp.z;
-          if (age < 0.0 || age > 3.5 || sp.w < 0.01) continue;
+          if (age < 0.0 || age > 4.2 || sp.w < 0.01) continue;
 
           float dist = length(vWorldXZ - sp.xy);
-          float rippleSpeed = 8.0;
-          float ringRadius = age * rippleSpeed;
 
-          // Multiple concentric rings
-          float ring1 = abs(dist - ringRadius);
-          float ring2 = abs(dist - ringRadius * 0.65);
-          float ring3 = abs(dist - ringRadius * 0.35);
+          // Wave-packet geometry.  Phase = individual crest speed;
+          // group = envelope speed.  The packet sits ahead of the
+          // origin and widens as it ages.
+          const float phaseSpeed = 2.4;
+          const float groupSpeed = 1.2;
+          const float wavelength = 2.8;
+          const float k = 6.2831853 / wavelength;
+          const float omega = phaseSpeed * k;
 
-          float width = 0.4 + age * 0.3; // rings widen with age
-          float r1 = exp(-ring1 * ring1 / (width * width));
-          float r2 = exp(-ring2 * ring2 / (width * width * 0.7)) * 0.5;
-          float r3 = exp(-ring3 * ring3 / (width * width * 0.5)) * 0.25;
+          float packetCenter = age * groupSpeed;
+          float packetWidth = 1.7 + age * 1.2;
+          float radial = dist - packetCenter;
+          float envelope = exp(-(radial * radial) / (packetWidth * packetWidth));
 
-          // Fade out over time
-          float fade = exp(-age * 1.2) * sp.w;
-          // Fade with distance from splash origin (don't let rings go forever)
-          float distFade = 1.0 - smoothstep(12.0, 25.0, dist);
+          // Signed wave — alternating crests and troughs along the radius.
+          float signedWave = sin(k * dist - omega * age) * envelope;
 
-          totalRipple += (r1 + r2 + r3) * fade * distFade;
+          // Damping: exponential with age + soft distance rolloff so
+          // rings don't march across the entire plane.
+          float amp = exp(-age * 0.6) * (1.0 - smoothstep(12.0, 28.0, dist)) * sp.w;
+          float contribution = signedWave * amp;
+
+          crest  += max( contribution, 0.0);
+          trough += max(-contribution, 0.0);
+
+          // Foam core: only meaningful for high-intensity, very fresh
+          // splashes.  Subtle (low-w) turn ripples skip this entirely.
+          if (sp.w > 0.22 && age < 0.7) {
+            float coreFall = 1.0 - age / 0.7;
+            float coreRadial = dist - age * 1.2;
+            foam += exp(-(coreRadial * coreRadial) / 0.6) * coreFall * sp.w;
+          }
         }
 
-        if (totalRipple < 0.01) discard;
+        float total = crest + trough + foam;
+        if (total < 0.004) discard;
 
-        // White-ish foam color for the ripple crests
-        vec3 color = mix(vec3(0.7, 0.85, 0.95), vec3(0.95, 0.98, 1.0), totalRipple);
-        float alpha = totalRipple * 0.35;
-        gl_FragColor = vec4(color, alpha);
+        // Base water tint — sampled to match the scene's deep-water hue.
+        // Crests lift toward a bright specular; troughs drop into a cooler
+        // shadow.  The two sum to a soft lateral light/dark band.
+        vec3 base    = vec3(0.36, 0.52, 0.62);
+        vec3 crestC  = vec3(0.92, 0.96, 1.00);
+        vec3 troughC = vec3(0.18, 0.28, 0.38);
+
+        vec3 color = mix(base, crestC, clamp(crest * 0.9 + foam, 0.0, 1.0));
+        color = mix(color, troughC, clamp(trough * 0.55, 0.0, 1.0));
+
+        // Subtle alpha — crests brighter than troughs, foam is the only
+        // channel allowed to punch through.  Turn ripples (low sp.w) land
+        // in the 0.01-0.04 alpha range; real splashes (sp.w ~ 1) peak
+        // around 0.22 + foam.
+        float alpha = crest * 0.22 + trough * 0.13 + foam * 0.28;
+        gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.55));
       }
     `,
     transparent: true,

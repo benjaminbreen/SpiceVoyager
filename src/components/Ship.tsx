@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { getTerrainHeight, getMeshHalf } from '../utils/terrain';
 import { Billboard, Text } from '@react-three/drei';
 import { FACTIONS } from '../constants/factions';
-import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxRiggingCreak, sfxTreasureFind } from '../audio/SoundEffects';
+import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxTreasureFind } from '../audio/SoundEffects';
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
@@ -37,6 +37,8 @@ export function Ship() {
   const previousHeading = useRef(0);
   const heel = useRef(0);
   const heelVelocity = useRef(0);
+  const yawSlide = useRef(0); // visual drift slip — hull lags physics heading
+  const prevVelocity = useRef(0); // for throttle weight-transfer pitch
   // Recoil state: slow drift away from land after collision
   const recoilVelX = useRef(0);
   const recoilVelZ = useRef(0);
@@ -94,6 +96,13 @@ export function Ship() {
   // Sailing sound triggers (cooldown-gated one-shots)
   const sailsCaughtRef = useRef(false); // true once we pass 40% speed, resets when below 20%
   const lastCreakTime = useRef(0);
+
+  // Hard-turn spray — arcade feel when banking at speed.
+  // Two particle kinds share the pool: 'arc' (high spray plume) and
+  // 'foam' (low, wide patches that cling to the waterline).
+  const spraySideRef = useRef<THREE.InstancedMesh>(null);
+  const sprayData = useRef<{pos: THREE.Vector3, vel: THREE.Vector3, life: number, maxLife: number, foam: boolean}[]>([]);
+  const SPRAY_COUNT = 44;
 
   // Fishing net state — unified auto-catch + manual cast
   const netState = useRef<'idle' | 'casting' | 'hauling'>('idle');
@@ -230,6 +239,7 @@ export function Ship() {
     () => Float32Array.from(foreSailGeometry.attributes.position.array as Float32Array),
     [foreSailGeometry]
   );
+  const normalFrame = useRef(0);
 
   // Sync ship position from store on mount; later teleports are handled in-frame.
   const initialized = useRef(false);
@@ -278,6 +288,16 @@ export function Ship() {
         pos: new THREE.Vector3(0, -1000, 0),
         vel: new THREE.Vector3(),
         life: 0,
+      });
+    }
+    // Initialize hard-turn spray particles
+    for (let i = 0; i < SPRAY_COUNT; i++) {
+      sprayData.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 1,
+        foam: false,
       });
     }
   }, []);
@@ -333,6 +353,29 @@ export function Ship() {
         window.dispatchEvent(new CustomEvent('ship-collision-warning', {
           detail: { appearancePhrase: detail.appearancePhrase },
         }));
+      }
+
+      // Elastic bounce: NPCShip supplies a contact normal (from player → NPC)
+      // plus the impulse magnitude. Push the player along -n so both ships
+      // separate realistically, bleed forward speed, heel into the impact.
+      if (
+        typeof detail?.nx === 'number' &&
+        typeof detail?.nz === 'number' &&
+        typeof detail?.impulseMag === 'number'
+      ) {
+        const nx = detail.nx as number;
+        const nz = detail.nz as number;
+        const approachSpeed = (detail.approachSpeed as number) ?? 0;
+        // Minimum felt bounce so even a soft touch registers.
+        const pushMag = Math.max(detail.impulseMag as number, 3);
+        recoilVelX.current += -nx * pushMag;
+        recoilVelZ.current += -nz * pushMag;
+        // Bleed forward speed — not to zero (that's for shore); ship keeps inertia.
+        velocity.current *= 0.55;
+        // Heel away from impact side for a "knocked sideways" read.
+        const rotHere = rotation.current;
+        const localRight = nx * Math.cos(rotHere) - nz * Math.sin(rotHere);
+        heelVelocity.current += -localRight * Math.min(0.35, 0.12 + approachSpeed * 0.06);
       }
     };
     window.addEventListener('ship-collision', handleCollisionEvent);
@@ -486,7 +529,9 @@ export function Ship() {
       const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
       const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus;
       const windTrim = getWindTrimInfo(store.windDirection, rotation.current);
-      const wantsWindTrim = keys.current.shift && keys.current.w && velocity.current > 0.5;
+      // Wind trim requires going straight — Shift while turning is drift, not boost.
+      const wantsWindTrim = keys.current.shift && keys.current.w && velocity.current > 0.5
+        && !keys.current.a && !keys.current.d;
       const windTrimActive = wantsWindTrim && windTrim.score > 0;
       const windTrimLerp = 1 - Math.exp(-delta * (windTrimActive ? 2.4 : 4.2));
       windTrimCharge.current = THREE.MathUtils.lerp(
@@ -496,8 +541,8 @@ export function Ship() {
       );
       const windTrimMultiplier = getWindTrimMultiplier(store.windSpeed, windTrim.score, windTrimCharge.current);
       const maxSpeed = baseMaxSpeed * windTrimMultiplier;
-      const accel = 5 * delta;
-      const drag = 2 * delta;
+      const accel = 7.5 * delta;
+      const drag = 2.4 * delta;
 
       if (windTrimActive && windTrimCharge.current > 0.35 && !windTrimWasActive.current) {
         windTrimWasActive.current = true;
@@ -515,7 +560,12 @@ export function Ship() {
         }
       } else if (keys.current.w) {
         const trimAcceleration = windTrimActive ? 1 + windTrim.score * 0.6 : 1;
-        velocity.current = Math.min(velocity.current + accel * trimAcceleration, maxSpeed);
+        // Only accelerate up to maxSpeed — don't snap velocity down if we're
+        // already overspeed (e.g. boost just ended). The overspeed handler
+        // below ramps that case smoothly via drag.
+        if (velocity.current < maxSpeed) {
+          velocity.current = Math.min(velocity.current + accel * trimAcceleration, maxSpeed);
+        }
       } else if (keys.current.s) {
         velocity.current = Math.max(velocity.current - accel, -baseMaxSpeed / 2);
       } else {
@@ -534,10 +584,14 @@ export function Ship() {
         setShowSpeedBoost(shouldShowSpeedBoost);
       }
 
-      // Turning (only turn if moving, or turn slowly if stopped)
+      // Turning (only turn if moving, or turn slowly if stopped).
+      // Drift: Shift+A/D gives a tighter turn radius — no speed penalty,
+      // just a sharper response for expressive piloting.
+      const isDrifting = keys.current.shift && (keys.current.a || keys.current.d);
       const turnFactor = Math.abs(velocity.current) > 0.1 ? 1 : 0.2;
-      const turnSpeed = stats.turnSpeed * delta * turnFactor;
-      
+      const driftTurnMult = isDrifting ? 1.3 : 1;
+      const turnSpeed = stats.turnSpeed * delta * turnFactor * driftTurnMult;
+
       if (keys.current.a) rotation.current += turnSpeed;
       if (keys.current.d) rotation.current -= turnSpeed;
 
@@ -705,11 +759,76 @@ export function Ship() {
         sailsCaughtRef.current = false;
       }
 
-      // Turn splash — water churning on turns at speed (cooldown: 1.8s)
-      const turnRate = Math.abs((keys.current.a ? 1 : 0) - (keys.current.d ? 1 : 0));
-      if (turnRate > 0 && spdRatio > 0.25 && now - lastCreakTime.current > 1.8) {
-        lastCreakTime.current = now;
-        sfxRiggingCreak();
+      // ── Hard turn: spray + hull foam ──
+      // Intensity combines turn input and speed so it only fires when the
+      // player is actively banking at pace. Drifting (Shift+A/D) lowers the
+      // bar and amplifies the effect — even mid-speed drifts throw big spray.
+      const turnKey = (keys.current.a ? 1 : 0) - (keys.current.d ? 1 : 0);
+      const turnIntensity = Math.abs(turnKey) * spdRatio;
+      const HARD_TURN_THRESH = isDrifting ? 0.15 : 0.4;
+      if (turnIntensity > HARD_TURN_THRESH && !store.anchored) {
+        const rawStrength = (turnIntensity - HARD_TURN_THRESH) / Math.max(0.01, 1 - HARD_TURN_THRESH);
+        const emitStrength = Math.min(1, isDrifting ? rawStrength + 0.45 : rawStrength);
+        const outerSide = turnKey; // +1 = starboard (left turn), -1 = port (right turn)
+        const rot = rotation.current;
+        const shipRightX = Math.cos(rot);
+        const shipRightZ = -Math.sin(rot);
+        const fwdX = Math.sin(rot);
+        const fwdZ = Math.cos(rot);
+        const baseX = group.current.position.x + fwdX * -0.5;
+        const baseZ = group.current.position.z + fwdZ * -0.5;
+
+        // Mix arc spray (upward plume) with hull-hugging foam patches.
+        // Foam particles outnumber arc 2:1 — they're the waterline kick that
+        // reads as real hydrodynamic displacement; arc adds sparkle on top.
+        const maxSpawns = isDrifting ? 4 : 3;
+        const spawns = Math.random() < (0.3 + emitStrength * 0.6) ? maxSpawns : Math.max(1, maxSpawns - 1);
+        for (let s = 0; s < spawns; s++) {
+          let slot = -1;
+          for (let i = 0; i < SPRAY_COUNT; i++) {
+            if (sprayData.current[i].life <= 0) { slot = i; break; }
+          }
+          if (slot < 0) break;
+          const p = sprayData.current[slot];
+          const isFoam = s !== 0; // first spawn per frame is arc, rest are foam
+          const alongScatter = (Math.random() - 0.5) * 3.5;
+          const sideDist = 1.25 + Math.random() * 0.35;
+          if (isFoam) {
+            // Foam clings to the waterline and spreads outward along the hull.
+            p.pos.set(
+              baseX + fwdX * alongScatter + shipRightX * outerSide * sideDist,
+              0.04 + Math.random() * 0.05,
+              baseZ + fwdZ * alongScatter + shipRightZ * outerSide * sideDist,
+            );
+            const outward = 0.9 + emitStrength * 1.1 + Math.random() * 0.5;
+            // Slight along-hull drift (toward stern) so foam trails the turn
+            const trail = -0.5 - emitStrength * 0.6;
+            p.vel.set(
+              shipRightX * outerSide * outward + fwdX * trail,
+              0.15 + Math.random() * 0.2,
+              shipRightZ * outerSide * outward + fwdZ * trail,
+            );
+            p.maxLife = 0.9 + Math.random() * 0.5;
+            p.foam = true;
+          } else {
+            p.pos.set(
+              baseX + fwdX * alongScatter + shipRightX * outerSide * sideDist,
+              0.15 + Math.random() * 0.15,
+              baseZ + fwdZ * alongScatter + shipRightZ * outerSide * sideDist,
+            );
+            const outward = 2.2 + emitStrength * 2.0 + Math.random() * 1.5;
+            const upward = 2.3 + emitStrength * 1.7 + Math.random() * 1.4;
+            p.vel.set(
+              shipRightX * outerSide * outward + (Math.random() - 0.5) * 0.6,
+              upward,
+              shipRightZ * outerSide * outward + (Math.random() - 0.5) * 0.6,
+            );
+            p.maxLife = 0.55 + Math.random() * 0.25;
+            p.foam = false;
+          }
+          p.life = p.maxLife;
+        }
+
       }
     } else if (speedBoostVisible.current) {
       speedBoostVisible.current = false;
@@ -727,9 +846,15 @@ export function Ship() {
     const sailSetLerp = 1 - Math.exp(-delta * 8);
     visualSailSet.current = THREE.MathUtils.lerp(visualSailSet.current, sailSetTarget, sailSetLerp);
     const steerIntent = (keys.current.d ? 1 : 0) - (keys.current.a ? 1 : 0); // right turn = positive
-    const steerHeel = -steerIntent * (0.08 + speedRatio * 0.1);
-    const angularHeel = THREE.MathUtils.clamp(angularVelocity * 0.045, -0.18, 0.18);
-    const targetHeel = THREE.MathUtils.clamp(steerHeel + angularHeel, -0.22, 0.22);
+    const heelDrifting = keys.current.shift && steerIntent !== 0;
+    const driftHeelBonus = heelDrifting ? 1.4 : 1;
+    // Steering input → base bank (scales strongly with speed for arcade feel).
+    const steerHeel = -steerIntent * (0.14 + speedRatio * 0.28) * driftHeelBonus;
+    // Actual rotation rate → secondary bank component (captures sustained turns).
+    const angularHeel = THREE.MathUtils.clamp(angularVelocity * 0.085, -0.32, 0.32);
+    // Final target: up to ~28° at full-speed hard turns, ~38° while drifting.
+    const heelClamp = heelDrifting ? 0.66 : 0.48;
+    const targetHeel = THREE.MathUtils.clamp(steerHeel + angularHeel, -heelClamp, heelClamp);
 
     // Spring the hull into turns, then let it settle once the helm straightens.
     const heelStiffness = 18 + speedRatio * 10;
@@ -738,11 +863,68 @@ export function Ship() {
     heelVelocity.current *= Math.exp(-heelDamping * delta);
     heel.current += heelVelocity.current * delta;
 
-    // Keep a little wave motion under the turn-driven heel so the ship stays lively.
-    if (visualGroup.current) {
-      visualGroup.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 0.15;
-      visualGroup.current.rotation.z = heel.current + Math.sin(state.clock.elapsedTime * 1.5) * (0.018 + speedRatio * 0.012);
-      visualGroup.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2) * 0.04 - speedRatio * 0.015;
+    // Pitch: planing lift at speed + throttle dig when reversing.
+    const throttle = keys.current.w ? 1 : keys.current.s ? -1 : 0;
+    const throttlePitch = -throttle * speedRatio * 0.06; // W lifts bow, S digs bow
+    const planingPitch = -speedRatio * 0.04;             // sustained bow-up at cruise
+
+    // Wave-coupled bob: sample a cheap analytic swell at bow, stern, and beam
+    // so the ship genuinely rides crests — pitches over fronts, rolls with
+    // beam seas. Also drives heel sink, drift yaw-slide, and throttle
+    // weight transfer. All effects share 6 sin evaluations total.
+    if (visualGroup.current && group.current) {
+      const t = state.clock.elapsedTime;
+      const sx = group.current.position.x;
+      const sz = group.current.position.z;
+      const rot = rotation.current;
+      // Ship-local forward (sin,cos) and right (cos,-sin) in world space.
+      const fwdX = Math.sin(rot);
+      const fwdZ = Math.cos(rot);
+      const rightX = Math.cos(rot);
+      const rightZ = -Math.sin(rot);
+      const bowX = sx + fwdX * 2.5;
+      const bowZ = sz + fwdZ * 2.5;
+      const sternX = sx - fwdX * 1.5;
+      const sternZ = sz - fwdZ * 1.5;
+      const portX = sx - rightX * 1.3;
+      const portZ = sz - rightZ * 1.3;
+      const stbdX = sx + rightX * 1.3;
+      const stbdZ = sz + rightZ * 1.3;
+      // Two-component swell: long primary + shorter cross-chop.
+      const sampleWave = (x: number, z: number) =>
+          Math.sin(t * 1.1 + x * 0.18 + z * 0.12) * 0.17
+        + Math.sin(t * 1.8 - x * 0.09 + z * 0.28) * 0.09;
+      const bowY = sampleWave(bowX, bowZ);
+      const sternY = sampleWave(sternX, sternZ);
+      const portY = sampleWave(portX, portZ);
+      const stbdY = sampleWave(stbdX, stbdZ);
+      const centerY = (bowY + sternY) * 0.5;
+      const pitchFromWave = (bowY - sternY) / 4.0;      // bow-to-stern ~4 units
+      const rollFromWave = (stbdY - portY) / 2.6 * 0.6; // beam ~2.6, damped
+
+      // Low side of the hull settles deeper when banking.
+      const heelSink = Math.abs(heel.current) * 0.22;
+
+      // Throttle weight transfer — acceleration spikes give a momentary pitch
+      // kick (bow up on W press, bow down on S press / decel). Clamped small.
+      const frameAccel = (velocity.current - prevVelocity.current) / Math.max(delta, 1 / 120);
+      prevVelocity.current = velocity.current;
+      const weightPitch = THREE.MathUtils.clamp(-frameAccel * 0.008, -0.08, 0.08);
+
+      // Drift yaw-slide — visual hull angles outward from physics heading.
+      const yawSlideTarget = heelDrifting ? -steerIntent * 0.09 * speedRatio : 0;
+      yawSlide.current = THREE.MathUtils.lerp(
+        yawSlide.current,
+        yawSlideTarget,
+        1 - Math.exp(-delta * 5),
+      );
+
+      visualGroup.current.position.y = centerY - heelSink;
+      visualGroup.current.rotation.y = yawSlide.current;
+      visualGroup.current.rotation.z = heel.current + rollFromWave
+        + Math.sin(t * 1.5) * (0.008 + speedRatio * 0.006);
+      visualGroup.current.rotation.x =
+        pitchFromWave + planingPitch + throttlePitch + weightPitch;
     }
 
     if (speedBoostRef.current) {
@@ -775,6 +957,10 @@ export function Ship() {
     sailTrim.current.main = THREE.MathUtils.lerp(sailTrim.current.main, trimTarget, trimLerp);
     sailTrim.current.fore = THREE.MathUtils.lerp(sailTrim.current.fore, trimTarget * 1.08, trimLerp);
 
+    // Live wind-heading score — well-trimmed sails visibly puff harder.
+    const sailTrimScore = getWindTrimInfo(store.windDirection, rotation.current).score;
+
+    const recomputeNormals = (++normalFrame.current % 4) === 0;
     const updateSailShape = (
       mesh: THREE.Mesh | null,
       geometry: THREE.PlaneGeometry,
@@ -797,7 +983,7 @@ export function Ship() {
       const halfWidth = width * 0.5;
       const halfHeight = height * 0.5;
       const camberDepth =
-        (0.12 + fill * 0.5 + speedRatio * 0.08) *
+        (0.12 + fill * 0.5 + speedRatio * 0.08 + sailTrimScore * 0.22) *
         fullnessScale *
         (0.72 + visualSailSet.current * 0.28);
       const flutterAmount = (0.01 + speedRatio * 0.005) * luff;
@@ -824,8 +1010,10 @@ export function Ship() {
       }
 
       position.needsUpdate = true;
-      geometry.computeVertexNormals();
-      geometry.attributes.normal.needsUpdate = true;
+      if (recomputeNormals) {
+        geometry.computeVertexNormals();
+        geometry.attributes.normal.needsUpdate = true;
+      }
     };
 
     updateSailShape(mainSailRef.current, mainSailGeometry, mainSailBase, 3.5, 4, 4, 1.55, sailTrim.current.main, 1, 0.3);
@@ -873,7 +1061,9 @@ export function Ship() {
         arr[i + 2] = (wave + flutter) * (0.2 + windStr * 0.8);
       }
       pos.needsUpdate = true;
-      flagGeometry.computeVertexNormals();
+      if (recomputeNormals) {
+        flagGeometry.computeVertexNormals();
+      }
     }
 
     // Visual Effects Updates
@@ -1084,6 +1274,59 @@ export function Ship() {
       }
       if (needsUpdate) {
         anchorSplashRef.current.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    // ── Hard-turn spray particles ──
+    if (spraySideRef.current) {
+      const dummy = new THREE.Object3D();
+      let needsUpdate = false;
+      for (let i = 0; i < SPRAY_COUNT; i++) {
+        const p = sprayData.current[i];
+        if (!p) continue;
+        if (p.life > 0) {
+          p.life -= delta;
+          const lifeRatio = p.life / p.maxLife;
+          if (p.foam) {
+            // Near-zero gravity, heavy lateral drag — foam sheets flatten
+            // onto the surface and fade. Keep height clamped to waterline.
+            p.vel.y -= 1.2 * delta;
+            const drag = Math.exp(-delta * 2.8);
+            p.vel.x *= drag;
+            p.vel.z *= drag;
+            p.pos.addScaledVector(p.vel, delta);
+            if (p.pos.y < 0.02) { p.pos.y = 0.02; if (p.vel.y < 0) p.vel.y = 0; }
+            dummy.position.copy(p.pos);
+            // Foam expands wider and flatter than arc spray
+            const grow = 0.28 + (1 - lifeRatio) * 0.55;
+            const fade = Math.pow(Math.max(0, lifeRatio), 0.6);
+            const sXZ = grow * fade;
+            const sY = sXZ * 0.35;
+            dummy.scale.set(sXZ, sY, sXZ);
+          } else {
+            p.vel.y -= 8 * delta; // lighter gravity — spray hangs briefly
+            const drag = Math.exp(-delta * 1.4);
+            p.vel.x *= drag;
+            p.vel.z *= drag;
+            p.pos.addScaledVector(p.vel, delta);
+            dummy.position.copy(p.pos);
+            const s = (0.16 + (1 - lifeRatio) * 0.22) * Math.pow(Math.max(0, lifeRatio), 0.4);
+            dummy.scale.set(s, s, s);
+          }
+          dummy.updateMatrix();
+          spraySideRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          spraySideRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) {
+        spraySideRef.current.instanceMatrix.needsUpdate = true;
       }
     }
 
@@ -1512,6 +1755,12 @@ export function Ship() {
       <instancedMesh ref={anchorSplashRef} args={[undefined, undefined, ANCHOR_SPLASH_COUNT]}>
         <sphereGeometry args={[0.15, 6, 6]} />
         <meshStandardMaterial color="#88ccdd" roughness={0.3} transparent opacity={0.7} />
+      </instancedMesh>
+
+      {/* Hard-turn spray — white foam kicking off the outer hull when banking */}
+      <instancedMesh ref={spraySideRef} args={[undefined, undefined, SPRAY_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.22, 5, 5]} />
+        <meshStandardMaterial color="#eef6fb" roughness={0.2} transparent opacity={0.8} />
       </instancedMesh>
 
       {/* Muzzle Flash — sparks + smoke from swivel gun */}

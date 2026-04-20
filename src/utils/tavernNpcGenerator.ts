@@ -133,7 +133,7 @@ const NPC_ROLES: Record<string, TavernNpcRole> = {
   },
   textile_factor: {
     title: 'factor',
-    knowledgeDomain: ['Cotton Textiles', 'Indigo', 'Sugar', 'Iron', 'Ivory'],
+    knowledgeDomain: ['Indigo', 'Sugar', 'Iron', 'Ivory'],
     conversationTopics: ['cloth quality', 'dyeing techniques', 'the Gujarat trade', 'bulk cargo'],
   },
   sailor: {
@@ -225,6 +225,7 @@ const PORT_TAVERN_NATIONALITIES: Record<string, Nationality[]> = {
   salvador: ['Portuguese', 'Spanish', 'Dutch'],
   havana:   ['Spanish', 'Portuguese', 'English'],
   cartagena:['Spanish', 'Portuguese', 'English'],
+  jamestown:['English'],
   cape:     ['Portuguese', 'Dutch', 'English'],
 };
 

@@ -9,7 +9,7 @@
  */
 
 import React, { useMemo } from 'react';
-import type { CrewMember } from '../store/gameStore';
+import type { CrewMember, HealthFlag } from '../store/gameStore';
 import {
   mulberry32,
   crewToPortraitConfig,
@@ -42,8 +42,8 @@ export function CrewPortrait({ member, size = 64, className = '', showBackground
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
     if (expressionOverride) config.personality = expressionOverride;
-    return renderPortrait(config, showBackground, member.morale);
-  }, [member.id, member.name, member.role, member.quality, member.morale, showBackground, expressionOverride]);
+    return renderPortrait(config, showBackground, member.morale, member.health);
+  }, [member.id, member.name, member.role, member.quality, member.morale, member.health, showBackground, expressionOverride]);
 
   return (
     <svg
@@ -65,8 +65,8 @@ export function CrewPortraitSquare({ member, size = 32, className = '', expressi
     const config = crewToPortraitConfig(member);
     if (expressionOverride) config.personality = expressionOverride;
     const showBg = config.role === 'Captain'; // captains get flag background even in compact view
-    return renderPortrait(config, showBg, member.morale);
-  }, [member.id, member.name, member.role, member.quality, member.morale, expressionOverride]);
+    return renderPortrait(config, showBg, member.morale, member.health);
+  }, [member.id, member.name, member.role, member.quality, member.morale, member.health, expressionOverride]);
 
   return (
     <svg
@@ -111,7 +111,7 @@ export function ConfigPortrait({ config, size = 64, className = '', showBackgrou
 
 // ── Core renderer ────────────────────────────────────────
 
-function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number): React.ReactNode {
+function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number, health?: HealthFlag): React.ReactNode {
   const rng = mulberry32(config.seed);
   const skin = getSkin(config);
   const eyeColor = getEyeColor(config);
@@ -168,7 +168,8 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const effNoseWidth = noseWidth + noseWiden;
 
   // ── Mouth (bolder, more readable at small sizes) ──
-  const mouthWidth = 14 + rng() * 12;                // 14–26, wider range
+  // Half-width — total mouth span is 2x this. Scaled to head size so mouths don't outgrow the face.
+  const mouthWidth = 10 + rng() * 5;                 // 10–15 half-width → 20–30 total
   const mouthY = eyeY + noseLength + 16 + (rng() - 0.5) * 3;
   const upperLip = 2.5 + rng() * 5;                  // 2.5–7.5
   const lowerLip = 3 + rng() * 7;                    // 3–10
@@ -225,7 +226,12 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
 
   // ── Age ──
   const ageIdx = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
-  const wrinkleAlpha = Math.max(0, (ageIdx - 1) * 0.15);
+  // Wrinkle alpha ramps harder past 40s — 30s: 0.12, 40s: 0.30, 50s: 0.52, 60s: 0.72.
+  const wrinkleAlpha = ageIdx <= 0 ? 0
+    : ageIdx === 1 ? 0.12
+    : ageIdx === 2 ? 0.30
+    : ageIdx === 3 ? 0.52
+    : 0.72;
   const jowlSag = ageIdx >= 3 ? (ageIdx - 2) * 1.5 : 0;
   const underEyeBags = ageIdx >= 2 ? (ageIdx - 1) * 0.08 : 0;
 
@@ -236,6 +242,20 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const skinTextureOpacity = 0.06 + ageIdx * 0.03 + (isOutdoorRole ? 0.025 : 0);
   const skinTextureSeed = Math.floor(rng() * 9999);  // unique noise per portrait
 
+  // ── Facial asymmetry (lived-in, not malformed) ──
+  // Derived from a sub-stream so existing feature rolls stay stable.
+  // Scars, broken noses, and old age amplify asymmetry; young clean faces get only a hair of it.
+  const asymRng = mulberry32(config.seed ^ 0x9E3779B9);
+  const asymBoost = (config.isScarred ? 1.6 : 1) * (config.hasBrokenNose ? 1.4 : 1)
+    * (ageIdx >= 3 ? 1.3 : 1);
+  const eyeYOffsetL = (asymRng() - 0.5) * 1.2 * asymBoost;
+  const eyeYOffsetR = (asymRng() - 0.5) * 1.2 * asymBoost;
+  const eyeHeightOffsetL = (asymRng() - 0.5) * 1.1 * asymBoost;
+  const eyeHeightOffsetR = (asymRng() - 0.5) * 1.1 * asymBoost;
+  // Extra brow baseline drift — one brow naturally sits slightly higher than the other.
+  const browDriftL = (asymRng() - 0.5) * 1.4 * asymBoost;
+  const browDriftR = (asymRng() - 0.5) * 1.4 * asymBoost;
+
   // ── Layout constants ──
   const cx = 100;
   const headTop = eyeY - 44 - foreheadHeight;
@@ -244,6 +264,81 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const bgColor = getRoleBgColor(config);
   const culturalAccent = getCulturalAccent(config.culturalGroup);
   const uid = `p${Math.abs(config.seed)}`;
+
+  // ── Eye animation: gaze shifts + occasional brow raise ──
+  // Low-morale crew get "shifty" eyes — multiple rapid glances per cycle.
+  // Normal crew get one slow relaxed glance every 12–18s.
+  const moraleLevel = morale ?? 75;
+  const anxious = moraleLevel < 25;
+  const uneasy = !anxious && moraleLevel < 45;
+  const gazeDur = anxious ? 5 + (Math.abs(config.seed) % 300) / 300 * 2
+                : uneasy ? 8 + (Math.abs(config.seed) % 400) / 400 * 3
+                : 13 + (Math.abs(config.seed) % 800) / 800 * 6;
+  const gazeDelay = (Math.abs(config.seed + 17) % 1000) / 1000 * 3;
+  const amp = anxious ? 2.8 : uneasy ? 2.2 : 1.8;
+  let gazeKeyframes: string;
+  if (anxious) {
+    gazeKeyframes = `
+      0%, 8%, 100% { transform: translateX(0); }
+      12%, 18% { transform: translateX(-${amp}px); }
+      22%, 28% { transform: translateX(0); }
+      32%, 38% { transform: translateX(${amp}px); }
+      42%, 48% { transform: translateX(0); }
+      55%, 62% { transform: translateX(-${(amp * 0.85).toFixed(2)}px); }
+      68%, 74% { transform: translateX(0); }
+      82%, 88% { transform: translateX(${(amp * 0.9).toFixed(2)}px); }
+    `;
+  } else if (uneasy) {
+    gazeKeyframes = `
+      0%, 18%, 100% { transform: translateX(0); }
+      24%, 32% { transform: translateX(-${amp}px); }
+      38%, 46% { transform: translateX(0); }
+      58%, 66% { transform: translateX(${amp}px); }
+      72%, 80% { transform: translateX(0); }
+    `;
+  } else {
+    const gazeSide = (config.seed & 1) ? 1 : -1;
+    gazeKeyframes = `
+      0%, 38%, 100% { transform: translateX(0); }
+      46%, 56% { transform: translateX(${gazeSide * amp}px); }
+      64%, 74% { transform: translateX(0); }
+    `;
+  }
+  const gazeAnim = `gaze-${uid} ${gazeDur.toFixed(2)}s ease-in-out ${gazeDelay.toFixed(2)}s infinite`;
+
+  // Brow raise — occasional single-brow lift. Curious/Smug get it reliably;
+  // others get it rarely. Low-morale crew don't raise brows (they furrow instead).
+  const browLift = !anxious && (config.personality === 'Curious' || config.personality === 'Smug'
+    || (Math.abs(config.seed) % 100) < 18);
+  const browDur = 7 + (Math.abs(config.seed + 42) % 600) / 600 * 5;
+  const browDelay = (Math.abs(config.seed + 73) % 1000) / 1000 * 4;
+  const browKeyframes = `
+    0%, 22%, 40%, 100% { transform: translateY(0); }
+    26%, 33% { transform: translateY(-1.8px); }
+  `;
+  const browAnim = browLift ? `brow-${uid} ${browDur.toFixed(2)}s ease-in-out ${browDelay.toFixed(2)}s infinite` : '';
+
+  // ── Idle head sway — very slow ±0.4° rotation so static portraits feel alive ──
+  const swayAmp = 0.35 + (Math.abs(config.seed) % 100) / 100 * 0.25;    // 0.35–0.60°
+  const swayDur = 16 + (Math.abs(config.seed + 29) % 1000) / 1000 * 10;  // 16–26s
+  const swayDelay = (Math.abs(config.seed + 131) % 1000) / 1000 * 6;
+  const swayDir = (config.seed & 4) ? 1 : -1;
+  const swayKeyframes = `
+    0%, 100% { transform: rotate(${(-swayAmp * swayDir).toFixed(2)}deg); }
+    50%      { transform: rotate(${(swayAmp * swayDir).toFixed(2)}deg); }
+  `;
+  const swayAnim = `sway-${uid} ${swayDur.toFixed(2)}s ease-in-out ${swayDelay.toFixed(2)}s infinite`;
+
+  // ── Health tint ── applies over the face before hair/hat, so illness reads as skin, not costume.
+  // Each flag carries a color wash and optional specular for fevered foreheads.
+  let healthTint: { color: string; opacity: number; shineOpacity: number } | null = null;
+  switch (health) {
+    case 'fevered':  healthTint = { color: '#c43028', opacity: 0.14, shineOpacity: 0.22 }; break;  // flushed + sweaty
+    case 'sick':     healthTint = { color: '#6a7a3a', opacity: 0.10, shineOpacity: 0 }; break;      // greenish pallor
+    case 'scurvy':   healthTint = { color: '#b89a3a', opacity: 0.13, shineOpacity: 0 }; break;      // sallow yellow
+    case 'injured':  healthTint = { color: '#8890a0', opacity: 0.11, shineOpacity: 0 }; break;      // ashen/pale
+    default: break;
+  }
 
   // ── Chiaroscuro: directional light from one side ──
   // Light comes from upper-left or upper-right, like a candle or window
@@ -321,12 +416,15 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
               xChannelSelector="R" yChannelSelector="G" />
           </filter>
         )}
-        {/* Blink animation */}
+        {/* Blink + gaze-shift + brow-raise animations */}
         <style>{`
           @keyframes blink-${uid} {
             0%, 92%, 100% { transform: scaleY(0); }
             95%, 97% { transform: scaleY(1); }
           }
+          @keyframes gaze-${uid} { ${gazeKeyframes} }
+          ${browLift ? `@keyframes brow-${uid} { ${browKeyframes} }` : ''}
+          @keyframes sway-${uid} { ${swayKeyframes} }
         `}</style>
       </defs>
 
@@ -345,8 +443,14 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
         </g>
       )}
 
+      {/* Idle sway group — subtle rotation keeps the portrait alive between blinks */}
+      <g style={{
+        transformOrigin: `${cx}px ${chinY + 30}px`,
+        animation: swayAnim,
+      }}>
+
       {/* Back hair */}
-      {renderBackHair(config, rng, cx, headTop, headWidth, hairColor)}
+      {renderBackHair(config, rng, cx, headTop, headWidth, eyeY, chinY, hairColor)}
 
       {/* Clothing */}
       {renderClothing(config, rng, cx, chinY, skin)}
@@ -424,8 +528,41 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
         rx={6} ry={4} fill="rgba(255,248,230,0.1)" opacity={lightIntensity}
         transform={`rotate(${lightSide * -15} ${cx + lightSide * (headWidth - 8)} ${eyeY + 10})`} />
 
+      {/* Sun-weathered flush — outdoor crew (sailor/gunner/captain) pick up a ruddy nose bridge
+          and cheek apples from wind and sun. Older faces and the "weathered fair" palette
+          (skinIndex 14) flush harder; dark-skinned faces show it far less visibly. */}
+      {isOutdoorRole && (() => {
+        const base = 0.07 + ageIdx * 0.025 + (config.skinIndex === 14 ? 0.09 : 0)
+          + (config.skinIndex === 11 ? 0.05 : 0);
+        const darkSkin = config.skinIndex >= 6 && config.skinIndex !== 11 && config.skinIndex !== 14;
+        const intensity = darkSkin ? base * 0.35 : base;
+        if (intensity < 0.04) return null;
+        return (
+          <g key="sun-wash">
+            {/* Nose bridge and tip — where the sun hits hardest */}
+            <ellipse cx={cx} cy={eyeY + noseLength * 0.55} rx={effNoseWidth - 1}
+              ry={noseLength * 0.38} fill="rgb(186,78,58)" opacity={intensity} />
+            <ellipse cx={cx} cy={noseY - 1} rx={effNoseWidth + 1} ry={4}
+              fill="rgb(196,88,68)" opacity={intensity * 1.15} />
+            {/* Cheek apples — zygomatic flush on both sides */}
+            <ellipse cx={cx - headWidth + 12} cy={eyeY + 13}
+              rx={7.5} ry={5} fill="rgb(186,78,58)" opacity={intensity * 0.85}
+              transform={`rotate(-12 ${cx - headWidth + 12} ${eyeY + 13})`} />
+            <ellipse cx={cx + headWidth - 12} cy={eyeY + 13}
+              rx={7.5} ry={5} fill="rgb(186,78,58)" opacity={intensity * 0.85}
+              transform={`rotate(12 ${cx + headWidth - 12} ${eyeY + 13})`} />
+            {/* Forehead cap — where a hat brim stops, the exposed strip catches sun too */}
+            {ageIdx >= 2 && (
+              <ellipse cx={cx} cy={eyeY - foreheadHeight * 0.35}
+                rx={headWidth * 0.55} ry={5}
+                fill="rgb(186,78,58)" opacity={intensity * 0.45} />
+            )}
+          </g>
+        );
+      })()}
+
       {/* Nose */}
-      {renderNose(cx, eyeY, noseY, noseLength, effNoseWidth, noseBridge, noseTip, noseCurve, philtrumDepth, mouthY, config.hasBrokenNose)}
+      {renderNose(cx, eyeY, noseY, noseLength, effNoseWidth, noseBridge, noseTip, noseCurve, philtrumDepth, mouthY, config.hasBrokenNose, skin)}
 
       {/* Directional eye socket shadows — deeper on shadow side */}
       <ellipse cx={cx - eyeSpacing - lightSide * 1} cy={eyeY + 1}
@@ -439,14 +576,17 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
       {(() => {
         const blinkDur = 3.5 + (Math.abs(config.seed) % 500) / 500 * 2.5; // 3.5–6s
         const blinkDel = (Math.abs(config.seed) % 1000) / 1000 * 3; // 0–3s offset
+        // Only one brow (randomized by seed) gets the lift animation — looks more natural
+        const liftLeftBrow = browLift && (config.seed & 2) === 0;
+        const liftRightBrow = browLift && !liftLeftBrow;
         return (<>
-          {renderEyeWithLid(cx - eyeSpacing, eyeY, eyeWidth, eyeHeight, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL, browOuterL, hairColor, config, underEyeBags, true, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel)}
-          {renderEyeWithLid(cx + eyeSpacing, eyeY, eyeWidth, eyeHeight, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR, browOuterR, hairColor, config, underEyeBags, false, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel)}
+          {renderEyeWithLid(cx - eyeSpacing, eyeY + eyeYOffsetL, eyeWidth, eyeHeight + eyeHeightOffsetL, eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerL + browDriftL, browOuterL + browDriftL, hairColor, config, underEyeBags, true, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel, gazeAnim, liftLeftBrow ? browAnim : '')}
+          {renderEyeWithLid(cx + eyeSpacing, eyeY + eyeYOffsetR, eyeWidth, eyeHeight + eyeHeightOffsetR, -eyeSlant, eyeLidWeight, epicanthicFold, eyeColor, skin, browInnerR + browDriftR, browOuterR + browDriftR, hairColor, config, underEyeBags, false, uid, gazeOffsetX, gazeOffsetY, eyeShape, blinkDur, blinkDel, gazeAnim, liftRightBrow ? browAnim : '')}
         </>);
       })()}
 
       {/* Mouth */}
-      {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin)}
+      {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin, config.hasGoldTooth, config.seed)}
 
       {/* Lower lip specular — wet highlight on the fullest part */}
       <ellipse cx={cx + lightSide * 2} cy={mouthY + effLowerLip * 0.35 + 1}
@@ -486,8 +626,26 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
       {/* Earring */}
       {config.hasEarring && renderEarring(rng, cx, eyeY, headWidth)}
 
-      {/* Gold tooth */}
-      {config.hasGoldTooth && renderGoldTooth(cx, mouthY, mouthWidth, mouthCurve)}
+      {/* Health tint — subtle color wash over the face skin (fever red, scurvy yellow, etc.) */}
+      {healthTint && (
+        <g key="health-tint">
+          <path d={headPath(cx, headTop, eyeY, chinY, headWidth, jawWidth, cheekWidth, foreheadHeight, jowlSag)}
+            fill={healthTint.color} opacity={healthTint.opacity} style={{ mixBlendMode: 'multiply' }} />
+          {healthTint.shineOpacity > 0 && (
+            <>
+              {/* Forehead sweat sheen for fever */}
+              <ellipse cx={cx + lightSide * 4} cy={headTop + foreheadHeight + 4}
+                rx={headWidth * 0.45} ry={4}
+                fill="rgba(255,250,240,1)" opacity={healthTint.shineOpacity} />
+              {/* A couple of sweat droplets */}
+              <circle cx={cx - 12 + (config.seed % 10)} cy={eyeY - 10} r={0.9}
+                fill="rgba(220,230,240,0.7)" />
+              <circle cx={cx + 14 - ((config.seed + 3) % 8)} cy={eyeY - 6} r={0.7}
+                fill="rgba(220,230,240,0.6)" />
+            </>
+          )}
+        </g>
+      )}
 
       {/* Front hair */}
       {renderFrontHair(config, rng, cx, headTop, headWidth, eyeY, foreheadHeight, hairColor)}
@@ -503,6 +661,9 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
 
       {/* Clay pipe (on top of everything) */}
       {config.hasPipe && renderPipe(rng, cx, mouthY)}
+
+      </g>
+      {/* /idle sway group */}
 
       {/* Quality border glow */}
       {config.quality === 'legendary' && showBg && (
@@ -538,6 +699,8 @@ function renderEars(
 ): React.ReactNode {
   const earTop = earY - earSize * 0.4;
   const earBot = earY + earSize * 0.6;
+  // Subsurface warmth — the outer cartilage glows with the blush tone because light passes through it.
+  // Thin strokes along the outer rim, stronger near the top helix where the ear is thinnest.
   return (
     <g key="ears">
       {/* Left ear */}
@@ -545,6 +708,11 @@ function renderEars(
         d={`M ${cx - hw} ${earTop} C ${cx - hw - 6} ${earTop + 2}, ${cx - hw - 7} ${earBot - 2}, ${cx - hw} ${earBot}
             C ${cx - hw - 2} ${earBot - earSize * 0.15}, ${cx - hw - 2} ${earTop + earSize * 0.15}, ${cx - hw} ${earTop} Z`}
         fill={`url(#skin-${uid})`}
+      />
+      {/* Translucent blush along the outer helix */}
+      <path
+        d={`M ${cx - hw - 1} ${earTop + 1} C ${cx - hw - 5.5} ${earTop + 3}, ${cx - hw - 6.5} ${earBot - 3}, ${cx - hw - 1} ${earBot - 1}`}
+        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
       />
       <path
         d={`M ${cx - hw - 1} ${earTop + 3} C ${cx - hw - 4} ${earTop + 5}, ${cx - hw - 4} ${earBot - 4}, ${cx - hw - 1} ${earBot - 3}`}
@@ -555,6 +723,10 @@ function renderEars(
         d={`M ${cx + hw} ${earTop} C ${cx + hw + 6} ${earTop + 2}, ${cx + hw + 7} ${earBot - 2}, ${cx + hw} ${earBot}
             C ${cx + hw + 2} ${earBot - earSize * 0.15}, ${cx + hw + 2} ${earTop + earSize * 0.15}, ${cx + hw} ${earTop} Z`}
         fill={`url(#skin-${uid})`}
+      />
+      <path
+        d={`M ${cx + hw + 1} ${earTop + 1} C ${cx + hw + 5.5} ${earTop + 3}, ${cx + hw + 6.5} ${earBot - 3}, ${cx + hw + 1} ${earBot - 1}`}
+        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
       />
       <path
         d={`M ${cx + hw + 1} ${earTop + 3} C ${cx + hw + 4} ${earTop + 5}, ${cx + hw + 4} ${earBot - 4}, ${cx + hw + 1} ${earBot - 3}`}
@@ -570,26 +742,44 @@ function renderNose(
   cx: number, eyeY: number, noseY: number, noseLength: number,
   nw: number, nb: number, tip: number, curve: number,
   philtrumDepth: number, mouthY: number, isBroken: boolean,
+  skin: SkinPalette,
 ): React.ReactNode {
-  // Broken nose shifts the bridge off-center
-  const brkOffset = isBroken ? 2.5 : 0;
-  const brkBulge = isBroken ? 1.5 : 0;
+  // Broken nose: bridge kinks mid-way rather than shifting uniformly, the way
+  // a poorly-set fracture actually heals. Direction is deterministic per portrait.
+  const brkDir = isBroken ? ((Math.round(cx) + Math.round(eyeY)) % 2 === 0 ? 1 : -1) : 0;
+  const brkKink = isBroken ? 3.2 : 0;            // lateral kink at the mid-bridge
+  const brkBulge = isBroken ? 2.2 : 0;           // thickness of the healed callus
+  const bridgeMidY = eyeY + noseLength * 0.38;
   return (
     <g key="nose">
-      {/* Bridge shadow */}
+      {/* Bridge shadow — left side curves through the kink */}
       <path
-        d={`M ${cx - nb + brkOffset} ${eyeY + 4}
-            Q ${cx - nb - curve + brkOffset} ${eyeY + noseLength * 0.5}, ${cx - nw} ${noseY}
+        d={`M ${cx - nb} ${eyeY + 4}
+            Q ${cx - nb - curve + brkKink * brkDir} ${bridgeMidY}, ${cx - nw} ${noseY}
             C ${cx - nw * 0.5} ${noseY + tip + 5}, ${cx + nw * 0.5} ${noseY + tip + 5}, ${cx + nw} ${noseY}
-            Q ${cx + nb + curve + brkOffset} ${eyeY + noseLength * 0.5}, ${cx + nb + brkOffset} ${eyeY + 4} Z`}
+            Q ${cx + nb + curve + brkKink * brkDir} ${bridgeMidY}, ${cx + nb} ${eyeY + 4} Z`}
         fill="rgba(0,0,0,0.07)"
       />
-      {/* Broken nose bump */}
+      {/* Broken nose callus — visible ridge on the kinked side */}
       {isBroken && (
-        <ellipse cx={cx + brkOffset} cy={eyeY + noseLength * 0.35} rx={nb + brkBulge} ry={3} fill="rgba(0,0,0,0.06)" />
+        <>
+          <ellipse cx={cx + brkKink * brkDir * 0.7} cy={bridgeMidY}
+            rx={nb + brkBulge} ry={3.2} fill="rgba(0,0,0,0.09)" />
+          <path d={`M ${cx + brkKink * brkDir * 0.4} ${eyeY + 6}
+                    Q ${cx + brkKink * brkDir * 1.1} ${bridgeMidY - 1},
+                      ${cx + brkKink * brkDir * 0.5} ${bridgeMidY + 4}`}
+            stroke="rgba(0,0,0,0.14)" strokeWidth="0.9" fill="none" strokeLinecap="round" />
+          {/* Subtle highlight on the opposite side — the valley of the kink */}
+          <path d={`M ${cx - brkKink * brkDir * 0.3} ${eyeY + 8}
+                    Q ${cx - brkKink * brkDir * 0.6} ${bridgeMidY},
+                      ${cx - brkKink * brkDir * 0.2} ${bridgeMidY + 5}`}
+            stroke={skin.light} strokeWidth="0.7" fill="none" opacity={0.35} />
+        </>
       )}
       {/* Nose tip bulb */}
       <ellipse cx={cx} cy={noseY + tip * 0.4} rx={nw - 0.5} ry={3.5 + Math.abs(tip) * 0.3} fill="rgba(0,0,0,0.06)" />
+      {/* Subsurface warmth at the nose tip — light passing through the thin cartilage */}
+      <ellipse cx={cx} cy={noseY + tip * 0.3} rx={nw * 0.7} ry={2.2} fill={skin.blush} opacity={0.22} />
       {/* Nostrils */}
       <ellipse cx={cx - nw * 0.45} cy={noseY + 1.5} rx={2.5} ry={2} fill="rgba(0,0,0,0.18)" />
       <ellipse cx={cx + nw * 0.45} cy={noseY + 1.5} rx={2.5} ry={2} fill="rgba(0,0,0,0.18)" />
@@ -620,6 +810,7 @@ function renderEyeWithLid(
   gazeX: number = 0, gazeY: number = 0,
   eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' = 'almond',
   blinkDuration: number = 4, blinkDelay: number = 0,
+  gazeAnimation: string = '', browAnimation: string = '',
 ): React.ReactNode {
   const hw = ew / 2;
   const dir = isLeft ? -1 : 1;
@@ -695,7 +886,12 @@ function renderEyeWithLid(
   const irisX = ex + gazeX;
   const irisY = ey + gazeY * 0.5 + droopOuter * 0.15;
   const iris = (
-    <g key={`${key}-iris`} clipPath={`url(#${key}-clip-${uid})`}>
+    <g key={`${key}-iris`} clipPath={`url(#${key}-clip-${uid})`}
+      style={gazeAnimation ? {
+        transformBox: 'fill-box' as any,
+        transformOrigin: '50% 50%',
+        animation: gazeAnimation,
+      } : undefined}>
       {/* Iris outline for definition */}
       <circle cx={irisX} cy={irisY} r={irisR + 0.8} fill="#1a1a1a" opacity={0.18} />
       {/* Main iris */}
@@ -809,6 +1005,11 @@ function renderEyeWithLid(
     <path key={`${key}-brow`}
       d={`M ${browInnerX} ${browBaseY + browInner}
           Q ${ex} ${browBaseY + Math.min(browInner, browOuter) - 3}, ${browOuterX} ${browBaseY + browOuter + droopOuter * 0.3}`}
+      style={browAnimation ? {
+        transformBox: 'fill-box' as any,
+        transformOrigin: '50% 100%',
+        animation: browAnimation,
+      } : undefined}
       stroke={hairColor} strokeWidth={browThick} fill="none" strokeLinecap="round"
     />
   );
@@ -822,6 +1023,7 @@ function renderMouth(
   cx: number, my: number, hw: number,
   upperLip: number, lowerLip: number,
   curve: number, asym: number, skin: SkinPalette,
+  hasGoldTooth: boolean = false, seed: number = 0,
 ): React.ReactNode {
   const leftY = my + curve - asym;
   const rightY = my + curve + asym;
@@ -831,6 +1033,13 @@ function renderMouth(
   const fullRatio = Math.min(upperLip / 3.5, 1);  // 0 = very thin, 1 = full
   const bowDepth = 0.5 + fullRatio * 1.5;          // cupid's bow prominence
   const cornerTuck = 1 + fullRatio * 0.8;          // how much corners tuck in
+
+  // Teeth visibility — only truly elated grins. Threshold set high enough that
+  // a merely Friendly personality at neutral morale doesn't trigger; it takes
+  // Friendly + morale ≥ 85, or morale ≥ 95 on an already-smiley base.
+  const showTeeth = curve <= -4;
+  const openH = showTeeth ? Math.min(2.8, (-curve - 2) * 0.5) : 0;
+  const teethHw = hw * 0.72;
 
   return (
     <g key="mouth">
@@ -863,6 +1072,59 @@ function renderMouth(
             C ${cx - hw * 0.2} ${my + lowerLip + curve * 0.3 + 2.5}, ${cx + hw * 0.2} ${my + lowerLip + curve * 0.3 + 2.5}, ${cx + hw - 3} ${my + lowerLip + curve * 0.3 + 1}`}
         stroke="rgba(0,0,0,0.14)" strokeWidth="0.8" fill="none"
       />
+      {/* Teeth — only for genuinely broad smiles. Teeth follow the smile arc:
+          outer teeth sit higher and are shorter/fainter (following the lifted corners),
+          inner teeth sit lower and are full-height, matching the dip in the lip line. */}
+      {showTeeth && (() => {
+        const toothCount = 5;
+        const strideX = (teethHw * 2) / toothCount;
+        const toothW = strideX * 0.78;
+        // Where the lips sit at corners vs. center. The smile curve dips at the center
+        // (lip line control point at my + 1) and rises at the corners (leftY/rightY).
+        const cornerY = (leftY + rightY) / 2;
+        const centerY = my + 0.5;
+        // Gold tooth in an off-center position (index 1 or 3), seeded so it's stable.
+        const goldIdx = hasGoldTooth ? (Math.abs(seed) % 2 === 0 ? 1 : 3) : -1;
+        // Build a smooth arc path for the dark oral cavity: mirrors the smile shape.
+        const cavityTop = `M ${cx - teethHw} ${cornerY - 0.4}
+            Q ${cx} ${centerY - openH * 0.5}, ${cx + teethHw} ${cornerY - 0.4}`;
+        const cavityBot = `Q ${cx} ${centerY + openH * 0.55}, ${cx - teethHw} ${cornerY - 0.4} Z`;
+        return (
+          <g key="teeth">
+            {/* Dark oral cavity — arc-shaped, matches the smile */}
+            <path d={`${cavityTop} ${cavityBot}`} fill="#1a0c0a" opacity={0.88} />
+            {/* Teeth row — each tooth placed on the arc, shorter at edges */}
+            {Array.from({ length: toothCount }).map((_, i) => {
+              // t ∈ [-1, +1] — normalized horizontal position
+              const t = (i - (toothCount - 1) / 2) / ((toothCount - 1) / 2);
+              const tx = cx + t * teethHw * 0.92;
+              // Arc: corner-high at t=±1, center-low at t=0. Quadratic blend.
+              const baseY = cornerY + (centerY - cornerY) * (1 - t * t);
+              // Outer teeth are shorter (less gap showing at corners)
+              const heightScale = 0.4 + 0.6 * (1 - t * t);
+              const toothH = openH * heightScale * 0.85;
+              const isGold = i === goldIdx;
+              return (
+                <rect key={`tooth-${i}`}
+                  x={tx - toothW / 2}
+                  y={baseY - toothH * 0.55}
+                  width={toothW}
+                  height={toothH}
+                  rx={0.6}
+                  fill={isGold ? '#d4a020' : '#ede3c6'}
+                  stroke={isGold ? '#a07818' : 'rgba(0,0,0,0.18)'}
+                  strokeWidth={isGold ? 0.4 : 0.25}
+                  opacity={isGold ? 1 : 0.5 + 0.5 * (1 - t * t)}
+                />
+              );
+            })}
+            {/* Upper-lip cast shadow along the smile arc — sells the teeth receding under the lip */}
+            <path d={`M ${cx - teethHw} ${cornerY - 0.3}
+                Q ${cx} ${centerY - openH * 0.2}, ${cx + teethHw} ${cornerY - 0.3}`}
+              stroke="rgba(0,0,0,0.4)" strokeWidth={openH * 0.35} fill="none" strokeLinecap="round" />
+          </g>
+        );
+      })()}
     </g>
   );
 }
@@ -873,14 +1135,55 @@ function renderWrinkles(
   cx: number, eyeY: number, noseY: number, mouthY: number,
   eyeSpacing: number, noseWidth: number, headWidth: number, alpha: number,
 ): React.ReactNode {
+  // Deeper ages reveal additional lines; alpha drives both opacity and line count.
+  const deep = alpha > 0.4;                       // 50s+ gets additional crow's feet / fold branches
+  const deeper = alpha > 0.6;                     // 60s gets the glabellar "11" lines and jowl creases
   return (
-    <g key="wrinkles" stroke="rgba(0,0,0,0.18)" strokeWidth="0.7" fill="none" opacity={alpha}>
+    <g key="wrinkles" stroke="rgba(0,0,0,0.22)" strokeWidth="0.7" fill="none" opacity={alpha}>
+      {/* Nasolabial folds — the main aging tell */}
       <path d={`M ${cx - noseWidth - 3} ${noseY + 2} Q ${cx - 20} ${mouthY}, ${cx - 22} ${mouthY + 8}`} />
       <path d={`M ${cx + noseWidth + 3} ${noseY + 2} Q ${cx + 20} ${mouthY}, ${cx + 22} ${mouthY + 8}`} />
+      {deep && (
+        <>
+          {/* Secondary parallel fold — a double crease at the cheek */}
+          <path d={`M ${cx - noseWidth - 1} ${noseY + 5} Q ${cx - 17} ${mouthY + 1}, ${cx - 18} ${mouthY + 7}`}
+            strokeWidth="0.5" opacity={0.75} />
+          <path d={`M ${cx + noseWidth + 1} ${noseY + 5} Q ${cx + 17} ${mouthY + 1}, ${cx + 18} ${mouthY + 7}`}
+            strokeWidth="0.5" opacity={0.75} />
+        </>
+      )}
+      {/* Forehead creases */}
       <path d={`M ${cx - headWidth + 10} ${eyeY - 30} Q ${cx} ${eyeY - 32} ${cx + headWidth - 10} ${eyeY - 30}`} />
       <path d={`M ${cx - headWidth + 14} ${eyeY - 24} Q ${cx} ${eyeY - 26} ${cx + headWidth - 14} ${eyeY - 24}`} />
+      {deep && (
+        <path d={`M ${cx - headWidth + 12} ${eyeY - 18} Q ${cx} ${eyeY - 20} ${cx + headWidth - 12} ${eyeY - 18}`}
+          strokeWidth="0.55" />
+      )}
+      {/* Glabellar "11" lines between the brows — only for older faces */}
+      {deeper && (
+        <>
+          <path d={`M ${cx - 2.5} ${eyeY - 12} l 0 7`} strokeWidth="0.65" />
+          <path d={`M ${cx + 2.5} ${eyeY - 12} l 0 7`} strokeWidth="0.65" />
+        </>
+      )}
+      {/* Crow's feet — simple at 30s/40s, fanning out at 50s+ */}
       <path d={`M ${cx - eyeSpacing - 9} ${eyeY - 1} l -4 -2 M ${cx - eyeSpacing - 9} ${eyeY + 2} l -4 2`} />
       <path d={`M ${cx + eyeSpacing + 9} ${eyeY - 1} l 4 -2 M ${cx + eyeSpacing + 9} ${eyeY + 2} l 4 2`} />
+      {deep && (
+        <>
+          <path d={`M ${cx - eyeSpacing - 10} ${eyeY} l -5 0`} strokeWidth="0.55" />
+          <path d={`M ${cx + eyeSpacing + 10} ${eyeY} l 5 0`} strokeWidth="0.55" />
+          <path d={`M ${cx - eyeSpacing - 9} ${eyeY + 5} l -4 3`} strokeWidth="0.55" />
+          <path d={`M ${cx + eyeSpacing + 9} ${eyeY + 5} l 4 3`} strokeWidth="0.55" />
+        </>
+      )}
+      {/* Jowl / marionette creases — pulled-down lines below the mouth corners */}
+      {deeper && (
+        <>
+          <path d={`M ${cx - 11} ${mouthY + 5} q -1 5 -2 10`} strokeWidth="0.6" />
+          <path d={`M ${cx + 11} ${mouthY + 5} q 1 5 2 10`} strokeWidth="0.6" />
+        </>
+      )}
     </g>
   );
 }
@@ -1185,39 +1488,36 @@ function renderBeardShape(
       );
     }
     case 'stubble': {
-      // Several days of growth — speckled dots across jaw + chin + upper lip
-      const dots: React.ReactNode[] = [];
-      const count = 70 + Math.floor(rng() * 40);
-      for (let i = 0; i < count; i++) {
-        // Distribute around the jawline and chin region
-        const t = rng();
-        const u = rng();
-        // Cluster around the jaw — use parametric ellipse-like region
-        const xRange = jawW + 2;
-        const yRange = chinY - mouthY + 6;
-        const px = cx + (u - 0.5) * xRange * 2;
-        const py = mouthY + 2 + t * yRange;
-        // Reject points that fall outside an oval mask
-        const dx = (px - cx) / xRange;
-        const dy = (py - (mouthY + yRange * 0.5)) / (yRange * 0.55);
-        if (dx * dx + dy * dy > 1) continue;
-        // Also exclude the lip/mouth region
-        if (py < mouthY + 3 && Math.abs(px - cx) < 12) continue;
-        dots.push(
-          <circle key={`sb${i}`} cx={px} cy={py} r={0.4 + rng() * 0.4}
-            fill={shadow} opacity={0.55 + rng() * 0.25} />
-        );
-      }
-      // Upper-lip stubble
-      for (let i = 0; i < 24; i++) {
-        const px = cx + (rng() - 0.5) * 22;
-        const py = mouthY - 4 + rng() * 3;
-        dots.push(
-          <circle key={`sbu${i}`} cx={px} cy={py} r={0.35 + rng() * 0.3}
-            fill={shadow} opacity={0.5 + rng() * 0.2} />
-        );
-      }
-      return <g>{dots}</g>;
+      // A few days of growth — render as a shadow-filled region masked by fractal noise,
+      // so the result reads as fine texture rather than a field of individual dots.
+      const seed = Math.floor(rng() * 10000);
+      const fid = `stb-${seed}`;
+      const yMid = (mouthY + chinY) / 2 + 1;
+      const yRad = (chinY - mouthY) / 2 + 4;
+      return (
+        <g key="stubble">
+          <defs>
+            <filter id={fid} x="-10%" y="-10%" width="120%" height="120%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.95" numOctaves="2" seed={seed} result="n" />
+              {/* Map noise luminance to alpha with a hard threshold — keeps only the brighter speckles */}
+              <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  2.2 0 0 0 -0.7" result="mask" />
+              <feComposite in="SourceGraphic" in2="mask" operator="in" />
+            </filter>
+          </defs>
+          {/* Jaw & chin coverage — excludes the lip area */}
+          <path d={`M ${cx - jawW} ${mouthY + 3}
+              C ${cx - jawW - 1} ${chinY - 6}, ${cx - jawW * 0.5} ${chinY + 5}, ${cx} ${chinY + 6}
+              C ${cx + jawW * 0.5} ${chinY + 5}, ${cx + jawW + 1} ${chinY - 6}, ${cx + jawW} ${mouthY + 3}
+              C ${cx + jawW * 0.35} ${mouthY + 6}, ${cx - jawW * 0.35} ${mouthY + 6}, ${cx - jawW} ${mouthY + 3} Z`}
+            fill={shadow} opacity={0.75} filter={`url(#${fid})`} />
+          {/* Upper-lip / mustache shadow */}
+          <ellipse cx={cx} cy={mouthY - 3.5} rx={12} ry={2.6}
+            fill={shadow} opacity={0.7} filter={`url(#${fid})`} />
+          {/* A faint soft wash underneath so the speckles sit on a hint of shadow, not bare skin */}
+          <ellipse cx={cx} cy={yMid} rx={jawW - 2} ry={yRad}
+            fill={shadow} opacity={0.08} />
+        </g>
+      );
     }
     case 'mustacheOnly':
       // No beard shape — just the mustache rendered separately by caller
@@ -1358,22 +1658,98 @@ function strandsAlongCurve(
 // ── Scar ─────────────────────────────────────────────────
 
 function renderScar(
-  _config: PortraitConfig, rng: () => number,
+  config: PortraitConfig, rng: () => number,
   cx: number, eyeY: number, eyeSpacing: number,
 ): React.ReactNode {
   const side = rng() > 0.5 ? 1 : -1;
-  if (rng() > 0.5) {
-    const sx = cx + side * (eyeSpacing + 5);
-    return (
-      <path key="scar" d={`M ${sx} ${eyeY + 6} l ${side * 7} ${9 + rng() * 4}`}
-        stroke="rgba(180,140,120,0.45)" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-    );
-  } else {
-    const sx = cx + side * eyeSpacing;
-    return (
-      <path key="scar" d={`M ${sx - 3} ${eyeY - 9} l 2 9`}
-        stroke="rgba(180,140,120,0.45)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-    );
+  // Scar color varies: older scars silver-pink, fresh scars redder.
+  const fresh = rng() > 0.6;
+  const scarStroke = fresh ? 'rgba(170,90,80,0.55)' : 'rgba(190,155,140,0.5)';
+  const scarHighlight = fresh ? 'rgba(230,190,180,0.4)' : 'rgba(235,220,210,0.35)';
+  // Gunners have a higher chance of powder burns (small black specks).
+  const variantRoll = rng();
+  const isGunner = config.role === 'Gunner';
+  let variant: 'jaw' | 'brow' | 'cheek' | 'lip' | 'browThrough' | 'powder';
+  if (isGunner && variantRoll > 0.75) variant = 'powder';
+  else if (variantRoll > 0.82) variant = 'browThrough';
+  else if (variantRoll > 0.62) variant = 'cheek';
+  else if (variantRoll > 0.45) variant = 'lip';
+  else if (variantRoll > 0.22) variant = 'brow';
+  else variant = 'jaw';
+
+  switch (variant) {
+    case 'jaw': {
+      // Original long slash running from cheek to jaw
+      const sx = cx + side * (eyeSpacing + 5);
+      const length = 9 + rng() * 5;
+      return (
+        <g key="scar">
+          <path d={`M ${sx} ${eyeY + 6} l ${side * 7} ${length}`}
+            stroke={scarStroke} strokeWidth="1.3" fill="none" strokeLinecap="round" />
+          <path d={`M ${sx + side * 0.6} ${eyeY + 6.4} l ${side * 6.4} ${length - 0.8}`}
+            stroke={scarHighlight} strokeWidth="0.5" fill="none" strokeLinecap="round" />
+        </g>
+      );
+    }
+    case 'brow': {
+      // Short vertical nick through the outer brow end
+      const sx = cx + side * (eyeSpacing + rng() * 3);
+      return (
+        <path key="scar" d={`M ${sx - 3} ${eyeY - 9} l ${1 + rng() * 2} ${8 + rng() * 3}`}
+          stroke={scarStroke} strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      );
+    }
+    case 'cheek': {
+      // Diagonal across the cheekbone — classic blade-fight wound
+      const sx = cx + side * (eyeSpacing + 3);
+      const sy = eyeY + 10 + rng() * 4;
+      const len = 10 + rng() * 6;
+      return (
+        <g key="scar">
+          <path d={`M ${sx} ${sy} l ${side * len * 0.8} ${len * 0.5}`}
+            stroke={scarStroke} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+          <path d={`M ${sx + side * 0.4} ${sy + 0.6} l ${side * (len * 0.8 - 0.8)} ${len * 0.5 - 0.6}`}
+            stroke={scarHighlight} strokeWidth="0.45" fill="none" strokeLinecap="round" />
+        </g>
+      );
+    }
+    case 'lip': {
+      // Vertical scar through the upper lip — the mouth-corner hook
+      const sx = cx + side * (5 + rng() * 3);
+      const sy = eyeY + 28 + rng() * 4;
+      return (
+        <path key="scar" d={`M ${sx} ${sy} l ${side * 0.6} ${6 + rng() * 2}`}
+          stroke={scarStroke} strokeWidth="1.1" fill="none" strokeLinecap="round" />
+      );
+    }
+    case 'browThrough': {
+      // Cut straight through the brow — the iconic "split brow"
+      const sx = cx + side * (eyeSpacing + 1);
+      return (
+        <g key="scar">
+          <path d={`M ${sx - 3} ${eyeY - 13} l ${2 + rng() * 1.5} ${10 + rng() * 3}`}
+            stroke={scarStroke} strokeWidth="1.6" fill="none" strokeLinecap="round" />
+          {/* Small break in the brow line itself — rendered as a skin-tone gap */}
+          <circle cx={sx - 1.5} cy={eyeY - 8} r={0.9} fill="rgba(235,215,195,0.7)" />
+        </g>
+      );
+    }
+    case 'powder': {
+      // Powder burn / pitting — scattered dark specks on one cheek, gunner-specific
+      const specks: React.ReactNode[] = [];
+      const count = 5 + Math.floor(rng() * 6);
+      const ox = cx + side * (eyeSpacing + 4);
+      const oy = eyeY + 4;
+      for (let i = 0; i < count; i++) {
+        const dx = (rng() - 0.3) * 12 * side;
+        const dy = rng() * 16 - 2;
+        specks.push(
+          <circle key={`pw${i}`} cx={ox + dx} cy={oy + dy}
+            r={0.4 + rng() * 0.7} fill="rgba(30,20,15,0.55)" />
+        );
+      }
+      return <g key="scar">{specks}</g>;
+    }
   }
 }
 
@@ -1399,7 +1775,7 @@ function renderEarring(
 
 function renderBackHair(
   config: PortraitConfig, rng: () => number,
-  cx: number, headTop: number, hw: number, hairColor: string,
+  cx: number, headTop: number, hw: number, eyeY: number, chinY: number, hairColor: string,
 ): React.ReactNode {
   if (config.gender === 'Female') {
     // Hair tucked behind the ears, ending around the upper neck — never extends
@@ -1440,10 +1816,96 @@ function renderBackHair(
         fill={hairColor} />
     );
   }
+  // ── European / generic male side hair ──
+  // In 1612 most European men wore hair at least collar-length. A wavy strip down the temples
+  // and sides flows past the jaw — this is what peeks out below a hat brim and past the ears.
+  // Cultural groups with their own distinctive styles are excluded.
+  const excludedGroups = ['ArabPersian', 'Indian', 'EastAsian', 'SoutheastAsian', 'Swahili'];
+  if (config.gender === 'Male' && !excludedGroups.includes(config.culturalGroup)) {
+    const age = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
+    const baldness = getBaldnessPattern(config);
+    // Fully bald — only a whisper of hair at the nape/temples.
+    if (baldness === 'bald') {
+      // Two small tufts behind the ears.
+      const tuftL = `M ${cx - hw + 2} ${eyeY + 6}
+          C ${cx - hw - 3} ${eyeY + 14}, ${cx - hw - 2} ${eyeY + 22}, ${cx - hw + 4} ${eyeY + 20}
+          C ${cx - hw + 2} ${eyeY + 14}, ${cx - hw + 3} ${eyeY + 8}, ${cx - hw + 2} ${eyeY + 6} Z`;
+      const tuftR = `M ${cx + hw - 2} ${eyeY + 6}
+          C ${cx + hw + 3} ${eyeY + 14}, ${cx + hw + 2} ${eyeY + 22}, ${cx + hw - 4} ${eyeY + 20}
+          C ${cx + hw - 2} ${eyeY + 14}, ${cx + hw - 3} ${eyeY + 8}, ${cx + hw - 2} ${eyeY + 6} Z`;
+      return (
+        <g key="back-hair">
+          <path d={tuftL} fill={hairColor} opacity={0.9} />
+          <path d={tuftR} fill={hairColor} opacity={0.9} />
+        </g>
+      );
+    }
+    // Balding (monk's fringe) — crown bare, but full side/back hair remains; force short.
+    const short = baldness === 'balding' ? true : (age >= 3 && rng() > 0.45);
+    const long = !short && baldness !== 'balding' && rng() > 0.5;
+    const flare = 5 + rng() * 3;                                 // extends well past the cheek line
+    const bottomY = long ? chinY + 14 : short ? eyeY + 12 : eyeY + (chinY - eyeY) * 0.55;
+    const wave = (rng() - 0.5) * 2;
+
+    // One closed shape per side. The inner edge hugs the head; the outer edge swings out
+    // past the cheek (flare) so the hair reads through the brim/face overlay.
+    const leftPath = `M ${cx - hw + 1} ${headTop + 4}
+        C ${cx - hw - flare} ${eyeY - 18}, ${cx - hw - flare + wave} ${eyeY + 2}, ${cx - hw - flare * 0.6} ${bottomY - 4}
+        L ${cx - hw + 4} ${bottomY}
+        C ${cx - hw - 1} ${eyeY + 6}, ${cx - hw + 1} ${eyeY - 14}, ${cx - hw + 1} ${headTop + 4} Z`;
+    const rightPath = `M ${cx + hw - 1} ${headTop + 4}
+        C ${cx + hw + flare} ${eyeY - 18}, ${cx + hw + flare - wave} ${eyeY + 2}, ${cx + hw + flare * 0.6} ${bottomY - 4}
+        L ${cx + hw - 4} ${bottomY}
+        C ${cx + hw + 1} ${eyeY + 6}, ${cx + hw - 1} ${eyeY - 14}, ${cx + hw - 1} ${headTop + 4} Z`;
+
+    return (
+      <g key="back-hair">
+        <path d={leftPath} fill={hairColor} />
+        <path d={rightPath} fill={hairColor} />
+        {/* Strand accents along the outer edge — keeps it from looking like a solid helmet */}
+        <path d={`M ${cx - hw - flare * 0.9} ${eyeY - 10} Q ${cx - hw - flare} ${eyeY + 4} ${cx - hw - flare * 0.5} ${bottomY - 6}`}
+          stroke="rgba(0,0,0,0.2)" strokeWidth="0.6" fill="none" />
+        <path d={`M ${cx + hw + flare * 0.9} ${eyeY - 10} Q ${cx + hw + flare} ${eyeY + 4} ${cx + hw + flare * 0.5} ${bottomY - 6}`}
+          stroke="rgba(0,0,0,0.2)" strokeWidth="0.6" fill="none" />
+      </g>
+    );
+  }
   return null;
 }
 
 // ── Front hair ───────────────────────────────────────────
+
+// Deterministic baldness pattern for European men — derived from seed so it's stable
+// without consuming the shared RNG stream.
+type Baldness = 'none' | 'receding' | 'balding' | 'bald';
+function getBaldnessPattern(config: PortraitConfig): Baldness {
+  if (config.gender !== 'Male') return 'none';
+  if (config.culturalGroup !== 'NorthEuropean' && config.culturalGroup !== 'SouthEuropean') return 'none';
+  const age = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
+  if (age < 1) return 'none';
+  // Stable 0..1 roll, independent of the main rng stream.
+  const roll = ((Math.abs(config.seed) >> 11) & 0xFFFF) / 65535;
+  if (age === 1) {                // 30s — a few receding, no balding
+    if (roll < 0.15) return 'receding';
+    return 'none';
+  }
+  if (age === 2) {                // 40s
+    if (roll < 0.30) return 'receding';
+    if (roll < 0.40) return 'balding';
+    return 'none';
+  }
+  if (age === 3) {                // 50s
+    if (roll < 0.25) return 'receding';
+    if (roll < 0.55) return 'balding';
+    if (roll < 0.65) return 'bald';
+    return 'none';
+  }
+  // 60s
+  if (roll < 0.20) return 'receding';
+  if (roll < 0.55) return 'balding';
+  if (roll < 0.80) return 'bald';
+  return 'none';
+}
 
 function renderFrontHair(
   config: PortraitConfig, rng: () => number,
@@ -1452,6 +1914,30 @@ function renderFrontHair(
 ): React.ReactNode {
   if (willHaveFullHeadwear(config, rng)) return null;
   const age = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
+  const baldness = getBaldnessPattern(config);
+  // Fully bald / monk's fringe — no front hair at all. Sides render from renderBackHair.
+  if (baldness === 'bald' || baldness === 'balding') return null;
+  if (baldness === 'receding') {
+    // M-pattern: temples pulled back, a modest central forelock/widow's peak between.
+    const severity = age <= 1 ? 0.55 : age === 2 ? 0.85 : 1;
+    const templeRecess = 8 + severity * 6;          // vertical pull-back at temples
+    const templePullIn = hw * (0.55 - severity * 0.1);  // horizontal position of the temple indent
+    const peakY = headTop + 2 + severity * 2;       // central forelock top
+    const templeY = headTop + templeRecess;
+    // Subtle widow's-peak dip in the middle (reads as a V rather than flat)
+    const widowDip = 1.5 + severity * 1.5;
+    return (
+      <path key="front-hair"
+        d={`M ${cx - hw - 2} ${eyeY - 12}
+            C ${cx - hw - 2} ${headTop + 4}, ${cx - templePullIn - 4} ${templeY - 2}, ${cx - templePullIn} ${templeY}
+            C ${cx - templePullIn + 2} ${peakY + 4}, ${cx - 4} ${peakY + widowDip}, ${cx} ${peakY + widowDip + 0.5}
+            C ${cx + 4} ${peakY + widowDip}, ${cx + templePullIn - 2} ${peakY + 4}, ${cx + templePullIn} ${templeY}
+            C ${cx + templePullIn + 4} ${templeY - 2}, ${cx + hw + 2} ${headTop + 4}, ${cx + hw + 2} ${eyeY - 12}
+            C ${cx + hw + 4} ${headTop + 2}, ${cx + hw * 0.5} ${headTop - 4}, ${cx} ${headTop - 4}
+            C ${cx - hw * 0.5} ${headTop - 4}, ${cx - hw - 4} ${headTop + 2}, ${cx - hw - 2} ${eyeY - 12} Z`}
+        fill={hairColor} />
+    );
+  }
 
   // Swahili short textured hair
   if (config.culturalGroup === 'Swahili' && config.gender === 'Male') {
@@ -1604,34 +2090,36 @@ function renderHeadwear(
     );
   }
 
-  // ── European male hats — c. 1612 was a hat-wearing era; bare-headed was unusual ──
+  // ── European male hats ──
+  // Hats signified rank in 1612. Captains, merchants, and gentlemen were rarely bareheaded;
+  // common sailors and labourers usually were — a broad felt hat aboard ship was an officer's mark.
   const isEurMale = (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') && gender === 'Male';
   if (isEurMale) {
     const ageIdx = ['20s', '30s', '40s', '50s', '60s'].indexOf(config.age);
     let hatProb: number;
-    if (config.role === 'Captain') hatProb = 0.92;
+    if (config.role === 'Captain') hatProb = 0.90;
     else if (socialClass === 'Noble') hatProb = 0.85;
-    else if (socialClass === 'Merchant') hatProb = 0.78;
-    else if (config.isSailor) hatProb = 0.70;
-    else hatProb = 0.55;
-    if (ageIdx >= 3) hatProb = Math.min(0.96, hatProb + 0.15); // older men rarely bareheaded
+    else if (socialClass === 'Merchant') hatProb = 0.70;
+    else if (config.isSailor) hatProb = 0.18;           // most common sailors: bareheaded
+    else hatProb = 0.30;                                 // other working-class: usually bareheaded
+    if (ageIdx >= 3 && (socialClass === 'Noble' || socialClass === 'Merchant' || config.role === 'Captain')) {
+      hatProb = Math.min(0.95, hatProb + 0.08);
+    }
 
     if (rng() < hatProb) {
       const r = rng();
       // Captains, nobles, factors → wide-brim cavalier or capotain
       if (config.role === 'Captain' || socialClass === 'Noble' || socialClass === 'Merchant') {
-        if (r < 0.5) {
-          return renderWideBrimHat(cx, headTop, hw, rng, socialClass);
-        } else if (r < 0.85) {
-          return renderCapotain(cx, headTop, hw, rng, socialClass);
+        if (r < 0.6) {
+          return renderWideBrimHat(cx, headTop, hw, eyeY, rng, socialClass);
+        } else if (r < 0.88) {
+          return renderCapotain(cx, headTop, hw, eyeY, rng, socialClass);
         } else {
-          // Plain coif/skullcap for scholar/older type
           return renderCoif(cx, headTop, hw, eyeY, rng);
         }
       }
-      // Sailors / working class → Monmouth knit cap or head kerchief
-      if (r < 0.7) return renderMonmouthCap(cx, headTop, hw, rng);
-      return renderHeadKerchief(cx, headTop, hw, eyeY, rng);
+      // Sailors / working class → occasional knit cap only; otherwise just the hair shows.
+      return renderMonmouthCap(cx, headTop, hw, eyeY, rng);
     }
   }
 
@@ -1697,18 +2185,21 @@ function renderHeadwear(
 // Wide-brim cavalier / "slouch" felt hat — by far the most common gentleman's hat c.1610s.
 // Broad flat brim, rounded crown, hat band, optional feather sweeping back.
 function renderWideBrimHat(
-  cx: number, headTop: number, hw: number, rng: () => number, socialClass: SocialClass,
+  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number, socialClass: SocialClass,
 ): React.ReactNode {
   const feltOptions = socialClass === 'Noble'
     ? ['#141214', '#1a1418', '#1c1410', '#221610']
     : ['#2a2018', '#3a2a20', '#1a1a1a', '#3a2818'];
   const felt = feltOptions[Math.floor(rng() * feltOptions.length)];
-  const brimRx = hw + 14 + rng() * 6;
-  const brimRy = 4 + rng() * 1.5;
-  const brimY = headTop + 4;
-  const crownH = 14 + rng() * 8;
-  const crownTop = headTop - crownH;
-  const crownHalfWidth = hw - 2;
+  // Brim rests just above the brow (cavalier hats sat low on the forehead).
+  const brimY = eyeY - 22 - rng() * 3;
+  const brimRx = hw + 16 + rng() * 6;
+  const brimRy = 4.5 + rng() * 1.5;
+  // Crown must rise above headTop to look like it sits on the skull, not inside it.
+  const crownH = (brimY - headTop) + 10 + rng() * 8;
+  const crownBase = brimY - 1;
+  const crownTop = crownBase - crownH;
+  const crownHalfWidth = hw + 2;
   const featherSide = rng() > 0.5 ? 1 : -1;
   const hasFeather = rng() > 0.3;
   const featherColor = ['#c83020', '#e0a020', '#f0e8d0', '#1a4a8a', '#80a040'][Math.floor(rng() * 5)];
@@ -1769,34 +2260,40 @@ function renderWideBrimHat(
 // Capotain — the iconic "Puritan" steeple-crowned hat, also worn widely by merchants and
 // gentlemen across Protestant Europe c.1590-1640. Stiff felt, narrow flat brim, tall tapered crown.
 function renderCapotain(
-  cx: number, headTop: number, hw: number, rng: () => number, socialClass: SocialClass,
+  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number, socialClass: SocialClass,
 ): React.ReactNode {
   const felt = socialClass === 'Noble' ? '#0e0e10' : (rng() > 0.5 ? '#1a1410' : '#241810');
-  const brimW = hw + 4 + rng() * 4;
-  const brimY = headTop + 5;
-  const crownH = 26 + rng() * 8;               // tall
-  const taper = 4 + rng() * 3;                 // crown narrows toward top
-  const crownTop = headTop - crownH;
+  // Brim rests on the brow. Capotain brims were narrow and flat.
+  const brimY = eyeY - 20 - rng() * 3;
+  const brimW = hw + 6 + rng() * 4;
+  // Crown rises moderately above the skull — period capotains were taller than cavalier hats
+  // but not stovepipes. Cap rise above headTop at ~14–22px.
+  const riseAboveSkull = 14 + rng() * 8;
+  const crownH = (brimY - headTop) + riseAboveSkull;
+  const taper = 3 + rng() * 2;
+  const crownBase = brimY - 1;
+  const crownTop = crownBase - crownH;
+  const crownHalfWidth = hw + 1;
   const tilt = (rng() - 0.5) * 3;
   const hasBuckle = socialClass === 'Noble' || rng() > 0.5;
 
   return (
-    <g key="capotain" transform={`rotate(${tilt} ${cx} ${headTop})`}>
+    <g key="capotain" transform={`rotate(${tilt} ${cx} ${brimY})`}>
       <ellipse cx={cx} cy={brimY + 3} rx={brimW - 2} ry={3} fill="rgba(0,0,0,0.2)" />
       {/* Brim — flat, narrow */}
       <ellipse cx={cx} cy={brimY} rx={brimW} ry={3.5} fill={felt} />
       <ellipse cx={cx} cy={brimY + 1} rx={brimW - 1} ry={1.5} fill="rgba(0,0,0,0.3)" />
       {/* Crown — tall, slightly tapered upward */}
-      <path d={`M ${cx - hw + 2} ${brimY - 1}
-          L ${cx - hw + 2 + taper} ${crownTop + 2}
-          C ${cx - hw + 2 + taper} ${crownTop - 2}, ${cx + hw - 2 - taper} ${crownTop - 2}, ${cx + hw - 2 - taper} ${crownTop + 2}
-          L ${cx + hw - 2} ${brimY - 1} Z`}
+      <path d={`M ${cx - crownHalfWidth} ${crownBase}
+          L ${cx - crownHalfWidth + taper} ${crownTop + 2}
+          C ${cx - crownHalfWidth + taper} ${crownTop - 2}, ${cx + crownHalfWidth - taper} ${crownTop - 2}, ${cx + crownHalfWidth - taper} ${crownTop + 2}
+          L ${cx + crownHalfWidth} ${crownBase} Z`}
         fill={felt} />
       {/* Crown highlight strip */}
-      <path d={`M ${cx - hw + 4 + taper} ${crownTop + 6} L ${cx - hw + 5 + taper} ${brimY - 3}`}
+      <path d={`M ${cx - crownHalfWidth + 2 + taper} ${crownTop + 6} L ${cx - crownHalfWidth + 3 + taper} ${crownBase - 2}`}
         stroke="rgba(255,240,210,0.1)" strokeWidth="1.5" fill="none" />
       {/* Hat band */}
-      <rect x={cx - hw + 2} y={brimY - 4} width={(hw - 2) * 2} height={3} fill="#0a0608" />
+      <rect x={cx - crownHalfWidth + 1} y={brimY - 4} width={(crownHalfWidth - 1) * 2} height={3} fill="#0a0608" />
       {/* Buckle (Puritan signature) */}
       {hasBuckle && (
         <g>
@@ -1833,67 +2330,39 @@ function renderCoif(
 // Monmouth cap — knitted wool sailor's cap, the standard 1612 mariner's headwear.
 // Round dome, rolled brim. Brown, dark blue, or russet.
 function renderMonmouthCap(
-  cx: number, headTop: number, hw: number, rng: () => number,
+  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number,
 ): React.ReactNode {
   const palette = ['#3a2818', '#2a3a4a', '#1a2030', '#5c2a18', '#3a3828', '#4a3818'];
   const wool = palette[Math.floor(rng() * palette.length)];
-  const apexLean = (rng() - 0.5) * 4;          // small lean — symmetric apex with subtle tilt
-  const apexY = headTop - 12 - rng() * 4;
-  const brimY = headTop + 8;
+  const apexLean = (rng() - 0.5) * 4;
+  // Monmouth caps were close-fitting knitted wool, pulled snug over the brow.
+  // Apex sits just above the skull — not a tall cap.
+  const brimY = eyeY - 18 - rng() * 3;
+  const apexY = headTop - 3 - rng() * 3;
+  const capHalfWidth = hw + 3;
 
   return (
     <g key="monmouth">
       {/* Cast shadow on forehead */}
-      <ellipse cx={cx} cy={brimY - 1} rx={hw} ry={2.5} fill="rgba(0,0,0,0.2)" />
-      {/* Main cap dome — symmetric apex with optional lean */}
-      <path d={`M ${cx - hw - 2} ${brimY}
-          C ${cx - hw - 3} ${headTop - 4}, ${cx - hw + 4 + apexLean} ${apexY + 2}, ${cx + apexLean} ${apexY}
-          C ${cx + hw - 4 + apexLean} ${apexY + 2}, ${cx + hw + 3} ${headTop - 4}, ${cx + hw + 2} ${brimY} Z`}
+      <ellipse cx={cx} cy={brimY - 1} rx={capHalfWidth} ry={2.8} fill="rgba(0,0,0,0.22)" />
+      {/* Main cap dome — sweeps from the low brim up and over the skull to the apex */}
+      <path d={`M ${cx - capHalfWidth} ${brimY}
+          C ${cx - capHalfWidth - 2} ${headTop + 4}, ${cx - hw + 2 + apexLean} ${apexY + 2}, ${cx + apexLean} ${apexY}
+          C ${cx + hw - 2 + apexLean} ${apexY + 2}, ${cx + capHalfWidth + 2} ${headTop + 4}, ${cx + capHalfWidth} ${brimY} Z`}
         fill={wool} />
-      {/* Knit texture — subtle horizontal ribbing */}
-      {[1, 2, 3, 4].map(i => (
+      {/* Knit texture — subtle horizontal ribbing following the dome */}
+      {[1, 2, 3, 4, 5].map(i => (
         <path key={`rib-${i}`}
-          d={`M ${cx - hw + 2} ${brimY - i * 4} Q ${cx + apexLean * (i / 5)} ${brimY - 1 - i * 4} ${cx + hw - 2} ${brimY - i * 4}`}
+          d={`M ${cx - capHalfWidth + 2} ${brimY - i * 6} Q ${cx + apexLean * (i / 5)} ${brimY - 1 - i * 6} ${cx + capHalfWidth - 2} ${brimY - i * 6}`}
           stroke="rgba(0,0,0,0.16)" strokeWidth="0.4" fill="none" />
       ))}
       {/* Rolled brim — fattened band along the base */}
-      <ellipse cx={cx} cy={brimY + 1} rx={hw + 2} ry={2.5} fill={wool} />
-      <ellipse cx={cx} cy={brimY + 2} rx={hw + 1.5} ry={1.5} fill="rgba(0,0,0,0.28)" />
+      <ellipse cx={cx} cy={brimY + 1} rx={capHalfWidth + 1} ry={2.8} fill={wool} />
+      <ellipse cx={cx} cy={brimY + 2} rx={capHalfWidth} ry={1.6} fill="rgba(0,0,0,0.28)" />
     </g>
   );
 }
 
-// Head kerchief — knotted cloth tied around the head, common among working sailors.
-function renderHeadKerchief(
-  cx: number, headTop: number, hw: number, eyeY: number, rng: () => number,
-): React.ReactNode {
-  const cloths = ['#8b2020', '#1a3a5a', '#4a2818', '#2a4a2a', '#5a3a1a', '#404048'];
-  const cloth = cloths[Math.floor(rng() * cloths.length)];
-  const knotSide = rng() > 0.5 ? 1 : -1;
-  return (
-    <g key="head-kerchief">
-      {/* Wrap covering crown */}
-      <path d={`M ${cx - hw - 2} ${eyeY - 8}
-          C ${cx - hw - 3} ${headTop + 2}, ${cx + hw + 3} ${headTop + 2}, ${cx + hw + 2} ${eyeY - 8}
-          C ${cx + hw - 4} ${eyeY - 6}, ${cx - hw + 4} ${eyeY - 6}, ${cx - hw - 2} ${eyeY - 8} Z`}
-        fill={cloth} />
-      {/* Fold shadow */}
-      <path d={`M ${cx - hw} ${eyeY - 9} Q ${cx} ${headTop + 6} ${cx + hw} ${eyeY - 9}`}
-        stroke="rgba(0,0,0,0.25)" strokeWidth="0.8" fill="none" />
-      {/* Knot — sticks out the side */}
-      <g key="knot">
-        <ellipse cx={cx + knotSide * (hw + 4)} cy={eyeY - 14} rx={4} ry={3} fill={cloth} />
-        {/* Tail ends */}
-        <path d={`M ${cx + knotSide * (hw + 4)} ${eyeY - 12}
-            C ${cx + knotSide * (hw + 8)} ${eyeY - 6}, ${cx + knotSide * (hw + 6)} ${eyeY + 2}, ${cx + knotSide * (hw + 10)} ${eyeY + 6}`}
-          stroke={cloth} strokeWidth="2.2" fill="none" strokeLinecap="round" />
-        <path d={`M ${cx + knotSide * (hw + 5)} ${eyeY - 13}
-            C ${cx + knotSide * (hw + 10)} ${eyeY - 8}, ${cx + knotSide * (hw + 12)} ${eyeY - 4}, ${cx + knotSide * (hw + 14)} ${eyeY + 2}`}
-          stroke={cloth} strokeWidth="1.6" fill="none" strokeLinecap="round" opacity={0.85} />
-      </g>
-    </g>
-  );
-}
 
 // ── Clothing ─────────────────────────────────────────────
 
@@ -2050,21 +2519,6 @@ function renderEyePatch(
       <ellipse cx={ex} cy={eyeY} rx={9} ry={7}
         fill="#1a1610" stroke="#2a2218" strokeWidth="1" />
     </g>
-  );
-}
-
-// ── Gold tooth ───────────────────────────────────────────
-
-function renderGoldTooth(
-  cx: number, mouthY: number, mouthWidth: number, mouthCurve: number,
-): React.ReactNode {
-  // Only visible if mouth is curved into a smile (negative curve = smile)
-  if (mouthCurve > -1) return null;
-  const toothX = cx + 3;
-  const toothY = mouthY + 0.5;
-  return (
-    <rect key="gold-tooth" x={toothX - 1} y={toothY - 1} width={2.5} height={2.5}
-      fill="#d4a020" rx={0.5} opacity={0.8} />
   );
 }
 

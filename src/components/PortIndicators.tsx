@@ -1,12 +1,13 @@
-import { useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, type Port } from '../store/gameStore';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
+import { createWorldLabelTexture, worldHeightForScreenPixels } from '../utils/worldLabelTextures';
+import { useWaterOverlayLayer } from '../utils/waterOverlayLayer';
 
 const SCALE_RADIUS: Record<string, number> = {
-  Small: 12, Medium: 18, Large: 24, 'Very Large': 30,
+  Small: 12, Medium: 18, Large: 24, 'Very Large': 30, Huge: 38,
 };
 
 // Generate a radial gradient texture once
@@ -78,6 +79,9 @@ function PortGlow() {
 const LABEL_SHOW = 80;
 const LABEL_FULL = 40;
 const LABEL_NEAR = 20;
+const LABEL_Y = 10.4;
+const LABEL_ACCENT = '#c9a84c';
+type LabelMode = 'far' | 'mid' | 'near';
 
 function PortLabels() {
   const ports = useGameStore((s) => s.ports);
@@ -88,7 +92,7 @@ function PortLabels() {
   const counterRef = useRef(0);
   useFrame((_, delta) => {
     counterRef.current += delta;
-    if (counterRef.current < 0.2) return;
+    if (counterRef.current < 0.25) return;
     counterRef.current = 0;
 
     const playerPos = getLiveShipTransform().pos;
@@ -124,43 +128,71 @@ function PortLabel({
   port,
   dist,
 }: {
-  port: { id: string; name: string; position: [number, number, number] };
+  port: Port;
   dist: number;
 }) {
+  const spriteRef = useRef<THREE.Sprite>(null);
+  useWaterOverlayLayer(spriteRef);
+  const { camera, size } = useThree();
   const opacity = dist > LABEL_FULL ? (LABEL_SHOW - dist) / (LABEL_SHOW - LABEL_FULL) : 1;
-  const isNear = dist < LABEL_NEAR;
+  const labelMode: LabelMode = dist < LABEL_NEAR ? 'near' : dist < LABEL_FULL ? 'mid' : 'far';
+  const label = useMemo(() => createWorldLabelTexture({
+    title: port.name,
+    subtitle: labelMode === 'far' ? undefined : `${port.scale} harbor`,
+    accent: LABEL_ACCENT,
+    variant: labelMode,
+  }), [labelMode, port.name, port.scale]);
+  const labelPosition = useMemo(
+    () => new THREE.Vector3(port.position[0], LABEL_Y, port.position[2]),
+    [port.position],
+  );
+  const baseWorldHeight = labelMode === 'near' ? 10.8 : labelMode === 'mid' ? 9.4 : 8.6;
+  const minReadableScreenHeight = labelMode === 'near' ? 74 : labelMode === 'mid' ? 60 : 46;
+  const maxReadableScreenHeight = labelMode === 'near' ? 170 : labelMode === 'mid' ? 135 : 105;
+  const maxWorldHeight = labelMode === 'near' ? 26 : labelMode === 'mid' ? 23 : 20;
+  const labelOpacity = labelMode === 'far' ? Math.max(0.58, opacity) : opacity;
+
+  useFrame(() => {
+    const sprite = spriteRef.current;
+    if (!sprite) return;
+
+    const minReadableWorldHeight = worldHeightForScreenPixels(
+      camera,
+      size.height,
+      labelPosition,
+      minReadableScreenHeight,
+    );
+    const maxReadableWorldHeight = worldHeightForScreenPixels(
+      camera,
+      size.height,
+      labelPosition,
+      maxReadableScreenHeight,
+    );
+    const desired = Math.max(baseWorldHeight, minReadableWorldHeight);
+    const upperBound = Math.min(maxWorldHeight, maxReadableWorldHeight);
+    const worldHeight = Math.min(desired, upperBound);
+    sprite.scale.set(worldHeight * label.aspect, worldHeight, 1);
+  });
+
+  useEffect(() => () => label.texture.dispose(), [label]);
 
   return (
-    <Html
-      position={[port.position[0], 8, port.position[2]]}
-      center
-      sprite
-      zIndexRange={[10, 0]}
-      style={{ pointerEvents: 'none', opacity, transition: 'opacity 0.3s' }}
+    <sprite
+      ref={spriteRef}
+      position={[port.position[0], LABEL_Y, port.position[2]]}
+      scale={[baseWorldHeight * label.aspect, baseWorldHeight, 1]}
+      renderOrder={1000}
+      raycast={() => null}
     >
-      <div className="select-none text-center whitespace-nowrap">
-        <div
-          className={`font-bold tracking-[0.15em] uppercase ${isNear ? 'text-[11px] text-slate-200' : 'text-[10px] text-slate-400'}`}
-          style={{
-            fontFamily: '"DM Sans", sans-serif',
-            textShadow: '0 1px 6px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.6)',
-          }}
-        >
-          {port.name}
-        </div>
-        {isNear && (
-          <div
-            className="text-[8px] tracking-[0.12em] uppercase text-slate-500 mt-0.5"
-            style={{
-              fontFamily: '"DM Sans", sans-serif',
-              textShadow: '0 1px 4px rgba(0,0,0,0.9)',
-            }}
-          >
-            Enter Port
-          </div>
-        )}
-      </div>
-    </Html>
+      <spriteMaterial
+        map={label.texture}
+        transparent
+        opacity={labelOpacity}
+        depthTest={false}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </sprite>
   );
 }
 

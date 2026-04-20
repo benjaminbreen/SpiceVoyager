@@ -21,6 +21,7 @@ export type GeographicArchetype =
   | 'inlet'              // channel of water cutting into land (Goa)
   | 'bay'                // concave cove harbor (Mombasa)
   | 'strait'             // water between two landmasses (Malacca)
+  | 'tidal_river'        // navigable river running through the map, city on both banks (London)
   | 'island'             // isolated landmass in open sea (Hormuz, Zanzibar)
   | 'coastal_island'     // island nestled in creeks off a continental coast (Mombasa)
   | 'peninsula'          // land jutting into water (Macau)
@@ -150,6 +151,13 @@ export interface PortDefinition {
   riverInlandWidth?: number;
   riverLength?: number;
   riverSinuosity?: number;
+  /**
+   * Number of bridges to attempt to place across the port's river/strait.
+   * Only takes effect when the city generator detects two major land components
+   * (i.e. a real river bisects the map). Bridges become part of the road network
+   * so buildings on both banks connect. Default 0 = no bridges.
+   */
+  bridgeCount?: number;
   /** Island shape sub-classification system */
   islandShape?: IslandShape;      // silhouette type (default: 'ovoid')
   islandCoverage?: number;        // target fraction of map as land (0.10 - 0.50)
@@ -164,6 +172,34 @@ export interface PortDefinition {
   buildingStyle?: BuildingStyle;
   /** Future POI slots (data-only scaffold, renderer TBD). */
   landmarks?: PortLandmark[];
+  /**
+   * RGB (0-1) flag flown from fort towers. Falls back to a culture default
+   * when absent. Use this to distinguish ports under different flags within
+   * the same culture (e.g. London vs Lisbon, both 'European').
+   */
+  flagColor?: [number, number, number];
+  /**
+   * Single named landmark rendered once per port near the fort/center.
+   * - 'tower-of-london': square white keep, four corner turrets (no chapel/cross)
+   * - 'belem-tower': slim tiered Manueline tower on the waterline (Lisbon)
+   * - 'oude-kerk-spire': tall slim brick spire (Amsterdam)
+   * - 'old-st-pauls': massive truncated tower (London — replaces tower-of-london if both set)
+   */
+  landmark?:
+    | 'tower-of-london'        // London — square Norman keep, four corner turrets
+    | 'belem-tower'            // Lisbon — tiered Manueline limestone tower
+    | 'oude-kerk-spire'        // Amsterdam — brick church + tall wooden spire
+    | 'old-st-pauls'           // London (alt) — truncated Gothic tower
+    | 'al-shadhili-mosque'     // Mocha — white minaret over the coffee port
+    | 'grand-mosque-tiered'    // Bantam — five stacked Javanese-Chinese roofs, no minaret
+    | 'fort-jesus'             // Mombasa — Portuguese star fort with four pointed bastions
+    | 'jesuit-college'         // Salvador — Jesuit college dominating the upper-town bluff
+    | 'palacio-inquisicion'    // Cartagena — colonial palace of the Holy Office
+    | 'bom-jesus-basilica'     // Goa — Portuguese baroque church, facade + single bell tower
+    | 'diu-fortress'           // Diu — long Portuguese sea-wall with four bastions + keep
+    | 'giralda-tower'          // Seville — square Almohad brick minaret + Christian belfry
+    | 'calicut-gopuram'        // Calicut — tiered-roof Kerala Hindu shrine
+    | 'elmina-castle';         // Elmina — squat white Portuguese coastal castle (São Jorge da Mina)
 }
 
 // ── The Dozen Core Ports ───────────────────────────────────────────────────────
@@ -215,6 +251,7 @@ export const CORE_PORTS: PortDefinition[] = [
         ruggedness: 0.8,
       },
     ],
+    landmark: 'bom-jesus-basilica',
   },
   {
     id: 'hormuz',
@@ -384,6 +421,7 @@ export const CORE_PORTS: PortDefinition[] = [
     harbors: [
       { side: 'SE', position: 0.7, depth: 0.2, width: 0.3 },  // Old Port / Fort Jesus harbor
     ],
+    landmark: 'fort-jesus',
   },
   {
     id: 'calicut',
@@ -399,6 +437,7 @@ export const CORE_PORTS: PortDefinition[] = [
     headlands: [
       { side: 'right', size: 0.25, width: 0.2 },  // Kadalundi point to the south
     ],
+    landmark: 'calicut-gopuram',
   },
   {
     id: 'surat',
@@ -500,6 +539,7 @@ export const CORE_PORTS: PortDefinition[] = [
       { side: 'left',  size: 0.22, width: 0.16, offset: 0.08, curl: 0.05, ruggedness: 0.6 },
       { side: 'right', size: 0.20, width: 0.16, offset: -0.08, curl: 0.05, ruggedness: 0.6 },
     ],
+    landmark: 'al-shadhili-mosque',
   },
   {
     id: 'bantam',
@@ -516,6 +556,7 @@ export const CORE_PORTS: PortDefinition[] = [
     headlands: [
       { side: 'right', size: 0.3, width: 0.25 },  // eastern point sheltering the bay
     ],
+    landmark: 'grand-mosque-tiered',
   },
   {
     id: 'socotra',
@@ -553,6 +594,7 @@ export const CORE_PORTS: PortDefinition[] = [
     harbors: [
       { side: 'S', position: 0.4, depth: 0.2, width: 0.35 },  // main harbor on south side
     ],
+    landmark: 'diu-fortress',
   },
 
   // ── European Ports ───────────────────────────────────────────────────────────
@@ -563,7 +605,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'mediterranean',
     culture: 'European',
     buildingStyle: 'iberian',
-    scale: 'Very Large',
+    scale: 'Huge',
     description: 'The Tagus estuary opens wide below the city, crowded with carracks and smaller craft. The Casa da Índia warehouses line the Ribeira waterfront, where stevedores unload pepper, cinnamon, and Chinese porcelain under the eye of customs agents. The streets climbing the hills behind are narrow and steep. Lisbon has been under the Spanish Habsburgs since 1580, and the Carreira da Índia is fraying, but the pepper still flows.',
     openDirection: 'W',
     enclosure: 0.2,
@@ -575,6 +617,8 @@ export const CORE_PORTS: PortDefinition[] = [
     headlands: [
       { side: 'right', size: 0.35, width: 0.2 },  // southern bank headland
     ],
+    flagColor: [0.85, 0.15, 0.15],  // Portuguese red (Habsburg crown 1580-1640, but red still flown)
+    landmark: 'belem-tower',
   },
   {
     id: 'amsterdam',
@@ -593,6 +637,8 @@ export const CORE_PORTS: PortDefinition[] = [
     riverLength: 0.75,
     riverSinuosity: 0.04,        // mostly straight channels
     coastRuggedness: 0.5,        // flat marshy banks
+    flagColor: [0.92, 0.55, 0.10],  // Prinsenvlag orange (Dutch Republic, c. 1612)
+    landmark: 'oude-kerk-spire',
   },
   {
     id: 'seville',
@@ -610,19 +656,24 @@ export const CORE_PORTS: PortDefinition[] = [
     riverInlandWidth: 0.07,
     riverLength: 0.95,           // extends far inland — Seville is well upstream
     riverSinuosity: 0.2,         // famously meandering
+    landmark: 'giralda-tower',
   },
   {
     id: 'london',
     name: 'London',
-    geography: 'strait',
+    geography: 'tidal_river',
     climate: 'temperate',
     culture: 'European',
     buildingStyle: 'english-tudor',
-    scale: 'Very Large',
+    scale: 'Huge',
     description: 'The Thames at low tide exposes mudflats and timber pilings below warehouses packed tight along both banks. Lighters and wherries crowd the river — London Bridge blocks larger vessels, so ocean-going ships moor downstream at Deptford and Wapping. The East India Company is barely twelve years old, still fitting out modest voyages. Apothecaries on Bucklersbury sell pepper and nutmeg at steep markups, and Virginia tobacco has just started appearing in the pipes of gentlemen. Sea coal smoke hangs over the rooftops on still days.',
     openDirection: 'E',
-    channelWidth: 0.5,
-    channelTaper: 0.4,
+    channelWidth: 0.5,         // ≈ Thames proportions at the Pool of London
+    channelTaper: 0.4,         // narrows slightly upstream (west)
+    riverSinuosity: 0.09,      // gentle Thames bend around the Isle of Dogs
+    bridgeCount: 1,            // London Bridge — the only Thames crossing in 1612
+    flagColor: [0.95, 0.95, 0.95],  // St George's cross — white field (red bar drawn separately)
+    landmark: 'tower-of-london',
   },
 
   // ── West African Ports ───────────────────────────────────────────────────────
@@ -640,6 +691,7 @@ export const CORE_PORTS: PortDefinition[] = [
     headlands: [
       { side: 'left', size: 0.3, width: 0.2 },  // fortress headland
     ],
+    landmark: 'elmina-castle',
   },
   {
     id: 'luanda',
@@ -732,6 +784,7 @@ export const CORE_PORTS: PortDefinition[] = [
         ruggedness: 0.9,
       },
     ],
+    landmark: 'jesuit-college',
   },
   {
     id: 'havana',
@@ -820,6 +873,28 @@ export const CORE_PORTS: PortDefinition[] = [
         ruggedness: 0.7,
       },
     ],
+    landmark: 'palacio-inquisicion',
+  },
+  {
+    id: 'jamestown',
+    name: 'Jamestown',
+    geography: 'estuary',
+    climate: 'temperate',
+    culture: 'Atlantic',
+    // Placeholder — English palisaded outpost has no dedicated style yet.
+    // Using english-tudor at Small scale reads approximately right from distance
+    // until a proper 'english-colonial-palisade' style is built.
+    buildingStyle: 'english-tudor',
+    scale: 'Small',
+    description: 'A triangular wooden palisade on a marshy peninsula in the James River, five years old and barely surviving. The Starving Time of 1609–10 killed most of the first settlers; the survivors live in wattle-and-daub huts inside the fort walls. John Rolfe has just planted the first experimental crop of Spanish-seed tobacco in cleared ground outside the palisade — most of the colony\'s export trade so far has been sassafras root and clapboard. Supply ships from London arrive once or twice a year. The Powhatan villages along the river are tense, watchful neighbors.',
+    openDirection: 'E',
+    enclosure: 0.25,
+    riverMouthWidth: 0.22,       // James River is a few miles wide here
+    riverInlandWidth: 0.12,
+    riverLength: 0.75,
+    riverSinuosity: 0.15,        // gently meandering
+    coastRuggedness: 0.55,       // low tidewater, marshy
+    flagColor: [0.95, 0.95, 0.95],  // St George's cross — white field
   },
 
   // ── Cape Route Waypoint ──────────────────────────────────────────────────────
@@ -1127,6 +1202,29 @@ export function getArchetypeShape(
       const absWrx = Math.abs(wrx);
       const isLand = absWrx > channelEdge;
       const landStrength = isLand ? smoothstep(channelEdge, channelEdge + 0.12, absWrx) : 0;
+      shape = landStrength * 0.9 - (isLand ? 0 : 0.5);
+      break;
+    }
+
+    case 'tidal_river': {
+      // A navigable tidal river threads through the map with city on both banks.
+      // Topology matches strait, but the baseline channel is roughly half as wide
+      // and a sine-based meander offsets the centerline for Thames-like curvature.
+      // - channelWidth: scales the river's half-width (0.5 ≈ Thames at London).
+      // - channelTaper: narrows upstream (toward +z).
+      // - riverSinuosity: lateral meander amplitude in mesh-normalized units
+      //   (0 = straight, ~0.08 = gentle S-curve, ~0.15 = pronounced).
+      const taperFactor = def.channelTaper ?? 0;
+      const taper = 1.0 - taperFactor * (wrz * 0.5 + 0.5);
+      const cw = (def.channelWidth ?? 1.0) * 0.14 * taper;
+      // S-curve centerline: one full meander across the map length.
+      const meander = (def.riverSinuosity ?? 0) * Math.sin(wrz * Math.PI * 1.2);
+      const channelNoise = cn * 0.35;
+      const shiftedX = wrx - meander;
+      const channelEdge = cw + channelNoise;
+      const absShifted = Math.abs(shiftedX);
+      const isLand = absShifted > channelEdge;
+      const landStrength = isLand ? smoothstep(channelEdge, channelEdge + 0.10, absShifted) : 0;
       shape = landStrength * 0.9 - (isLand ? 0 : 0.5);
       break;
     }

@@ -27,52 +27,51 @@ const UNIVERSALLY_KNOWN: Commodity[] = [
 
 const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
   English: [
-    'Cotton Textiles', 'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
+    'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
     'Indigo', 'Ivory', 'Tobacco',
   ],
   Portuguese: [
-    'Cotton Textiles', 'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
+    'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
     'Cloves', 'Nutmeg', 'Opium', 'Red Coral', 'Quicksilver',
     'Tobacco', 'Cassia Fistula', 'Lapis de Goa',
   ],
   Dutch: [
-    'Cotton Textiles', 'Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg',
+    'Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg',
     'Sugar', 'Indigo', 'Camphor',
   ],
   Spanish: [
-    'Cotton Textiles', 'Sugar', 'Tobacco', 'Red Coral', 'Quicksilver',
+    'Sugar', 'Tobacco', 'Red Coral', 'Quicksilver',
     'Cinnamon',
   ],
   French: [
-    'Cotton Textiles', 'Black Pepper', 'Cinnamon', 'Coffee', 'Sugar',
+    'Black Pepper', 'Cinnamon', 'Coffee', 'Sugar',
     'Indigo',
   ],
   Danish: [
-    'Cotton Textiles', 'Black Pepper', 'Tea', 'Sugar',
+    'Black Pepper', 'Tea', 'Sugar',
   ],
   Gujarati: [
-    'Cotton Textiles', 'Black Pepper', 'Cardamom', 'Ginger', 'Sugar',
+    'Black Pepper', 'Cardamom', 'Ginger', 'Sugar',
     'Tamarind', 'Cassia Fistula', 'Indigo', 'Opium', 'Bezoar Stones',
     'Rose Water', 'Saffron', 'Coffee',
   ],
   Mughal: [
-    'Cotton Textiles', 'Black Pepper', 'Cardamom', 'Indigo', 'Opium',
+    'Black Pepper', 'Cardamom', 'Indigo', 'Opium',
     'Saffron', 'Rose Water', 'Bezoar Stones', 'Sugar',
   ],
   Ottoman: [
     'Coffee', 'Frankincense', 'Myrrh', 'Rose Water', 'Saffron',
-    'Cotton Textiles', 'Red Coral', 'Sugar',
+    'Red Coral', 'Sugar',
   ],
   Persian: [
     'Rose Water', 'Saffron', 'Pearls', 'Coffee', 'Frankincense',
-    'Myrrh', 'Bezoar Stones', 'Cotton Textiles', 'Rhubarb',
+    'Myrrh', 'Bezoar Stones', 'Rhubarb',
   ],
   Omani: [
     'Frankincense', 'Myrrh', 'Pearls', 'Coffee', 'Ambergris',
-    'Cotton Textiles',
   ],
   Swahili: [
-    'Ivory', 'Ambergris', 'Aloes', 'Frankincense', 'Cotton Textiles',
+    'Ivory', 'Ambergris', 'Aloes', 'Frankincense',
     'Tamarind',
   ],
   Malay: [
@@ -112,10 +111,10 @@ export interface CrewKnowledgeProfile {
 
 export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgeProfile>> = {
   Gujarati: {
-    identifies: ['Black Pepper', 'Cotton Textiles', 'Indigo', 'Opium',
+    identifies: ['Black Pepper', 'Indigo', 'Opium',
                  'Cassia Fistula', 'Tamarind', 'Sugar', 'Ginger',
                  'Saffron', 'Rose Water', 'Bezoar Stones'],
-    masters: ['Cotton Textiles', 'Indigo'],
+    masters: ['Indigo'],
   },
   Malay: {
     identifies: ['Cloves', 'Nutmeg', 'Camphor', 'Benzoin',
@@ -163,7 +162,7 @@ export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgePr
     masters: ['Cloves', 'Nutmeg'],
   },
   Mughal: {
-    identifies: ['Cotton Textiles', 'Indigo', 'Opium', 'Saffron',
+    identifies: ['Indigo', 'Opium', 'Saffron',
                  'Rose Water', 'Bezoar Stones', 'Bhang'],
     masters: ['Opium', 'Indigo'],
   },
@@ -174,7 +173,7 @@ export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgePr
   },
   English: {
     identifies: ['Black Pepper', 'Cinnamon', 'Ginger', 'Indigo',
-                 'Cotton Textiles', 'Tobacco', 'Sugar'],
+                 'Tobacco', 'Sugar'],
     masters: [],
   },
   Dutch: {

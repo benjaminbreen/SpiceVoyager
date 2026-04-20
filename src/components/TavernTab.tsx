@@ -437,13 +437,13 @@ export function TavernTab({ port }: TavernTabProps) {
           {/* NPCs in the room */}
           <div className="rounded-lg border border-white/[0.04] bg-white/[0.015] px-4 py-4">
             <div className="mb-3 flex items-center justify-between">
-              <div className="text-[11px] font-bold tracking-[0.12em] uppercase text-slate-500">
+              <div className="text-[12px] font-bold tracking-[0.12em] uppercase text-slate-500">
                 The Room
                 <span className="ml-2 font-normal text-slate-600">
                   {timeOfDay >= 17 || timeOfDay < 6 ? 'evening' : timeOfDay >= 12 ? 'afternoon' : 'morning'}
                 </span>
               </div>
-              <div className="text-[11px] text-slate-600">
+              <div className="text-[12px] text-slate-600">
                 {npcs.length} {npcs.length === 1 ? 'figure' : 'figures'}
               </div>
             </div>
@@ -492,7 +492,7 @@ export function TavernTab({ port }: TavernTabProps) {
                       >
                         <ConfigPortrait
                           config={npc.portraitConfig}
-                          size={52}
+                          size={64}
                           square
                         />
                       </div>
@@ -502,25 +502,25 @@ export function TavernTab({ port }: TavernTabProps) {
                         {npc.revealed ? (
                           <>
                             <div className="flex items-center gap-2">
-                              <span className="text-[14px] font-bold text-slate-200">
+                              <span className="text-[16px] font-bold text-slate-200">
                                 {npc.name}
                               </span>
-                              <span className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[10px] text-slate-500">
+                              <span className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[12px] text-slate-500">
                                 {npc.nationality} {npc.role.title}
                               </span>
                             </div>
                             {isActive && (
-                              <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-300/60">
-                                <MessageCircle size={10} /> talking to you
+                              <div className="mt-1 flex items-center gap-1 text-[12px] text-amber-300/60">
+                                <MessageCircle size={11} /> talking to you
                               </div>
                             )}
                           </>
                         ) : (
                           <>
-                            <div className="text-[13px] leading-snug text-slate-300">
+                            <div className="text-[14px] leading-snug text-slate-300">
                               {npc.appearance}
                             </div>
-                            <div className="mt-1 text-[12px] text-slate-500 italic">
+                            <div className="mt-1 text-[13px] text-slate-500 italic">
                               {isPending ? (
                                 <span className="text-amber-300/70 not-italic font-medium">Approaching you...</span>
                               ) : (
@@ -546,11 +546,11 @@ export function TavernTab({ port }: TavernTabProps) {
               onMouseEnter={() => sfxHover()}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3 text-[13px] font-bold text-emerald-200/80 transition-all hover:border-emerald-400/35 hover:bg-emerald-400/[0.10] hover:text-emerald-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
             >
-              <Beer size={15} />
+              <Beer size={16} />
               Buy a round — 5g
             </button>
             {roundsBought > 0 && (
-              <div className="mt-2.5 text-center text-[12px] text-slate-500">
+              <div className="mt-2.5 text-center text-[13px] text-slate-500">
                 {roundsBought} {roundsBought === 1 ? 'round' : 'rounds'} bought tonight
               </div>
             )}
@@ -571,10 +571,10 @@ export function TavernTab({ port }: TavernTabProps) {
                   />
                 </div>
                 <div>
-                  <div className="text-[13px] font-bold text-slate-200">
+                  <div className="text-[15px] font-bold text-slate-200">
                     {activeNpc.revealed ? activeNpc.name : 'A stranger'}
                   </div>
-                  <div className="text-[10px] text-slate-500">
+                  <div className="text-[11px] text-slate-500">
                     {activeNpc.revealed ? `${activeNpc.nationality} ${activeNpc.role.title}` : activeNpc.appearance}
                   </div>
                 </div>
@@ -598,18 +598,18 @@ export function TavernTab({ port }: TavernTabProps) {
                       }
                     >
                       {msg.sender === 'system' ? (
-                        <span className="text-[12px] italic text-slate-600">
+                        <span className="text-[13px] italic text-slate-600">
                           {msg.text}
                         </span>
                       ) : msg.sender === 'npc' ? (
                         <div className="inline-block rounded-lg rounded-tl-none border border-white/[0.06] bg-white/[0.03] px-4 py-3">
-                          <p className="text-[13px] leading-relaxed text-slate-300">
+                          <p className="text-[17px] leading-[1.7] text-slate-300">
                             {msg.text}
                           </p>
                         </div>
                       ) : (
                         <div className="inline-block rounded-lg rounded-tr-none border border-amber-400/15 bg-amber-400/[0.04] px-4 py-3">
-                          <p className="text-[13px] leading-relaxed text-amber-200/70">
+                          <p className="text-[17px] leading-[1.7] text-amber-200/70">
                             {msg.text}
                           </p>
                         </div>
@@ -627,7 +627,7 @@ export function TavernTab({ port }: TavernTabProps) {
                   >
                     <div className="inline-flex items-center gap-2 rounded-lg rounded-tl-none border border-white/[0.06] bg-white/[0.03] px-4 py-3">
                       <Loader2 size={14} className="animate-spin text-slate-500" />
-                      <span className="text-[12px] italic text-slate-500">
+                      <span className="text-[13px] italic text-slate-500">
                         {activeNpc.revealed ? activeNpc.name : 'The stranger'} considers...
                       </span>
                     </div>
@@ -648,7 +648,7 @@ export function TavernTab({ port }: TavernTabProps) {
                         onMouseEnter={() => sfxHover()}
                         onClick={() => handleSuggestedResponse(opt)}
                         disabled={isLoading}
-                        className={`group flex w-full items-center gap-2.5 rounded-lg border px-4 py-2 text-left text-[13px] transition-all active:scale-[0.99] disabled:opacity-40 ${
+                        className={`group flex w-full items-center gap-2.5 rounded-lg border px-4 py-2.5 text-left text-[14px] transition-all active:scale-[0.99] disabled:opacity-40 ${
                           opt.type === 'show_item'
                             ? 'border-sky-400/15 bg-sky-400/[0.03] text-sky-300/70 hover:border-sky-400/25 hover:bg-sky-400/[0.06] hover:text-sky-200'
                             : opt.type === 'farewell'
@@ -658,7 +658,7 @@ export function TavernTab({ port }: TavernTabProps) {
                                 : 'border-white/[0.04] bg-white/[0.02] text-slate-400 hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-slate-200'
                         }`}
                       >
-                        <span className={`text-[12px] ${
+                        <span className={`text-[13px] ${
                           opt.type === 'show_item' ? 'text-sky-500/50 group-hover:text-sky-400/60'
                           : opt.type === 'buy_drink' ? 'text-emerald-500/50 group-hover:text-emerald-400/60'
                           : 'text-slate-600 group-hover:text-amber-300/50'
@@ -682,7 +682,7 @@ export function TavernTab({ port }: TavernTabProps) {
                     onChange={e => setPlayerInput(e.target.value)}
                     disabled={isLoading}
                     placeholder={isLoading ? 'Waiting...' : 'Say something...'}
-                    className="flex-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 text-[13px] text-slate-200 placeholder-slate-600 outline-none transition-all focus:border-amber-400/30 focus:bg-white/[0.04] focus:shadow-[0_0_12px_rgba(201,168,76,0.08)] disabled:opacity-40"
+                    className="flex-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 text-[14px] text-slate-200 placeholder-slate-600 outline-none transition-all focus:border-amber-400/30 focus:bg-white/[0.04] focus:shadow-[0_0_12px_rgba(201,168,76,0.08)] disabled:opacity-40"
                   />
                   <button
                     type="submit"
@@ -697,8 +697,8 @@ export function TavernTab({ port }: TavernTabProps) {
           ) : (
             /* Empty state — no conversation yet */
             <div className="flex flex-1 flex-col items-center justify-center px-8 py-16 text-center">
-              <Beer size={28} className="mb-4 text-slate-700/40" />
-              <div className="text-[13px] font-bold text-slate-600">
+              <Beer size={30} className="mb-4 text-slate-700/40" />
+              <div className="text-[15px] font-bold text-slate-600" style={{ fontFamily: '"Fraunces", serif' }}>
                 {roundsBought === 0
                   ? 'No one has spoken to you yet'
                   : pendingApproach
@@ -706,7 +706,7 @@ export function TavernTab({ port }: TavernTabProps) {
                     : 'Buy a round to loosen tongues'
                 }
               </div>
-              <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-slate-600">
+              <p className="mt-2 max-w-[300px] text-[14px] leading-relaxed text-slate-600">
                 {roundsBought === 0
                   ? 'The room hums with conversation in several languages. A round of drinks might draw someone out.'
                   : 'The barkeep watches you. Another drink might help.'

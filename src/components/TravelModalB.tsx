@@ -9,55 +9,12 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ASCII_COLORS, C, BaroqueBorder, useSparkle } from './ascii-ui-kit';
 import { PORT_REGIONS } from '../utils/worldPorts';
+import { ShipView } from './ShipView';
+import { pickFlagColor } from '../constants/factions';
+import { useGameStore } from '../store/gameStore';
 
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 const SERIF = '"Fraunces", serif';
-
-// ── Ship ASCII art ──────────────────────────────────────────────────────
-
-const SHIP_ART: Record<string, string[]> = {
-  Carrack: [
-    '            |    |    |',
-    '           )_)  )_)  )_)',
-    '          )___))___))___)\\',
-    '         )____)____)_____)\\\\',
-    '       _____|____|____|____\\\\\\__',
-    '  ─────\\                   /──────',
-  ],
-  Galleon: [
-    '           |    |    |    |',
-    '          )_)  )_)  )_)  )_)',
-    '         )___))___))___))___)\\',
-    '        )____)____)____)_____)\\\\',
-    '      ______|____|____|____|____\\\\\\__',
-    '  ────\\                           /─────',
-  ],
-  Dhow: [
-    '             |',
-    '            /|',
-    '           / |',
-    '          /  |',
-    '         /   |',
-    '       _/____|____',
-    '  ─────\\         /──────',
-  ],
-  Junk: [
-    '           |  |  |',
-    '          _|__|__|_',
-    '         |__|__|__|\\',
-    '         |__|__|__|\\\\',
-    '       __|__|__|__|__\\\\',
-    '  ─────\\              /──────',
-  ],
-  Pinnace: [
-    '           |',
-    '          )_)',
-    '         )___)\\',
-    '        )____)\\\\',
-    '      ___|____|_\\\\\\',
-    '  ────\\          /─────',
-  ],
-};
 
 // ── Route-aware event pools ─────────────────────────────────────────────
 
@@ -159,64 +116,6 @@ function pickVoyageEvents(
   }
 
   return events.sort((a, b) => a.day - b.day);
-}
-
-// ── Parallax wave field ─────────────────────────────────────────────────
-
-const WAVE_CHARS = [' ', '\u00b7', '~', '\u223c', '\u2248', '\u2248'];
-
-function WaveField({ width, height, frame }: { width: number; height: number; frame: number }) {
-  const { water, waterLight, foam } = ASCII_COLORS;
-
-  const backGrid = useMemo(() => {
-    const rows: string[][] = [];
-    for (let y = 0; y < 2; y++) {
-      const row: string[] = [];
-      for (let x = 0; x < width; x++) {
-        const base = Math.sin((x + frame * 0.7) * 0.25 + y * 1.2) * 0.5 + 0.5;
-        const idx = Math.min(WAVE_CHARS.length - 1, Math.floor(base * WAVE_CHARS.length));
-        row.push(WAVE_CHARS[idx]);
-      }
-      rows.push(row);
-    }
-    return rows;
-  }, [width, frame]);
-
-  const frontGrid = useMemo(() => {
-    const rows: string[][] = [];
-    for (let y = 0; y < height; y++) {
-      const row: string[] = [];
-      for (let x = 0; x < width; x++) {
-        const base = Math.sin((x + frame * 1.5) * 0.3 + y * 0.8) * 0.5 + 0.5;
-        const idx = Math.min(WAVE_CHARS.length - 1, Math.floor(base * WAVE_CHARS.length));
-        row.push(WAVE_CHARS[idx]);
-      }
-      rows.push(row);
-    }
-    return rows;
-  }, [width, height, frame]);
-
-  const backColors = ['#2a4a5a', '#1a3a4a'];
-  const frontColors = [water, waterLight, foam, water, waterLight];
-
-  return (
-    <div className="relative">
-      <pre className="text-[9px] leading-[1.25] whitespace-pre" style={{ opacity: 0.3 }}>
-        {backGrid.map((row, y) => (
-          <span key={`b${y}`}>
-            <C c={backColors[y % backColors.length]}>{row.join('')}</C>{'\n'}
-          </span>
-        ))}
-      </pre>
-      <pre className="text-[9px] leading-[1.25] whitespace-pre">
-        {frontGrid.map((row, y) => (
-          <span key={`f${y}`}>
-            <C c={frontColors[y % frontColors.length]}>{row.join('')}</C>{'\n'}
-          </span>
-        ))}
-      </pre>
-    </div>
-  );
 }
 
 // ── Sky gradient ────────────────────────────────────────────────────────
@@ -463,8 +362,6 @@ interface TravelModalBProps {
   fromPort: string;
   toPort: string;
   totalDays: number;
-  shipType: 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace';
-  shipName: string;
   fromPortId?: string;
   toPortId?: string;
   onComplete: () => void;
@@ -475,13 +372,14 @@ export default function TravelModalB({
   fromPort,
   toPort,
   totalDays,
-  shipType,
-  shipName,
   fromPortId,
   toPortId,
   onComplete,
   onSkip,
 }: TravelModalBProps) {
+  const ship = useGameStore(s => s.ship);
+  const stats = useGameStore(s => s.stats);
+
   const [currentDay, setCurrentDay] = useState(0);
   const [waveFrame, setWaveFrame] = useState(0);
   const [shipBob, setShipBob] = useState(0);
@@ -491,8 +389,7 @@ export default function TravelModalB({
   const [shootingStarKey, setShootingStarKey] = useState<number | null>(null);
   const sparkle = useSparkle(350);
 
-  const shipArt = SHIP_ART[shipType] || SHIP_ART.Carrack;
-  const { gold, dimGold, warm, bright, txt, dim, rule, mast, hull, sail, water } = ASCII_COLORS;
+  const { gold, dimGold, warm, bright, txt, dim, rule } = ASCII_COLORS;
 
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
@@ -525,8 +422,9 @@ export default function TravelModalB({
         setPhase('arriving');
         setTimeout(() => {
           setPhase('arrived');
-          setTimeout(() => onCompleteRef.current(), 1800);
-        }, 1500);
+          // Show "Arrived at X" pulse briefly, then hand off to the curtain.
+          setTimeout(() => onCompleteRef.current(), 1100);
+        }, 1100);
         return;
       }
 
@@ -563,6 +461,11 @@ export default function TravelModalB({
   const bobY = Math.sin(shipBob * 0.5) * 3;
   const billowX = Math.sin(shipBob * 0.23) * 1.2; // slow horizontal sway
   const dayProgress = totalDays > 0 ? currentDay / totalDays : 0;
+  // Ship slides from the fromPort side to the toPort side across the scene
+  // as days tick by, mirroring the progress bar. The bob/billow values
+  // layer on top of this slide for swell motion.
+  const SLIDE_RANGE_PX = 70;
+  const slideX = (dayProgress - 0.5) * SLIDE_RANGE_PX;
   const skyColors = getSkyColors(dayProgress);
   isNightRef.current = skyColors.isNight;
   const starSeed = useMemo(() => (fromPort.length * 31 + toPort.length * 17) | 0, [fromPort, toPort]);
@@ -623,12 +526,12 @@ export default function TravelModalB({
                 className="mt-1.5 text-[12px]"
                 style={{ color: warm, fontFamily: SERIF, fontStyle: 'italic' }}
               >
-                {shipName} \u2014 {shipType}
+                {ship.name} — {ship.type}
               </div>
             </div>
 
             {/* Ship + waves scene */}
-            <div className="relative mt-4 overflow-hidden" style={{ height: '135px' }}>
+            <div className="relative mt-4 overflow-hidden" style={{ height: '152px' }}>
               <Starfield visible={skyColors.isNight} frame={waveFrame} seed={starSeed} />
 
               {/* Shooting star — rare, night only */}
@@ -642,44 +545,82 @@ export default function TravelModalB({
               {/* Seabirds — appear when nearing destination */}
               <Seabirds visible={showSeabirds} />
 
-              {/* Lantern glow at night */}
+              {/* Water layer — stable horizon drawn by ShipView in water-only
+                  mode, so bobbing/sliding the ship above it doesn't drag the
+                  waterline along. */}
               <div
+                className="absolute inset-0 flex justify-center pointer-events-none"
+                style={{ zIndex: 1 }}
+              >
+                <ShipView
+                  shipType={ship.type}
+                  hull={stats.hull}
+                  maxHull={stats.maxHull}
+                  sails={stats.sails}
+                  maxSails={stats.maxSails}
+                  wind={0.55}
+                  size="small"
+                  view="exterior"
+                  layer="water"
+                  showToggle={false}
+                />
+              </div>
+
+              {/* Lantern glow at night — follows the ship so the halo always
+                  sits above the masthead, not a fixed point on the canvas. */}
+              <motion.div
                 className="absolute pointer-events-none transition-opacity duration-[2000ms]"
+                animate={{ x: slideX + billowX }}
+                transition={{ duration: 2.4, ease: 'linear' }}
                 style={{
                   left: '50%',
                   top: '30%',
-                  transform: 'translate(-50%, -50%)',
+                  marginLeft: '-70px',
+                  marginTop: '-55px',
                   width: '140px',
                   height: '110px',
                   background: `radial-gradient(ellipse at center, #c9a84c14 0%, transparent 70%)`,
                   opacity: skyColors.isNight ? 1 : 0,
-                  zIndex: 1,
+                  zIndex: 2,
                 }}
               />
 
-              {/* Ship — bobbing vertically + subtle horizontal billow */}
-              <motion.pre
-                className="text-[9px] leading-[1.25] whitespace-pre text-center"
-                animate={{ y: bobY, x: billowX }}
-                transition={{ duration: 0.3, ease: 'easeInOut' }}
-                style={{ position: 'relative', zIndex: 2 }}
+              {/* Ship layer — slides across the scene with dayProgress and
+                  bobs with the swell. Water is drawn separately below. */}
+              <motion.div
+                className="absolute inset-0 flex justify-center"
+                animate={{ y: bobY, x: slideX + billowX }}
+                transition={{
+                  x: { duration: 2.4, ease: 'linear' },
+                  y: { duration: 0.3, ease: 'easeInOut' },
+                }}
+                style={{ zIndex: 3 }}
               >
-                {shipArt.map((line, i) => {
-                  const isWaterline = i === shipArt.length - 1;
-                  const isMast = i === 0;
-                  const isHull = i >= shipArt.length - 2;
-                  return (
-                    <span key={i}>
-                      <C c={isWaterline ? water : isMast ? mast : isHull ? hull : sail}>{line}</C>
-                      {'\n'}
-                    </span>
-                  );
-                })}
-              </motion.pre>
+                <ShipView
+                  shipType={ship.type}
+                  hull={stats.hull}
+                  maxHull={stats.maxHull}
+                  sails={stats.sails}
+                  maxSails={stats.maxSails}
+                  wind={0.55}
+                  flagColor={pickFlagColor(ship.flag)}
+                  size="small"
+                  view="exterior"
+                  layer="ship"
+                  showToggle={false}
+                />
+              </motion.div>
 
-              <div className="absolute bottom-0 left-0 right-0" style={{ opacity: 0.65 }}>
-                <WaveField width={80} height={4} frame={waveFrame} />
-              </div>
+              {/* Bottom fade — softens the hard edge where the ShipView
+                  water canvas clips into the modal background. */}
+              <div
+                className="absolute bottom-0 left-0 right-0 pointer-events-none"
+                style={{
+                  height: '18px',
+                  background: 'linear-gradient(to bottom, transparent 0%, #080706 100%)',
+                  zIndex: 4,
+                }}
+              />
             </div>
 
             {/* Day counter — clean, centered */}
@@ -693,9 +634,22 @@ export default function TravelModalB({
                   transition={{ duration: 0.4 }}
                 >
                   {phase === 'arrived' ? (
-                    <div className="text-[18px]" style={{ color: gold, fontFamily: SERIF }}>
+                    <motion.div
+                      className="text-[18px]"
+                      style={{ color: gold, fontFamily: SERIF }}
+                      initial={{ scale: 0.92 }}
+                      animate={{
+                        scale: [0.92, 1.08, 1],
+                        textShadow: [
+                          '0 0 0px #c9a84c00',
+                          '0 0 14px #c9a84c88',
+                          '0 0 6px #c9a84c44',
+                        ],
+                      }}
+                      transition={{ duration: 1.1, times: [0, 0.45, 1], ease: 'easeOut' }}
+                    >
                       {sparkle(0)} Arrived at {toPort} {sparkle(2)}
-                    </div>
+                    </motion.div>
                   ) : phase === 'arriving' ? (
                     <div className="text-[14px]" style={{ color: warm, fontFamily: SERIF, fontStyle: 'italic' }}>
                       Land on the horizon...

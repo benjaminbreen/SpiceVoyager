@@ -294,15 +294,39 @@ export function MarketTabLedger({
                           setSelectedCommodity(row.commodity);
                           setQuantity(Math.min(Math.max(quantity, 1), Math.max(row.maxBuy, row.maxSell, 1)));
                         }}
-                        className={`group grid min-h-[64px] w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-white/[0.04] px-3 py-2 text-left transition-all last:border-b-0 md:grid-cols-[minmax(180px,1.35fr)_76px_92px_84px_84px] md:items-center ${
+                        className={`group grid min-h-[72px] w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-white/[0.04] px-3 py-2 text-left transition-all last:border-b-0 md:grid-cols-[minmax(180px,1.35fr)_76px_92px_84px_84px] md:items-center ${
                           isSelected ? 'bg-white/[0.045] shadow-[inset_2px_0_0_rgba(201,168,76,0.7)]' : 'bg-transparent hover:bg-white/[0.03]'
                         }`}
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           {image ? (
-                            <img src={image} alt="" className={`h-11 w-11 shrink-0 rounded-lg border object-cover ${isUnknown ? 'border-amber-400/15 opacity-60 saturate-50' : 'border-white/[0.06] bg-white/[0.03] opacity-90'}`} />
+                            <span
+                              className={`flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-lg border transition-all duration-200 ${
+                                isUnknown
+                                  ? 'border-amber-400/15 bg-amber-400/[0.04] opacity-65 saturate-50'
+                                  : isSelected
+                                    ? 'border-white/[0.14] bg-white/[0.05]'
+                                    : 'border-white/[0.07] bg-white/[0.03] group-hover:border-white/[0.12] group-hover:bg-white/[0.05]'
+                              }`}
+                              style={isSelected ? { boxShadow: `inset 0 0 0 1px ${def.color}40, 0 0 12px ${def.color}25` } : undefined}
+                            >
+                              <img
+                                src={image}
+                                alt=""
+                                className={`h-[110%] w-[110%] object-cover transition-transform duration-200 ${isSelected ? 'scale-[1.05]' : 'group-hover:scale-[1.04]'}`}
+                              />
+                            </span>
                           ) : (
-                            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border text-lg ${isUnknown ? 'border-amber-400/15 bg-amber-400/[0.05]' : 'border-white/[0.06] bg-white/[0.03]'}`} style={{ color: isUnknown ? '#d4a054' : def.color }}>
+                            <span
+                              className={`flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-lg border text-xl transition-colors duration-200 ${
+                                isUnknown
+                                  ? 'border-amber-400/15 bg-amber-400/[0.05]'
+                                  : isSelected
+                                    ? 'border-white/[0.14] bg-white/[0.05]'
+                                    : 'border-white/[0.07] bg-white/[0.03] group-hover:border-white/[0.12]'
+                              }`}
+                              style={{ color: isUnknown ? '#d4a054' : def.color }}
+                            >
                               {def.icon}
                             </span>
                           )}
@@ -369,9 +393,32 @@ export function MarketTabLedger({
       <aside className={`rounded-lg border p-4 ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-950/[0.15]' : 'border-white/[0.05] bg-white/[0.018]'}`}>
         <div className="flex items-start gap-4">
           {selectedImage ? (
-            <img src={selectedImage} alt="" className={`h-24 w-24 shrink-0 rounded-lg border object-cover ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 opacity-60 saturate-50' : 'border-white/[0.07] bg-white/[0.025] opacity-95'}`} />
+            <span
+              className={`relative flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${
+                selected.knowledgeLevel === 0
+                  ? 'border-amber-400/15 opacity-65 saturate-50'
+                  : 'border-white/[0.08]'
+              }`}
+              style={
+                selected.knowledgeLevel === 0
+                  ? undefined
+                  : {
+                      background: `radial-gradient(circle at 32% 28%, color-mix(in srgb, ${selectedDef.color} 18%, #ece2cc) 0%, color-mix(in srgb, ${selectedDef.color} 10%, #c8bea7) 70%, color-mix(in srgb, ${selectedDef.color} 6%, #a89e88) 100%)`,
+                      boxShadow: `inset 0 1px 1px rgba(255,255,255,0.25), inset 0 -2px 6px rgba(0,0,0,0.18), 0 2px 12px rgba(0,0,0,0.25), 0 0 24px ${selectedDef.color}1f`,
+                    }
+              }
+            >
+              <img src={selectedImage} alt="" className="h-[116%] w-[116%] object-cover" />
+              {selected.knowledgeLevel !== 0 && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 rounded-[inherit]"
+                  style={{ boxShadow: `inset 0 0 0 1px ${selectedDef.color}30, inset 0 0 0 2px rgba(255,255,255,0.05)` }}
+                />
+              )}
+            </span>
           ) : (
-            <div className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border text-4xl ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-400/[0.05]' : 'border-white/[0.07] bg-white/[0.025]'}`} style={{ color: selected.knowledgeLevel === 0 ? '#d4a054' : selectedDef.color }}>
+            <div className={`flex h-28 w-28 shrink-0 items-center justify-center rounded-xl border text-4xl ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-400/[0.05]' : 'border-white/[0.08] bg-white/[0.025]'}`} style={{ color: selected.knowledgeLevel === 0 ? '#d4a054' : selectedDef.color }}>
               {selectedDef.icon}
             </div>
           )}

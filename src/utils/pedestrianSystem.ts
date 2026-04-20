@@ -255,6 +255,7 @@ const MAX_PEDESTRIANS_BY_SCALE: Record<string, number> = {
   'Medium': 16,
   'Large': 28,
   'Very Large': 45,
+  'Huge': 70,
 };
 
 function pickFigureType(rng: () => number): FigureType {

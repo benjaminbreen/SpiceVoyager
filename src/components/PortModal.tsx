@@ -479,7 +479,6 @@ const DEFAULT_OVERVIEW: PortOverview = {
 const CULTURE_GRADIENT: Record<Culture, string> = {
   'Indian Ocean': 'from-amber-950/25 via-amber-950/10 to-transparent',
   'European': 'from-slate-900/25 via-slate-800/10 to-transparent',
-  'Caribbean': 'from-emerald-950/25 via-emerald-950/10 to-transparent',
   'West African': 'from-yellow-950/25 via-yellow-950/10 to-transparent',
   'Atlantic': 'from-emerald-950/25 via-emerald-950/10 to-transparent',
 };
@@ -760,22 +759,22 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
             <div className="absolute inset-0 flex flex-col justify-between p-4 pb-14 md:p-6 z-10">
               {/* Historical info panel (desktop — top-left of banner) */}
               {info && (
-                <div className="hidden md:flex items-start gap-5 text-[11px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                <div className="hidden md:flex items-start gap-5 text-[13px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Sovereign</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Sovereign</div>
                     <div className="text-white/100 mt-0.5">{info.sovereign}</div>
                     <div className="text-white/60">{info.sovereignType}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Population</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Population</div>
                     <div className="text-white/60 font-mono mt-0.5">{info.population}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Language</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Language</div>
                     <div className="text-white/60 mt-0.5">{info.languages}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70">Religion</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Religion</div>
                     <div className="text-white/60 mt-0.5">{info.religions}</div>
                   </div>
                 </div>
@@ -784,16 +783,16 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
               {/* Bottom of banner: tab title + description */}
               <div className={`${activeTab === 'overview' ? 'max-w-4xl' : activeTab === 'shipyard' ? 'max-w-5xl' : 'max-w-3xl'} mt-auto`}>
                 {/* Mobile: port name */}
-                <div className="md:hidden text-[9px] font-bold tracking-[0.15em] uppercase text-white/40 mb-0.5"
+                <div className="md:hidden text-[11px] font-bold tracking-[0.15em] uppercase text-white/40 mb-0.5"
                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
                   {activePort.name} · {activePort.culture}
                 </div>
-                <h3 className="text-xl md:text-2xl font-bold text-white/90 leading-tight"
+                <h3 className="text-3xl md:text-4xl font-bold text-white/90 leading-tight"
                   style={{ fontFamily: '"Fraunces", serif' }}>
                   {bannerTitle}
                 </h3>
                 {bannerText && (
-                  <p className="text-[13px] md:text-sm text-white/55 mt-2 leading-relaxed"
+                  <p className="text-base md:text-lg text-white/55 mt-2 leading-relaxed"
                     style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
                     {bannerText}
                   </p>
@@ -867,7 +866,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                   className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]"
                 >
                   <section>
-                    <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500 mb-2 px-1"
+                    <div className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-500 mb-2 px-1"
                       style={{ fontFamily: '"DM Sans", sans-serif' }}>
                       Port Places
                     </div>
@@ -882,28 +881,28 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                             key={place.id}
                             onMouseEnter={() => sfxHover()}
                             onClick={() => { sfxTab(); setActiveTab(place.id); }}
-                            className="group min-h-[126px] rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-3 text-left transition-all hover:bg-white/[0.055] hover:border-white/[0.11] active:scale-[0.99]"
+                            className="group min-h-[140px] rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-3 text-left transition-all hover:bg-white/[0.055] hover:border-white/[0.11] active:scale-[0.99]"
                           >
                             <div className="flex items-center gap-4">
-                              <div className="h-[88px] w-[88px] shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-[#111827] flex items-center justify-center">
+                              <div className="h-[110px] w-[110px] shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-[#111827] flex items-center justify-center">
                                 {placeImage ? (
                                   <img
                                     key={placeImage}
                                     src={placeImage}
                                     alt=""
-                                    className="h-full w-full object-cover opacity-80 transition-opacity group-hover:opacity-100"
+                                    className="h-full w-full object-cover scale-125 opacity-80 transition-opacity group-hover:opacity-100"
                                     onError={() => markImageError(placeImage)}
                                   />
                                 ) : (
-                                  <Icon size={30} className="text-slate-500 group-hover:text-slate-300 transition-colors" />
+                                  <Icon size={36} className="text-slate-500 group-hover:text-slate-300 transition-colors" />
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <div className="text-[12px] md:text-[13px] font-bold text-slate-200 leading-tight"
+                                <div className="text-[16px] md:text-[17px] font-bold text-slate-200 leading-tight"
                                   style={{ fontFamily: '"Fraunces", serif' }}>
                                   {placeInfo?.title ?? place.label}
                                 </div>
-                                <div className="mt-1 text-[9px] md:text-[10px] uppercase tracking-[0.14em] text-slate-600 group-hover:text-slate-500 transition-colors"
+                                <div className="mt-1.5 text-[11px] md:text-[12px] uppercase tracking-[0.14em] text-slate-600 group-hover:text-slate-500 transition-colors"
                                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
                                   {place.action}
                                 </div>
@@ -918,27 +917,27 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
                   <aside className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
                     <div className="rounded-lg border border-white/[0.05] bg-white/[0.018] px-3 py-3">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500"
+                        <div className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-500"
                           style={{ fontFamily: '"DM Sans", sans-serif' }}>
                           Harbor News
                         </div>
-                        <div className="text-[8px] font-bold tracking-[0.14em] uppercase text-slate-700"
+                        <div className="text-[9px] font-bold tracking-[0.14em] uppercase text-slate-700"
                           style={{ fontFamily: '"DM Sans", sans-serif' }}>
                           Day {dayCount} · {getSeasonLabel(season)}
                         </div>
                       </div>
-                      <p className="mt-2 text-[12px] leading-relaxed text-slate-400"
+                      <p className="mt-2 text-[13px] leading-relaxed text-slate-400"
                         style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
                         {harborNews}
                       </p>
                     </div>
 
                     <div className="rounded-lg border border-white/[0.05] bg-white/[0.018] px-3 py-3">
-                      <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500"
+                      <div className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-500"
                         style={{ fontFamily: '"DM Sans", sans-serif' }}>
                         Historical Note
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-slate-500"
+                      <p className="mt-2 text-[13px] leading-relaxed text-slate-500"
                         style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
                         {overview.historicalNote}
                       </p>
@@ -1241,11 +1240,11 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
           <div className="shrink-0 border-t border-white/[0.04] px-5 py-2.5 flex items-center justify-end">
             <button
               onClick={handleClose}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[10px] font-bold tracking-[0.1em] uppercase
-                text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all active:scale-95"
+              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-[15px] font-bold tracking-[0.08em] uppercase
+                text-slate-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all active:scale-95"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
             >
-              <Sailboat size={11} /> Set Sail
+              <Sailboat size={18} /> Set Sail
             </button>
           </div>
         </div>

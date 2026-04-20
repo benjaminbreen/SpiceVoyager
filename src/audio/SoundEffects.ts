@@ -1,12 +1,43 @@
 // Synthesized UI sound effects — no audio files needed.
 // Inspired by Diablo 2's minimalist, tactile menu sounds.
 
+import { getActivePlayerPos } from '../utils/livePlayerTransform';
+
 let ctx: AudioContext | null = null;
 
 function getCtx(): AudioContext {
   if (!ctx) ctx = new AudioContext();
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
+}
+
+/**
+ * Build a gain+panner chain terminating at ac.destination, biased by the XZ
+ * offset from the active player. Sound falls off with distance and pans
+ * left/right using world-space dx — matches the camera's near-overhead view
+ * accurately enough without tracking camera rotation.
+ *
+ * Returns the chain's *input* node, suitable for passing as the `dest`
+ * parameter to noise()/ping() or as the terminus of caller-built chains.
+ */
+function spatialDest(ac: AudioContext, x: number, z: number): AudioNode {
+  const pp = getActivePlayerPos();
+  const dx = x - pp[0];
+  const dz = z - pp[2];
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  // 1/(1+d/r) falloff: half volume at distance = ATTEN_RANGE
+  const ATTEN_RANGE = 32;
+  const atten = ATTEN_RANGE / (ATTEN_RANGE + dist);
+  // Pan saturates before going off-screen so hard left/right happens at ~20u
+  const PAN_RANGE = 20;
+  const panVal = Math.max(-1, Math.min(1, dx / PAN_RANGE));
+
+  const gain = ac.createGain();
+  gain.gain.value = atten;
+  const pan = ac.createStereoPanner();
+  pan.pan.value = panVal;
+  gain.connect(pan).connect(ac.destination);
+  return gain;
 }
 
 /** Short noise burst shaped by an envelope — foundation for clicks. */
@@ -1067,6 +1098,29 @@ export function sfxFootstep(biome: string) {
   }
 }
 
+/** Walking player bumping a tree trunk or rock — short woody thud. */
+export function sfxThud() {
+  const ac = getCtx();
+  const v = masterVolume * 0.35;
+  const t = ac.currentTime;
+
+  // Low body — hollow trunk resonance
+  ping(ac, 110, 0.09, v * 0.55, 'sine');
+  ping(ac, 165, 0.07, v * 0.3, 'triangle');
+  // Sharp attack — bark/wood contact transient
+  noise(ac, 0.04, v * 0.4, 1800, 1.4);
+  // Subtle tail — fades the impact rather than a clean cut
+  const tail = ac.createGain();
+  tail.gain.setValueAtTime(v * 0.12, t);
+  tail.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  const tailOsc = ac.createOscillator();
+  tailOsc.type = 'sine';
+  tailOsc.frequency.value = 80;
+  tailOsc.connect(tail).connect(ac.destination);
+  tailOsc.start(t);
+  tailOsc.stop(t + 0.12);
+}
+
 /** Ship grinding into shore — wood splintering on rock/sand. */
 export function sfxShoreCollision() {
   const ac = getCtx();
@@ -1784,10 +1838,11 @@ export function sfxShipHail(language: string) {
 }
 
 /** Herd hoofbeats — rapid soft thumps as grazers scatter. */
-export function sfxHoofbeats() {
+export function sfxHoofbeats(x?: number, z?: number) {
   const ac = getCtx();
   const v = masterVolume * 0.32;
   const t = ac.currentTime;
+  const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
   // 6 rapid low thuds with jitter — overlapping hooves
   for (let i = 0; i < 6; i++) {
     const start = t + i * 0.055 + Math.random() * 0.02;
@@ -1804,17 +1859,18 @@ export function sfxHoofbeats() {
     const gain = ac.createGain();
     gain.gain.setValueAtTime(v * (0.5 + Math.random() * 0.5), start);
     gain.gain.exponentialRampToValueAtTime(0.001, start + 0.08);
-    src.connect(filt).connect(gain).connect(ac.destination);
+    src.connect(filt).connect(gain).connect(dest);
     src.start(start);
     src.stop(start + 0.1);
   }
 }
 
 /** Flock takeoff — sweeping wing flap whoosh. */
-export function sfxBirdFlap() {
+export function sfxBirdFlap(x?: number, z?: number) {
   const ac = getCtx();
   const v = masterVolume * 0.28;
   const t = ac.currentTime;
+  const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
   // Three stacked flap bursts — filtered noise sweeping low→high→low
   for (let i = 0; i < 3; i++) {
     const start = t + i * 0.12;
@@ -1834,17 +1890,18 @@ export function sfxBirdFlap() {
     gain.gain.setValueAtTime(0.001, start);
     gain.gain.linearRampToValueAtTime(v * 0.7, start + 0.04);
     gain.gain.exponentialRampToValueAtTime(0.001, start + 0.24);
-    src.connect(filt).connect(gain).connect(ac.destination);
+    src.connect(filt).connect(gain).connect(dest);
     src.start(start);
     src.stop(start + 0.25);
   }
 }
 
 /** Reptile scrabble — short scratchy noise as a lizard lurches away. */
-export function sfxReptileScrabble() {
+export function sfxReptileScrabble(x?: number, z?: number) {
   const ac = getCtx();
   const v = masterVolume * 0.25;
   const t = ac.currentTime;
+  const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
   // Short rasping noise, filtered mid-high
   const len = ac.sampleRate * 0.2;
   const buf = ac.createBuffer(1, len, ac.sampleRate);
@@ -1860,16 +1917,17 @@ export function sfxReptileScrabble() {
   gain.gain.setValueAtTime(0.001, t);
   gain.gain.linearRampToValueAtTime(v * 0.7, t + 0.03);
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-  src.connect(filt).connect(gain).connect(ac.destination);
+  src.connect(filt).connect(gain).connect(dest);
   src.start(t);
   src.stop(t + 0.22);
 }
 
 /** Primate alarm chatter — short high-pitched yelps. */
-export function sfxPrimateChatter() {
+export function sfxPrimateChatter(x?: number, z?: number) {
   const ac = getCtx();
   const v = masterVolume * 0.22;
   const t = ac.currentTime;
+  const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
   // Three quick chirps of varying pitch
   const pitches = [1400, 1700, 1550];
   for (let i = 0; i < pitches.length; i++) {
@@ -1886,7 +1944,7 @@ export function sfxPrimateChatter() {
     gain.gain.setValueAtTime(0.001, start);
     gain.gain.linearRampToValueAtTime(v * 0.6, start + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
-    osc.connect(filt).connect(gain).connect(ac.destination);
+    osc.connect(filt).connect(gain).connect(dest);
     osc.start(start);
     osc.stop(start + 0.14);
   }

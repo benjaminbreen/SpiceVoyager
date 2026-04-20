@@ -8,6 +8,7 @@ import { npcLivePositions } from '../utils/combatState';
 import { getMeshHalf, getTerrainHeight } from '../utils/terrain';
 import { sfxShipSink } from '../audio/SoundEffects';
 import { spawnSplash } from '../utils/splashState';
+import { addCameraImpulse } from '../utils/cameraShakeState';
 import { SEA_LEVEL } from '../constants/world';
 
 const APPROACH_RADIUS = 40;  // show "approaching" toast
@@ -602,20 +603,50 @@ export function NPCShip({
       }
     }
 
-    // ── Collision ──
+    // ── Collision — elastic bounce with restitution ──
     if (distToPlayer < COLLISION_RADIUS) {
       const now = Date.now();
-      const bounceDir = _tmpVec.current.set(
-        currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
-      ).normalize();
-      currentPos.addScaledVector(bounceDir, 2);
+      // Contact normal points from player → NPC.
+      const rawDx = currentPos.x - playerPos[0];
+      const rawDz = currentPos.z - playerPos[2];
+      const rawLen = Math.max(0.001, Math.sqrt(rawDx * rawDx + rawDz * rawDz));
+      const nx = rawDx / rawLen;
+      const nz = rawDz / rawLen;
 
-      // Only fire events/reputation once per cooldown (matches Ship.tsx's 2s gate)
+      // Relative velocity along the contact normal (NPC minus player, dotted with n).
+      // Negative means ships are closing; positive means separating.
+      const playerTransform = getLiveShipTransform();
+      const pvx = Math.sin(playerTransform.rot) * playerTransform.vel;
+      const pvz = Math.cos(playerTransform.rot) * playerTransform.vel;
+      // Effective NPC speed this frame (alertMode not yet computed this frame — approximate).
+      const npcSpeed = Date.now() < alertUntil.current ? speed * 2.5 : speed;
+      const nvx = Math.sin(group.current.rotation.y) * npcSpeed;
+      const nvz = Math.cos(group.current.rotation.y) * npcSpeed;
+      const relN = (nvx - pvx) * nx + (nvz - pvz) * nz;
+      const approachSpeed = Math.max(0, -relN);
+
+      // Equal-mass elastic impulse with restitution.
+      const RESTITUTION = 0.7;
+      const impulseMag = (1 + RESTITUTION) * approachSpeed * 0.5;
+
+      // Kick NPC outward along +n (guaranteed minimum so a grazing touch is still felt).
+      const npcKick = Math.max(impulseMag * 0.8, 1.8);
+      currentPos.x += nx * npcKick * 0.35;
+      currentPos.z += nz * npcKick * 0.35;
+
+      // Only fire events/reputation/damage once per cooldown (matches Ship.tsx's 2s gate)
       if (now - lastCollisionTime.current > COLLISION_COOLDOWN) {
         lastCollisionTime.current = now;
         window.dispatchEvent(new CustomEvent('ship-collision', {
-          detail: { appearancePhrase: identity.appearancePhrase },
+          detail: {
+            appearancePhrase: identity.appearancePhrase,
+            nx, nz,
+            impulseMag,
+            approachSpeed,
+          },
         }));
+        // Camera nudge — one-shot directional push away from the ram point.
+        addCameraImpulse(-nx, -nz, Math.min(1.8, 0.45 + approachSpeed * 0.22));
         hullRef.current = Math.max(0, hullRef.current - NPC_COLLISION_DAMAGE);
         if (liveEntry) liveEntry.hull = hullRef.current;
         adjustReputation(identity.flag, -5);
@@ -636,7 +667,7 @@ export function NPCShip({
       // Always refresh alert mode so the ship keeps fleeing
       alertUntil.current = now + ALERT_DURATION;
       targetRef.current.set(
-        currentPos.x + bounceDir.x * 80, 0, currentPos.z + bounceDir.z * 80
+        currentPos.x + nx * 80, 0, currentPos.z + nz * 80
       );
     }
 
