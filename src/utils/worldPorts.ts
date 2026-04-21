@@ -244,9 +244,14 @@ export function estimateSeaTravel(fromPortId: string, toPortId: string) {
 
 /**
  * Waypoints for sea lanes that need to route around land.
- * Keys are sorted "portA:portB". Values are [lon, lat] waypoints
- * that the route passes through between the two ports.
- * Routes without waypoints use a simple curve.
+ * Keys are sorted "portA:portB" (alphabetical). Values are [lon, lat]
+ * waypoints read in SORTED-KEY ORDER — first point near portA, last near
+ * portB. `getSeaLaneWaypoints` reverses the array automatically when the
+ * caller queries B→A. Routes without waypoints use a simple direct curve.
+ *
+ * The comment above each route describes the natural geographic direction
+ * (often matching the sorted key, sometimes inverted); the array order
+ * always follows the key.
  */
 const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
   // ── Cape route: Africa circumnavigation ──────────────────────────
@@ -256,19 +261,19 @@ const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
   'cape:zanzibar':  [[33, -30], [38, -20], [39, -12]],
   // Cape → Luanda: up the West African coast
   'cape:luanda':    [[14, -30], [12, -22], [13, -14]],
-  // Luanda → Elmina: along the Gulf of Guinea coast
-  'elmina:luanda':  [[8, -4], [6, 0], [3, 3]],
+  // Elmina → Luanda (south along the Gulf of Guinea, hugging the coast offshore)
+  'elmina:luanda':  [[3, 3], [6, 0], [8, -4]],
 
   // ── European coastal routes ──────────────────────────────────────
   // Lisbon → London: around Iberian NW coast, across Bay of Biscay, through Channel
   'lisbon:london':  [[-9, 43], [-5, 48], [-2, 50]],
-  // Lisbon → Amsterdam: same route but continues north
-  'amsterdam:lisbon': [[-9, 43], [-5, 48], [0, 51]],
-  // London → Amsterdam: short North Sea hop — no waypoints needed (it's over water)
-  // Seville → London: out of Mediterranean, up Atlantic coast
-  'london:seville': [[-8, 38], [-9, 43], [-5, 48], [-2, 50]],
-  // Elmina → Amsterdam: along West African coast, past Iberia, up to Netherlands
-  'amsterdam:elmina': [[-5, 10], [-12, 20], [-10, 35], [-9, 43], [-5, 48], [0, 51]],
+  // Amsterdam → Lisbon: through Channel, across Bay of Biscay, south to Iberia
+  'amsterdam:lisbon': [[0, 51], [-5, 48], [-9, 43]],
+  // London → Amsterdam: short North Sea hop — no waypoints needed
+  // London → Seville: down through Channel, across Biscay, around Iberia, to Gibraltar
+  'london:seville': [[-2, 50], [-5, 48], [-9, 43], [-8, 38]],
+  // Amsterdam → Elmina: down past England, Iberia, West African coast, to Gulf of Guinea
+  'amsterdam:elmina': [[0, 51], [-5, 48], [-9, 43], [-10, 35], [-12, 20], [-5, 10]],
   // Elmina → Lisbon: up the West African coast, past Canaries/Madeira
   'elmina:lisbon': [[-8, 10], [-14, 18], [-14, 28], [-10, 35]],
 
@@ -277,18 +282,19 @@ const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
   'lisbon:salvador': [[-18, 30], [-25, 20], [-30, 8], [-35, -5]],
   // Elmina → Salvador: across the Atlantic narrows (shortest ocean crossing)
   'elmina:salvador': [[-10, 2], [-20, -2], [-30, -6]],
-  // Seville → Havana: Canaries, then trade winds west across Atlantic
-  'havana:seville': [[-15, 32], [-25, 28], [-45, 25], [-65, 24]],
-  // Seville → Cartagena: similar route via Canaries and trade winds
-  'cartagena:seville': [[-15, 32], [-25, 28], [-42, 22], [-58, 15]],
-  // Salvador → Havana: up the Brazilian coast, through Caribbean
-  'havana:salvador': [[-38, -8], [-42, 0], [-55, 8], [-68, 15], [-78, 20]],
+  // Havana → Seville: out of Caribbean, ride Gulf Stream east past Azores, down to Iberia
+  'havana:seville': [[-65, 24], [-45, 25], [-25, 28], [-15, 32]],
+  // Cartagena → Seville: out through the Caribbean, east across mid-Atlantic, past Canaries
+  'cartagena:seville': [[-58, 15], [-42, 22], [-25, 28], [-15, 32]],
+  // Havana → Salvador: south through Caribbean, past Trinidad, down Brazilian coast
+  'havana:salvador': [[-78, 20], [-68, 15], [-55, 8], [-42, 0], [-38, -8]],
   // Luanda → Salvador: straight across the South Atlantic (actually fairly direct)
   'luanda:salvador': [[5, -10], [-10, -12], [-25, -13]],
-  // London → Jamestown: 1612 English crossings used the southern route (down
+  // Jamestown → London: 1612 English crossings used the southern route (down
   // past the Canaries, west with the trade winds, then north up the Atlantic
-  // coast of North America). Return via the Gulf Stream back north.
-  'jamestown:london': [[-5, 48], [-12, 36], [-25, 28], [-50, 24], [-65, 28], [-75, 35]],
+  // coast of North America). Return uses the Gulf Stream — this is the game's
+  // one-route simplification.
+  'jamestown:london': [[-75, 35], [-65, 28], [-50, 24], [-25, 28], [-12, 36], [-5, 48]],
 
   // ── Indian Ocean long-haul routes ────────────────────────────────
   // Calicut → Zanzibar: across the western Indian Ocean
@@ -299,14 +305,14 @@ const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
   'goa:malacca': [[76, 10], [80, 6], [85, 4], [92, 3], [98, 2]],
   // Calicut → Malacca: around Sri Lanka, across Bay of Bengal
   'calicut:malacca': [[78, 8], [82, 5], [88, 3], [95, 2], [99, 2]],
-  // Calicut → Bantam: south of Sri Lanka, across Indian Ocean, through Sunda Strait
-  'bantam:calicut': [[80, 6], [86, 3], [92, 1], [98, -1], [103, -4]],
-  // Muscat → Mombasa: down the East African coast
-  'mombasa:muscat': [[57, 20], [52, 14], [46, 5], [42, -2]],
+  // Bantam → Calicut: out through Sunda Strait, across Indian Ocean, south of Sri Lanka
+  'bantam:calicut': [[103, -4], [98, -1], [92, 1], [86, 3], [80, 6]],
+  // Mombasa → Muscat: up the East African coast, across to Arabia
+  'mombasa:muscat': [[42, -2], [46, 5], [52, 14], [57, 20]],
 
   // ── Southeast Asia routes ────────────────────────────────────────
-  // Malacca → Macau: through the South China Sea, east of Indochina
-  'macau:malacca': [[104, 4], [107, 8], [110, 14], [112, 18]],
+  // Macau → Malacca: south through the South China Sea, east of Indochina
+  'macau:malacca': [[112, 18], [110, 14], [107, 8], [104, 4]],
   // Bantam → Macau: north through Java Sea, east of Borneo, up to South China Sea
   'bantam:macau': [[108, -3], [110, 2], [112, 8], [113, 14]],
 

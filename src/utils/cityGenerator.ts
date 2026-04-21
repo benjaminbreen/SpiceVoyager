@@ -2,6 +2,8 @@ import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from './terrain';
 import { generateBuildingLabel } from './buildingLabels';
+import type { CanalLayout } from './canalLayout';
+import { distanceToNearestCanal } from './canalLayout';
 
 function mulberry32(a: number) {
   return function() {
@@ -301,6 +303,7 @@ export function generateCity(
   nationality?: Nationality,
   region?: CulturalRegion,
   bridgeCount: number = 0,
+  canalLayout?: CanalLayout,
 ): { buildings: Building[]; roads: Road[] } {
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
@@ -322,14 +325,29 @@ export function generateCity(
       const x = portX + c * cellSize;
       const z = portZ + r * cellSize;
       const terrain = getTerrainData(x, z);
+      let height = terrain.height;
+      let isWater = terrain.height < SEA_LEVEL;
+      let isBeach = terrain.height >= SEA_LEVEL && (terrain.coastFactor > 0.22 || terrain.height < SEA_LEVEL + 2.2);
+      let isLand = terrain.height >= SEA_LEVEL && terrain.coastFactor <= 0.22 && terrain.height >= SEA_LEVEL + 0.6;
+
+      // Canal carving: cells inside a canal water strip override to water with
+      // the deck-level depth so bridges still clear comfortably overhead.
+      if (canalLayout && canalLayout.canals.length > 0 && (isLand || isBeach)) {
+        const { insideCanal } = distanceToNearestCanal(x, z, canalLayout);
+        if (insideCanal) {
+          height = SEA_LEVEL - 0.5;
+          isWater = true;
+          isLand = false;
+          isBeach = false;
+        }
+      }
+
       const cell: Cell = {
         x, z,
-        height: terrain.height,
+        height,
         moisture: terrain.moisture,
         occupied: false,
-        isWater: terrain.height < SEA_LEVEL,
-        isBeach: terrain.height >= SEA_LEVEL && (terrain.coastFactor > 0.22 || terrain.height < SEA_LEVEL + 2.2),
-        isLand: terrain.height >= SEA_LEVEL && terrain.coastFactor <= 0.22 && terrain.height >= SEA_LEVEL + 0.6,
+        isWater, isBeach, isLand,
         distToCenter: Math.sqrt((x - portX) ** 2 + (z - portZ) ** 2),
         bank: -1,
       };
@@ -368,8 +386,12 @@ export function generateCity(
     .map((size, id) => ({ id, size }))
     .sort((a, b) => b.size - a.size);
   const totalLand = bankSizes.reduce((a, b) => a + b, 0);
-  const dualBank =
-    sortedBanks.length >= 2 && sortedBanks[1].size >= totalLand * 0.18;
+  // Canal cities subdivide the land into many ring/spoke fragments. The dual-
+  // bank logic is meant for a single river bisecting the map; suppressing it
+  // here lets anchors place freely on whichever fragment happens to be largest.
+  const dualBank = !canalLayout
+    && sortedBanks.length >= 2
+    && sortedBanks[1].size >= totalLand * 0.18;
   const bankA = dualBank ? sortedBanks[0].id : -1;
   const bankB = dualBank ? sortedBanks[1].id : -1;
   const majorBanks = new Set<number>();
@@ -558,6 +580,61 @@ export function generateCity(
       bridgeRoads.push(path);
       const mid = best.water[Math.floor(best.water.length / 2)];
       bridgeCentroids.push([mid.x, mid.z]);
+    }
+  }
+
+  // ── Canal-city bridges ────────────────────────────────────────────────────
+  // For each predetermined canal crossing, walk perpendicular across the
+  // canal in cell steps, trim to land on each side, and emit a bridge road.
+  if (canalLayout && canalLayout.bridges.length > 0) {
+    let canalBridgeIdx = 0;
+    for (const cb of canalLayout.bridges) {
+      // Sample along the deck axis at sub-cell density so the path includes
+      // every cell the deck overlaps. Reach a bit past halfLength so the
+      // trim step can find land on both sides.
+      const reach = cb.halfLength + cellSize * 2;
+      const samples = Math.max(8, Math.ceil((reach * 2) / (cellSize * 0.5)));
+      const seen = new Set<string>();
+      const rawPath: Cell[] = [];
+      for (let i = -samples; i <= samples; i++) {
+        const t = (i / samples) * reach;
+        const wx = cb.x + cb.dirX * t;
+        const wz = cb.z + cb.dirZ * t;
+        const cx = portX + Math.round((wx - portX) / cellSize) * cellSize;
+        const cz = portZ + Math.round((wz - portZ) / cellSize) * cellSize;
+        const key = `${cx},${cz}`;
+        if (seen.has(key)) continue;
+        const cell = gridMap.get(key);
+        if (!cell) continue;
+        seen.add(key);
+        rawPath.push(cell);
+      }
+      // Trim to first land cell on each side so the deck lands on solid ground.
+      let lo = -1, hi = -1;
+      for (let i = 0; i < rawPath.length; i++) {
+        if (rawPath[i].isLand || rawPath[i].isBeach) { lo = i; break; }
+      }
+      for (let i = rawPath.length - 1; i >= 0; i--) {
+        if (rawPath[i].isLand || rawPath[i].isBeach) { hi = i; break; }
+      }
+      if (lo < 0 || hi <= lo) continue;
+      const path = rawPath.slice(lo, hi + 1);
+      // Need at least one water cell in the middle for this to read as a bridge.
+      const hasWater = path.some(c => c.isWater);
+      if (!hasWater) continue;
+
+      for (const cell of path) {
+        const k = `${cell.x},${cell.z}`;
+        if (cell.isWater) bridgeCells.add(k);
+        roadCells.add(k);
+      }
+      const deckY = SEA_LEVEL + 0.8;
+      const points: [number, number, number][] = path.map(c => {
+        const y = c.isWater ? deckY : Math.max(c.height, deckY);
+        return [c.x, y, c.z];
+      });
+      roads.push({ id: `canal_bridge_${canalBridgeIdx++}`, tier: 'bridge', points });
+      bridgeRoads.push(path);
     }
   }
 

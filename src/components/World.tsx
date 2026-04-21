@@ -13,6 +13,7 @@ import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN } from '../utils/animalTerrain';
+import { treeShakes, type TreeImpactKind, getPalmDamage, resetVegetationDamage } from '../utils/impactShakeState';
 
 /** Shift a hex color's HSL to match the current climate palette.
  *  Tropical is the baseline — other climates desaturate and hue-shift. */
@@ -216,12 +217,25 @@ export function getAnimalMapData() {
   };
 }
 
+export interface TreeImpactTarget {
+  kind: TreeImpactKind;
+  index: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
+let _treeImpactTargets: TreeImpactTarget[] = [];
+export function getTreeImpactTargets() { return _treeImpactTargets; }
+
 
 // Commodity list now imported from utils/commodities.ts
 type PalmEntry = { position: [number, number, number], scale: number, lean: number, rotation: number };
 
 const FISH_SWIM_DEPTH = 0.85;
 const TURTLE_SWIM_DEPTH = 0.65;
+const TREE_SHAKE_DURATION = 0.34;
 const NPC_SPAWN_TARGET_COUNT = 5;
 const NPC_SPAWN_MIN_SEPARATION = 38;
 const NPC_SPAWN_EDGE_MARGIN = 0.82;
@@ -251,6 +265,15 @@ function isClearNpcSpawnWater(x: number, z: number, halfSize: number): boolean {
   }
 
   return true;
+}
+
+function palmCanopyCenter(palm: PalmEntry, out: THREE.Vector3) {
+  out.set(0.6 * palm.scale, 4.15 * palm.scale, 0);
+  out.applyEuler(new THREE.Euler(palm.lean, palm.rotation, 0));
+  out.x += palm.position[0];
+  out.y += palm.position[1];
+  out.z += palm.position[2];
+  return out;
 }
 
 function addNpcSpawnCandidate(
@@ -1169,6 +1192,59 @@ export function World() {
     terrainCanvas.width = mapResolution;
     terrainCanvas.height = mapResolution;
     terrainCanvas.getContext('2d')!.putImageData(mapImageData, 0, 0);
+    resetVegetationDamage();
+    const palmCenter = new THREE.Vector3();
+
+    _treeImpactTargets = [
+      ...trees.map((tree, index) => ({
+        kind: 'tree' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.2,
+        z: tree.position[2],
+        radius: Math.max(0.85, tree.scale * 1.35),
+      })),
+      ...broadleafs.map((tree, index) => ({
+        kind: 'broadleaf' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.3,
+        z: tree.position[2],
+        radius: Math.max(1.0, tree.scale * 1.45),
+      })),
+      ...palms.map((tree, index) => ({
+        kind: 'palm' as const,
+        index,
+        x: palmCanopyCenter(tree, palmCenter).x,
+        y: palmCenter.y,
+        z: palmCenter.z,
+        radius: Math.max(1.05, tree.scale * 1.65),
+      })),
+      ...baobabs.map((tree, index) => ({
+        kind: 'baobab' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.4,
+        z: tree.position[2],
+        radius: Math.max(1.1, tree.scale * 1.6),
+      })),
+      ...acacias.map((tree, index) => ({
+        kind: 'acacia' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.5,
+        z: tree.position[2],
+        radius: Math.max(1.0, tree.scale * 1.65),
+      })),
+      ...mangroves.map((tree, index) => ({
+        kind: 'mangrove' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 1.1,
+        z: tree.position[2],
+        radius: Math.max(0.8, tree.scale * 1.1),
+      })),
+    ];
 
     return {
       landTerrainGeometry: landGeometry,
@@ -1967,8 +2043,77 @@ export function World() {
   const palmEulerRef = useRef(new THREE.Euler());
   const palmWindVectorRef = useRef(new THREE.Vector2());
   const palmAnimatedIndicesRef = useRef(new Set<number>());
+  const activeTreeShakeRef = useRef(new Set<string>());
+  const nextTreeShakeRef = useRef(new Set<string>());
   const palmSwayAccum = useRef(0);
   const respawnCheckAccum = useRef(0);
+
+  function setTreeMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!trunkMeshRef.current || !leavesMeshRef.current) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    trunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 3 * tree.scale, tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    leavesMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setBroadleafMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!broadleafTrunkMeshRef.current || !broadleafCanopyMeshRef.current) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.25 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    broadleafTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 3.0 * tree.scale, tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    broadleafCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setBaobabMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!baobabTrunkMeshRef.current || !baobabCanopyMeshRef.current) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.75 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, tree.rotation, 0);
+    dummy.updateMatrix();
+    baobabTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    baobabCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setAcaciaMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!acaciaTrunkMeshRef.current || !acaciaCanopyMeshRef.current) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.5 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, tree.rotation, 0);
+    dummy.updateMatrix();
+    acaciaTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    acaciaCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setMangroveMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!mangroveRootMeshRef.current || !mangroveCanopyMeshRef.current) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, tree.rotation, 0);
+    dummy.updateMatrix();
+    mangroveRootMeshRef.current.setMatrixAt(index, dummy.matrix);
+    mangroveCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
 
   function setPalmMatrixAt(
     palm: PalmEntry,
@@ -1983,6 +2128,7 @@ export function World() {
     const topLocal = palmTopLocalRef.current;
     const palmEuler = palmEulerRef.current;
     const s = palm.scale;
+    const damage = getPalmDamage(index);
     const bx = palm.position[0], by = palm.position[1], bz = palm.position[2];
     const trunkPitch = palm.lean + trunkPitchOffset;
 
@@ -1999,9 +2145,21 @@ export function World() {
     topLocal.set(0.6 * s, 4 * s, 0);
     palmEuler.set(trunkPitch, palm.rotation, trunkRollOffset);
     topLocal.applyEuler(palmEuler);
-    dummy.position.set(bx + topLocal.x, by + topLocal.y, bz + topLocal.z);
-    dummy.scale.set(s, s, s);
-    dummy.rotation.set(palm.lean * 0.3 + frondPitchOffset, palm.rotation, frondRollOffset);
+    dummy.position.set(
+      bx + topLocal.x + damage * s * 0.18,
+      by + topLocal.y - damage * s * 0.45,
+      bz + topLocal.z,
+    );
+    dummy.scale.set(
+      s * (1 - damage * 0.16),
+      s * (1 - damage * 0.42),
+      s * (1 - damage * 0.22),
+    );
+    dummy.rotation.set(
+      palm.lean * 0.3 + frondPitchOffset + damage * 0.7,
+      palm.rotation + damage * 0.18,
+      frondRollOffset + damage * 0.28,
+    );
     dummy.updateMatrix();
     palmFrondMeshRef.current.setMatrixAt(index, dummy.matrix);
   }
@@ -2553,6 +2711,160 @@ export function World() {
       if (anyUpdated) gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
+  });
+
+  useFrame(() => {
+    const now = Date.now() * 0.001;
+    const active = activeTreeShakeRef.current;
+    const next = nextTreeShakeRef.current;
+    next.clear();
+
+    let treeDirty = false;
+    let broadleafDirty = false;
+    let palmDirty = false;
+    let baobabDirty = false;
+    let acaciaDirty = false;
+    let mangroveDirty = false;
+
+    for (const shake of treeShakes) {
+      const age = now - shake.time;
+      if (age < 0 || age >= TREE_SHAKE_DURATION) continue;
+      const decay = 1 - age / TREE_SHAKE_DURATION;
+      const sway = decay * shake.intensity;
+      const key = `${shake.kind}:${shake.index}`;
+      next.add(key);
+
+      switch (shake.kind) {
+        case 'tree': {
+          const tree = treeData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 56 + shake.index * 0.43) * tree.scale * 0.16 * sway;
+          const zOffset = Math.cos(age * 49 + shake.index * 0.37) * tree.scale * 0.13 * sway;
+          setTreeMatricesAt(tree, shake.index, xOffset, zOffset);
+          treeDirty = true;
+          break;
+        }
+        case 'broadleaf': {
+          const tree = broadleafData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 52 + shake.index * 0.31) * tree.scale * 0.18 * sway;
+          const zOffset = Math.cos(age * 47 + shake.index * 0.28) * tree.scale * 0.15 * sway;
+          setBroadleafMatricesAt(tree, shake.index, xOffset, zOffset);
+          broadleafDirty = true;
+          break;
+        }
+        case 'palm': {
+          const palm = palmData[shake.index];
+          if (!palm) break;
+          const pitch = Math.sin(age * 40 + shake.index * 0.51) * 0.18 * sway;
+          const roll = Math.cos(age * 36 + shake.index * 0.44) * 0.16 * sway;
+          setPalmMatrixAt(palm, shake.index, pitch, roll, pitch * 1.3, roll * 1.35);
+          palmDirty = true;
+          break;
+        }
+        case 'baobab': {
+          const tree = baobabData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 44 + shake.index * 0.23) * tree.scale * 0.14 * sway;
+          const zOffset = Math.cos(age * 41 + shake.index * 0.19) * tree.scale * 0.12 * sway;
+          setBaobabMatricesAt(tree, shake.index, xOffset, zOffset);
+          baobabDirty = true;
+          break;
+        }
+        case 'acacia': {
+          const tree = acaciaData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 46 + shake.index * 0.27) * tree.scale * 0.16 * sway;
+          const zOffset = Math.cos(age * 42 + shake.index * 0.22) * tree.scale * 0.14 * sway;
+          setAcaciaMatricesAt(tree, shake.index, xOffset, zOffset);
+          acaciaDirty = true;
+          break;
+        }
+        case 'mangrove': {
+          const tree = mangroveData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 50 + shake.index * 0.29) * tree.scale * 0.12 * sway;
+          const zOffset = Math.cos(age * 45 + shake.index * 0.26) * tree.scale * 0.1 * sway;
+          setMangroveMatricesAt(tree, shake.index, xOffset, zOffset);
+          mangroveDirty = true;
+          break;
+        }
+      }
+    }
+
+    active.forEach((key) => {
+      if (next.has(key)) return;
+      const split = key.indexOf(':');
+      if (split < 0) return;
+      const kind = key.slice(0, split) as TreeImpactKind;
+      const index = Number(key.slice(split + 1));
+      switch (kind) {
+        case 'tree':
+          if (treeData[index]) {
+            setTreeMatricesAt(treeData[index], index);
+            treeDirty = true;
+          }
+          break;
+        case 'broadleaf':
+          if (broadleafData[index]) {
+            setBroadleafMatricesAt(broadleafData[index], index);
+            broadleafDirty = true;
+          }
+          break;
+        case 'palm':
+          if (palmData[index]) {
+            setPalmMatrixAt(palmData[index], index);
+            palmDirty = true;
+          }
+          break;
+        case 'baobab':
+          if (baobabData[index]) {
+            setBaobabMatricesAt(baobabData[index], index);
+            baobabDirty = true;
+          }
+          break;
+        case 'acacia':
+          if (acaciaData[index]) {
+            setAcaciaMatricesAt(acaciaData[index], index);
+            acaciaDirty = true;
+          }
+          break;
+        case 'mangrove':
+          if (mangroveData[index]) {
+            setMangroveMatricesAt(mangroveData[index], index);
+            mangroveDirty = true;
+          }
+          break;
+      }
+    });
+
+    active.clear();
+    next.forEach((key) => active.add(key));
+
+    if (treeDirty && trunkMeshRef.current && leavesMeshRef.current) {
+      trunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      leavesMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (broadleafDirty && broadleafTrunkMeshRef.current && broadleafCanopyMeshRef.current) {
+      broadleafTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      broadleafCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (palmDirty && palmTrunkMeshRef.current && palmFrondMeshRef.current) {
+      palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (baobabDirty && baobabTrunkMeshRef.current && baobabCanopyMeshRef.current) {
+      baobabTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      baobabCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (acaciaDirty && acaciaTrunkMeshRef.current && acaciaCanopyMeshRef.current) {
+      acaciaTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      acaciaCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (mangroveDirty && mangroveRootMeshRef.current && mangroveCanopyMeshRef.current) {
+      mangroveRootMeshRef.current.instanceMatrix.needsUpdate = true;
+      mangroveCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
   });
 
   return (

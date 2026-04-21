@@ -909,7 +909,9 @@ export function NPCShip({
     // Update live position for projectile hit detection
     npcLivePositions.set(identity.id, {
       x: currentPos.x,
+      y: currentPos.y + 1.4,
       z: currentPos.z,
+      radius: Math.max(3.2, identity.visual.scale * 4.0),
       flag: identity.flag,
       shipName: identity.shipName,
       hull: hullRef.current,

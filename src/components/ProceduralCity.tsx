@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import type { BuildingStyle } from '../utils/portArchetypes';
+import { buildingShakes } from '../utils/impactShakeState';
 
 interface Part {
   geo: 'box' | 'cylinder' | 'cone' | 'sphere' | 'dome';
@@ -11,6 +12,8 @@ interface Part {
   scale: [number, number, number];
   rot: [number, number, number];
   color?: [number, number, number];
+  buildingId?: string;
+  shakeCenter?: [number, number, number];
 }
 
 interface TorchSpot {
@@ -21,6 +24,9 @@ interface SmokeSpot {
   pos: [number, number, number];
   seed: number; // per-chimney offset for staggered animation
 }
+
+const BUILDING_SHAKE_DURATION = 0.28;
+const BUILDING_SHAKE_SWAY = 0.18;
 
 // Simple seeded random for deterministic color variation
 function mulberry32(a: number) {
@@ -518,6 +524,7 @@ export function ProceduralCity() {
         const c = port.culture;
         const rng = mulberry32(bi * 7919 + (x * 1000 | 0) + (z * 31 | 0));
 
+        const shakeCenter: [number, number, number] = [x, y + Math.max(h * 0.5, 1.2), z];
         const addPart = (geo: Part['geo'], mat: Part['mat'], lx: number, ly: number, lz: number, sw: number, sh: number, sd: number, colorOverride?: [number, number, number]) => {
           const rx = lx * Math.cos(rot) - lz * Math.sin(rot);
           const rz = lx * Math.sin(rot) + lz * Math.cos(rot);
@@ -527,6 +534,8 @@ export function ProceduralCity() {
             scale: [sw, sh, sd],
             rot: [0, rot, 0],
             color: colorOverride ?? varyColor(BASE_COLORS[mat] ?? BASE_COLORS.dark, rng),
+            buildingId: b.id,
+            shakeCenter,
           });
         };
 
@@ -1402,10 +1411,50 @@ const ROAD_TIER_STYLE: Record<RoadTierKey, {
   path:   { width: 1.0, color: '#8a6f4a', roughness: 1.0, yLift: 0.06 },
   road:   { width: 2.0, color: '#6b5a42', roughness: 0.95, yLift: 0.08 },
   avenue: { width: 3.6, color: '#7a7265', roughness: 0.85, yLift: 0.10 },
-  // Bridge deck: slightly wider than an avenue, weathered stone hue, no extra
-  // yLift (the generator already places deck points at SEA_LEVEL + 0.8).
+  // Bridge deck width is shared across styles; per-style colors live in
+  // BRIDGE_STYLE below. Generator places deck points at SEA_LEVEL + 0.8.
   bridge: { width: 3.2, color: '#5a5550', roughness: 0.9,  yLift: 0.0  },
 };
+
+// ── Bridge styles ────────────────────────────────────────────────────────────
+// Three cultural variants. Dispatch by port.culture in bridgeStyleForPort().
+type BridgeStyleKey = 'stone' | 'timber' | 'plank';
+
+const BRIDGE_STYLE: Record<BridgeStyleKey, {
+  deckColor: string;
+  deckRoughness: number;
+  parapet: { color: string; height: number; thickness: number } | null;
+  pier: { radiusTop: number; radiusBot: number; height: number; color: string; segments: number };
+  pierStep: number; // sample every Nth interior deck node
+}> = {
+  // European: weathered grey stone deck, low stone parapet, stout tapered piers.
+  stone: {
+    deckColor: '#5a5550', deckRoughness: 0.9,
+    parapet: { color: '#6b655e', height: 0.5, thickness: 0.3 },
+    pier: { radiusTop: 0.6, radiusBot: 0.8, height: 3.4, color: '#4a4540', segments: 8 },
+    pierStep: 2,
+  },
+  // Indian Ocean: dark timber deck, slim wooden rail, closely spaced piles.
+  timber: {
+    deckColor: '#5a4632', deckRoughness: 1.0,
+    parapet: { color: '#3e2f22', height: 0.35, thickness: 0.15 },
+    pier: { radiusTop: 0.18, radiusBot: 0.18, height: 3.6, color: '#3a2c20', segments: 6 },
+    pierStep: 1,
+  },
+  // West African / Atlantic / fallback: rough planks on log piers, no railing.
+  plank: {
+    deckColor: '#6b5230', deckRoughness: 1.0,
+    parapet: null,
+    pier: { radiusTop: 0.22, radiusBot: 0.28, height: 3.4, color: '#2d231a', segments: 6 },
+    pierStep: 2,
+  },
+};
+
+function bridgeStyleForPort(culture: string): BridgeStyleKey {
+  if (culture === 'European') return 'stone';
+  if (culture === 'Indian Ocean') return 'timber';
+  return 'plank';
+}
 
 function buildRoadRibbon(
   points: [number, number, number][],
@@ -1452,119 +1501,231 @@ function buildRoadRibbon(
   return geo;
 }
 
+// Offset a polyline perpendicular to its tangent in the XZ plane, preserving
+// y. Used to build parapet centerlines from a deck centerline.
+function offsetPolylineXZ(
+  points: [number, number, number][],
+  offset: number,
+  yLift: number,
+): [number, number, number][] {
+  const n = points.length;
+  const out: [number, number, number][] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const prev = points[Math.max(0, i - 1)];
+    const next = points[Math.min(n - 1, i + 1)];
+    let tx = next[0] - prev[0];
+    let tz = next[2] - prev[2];
+    const tl = Math.hypot(tx, tz);
+    if (tl < 1e-5) { tx = 1; tz = 0; } else { tx /= tl; tz /= tl; }
+    const nx = -tz, nz = tx;
+    const [px, py, pz] = points[i];
+    out[i] = [px + nx * offset, py + yLift, pz + nz * offset];
+  }
+  return out;
+}
+
+function mergeGeometries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
+  if (geos.length === 0) return null;
+  let totalVerts = 0, totalIdx = 0;
+  for (const g of geos) {
+    totalVerts += g.getAttribute('position').count;
+    totalIdx += g.getIndex()!.count;
+  }
+  const mergedPos = new Float32Array(totalVerts * 3);
+  const mergedIdx = new Uint32Array(totalIdx);
+  let posOff = 0, idxOff = 0, vertOff = 0;
+  for (const g of geos) {
+    const pos = g.getAttribute('position').array as Float32Array;
+    mergedPos.set(pos, posOff);
+    posOff += pos.length;
+    const idx = g.getIndex()!.array as ArrayLike<number>;
+    for (let k = 0; k < idx.length; k++) mergedIdx[idxOff + k] = idx[k] + vertOff;
+    idxOff += idx.length;
+    vertOff += g.getAttribute('position').count;
+  }
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(mergedPos, 3));
+  merged.setIndex(new THREE.BufferAttribute(mergedIdx, 1));
+  merged.computeVertexNormals();
+  geos.forEach(g => g.dispose());
+  return merged;
+}
+
 function CityRoads({ ports }: { ports: PortsProp }) {
-  const { tierMeshes, bridgePiers } = useMemo(() => {
-    const byTier: Record<RoadTierKey, THREE.BufferGeometry[]> = {
-      path: [], road: [], avenue: [], bridge: [],
+  const { tierMeshes, bridgeMeshes, bridgePiersByStyle } = useMemo(() => {
+    // Non-bridge roads stay grouped by tier.
+    const byTier: Record<Exclude<RoadTierKey, 'bridge'>, THREE.BufferGeometry[]> = {
+      path: [], road: [], avenue: [],
     };
-    // Pier positions for bridges. Sampled every 2 deck points so piers read
-    // as evenly spaced without one at every segment.
-    const piers: [number, number, number][] = [];
+    // Bridges grouped by cultural style. Each style accumulates deck +
+    // parapet ribbons separately so they can use distinct materials.
+    const bridgeBuckets: Record<BridgeStyleKey, {
+      deck: THREE.BufferGeometry[];
+      parapet: THREE.BufferGeometry[];
+      piers: [number, number, number][];
+    }> = {
+      stone:  { deck: [], parapet: [], piers: [] },
+      timber: { deck: [], parapet: [], piers: [] },
+      plank:  { deck: [], parapet: [], piers: [] },
+    };
+
+    const deckHalfWidth = ROAD_TIER_STYLE.bridge.width / 2;
+
     for (const port of ports) {
       if (!port.roads || port.roads.length === 0) continue;
+      const bridgeStyle = bridgeStyleForPort(port.culture);
+      const bs = BRIDGE_STYLE[bridgeStyle];
       for (const r of port.roads) {
-        const tierKey = r.tier as RoadTierKey;
-        const style = ROAD_TIER_STYLE[tierKey];
-        const geo = buildRoadRibbon(r.points, style.width, style.yLift);
-        if (geo) byTier[tierKey].push(geo);
         if (r.tier === 'bridge') {
-          // Skip the two endpoint nodes (those sit on land); place piers on
-          // interior deck nodes at every other step.
-          for (let i = 1; i < r.points.length - 1; i += 2) {
-            piers.push(r.points[i]);
+          const deckGeo = buildRoadRibbon(r.points, ROAD_TIER_STYLE.bridge.width, 0);
+          if (deckGeo) bridgeBuckets[bridgeStyle].deck.push(deckGeo);
+          // Parapets: two narrow ribbons hugging each deck edge, lifted by
+          // parapet.height. Reuses buildRoadRibbon on offset centerlines.
+          if (bs.parapet) {
+            const railOffset = deckHalfWidth - bs.parapet.thickness / 2;
+            const yLift = bs.parapet.height / 2;
+            const leftCenter  = offsetPolylineXZ(r.points,  railOffset, yLift);
+            const rightCenter = offsetPolylineXZ(r.points, -railOffset, yLift);
+            const lg = buildRoadRibbon(leftCenter,  bs.parapet.thickness, 0);
+            const rg = buildRoadRibbon(rightCenter, bs.parapet.thickness, 0);
+            if (lg) bridgeBuckets[bridgeStyle].parapet.push(lg);
+            if (rg) bridgeBuckets[bridgeStyle].parapet.push(rg);
+            // Note: ribbons are flat, so the parapet is a low cap rather than
+            // a full wall. Reads as a railing at game camera distance and
+            // costs us nothing extra.
           }
+          // Piers on interior deck nodes at the style's spacing.
+          for (let i = 1; i < r.points.length - 1; i += bs.pierStep) {
+            bridgeBuckets[bridgeStyle].piers.push(r.points[i]);
+          }
+        } else {
+          const tierKey = r.tier as Exclude<RoadTierKey, 'bridge'>;
+          const style = ROAD_TIER_STYLE[tierKey];
+          const geo = buildRoadRibbon(r.points, style.width, style.yLift);
+          if (geo) byTier[tierKey].push(geo);
         }
       }
     }
-    // Merge per-tier into one geometry each for draw-call efficiency
-    const tierMeshes: { tier: RoadTierKey; geo: THREE.BufferGeometry }[] = [];
-    (['path', 'road', 'avenue', 'bridge'] as const).forEach(tier => {
-      const geos = byTier[tier];
-      if (geos.length === 0) return;
-      // Merge manually: concatenate positions + offset indices
-      let totalVerts = 0;
-      let totalIdx = 0;
-      for (const g of geos) {
-        totalVerts += g.getAttribute('position').count;
-        totalIdx += g.getIndex()!.count;
-      }
-      const mergedPos = new Float32Array(totalVerts * 3);
-      const mergedIdx = new Uint32Array(totalIdx);
-      let posOff = 0;
-      let idxOff = 0;
-      let vertOff = 0;
-      for (const g of geos) {
-        const pos = g.getAttribute('position').array as Float32Array;
-        mergedPos.set(pos, posOff);
-        posOff += pos.length;
-        const idx = g.getIndex()!.array as ArrayLike<number>;
-        for (let k = 0; k < idx.length; k++) {
-          mergedIdx[idxOff + k] = idx[k] + vertOff;
-        }
-        idxOff += idx.length;
-        vertOff += g.getAttribute('position').count;
-      }
-      const merged = new THREE.BufferGeometry();
-      merged.setAttribute('position', new THREE.BufferAttribute(mergedPos, 3));
-      merged.setIndex(new THREE.BufferAttribute(mergedIdx, 1));
-      merged.computeVertexNormals();
-      tierMeshes.push({ tier, geo: merged });
-      // Dispose the per-road geometries since they're no longer needed
-      geos.forEach(g => g.dispose());
+
+    const tierMeshes: { tier: Exclude<RoadTierKey, 'bridge'>; geo: THREE.BufferGeometry }[] = [];
+    (['path', 'road', 'avenue'] as const).forEach(tier => {
+      const merged = mergeGeometries(byTier[tier]);
+      if (merged) tierMeshes.push({ tier, geo: merged });
     });
-    return { tierMeshes, bridgePiers: piers };
+
+    const bridgeMeshes: {
+      style: BridgeStyleKey;
+      deck: THREE.BufferGeometry | null;
+      parapet: THREE.BufferGeometry | null;
+    }[] = [];
+    const bridgePiersByStyle: Record<BridgeStyleKey, [number, number, number][]> = {
+      stone: [], timber: [], plank: [],
+    };
+    (['stone', 'timber', 'plank'] as const).forEach(style => {
+      const b = bridgeBuckets[style];
+      bridgeMeshes.push({
+        style,
+        deck: mergeGeometries(b.deck),
+        parapet: mergeGeometries(b.parapet),
+      });
+      bridgePiersByStyle[style] = b.piers;
+    });
+
+    return { tierMeshes, bridgeMeshes, bridgePiersByStyle };
   }, [ports]);
 
   const materials = useMemo(() => {
     const m: Record<string, THREE.MeshStandardMaterial> = {};
-    (Object.keys(ROAD_TIER_STYLE) as Array<keyof typeof ROAD_TIER_STYLE>).forEach(k => {
+    (['path', 'road', 'avenue'] as const).forEach(k => {
       const s = ROAD_TIER_STYLE[k];
       m[k] = new THREE.MeshStandardMaterial({
-        color: s.color,
-        roughness: s.roughness,
-        metalness: 0,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
+        color: s.color, roughness: s.roughness, metalness: 0,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
       });
     });
     return m;
   }, []);
 
-  // Pier geometry: a short, chunky stone cylinder standing in the water
-  // beneath each interior deck node.
-  const pierGeo = useMemo(() => new THREE.CylinderGeometry(0.55, 0.7, 3.2, 8), []);
-  const pierMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#4a4540', roughness: 0.95, metalness: 0,
-  }), []);
-  const pierMeshRef = useRef<THREE.InstancedMesh>(null);
-  useEffect(() => {
-    if (!pierMeshRef.current || bridgePiers.length === 0) return;
-    const dummy = new THREE.Object3D();
-    bridgePiers.forEach((p, i) => {
-      // Pier center sits below deck: deck at p[1], top of pier ≈ p[1] - 0.2,
-      // height 3.2, so center at p[1] - 0.2 - 1.6 = p[1] - 1.8.
-      dummy.position.set(p[0], p[1] - 1.8, p[2]);
-      dummy.updateMatrix();
-      pierMeshRef.current!.setMatrixAt(i, dummy.matrix);
+  const bridgeMaterials = useMemo(() => {
+    const m: Record<BridgeStyleKey, { deck: THREE.MeshStandardMaterial; parapet: THREE.MeshStandardMaterial; pier: THREE.MeshStandardMaterial }> = {} as never;
+    (['stone', 'timber', 'plank'] as const).forEach(k => {
+      const s = BRIDGE_STYLE[k];
+      m[k] = {
+        deck: new THREE.MeshStandardMaterial({
+          color: s.deckColor, roughness: s.deckRoughness, metalness: 0,
+          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        }),
+        parapet: new THREE.MeshStandardMaterial({
+          color: s.parapet?.color ?? s.deckColor, roughness: 0.95, metalness: 0,
+        }),
+        pier: new THREE.MeshStandardMaterial({
+          color: s.pier.color, roughness: 0.95, metalness: 0,
+        }),
+      };
     });
-    pierMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [bridgePiers]);
+    return m;
+  }, []);
+
+  const pierGeoms = useMemo(() => {
+    const g: Record<BridgeStyleKey, THREE.CylinderGeometry> = {} as never;
+    (['stone', 'timber', 'plank'] as const).forEach(k => {
+      const p = BRIDGE_STYLE[k].pier;
+      g[k] = new THREE.CylinderGeometry(p.radiusTop, p.radiusBot, p.height, p.segments);
+    });
+    return g;
+  }, []);
 
   return (
     <group>
       {tierMeshes.map(({ tier, geo }) => (
         <mesh key={tier} geometry={geo} material={materials[tier]} receiveShadow />
       ))}
-      {bridgePiers.length > 0 && (
-        <instancedMesh
-          ref={pierMeshRef}
-          args={[pierGeo, pierMat, bridgePiers.length]}
-          castShadow
-          receiveShadow
-        />
-      )}
+      {bridgeMeshes.map(({ style, deck, parapet }) => (
+        <group key={style}>
+          {deck && <mesh geometry={deck} material={bridgeMaterials[style].deck} receiveShadow castShadow />}
+          {parapet && <mesh geometry={parapet} material={bridgeMaterials[style].parapet} receiveShadow castShadow />}
+        </group>
+      ))}
+      {(['stone', 'timber', 'plank'] as const).map(style => {
+        const piers = bridgePiersByStyle[style];
+        if (piers.length === 0) return null;
+        return (
+          <BridgePiers
+            key={style}
+            geom={pierGeoms[style]}
+            material={bridgeMaterials[style].pier}
+            positions={piers}
+            height={BRIDGE_STYLE[style].pier.height}
+          />
+        );
+      })}
     </group>
+  );
+}
+
+function BridgePiers({
+  geom, material, positions, height,
+}: {
+  geom: THREE.CylinderGeometry;
+  material: THREE.MeshStandardMaterial;
+  positions: [number, number, number][];
+  height: number;
+}) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const dummy = new THREE.Object3D();
+    // Top of pier sits ~0.2 below deck so it tucks under cleanly.
+    const centerOffset = 0.2 + height / 2;
+    positions.forEach((p, i) => {
+      dummy.position.set(p[0], p[1] - centerOffset, p[2]);
+      dummy.updateMatrix();
+      ref.current!.setMatrixAt(i, dummy.matrix);
+    });
+    ref.current.instanceMatrix.needsUpdate = true;
+  }, [positions, height]);
+  return (
+    <instancedMesh ref={ref} args={[geom, material, positions.length]} castShadow receiveShadow />
   );
 }
 
@@ -1825,11 +1986,14 @@ function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
 
 function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry: THREE.BufferGeometry; material: THREE.Material }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
+  const colorRef = useRef(new THREE.Color());
+  const hadShakeRef = useRef(false);
 
   useEffect(() => {
     if (!meshRef.current) return;
-    const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
+    const dummy = dummyRef.current;
+    const color = colorRef.current;
     parts.forEach((p, i) => {
       dummy.position.set(...p.pos);
       dummy.scale.set(...p.scale);
@@ -1849,6 +2013,60 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry
       meshRef.current.instanceColor.needsUpdate = true;
     }
   }, [parts, geometry]);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const now = Date.now() * 0.001;
+    let hasRecentShake = false;
+    for (const shake of buildingShakes) {
+      const age = now - shake.time;
+      if (age >= 0 && age < BUILDING_SHAKE_DURATION) {
+        hasRecentShake = true;
+        break;
+      }
+    }
+    if (!hasRecentShake && !hadShakeRef.current) return;
+
+    const dummy = dummyRef.current;
+    let needsUpdate = false;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      let offsetX = 0;
+      let offsetY = 0;
+      let offsetZ = 0;
+      if (p.buildingId && p.shakeCenter) {
+        for (const shake of buildingShakes) {
+          if (shake.buildingId !== p.buildingId) continue;
+          const age = now - shake.time;
+          if (age < 0 || age >= BUILDING_SHAKE_DURATION) continue;
+          const decay = 1 - age / BUILDING_SHAKE_DURATION;
+          const amp = BUILDING_SHAKE_SWAY * shake.intensity * decay;
+          const radialX = p.pos[0] - p.shakeCenter[0];
+          const radialZ = p.pos[2] - p.shakeCenter[2];
+          offsetX += Math.sin(age * 62 + i * 0.37) * amp + radialX * 0.018 * amp;
+          offsetY += Math.abs(Math.sin(age * 88 + i * 0.21)) * amp * 0.28;
+          offsetZ += Math.cos(age * 57 + i * 0.29) * amp + radialZ * 0.018 * amp;
+        }
+      }
+
+      dummy.position.set(p.pos[0] + offsetX, p.pos[1] + offsetY, p.pos[2] + offsetZ);
+      dummy.scale.set(...p.scale);
+      dummy.rotation.set(...p.rot);
+      if (geometry instanceof THREE.CylinderGeometry && geometry.parameters.radialSegments === 4) {
+        dummy.rotation.y += Math.PI / 4;
+      }
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    hadShakeRef.current = hasRecentShake;
+  });
 
   return (
     <instancedMesh

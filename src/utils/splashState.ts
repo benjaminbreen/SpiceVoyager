@@ -17,12 +17,37 @@ export interface SplinterEvent {
   intensity: number;
 }
 
+export interface ImpactBurstEvent {
+  x: number;
+  y: number;
+  z: number;
+  time: number;
+  intensity: number;
+}
+
+export interface MuzzleBurstEvent {
+  x: number;
+  y: number;
+  z: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+  time: number;
+  intensity: number;
+}
+
 // Ring of active splashes — oldest get overwritten
 const MAX_SPLASHES = 8;
 export const splashes: SplashEvent[] = [];
 
 const MAX_SPLINTERS = 8;
 export const splinters: SplinterEvent[] = [];
+
+const MAX_IMPACT_BURSTS = 12;
+export const impactBursts: ImpactBurstEvent[] = [];
+
+const MAX_MUZZLE_BURSTS = 12;
+export const muzzleBursts: MuzzleBurstEvent[] = [];
 
 let _nextClock = 0; // set by SplashSystem each frame
 
@@ -42,4 +67,37 @@ export function spawnSplinters(x: number, y: number, z: number, intensity = 1) {
     splinters.shift();
   }
   splinters.push(ev);
+}
+
+export function spawnImpactBurst(x: number, y: number, z: number, intensity = 1) {
+  const ev: ImpactBurstEvent = { x, y, z, time: _nextClock, intensity: Math.min(1, Math.max(0.1, intensity)) };
+  if (impactBursts.length >= MAX_IMPACT_BURSTS) {
+    impactBursts.shift();
+  }
+  impactBursts.push(ev);
+}
+
+export function spawnMuzzleBurst(
+  x: number,
+  y: number,
+  z: number,
+  dirX: number,
+  dirY: number,
+  dirZ: number,
+  intensity = 1,
+) {
+  const ev: MuzzleBurstEvent = {
+    x,
+    y,
+    z,
+    dirX,
+    dirY,
+    dirZ,
+    time: _nextClock,
+    intensity: Math.min(1, Math.max(0.1, intensity)),
+  };
+  if (muzzleBursts.length >= MAX_MUZZLE_BURSTS) {
+    muzzleBursts.shift();
+  }
+  muzzleBursts.push(ev);
 }

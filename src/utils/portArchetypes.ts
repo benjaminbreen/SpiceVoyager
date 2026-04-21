@@ -1,5 +1,6 @@
 import { PortScale, Culture } from '../store/gameStore';
 import { createNoise2D } from 'simplex-noise';
+import type { CanalLayoutDef } from './canalLayout';
 
 // ── Direction helpers ──────────────────────────────────────────────────────────
 export type CardinalDir = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW';
@@ -172,6 +173,14 @@ export interface PortDefinition {
   buildingStyle?: BuildingStyle;
   /** Future POI slots (data-only scaffold, renderer TBD). */
   landmarks?: PortLandmark[];
+  /**
+   * Optional urban canal network. When set, the city generator carves canal
+   * water strips into the land mask and auto-places bridges at predetermined
+   * crossings. Independent of `geography` — the terrain archetype gives natural
+   * water (bay, lagoon), and `canalLayout` adds engineered urban canals on top.
+   * Used for canal cities (Amsterdam, Venice).
+   */
+  canalLayout?: CanalLayoutDef;
   /**
    * RGB (0-1) flag flown from fort towers. Falls back to a culture default
    * when absent. Use this to distinguish ports under different flags within
@@ -623,20 +632,39 @@ export const CORE_PORTS: PortDefinition[] = [
   {
     id: 'amsterdam',
     name: 'Amsterdam',
-    geography: 'tidal_river',
+    // The IJ is a sheltered tidal bay (arm of the Zuiderzee), not a river through
+    // the city — so 'bay' models the natural geography. The distinctive concentric
+    // canal grid is layered on top via canalLayout (an urban feature, not natural).
+    geography: 'bay',
     climate: 'temperate',
     culture: 'European',
     buildingStyle: 'dutch-brick',
     scale: 'Very Large',
     description: 'The IJ waterfront is all activity — cranes swinging bales from lighters into canal-side warehouses, VOC clerks tallying inventories, shipwrights caulking hulls in the yards. The city is flat and wet, and smells of tar and herring. The new Bourse is barely a year old but already thick with merchants trading pepper futures and Baltic grain contracts. Sephardic refugees from Iberia have settled along the canals, and their networks reach from Antwerp to Goa. Even in summer the wind off the Zuiderzee cuts through the rigging.',
     openDirection: 'N',
-    // IJ-scale waterway: slightly wider than London's Thames (0.5) since the
-    // historical IJ was roughly twice the Thames width. Capped at 0.55 so the
-    // channel stays within the bridge scanner's reach on Very Large ports.
-    channelWidth: 0.55,
-    channelTaper: 0.1,           // IJ is fairly uniform across the city
-    riverSinuosity: 0.04,        // mostly straight channels
-    bridgeCount: 3,              // Amsterdam was already famous for its canal bridges by 1612
+    harborWidth: 0.7,            // wide IJ tidal bay across the entire north edge
+    harborDepth: 0.18,           // shallow — the IJ was navigable but not deep
+    harborShape: 'semicircle',   // broad flat-bottomed sweep, not a parabolic cove
+    coastRuggedness: 0.4,        // low marshy polderland, not jagged
+    // 1612 canal grid: Singel (medieval moat, the inner ring) plus the just-begun
+    // Herengracht line (construction started 1613) as the outer ring. Three radial
+    // canals connect them to the IJ harbor, and the central inlet is the Damrak/
+    // Rokin running south from Dam square into the city core.
+    canalLayout: {
+      type: 'concentric',
+      openDirection: 'N',
+      innerRadius: 22,
+      rings: 2,
+      ringSpacing: 18,
+      radials: 3,
+      canalWidth: 4,
+      centralInlet: true,
+      inletDepth: 32,
+      inletWidth: 6,
+      bridgesPerRing: 3,
+      bridgesPerRadial: 1,
+      bridgesOnInlet: 2,
+    },
     flagColor: [0.92, 0.55, 0.10],  // Prinsenvlag orange (Dutch Republic, c. 1612)
     landmark: 'oude-kerk-spire',
   },

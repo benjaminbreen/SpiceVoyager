@@ -7,6 +7,7 @@ import {
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
   resolveDirRadians,
 } from './portArchetypes';
+import { generateCanalLayout } from './canalLayout';
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
@@ -292,7 +293,19 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       basePrices,
       prices,
       ...(() => {
-        const city = generateCity(portX, portZ, override.scale, override.culture, config.seed + portIdx, override.name, PORT_FACTION[override.id], PORT_CULTURAL_REGION[override.id], override.bridgeCount ?? 0);
+        const portDef = findPortDef(override.id);
+        const canalLayout = portDef?.canalLayout
+          ? generateCanalLayout(portX, portZ, portDef.canalLayout)
+          : undefined;
+        const city = generateCity(
+          portX, portZ,
+          override.scale, override.culture,
+          config.seed + portIdx,
+          override.name,
+          PORT_FACTION[override.id], PORT_CULTURAL_REGION[override.id],
+          override.bridgeCount ?? 0,
+          canalLayout,
+        );
         return { buildings: city.buildings, roads: city.roads };
       })(),
     });

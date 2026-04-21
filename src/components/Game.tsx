@@ -42,7 +42,13 @@ export function Game() {
   }, []);
 
   return (
-    <div className="w-full h-screen bg-black overflow-hidden relative">
+    <div
+      className="w-full bg-black overflow-hidden relative"
+      // 100dvh — dynamic viewport height — tracks iOS Safari's URL bar
+      // show/hide so the game doesn't get cropped when the bar appears.
+      // 100vh fallback for browsers that don't support dvh.
+      style={{ height: '100dvh', minHeight: '100vh' }}
+    >
       <Suspense fallback={null}>
         <GameScene />
       </Suspense>

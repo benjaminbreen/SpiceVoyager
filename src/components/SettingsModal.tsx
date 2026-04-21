@@ -410,6 +410,35 @@ function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize
             </button>
           </div>
 
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-300">World Map Variant</div>
+              <div className="text-[11px] text-slate-500">Brass-framed portolan chart (new) or flat slate modal (classic).</div>
+            </div>
+            <div className="flex gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5">
+              <button
+                onClick={() => onUpdateRenderDebug({ worldMapChart: true })}
+                className={`rounded px-3 py-1.5 text-xs font-medium transition-all ${
+                  renderDebug.worldMapChart
+                    ? 'bg-amber-600/20 text-amber-300'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Chart
+              </button>
+              <button
+                onClick={() => onUpdateRenderDebug({ worldMapChart: false })}
+                className={`rounded px-3 py-1.5 text-xs font-medium transition-all ${
+                  !renderDebug.worldMapChart
+                    ? 'bg-amber-600/20 text-amber-300'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Classic
+              </button>
+            </div>
+          </div>
+
           <div className="flex gap-2">
             <button
               onClick={() => onUpdateRenderDebug({

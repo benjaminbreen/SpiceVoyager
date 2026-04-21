@@ -2,10 +2,10 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO } from '@react-three/postprocessing';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
-import { World } from './World';
+import { World, getTreeImpactTargets } from './World';
 import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
-import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus } from '../store/gameStore';
+import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, type Building } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
@@ -20,15 +20,17 @@ import {
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
 import { SplashSystem } from './SplashSystem';
-import { spawnSplash, spawnSplinters } from '../utils/splashState';
+import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst } from '../utils/splashState';
+import { spawnBuildingShake, spawnTreeShake, damagePalm } from '../utils/impactShakeState';
 import {
   mouseWorldPos,
   mouseRay,
   projectiles,
   spawnProjectile,
   setSwivelAimAngle,
-  setHuntAimAngle,
-  huntAimAngle,
+  setHuntAim,
+  huntAimTarget,
+  huntAimValid,
   swivelAimAngle,
   npcLivePositions,
   wildlifeLivePositions,
@@ -51,6 +53,491 @@ function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+const HUNT_AIM_WILDLIFE_BUFFER = 0.45;
+const HUNT_AIM_MIN_DISTANCE = 1;
+const HUNT_AIM_MAX_DISTANCE = 110;
+const HUNT_AIM_FALLBACK_DISTANCE = 42;
+const HUNT_AIM_STEP = 1.6;
+const HUNT_AIM_REFINE_STEPS = 5;
+const HUNT_VISUAL_PITCH_MIN = -0.95;
+const HUNT_VISUAL_PITCH_MAX = 0.72;
+const HUNT_MARKER_SURFACE_OFFSET = 0.08;
+const LAND_PROJECTILE_GRAVITY = 1.5;
+const LAND_PROJECTILE_LIFE = 2.5;
+const LAND_MARKER_STEP = 1 / 120;
+const HUNT_BUILDING_PORT_RANGE = 220;
+const LAND_SHIP_DAMAGE: Record<LandWeaponType, number> = {
+  musket: 4,
+  bow: 1,
+};
+
+const _huntAimSphere = new THREE.Sphere();
+const _huntAimHit = new THREE.Vector3();
+const _huntAimCenter = new THREE.Vector3();
+const _huntAimPoint = new THREE.Vector3();
+const _huntAimTarget = new THREE.Vector3();
+const _huntAimFireOrigin = new THREE.Vector3();
+const _huntAimFireDir = new THREE.Vector3();
+const _predictSegmentStart = new THREE.Vector3();
+const _landPredictPos = new THREE.Vector3();
+const _landPredictVel = new THREE.Vector3();
+const _huntMarkerOrigin = new THREE.Vector3();
+const _huntMarkerDir = new THREE.Vector3();
+const _huntMarkerImpact = new THREE.Vector3();
+const _huntMarkerNormal = new THREE.Vector3();
+const _aimObjectHit = new THREE.Vector3();
+const _aimObjectNormal = new THREE.Vector3();
+const _sphereCenter = new THREE.Vector3();
+const _segmentDelta = new THREE.Vector3();
+const _segmentOffset = new THREE.Vector3();
+const _segmentHit = new THREE.Vector3();
+const _markerBaseNormal = new THREE.Vector3(0, 0, 1);
+function aimSurfaceHeight(x: number, z: number) {
+  return Math.max(getTerrainHeight(x, z), SEA_LEVEL);
+}
+
+type LandImpactKind = 'wildlife' | 'tree' | 'surface' | 'none';
+
+function estimateAimSurfaceNormal(x: number, z: number, out: THREE.Vector3) {
+  if (aimSurfaceHeight(x, z) <= SEA_LEVEL + 0.01) {
+    out.set(0, 1, 0);
+    return out;
+  }
+  const eps = 0.45;
+  const hL = aimSurfaceHeight(x - eps, z);
+  const hR = aimSurfaceHeight(x + eps, z);
+  const hD = aimSurfaceHeight(x, z - eps);
+  const hU = aimSurfaceHeight(x, z + eps);
+  out.set(hL - hR, eps * 2, hD - hU).normalize();
+  return out;
+}
+
+function intersectSegmentSphere(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  center: THREE.Vector3,
+  radius: number,
+  outPoint: THREE.Vector3,
+  outNormal: THREE.Vector3,
+) {
+  _segmentDelta.copy(end).sub(start);
+  const a = _segmentDelta.lengthSq();
+  if (a < 1e-8) return Infinity;
+  _segmentOffset.copy(start).sub(center);
+  const b = 2 * _segmentOffset.dot(_segmentDelta);
+  const c = _segmentOffset.lengthSq() - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  const sqrtDisc = Math.sqrt(disc);
+  const invDenom = 1 / (2 * a);
+  let t = (-b - sqrtDisc) * invDenom;
+  if (t < 0 || t > 1) {
+    t = (-b + sqrtDisc) * invDenom;
+    if (t < 0 || t > 1) return Infinity;
+  }
+  outPoint.copy(_segmentDelta).multiplyScalar(t).add(start);
+  outNormal.copy(outPoint).sub(center).normalize();
+  return t;
+}
+
+function intersectWildlifeSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
+  let bestT = Infinity;
+  for (const w of wildlifeLivePositions.values()) {
+    if (w.dead) continue;
+    _sphereCenter.set(w.x, w.y + 0.5, w.z);
+    const t = intersectSegmentSphere(start, end, _sphereCenter, Math.max(0.65, w.radius), _segmentHit, _aimObjectNormal);
+    if (t < bestT) {
+      bestT = t;
+      outPoint.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+  }
+  return bestT;
+}
+
+function intersectNpcShipSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
+  let bestT = Infinity;
+  for (const npc of npcLivePositions.values()) {
+    if (npc.sunk) continue;
+    _sphereCenter.set(npc.x, npc.y, npc.z);
+    const t = intersectSegmentSphere(start, end, _sphereCenter, npc.radius, _segmentHit, _aimObjectNormal);
+    if (t < bestT) {
+      bestT = t;
+      outPoint.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+  }
+  return bestT;
+}
+
+function intersectBuildingSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
+  let bestT = Infinity;
+  eachNearbyBuilding((building) => {
+    _sphereCenter.set(
+      building.position[0],
+      building.position[1] + building.scale[1] * 0.5,
+      building.position[2],
+    );
+    const t = intersectSegmentSphere(start, end, _sphereCenter, buildingAimRadius(building), _segmentHit, _aimObjectNormal);
+    if (t < bestT) {
+      bestT = t;
+      outPoint.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+  });
+  return bestT;
+}
+
+function intersectTreeSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
+  let bestT = Infinity;
+  for (const tree of getTreeImpactTargets()) {
+    _sphereCenter.set(tree.x, tree.y, tree.z);
+    const t = intersectSegmentSphere(start, end, _sphereCenter, tree.radius, _segmentHit, _aimObjectNormal);
+    if (t < bestT) {
+      bestT = t;
+      outPoint.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+  }
+  return bestT;
+}
+
+function intersectSurfaceSegment(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  outPoint: THREE.Vector3,
+  outNormal: THREE.Vector3,
+) {
+  const startDelta = start.y - aimSurfaceHeight(start.x, start.z);
+  const endDelta = end.y - aimSurfaceHeight(end.x, end.z);
+  if (startDelta <= 0) {
+    outPoint.set(start.x, aimSurfaceHeight(start.x, start.z), start.z);
+    estimateAimSurfaceNormal(outPoint.x, outPoint.z, outNormal);
+    return 0;
+  }
+  if (endDelta > 0) return Infinity;
+
+  let low = 0;
+  let high = 1;
+  for (let i = 0; i < HUNT_AIM_REFINE_STEPS + 2; i++) {
+    const mid = (low + high) * 0.5;
+    _segmentHit.copy(end).sub(start).multiplyScalar(mid).add(start);
+    const delta = _segmentHit.y - aimSurfaceHeight(_segmentHit.x, _segmentHit.z);
+    if (delta > 0) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  outPoint.copy(end).sub(start).multiplyScalar(high).add(start);
+  outPoint.y = aimSurfaceHeight(outPoint.x, outPoint.z);
+  estimateAimSurfaceNormal(outPoint.x, outPoint.z, outNormal);
+  return high;
+}
+
+function buildingAimRadius(building: Building) {
+  return Math.max(1.2, Math.max(building.scale[0], building.scale[1], building.scale[2]) * 0.65);
+}
+
+function eachNearbyBuilding(visitor: (building: Building) => void) {
+  const wp = getLiveWalkingTransform().pos;
+  const maxDistSq = HUNT_BUILDING_PORT_RANGE * HUNT_BUILDING_PORT_RANGE;
+  for (const port of useGameStore.getState().ports) {
+    const dx = port.position[0] - wp[0];
+    const dz = port.position[2] - wp[2];
+    if (dx * dx + dz * dz > maxDistSq) continue;
+    for (const building of port.buildings) {
+      visitor(building);
+    }
+  }
+}
+
+function intersectWildlifeAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
+  const maxDistanceSq = maxDistance * maxDistance;
+  let bestDistSq = Infinity;
+  for (const w of wildlifeLivePositions.values()) {
+    if (w.dead) continue;
+    _huntAimCenter.set(w.x, w.y + 0.5, w.z);
+    _huntAimSphere.center.copy(_huntAimCenter);
+    _huntAimSphere.radius = Math.max(0.65, w.radius + HUNT_AIM_WILDLIFE_BUFFER);
+    const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
+    if (!hit) continue;
+    const distSq = ray.origin.distanceToSquared(hit);
+    if (distSq > maxDistanceSq) continue;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      out.copy(hit);
+    }
+  }
+  return bestDistSq;
+}
+
+function intersectNpcShipAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
+  const maxDistanceSq = maxDistance * maxDistance;
+  let bestDistSq = Infinity;
+  for (const npc of npcLivePositions.values()) {
+    if (npc.sunk) continue;
+    _huntAimSphere.center.set(npc.x, npc.y, npc.z);
+    _huntAimSphere.radius = npc.radius;
+    const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
+    if (!hit) continue;
+    const distSq = ray.origin.distanceToSquared(hit);
+    if (distSq > maxDistanceSq) continue;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      out.copy(hit);
+    }
+  }
+  return bestDistSq;
+}
+
+function intersectBuildingAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
+  const maxDistanceSq = maxDistance * maxDistance;
+  let bestDistSq = Infinity;
+  eachNearbyBuilding((building) => {
+    _huntAimSphere.center.set(
+      building.position[0],
+      building.position[1] + building.scale[1] * 0.5,
+      building.position[2],
+    );
+    _huntAimSphere.radius = buildingAimRadius(building);
+    const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
+    if (!hit) return;
+    const distSq = ray.origin.distanceToSquared(hit);
+    if (distSq > maxDistanceSq) return;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      out.copy(hit);
+    }
+  });
+  return bestDistSq;
+}
+
+function intersectTreeAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
+  const maxDistanceSq = maxDistance * maxDistance;
+  let bestDistSq = Infinity;
+  for (const tree of getTreeImpactTargets()) {
+    _huntAimSphere.center.set(tree.x, tree.y, tree.z);
+    _huntAimSphere.radius = tree.radius;
+    const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
+    if (!hit) continue;
+    const distSq = ray.origin.distanceToSquared(hit);
+    if (distSq > maxDistanceSq) continue;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      out.copy(hit);
+    }
+  }
+  return bestDistSq;
+}
+
+function intersectAimSurface(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
+  let prevT = HUNT_AIM_MIN_DISTANCE;
+  _huntAimPoint.copy(ray.direction).multiplyScalar(prevT).add(ray.origin);
+  let prevDelta = _huntAimPoint.y - aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z);
+  if (prevDelta <= 0) {
+    out.set(_huntAimPoint.x, aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z), _huntAimPoint.z);
+    return ray.origin.distanceToSquared(out);
+  }
+
+  for (let t = prevT + HUNT_AIM_STEP; t <= maxDistance; t += HUNT_AIM_STEP) {
+    _huntAimPoint.copy(ray.direction).multiplyScalar(t).add(ray.origin);
+    const surfaceY = aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z);
+    const delta = _huntAimPoint.y - surfaceY;
+    if (delta <= 0) {
+      let low = prevT;
+      let high = t;
+      for (let i = 0; i < HUNT_AIM_REFINE_STEPS; i++) {
+        const mid = (low + high) * 0.5;
+        _huntAimPoint.copy(ray.direction).multiplyScalar(mid).add(ray.origin);
+        if (_huntAimPoint.y > aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z)) {
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+      out.copy(ray.direction).multiplyScalar(high).add(ray.origin);
+      out.y = aimSurfaceHeight(out.x, out.z);
+      return ray.origin.distanceToSquared(out);
+    }
+    prevT = t;
+    prevDelta = delta;
+  }
+
+  return Infinity;
+}
+
+function resolveHuntAimTarget(ray: THREE.Ray, fallbackDistance: number, out: THREE.Vector3): boolean {
+  let bestDistSq = Infinity;
+
+  const wildlifeDistSq = intersectWildlifeAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (wildlifeDistSq < bestDistSq) {
+    bestDistSq = wildlifeDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const shipDistSq = intersectNpcShipAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (shipDistSq < bestDistSq) {
+    bestDistSq = shipDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const buildingDistSq = intersectBuildingAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (buildingDistSq < bestDistSq) {
+    bestDistSq = buildingDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const treeDistSq = intersectTreeAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (treeDistSq < bestDistSq) {
+    bestDistSq = treeDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const surfaceDistSq = intersectAimSurface(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (surfaceDistSq < bestDistSq) {
+    bestDistSq = surfaceDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  if (bestDistSq < Infinity) return true;
+  out.copy(ray.direction).multiplyScalar(fallbackDistance).add(ray.origin);
+  return true;
+}
+
+function predictLandImpactPoint(
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  speed: number,
+  out: THREE.Vector3,
+  outNormal: THREE.Vector3,
+): LandImpactKind {
+  _landPredictPos.copy(origin);
+  _landPredictVel.copy(direction).multiplyScalar(speed);
+
+  for (let t = 0; t < LAND_PROJECTILE_LIFE; t += LAND_MARKER_STEP) {
+    const dt = Math.min(LAND_MARKER_STEP, LAND_PROJECTILE_LIFE - t);
+    _predictSegmentStart.copy(_landPredictPos);
+    _landPredictVel.y -= LAND_PROJECTILE_GRAVITY * dt;
+    _landPredictPos.addScaledVector(_landPredictVel, dt);
+
+    let bestT = Infinity;
+    let bestKind: LandImpactKind = 'none';
+
+    const wildlifeT = intersectWildlifeSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (wildlifeT < bestT) {
+      bestT = wildlifeT;
+      bestKind = 'wildlife';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const treeT = intersectTreeSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (treeT < bestT) {
+      bestT = treeT;
+      bestKind = 'tree';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const shipT = intersectNpcShipSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (shipT < bestT) {
+      bestT = shipT;
+      bestKind = 'surface';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const buildingT = intersectBuildingSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (buildingT < bestT) {
+      bestT = buildingT;
+      bestKind = 'surface';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const surfaceT = intersectSurfaceSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (surfaceT < bestT) {
+      bestT = surfaceT;
+      bestKind = 'surface';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    if (bestKind !== 'none') {
+      return bestKind;
+    }
+  }
+
+  out.copy(_landPredictPos);
+  outNormal.set(0, 1, 0);
+  return 'none';
+}
+
+function spawnLandSurfaceImpact(x: number, z: number, intensity: number) {
+  const surfaceY = aimSurfaceHeight(x, z);
+  if (surfaceY <= SEA_LEVEL + 0.05) {
+    spawnSplash(x, z, Math.min(0.45, intensity));
+  } else {
+    spawnImpactBurst(x, surfaceY, z, intensity);
+  }
+}
+
+function pointHitsNpcShip(point: THREE.Vector3) {
+  for (const npc of npcLivePositions.values()) {
+    if (npc.sunk) continue;
+    const dx = point.x - npc.x;
+    const dy = point.y - npc.y;
+    const dz = point.z - npc.z;
+    if (dx * dx + dy * dy + dz * dz < npc.radius * npc.radius) {
+      return npc;
+    }
+  }
+  return null;
+}
+
+function pointHitsBuilding(point: THREE.Vector3) {
+  let hitBuilding: Building | null = null;
+  eachNearbyBuilding((building) => {
+    if (hitBuilding) return;
+    const cx = building.position[0];
+    const cy = building.position[1] + building.scale[1] * 0.5;
+    const cz = building.position[2];
+    const radius = buildingAimRadius(building);
+    const dx = point.x - cx;
+    const dy = point.y - cy;
+    const dz = point.z - cz;
+    if (dx * dx + dy * dy + dz * dz < radius * radius) {
+      hitBuilding = building;
+    }
+  });
+  return hitBuilding;
+}
+
+function pointHitsTree(point: THREE.Vector3) {
+  for (const tree of getTreeImpactTargets()) {
+    const dx = point.x - tree.x;
+    const dy = point.y - tree.y;
+    const dz = point.z - tree.z;
+    if (dx * dx + dy * dy + dz * dz < tree.radius * tree.radius) {
+      return tree;
+    }
+  }
+  return null;
+}
+
+function resolveCurrentHuntFire(origin: THREE.Vector3, direction: THREE.Vector3) {
+  if (!huntAimValid) return false;
+  const wp = getLiveWalkingTransform().pos;
+  origin.set(wp[0], wp[1] + 1.4, wp[2]);
+  direction.copy(huntAimTarget).sub(origin);
+  if (direction.lengthSq() < 1e-6) return false;
+  direction.normalize();
+  // Muzzle origin: chest height + a short way along the current aim vector.
+  origin.addScaledVector(direction, 0.8);
+  return true;
 }
 
 function landfallDescription(x: number, z: number): { title: string; subtitle: string } {
@@ -155,13 +642,76 @@ function CameraController() {
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
 
-    const handlePointerMove = (e: PointerEvent) => {
-      // Track mouse NDC for combat aiming
+    // Touch devices don't have a right mouse button for pan and don't fire
+    // pointermove until a finger is down. They also shouldn't auto-fire on
+    // tap — fire lives on a dedicated button. We detect via pointerType
+    // inside each handler so a single listener handles both.
+    const isTouchEvent = (e: PointerEvent) =>
+      e.pointerType === 'touch' || e.pointerType === 'pen';
+
+    // Multi-touch gesture tracking: pinch = zoom, two-finger drag = pan.
+    // While a 2-finger gesture is active we suppress the single-finger aim
+    // path so the pinch doesn't also yank the swivel gun around.
+    const activeTouches = new Map<number, { x: number; y: number }>();
+    let pinchActive = false;
+    let pinchPrevDist = 0;
+    let pinchPrevMidX = 0;
+    let pinchPrevMidY = 0;
+
+    const updateMouseNDC = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect();
       mouseNDC.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouseNDC.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
 
-      // Right-button drag (buttons bitmask: 2 = right)
+    const pinchSnapshot = () => {
+      const pts = Array.from(activeTouches.values());
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      pinchPrevDist = Math.hypot(dx, dy);
+      pinchPrevMidX = (pts[0].x + pts[1].x) * 0.5;
+      pinchPrevMidY = (pts[0].y + pts[1].y) * 0.5;
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      // Update touch tracking first so pinch math uses the newest point.
+      if (isTouchEvent(e) && activeTouches.has(e.pointerId)) {
+        activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      // Two-finger gesture active → pinch-zoom + two-finger pan.
+      if (pinchActive && activeTouches.size === 2) {
+        const pts = Array.from(activeTouches.values());
+        const dx = pts[0].x - pts[1].x;
+        const dy = pts[0].y - pts[1].y;
+        const dist = Math.hypot(dx, dy);
+        const midX = (pts[0].x + pts[1].x) * 0.5;
+        const midY = (pts[0].y + pts[1].y) * 0.5;
+
+        // Zoom: ratio of distance change maps to zoom scalar. Spread fingers
+        // apart → zoom in (dist grows → ratio > 1 → zoom shrinks).
+        if (pinchPrevDist > 0) {
+          const ratio = pinchPrevDist / dist;
+          zoomTarget.current = Math.max(10, Math.min(150, zoomTarget.current * ratio));
+        }
+
+        // Pan: midpoint delta in world units (same scale as desktop right-drag).
+        const scale = zoomTarget.current / el.clientHeight * 2;
+        panOffset.current.x -= (midX - pinchPrevMidX) * scale;
+        panOffset.current.z -= (midY - pinchPrevMidY) * scale;
+        snapBack.current = false;
+
+        pinchPrevDist = dist;
+        pinchPrevMidX = midX;
+        pinchPrevMidY = midY;
+        return;
+      }
+
+      // Single pointer — track mouse NDC for combat aiming. For touch, this
+      // happens while a finger is dragging — which is the drag-to-aim flow.
+      updateMouseNDC(e);
+
+      // Right-button drag (buttons bitmask: 2 = right) for desktop pan.
       if (!(e.buttons & 2)) return;
       const { cameraZoom } = useGameStore.getState();
       const scale = cameraZoom / el.clientHeight * 2;
@@ -171,13 +721,58 @@ function CameraController() {
     };
 
     const handlePointerDown = (e: PointerEvent) => {
-      // Left click (button 0) in combat mode = fire
+      if (isTouchEvent(e)) {
+        activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (activeTouches.size === 2) {
+          pinchActive = true;
+          pinchSnapshot();
+          // Drop any in-flight single-finger fire state when a second finger
+          // lands. (Desktop path already exits here so this is belt-and-braces.)
+          setFireHeld(false);
+          return;
+        }
+      }
+
+      // Always sync NDC on down so a tap-and-release (no move) points at
+      // whatever the player just touched — without this, a brand-new touch
+      // in combat mode fires along the last cursor position.
+      updateMouseNDC(e);
+
+      // Desktop: left click in combat = fire.
+      // Touch: never auto-fires from the canvas — the fire button in
+      // TouchControls owns that so drag-to-aim doesn't also spam shots.
+      if (isTouchEvent(e)) return;
       if (e.button === 0 && useGameStore.getState().combatMode) {
         setFireHeld(true);
       }
     };
+
     const handlePointerUp = (e: PointerEvent) => {
+      if (isTouchEvent(e)) {
+        activeTouches.delete(e.pointerId);
+        if (activeTouches.size < 2) {
+          pinchActive = false;
+          // If one finger is still down after a pinch, re-seed NDC from it so
+          // aim snaps to where the remaining finger is (avoids a weird jump).
+          if (activeTouches.size === 1) {
+            const remaining = activeTouches.values().next().value;
+            if (remaining) {
+              const rect = el.getBoundingClientRect();
+              mouseNDC.current.x = ((remaining.x - rect.left) / rect.width) * 2 - 1;
+              mouseNDC.current.y = -((remaining.y - rect.top) / rect.height) * 2 + 1;
+            }
+          }
+        }
+        return;
+      }
       if (e.button === 0) setFireHeld(false);
+    };
+
+    const handlePointerCancel = (e: PointerEvent) => {
+      if (isTouchEvent(e)) {
+        activeTouches.delete(e.pointerId);
+        if (activeTouches.size < 2) pinchActive = false;
+      }
     };
 
     // Z/X camera rotation keys (use window so they work even when canvas isn't focused)
@@ -197,6 +792,7 @@ function CameraController() {
     el.addEventListener('pointermove', handlePointerMove);
     el.addEventListener('pointerdown', handlePointerDown);
     el.addEventListener('pointerup', handlePointerUp);
+    el.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('keydown', handleRotKeyDown);
     window.addEventListener('keyup', handleRotKeyUp);
     return () => {
@@ -205,6 +801,7 @@ function CameraController() {
       el.removeEventListener('pointermove', handlePointerMove);
       el.removeEventListener('pointerdown', handlePointerDown);
       el.removeEventListener('pointerup', handlePointerUp);
+      el.removeEventListener('pointercancel', handlePointerCancel);
       window.removeEventListener('keydown', handleRotKeyDown);
       window.removeEventListener('keyup', handleRotKeyUp);
     };
@@ -337,18 +934,26 @@ function CameraController() {
       walkPlane.current.constant = -walkingTransform.pos[1];
     }
 
+    mouseWorldPos.valid = false;
     if (raycaster.current.ray.intersectPlane(aimPlane, hitVec.current)) {
       mouseWorldPos.x = hitVec.current.x;
       mouseWorldPos.z = hitVec.current.z;
       mouseWorldPos.valid = true;
-      const combat = useGameStore.getState().combatMode;
-      if (combat && !inWalkingMode) {
+      if (!inWalkingMode) {
         const shipPos = getLiveShipTransform().pos;
         setSwivelAimAngle(Math.atan2(hitVec.current.x - shipPos[0], hitVec.current.z - shipPos[2]));
-      } else if (combat && inWalkingMode) {
-        const wp = walkingTransform.pos;
-        setHuntAimAngle(Math.atan2(hitVec.current.x - wp[0], hitVec.current.z - wp[2]));
       }
+    }
+
+    if (inWalkingMode && resolveHuntAimTarget(raycaster.current.ray, HUNT_AIM_FALLBACK_DISTANCE, _huntAimTarget)) {
+      const wp = walkingTransform.pos;
+      const aimSourceY = wp[1] + 1.4;
+      const dx = _huntAimTarget.x - wp[0];
+      const dy = _huntAimTarget.y - aimSourceY;
+      const dz = _huntAimTarget.z - wp[2];
+      const flatDist = Math.sqrt(dx * dx + dz * dz);
+      const pitch = THREE.MathUtils.clamp(Math.atan2(dy, Math.max(0.001, flatDist)), HUNT_VISUAL_PITCH_MIN, HUNT_VISUAL_PITCH_MAX);
+      setHuntAim(Math.atan2(dx, dz), pitch, _huntAimTarget);
     }
   });
 
@@ -362,13 +967,15 @@ function CameraController() {
 function tryFireLandWeapon() {
   const state = useGameStore.getState();
   if (!state.combatMode || state.playerMode !== 'walking') return;
-  if (!mouseWorldPos.valid) return;
+  if (!huntAimValid) return;
 
   const weaponId = state.activeLandWeapon;
   const def = LAND_WEAPON_DEFS[weaponId];
   const now = Date.now();
   const readyAt = landWeaponReload[weaponId] ?? 0;
   if (now < readyAt) return;
+
+  if (!resolveCurrentHuntFire(_huntAimFireOrigin, _huntAimFireDir)) return;
 
   // Ammo check (musket needs Munitions, bow is free)
   if (def.ammoCommodity) {
@@ -386,32 +993,42 @@ function tryFireLandWeapon() {
 
   landWeaponReload[weaponId] = now + def.reloadTime * 1000;
 
-  const wp = getLiveWalkingTransform().pos;
-  // Muzzle origin: chest height + a short way along aim direction
-  const aimX = Math.sin(huntAimAngle);
-  const aimZ = Math.cos(huntAimAngle);
-  const origin = new THREE.Vector3(
-    wp[0] + aimX * 0.8,
-    wp[1] + 1.4,
-    wp[2] + aimZ * 0.8,
-  );
-
-  // Direction with slight random spread cone
-  const spread = (Math.random() - 0.5) * 2 * def.spread;
-  const angle = huntAimAngle + spread;
-  const dir = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).normalize();
-
-  spawnProjectile(origin, dir, def.projectileSpeed, weaponId);
+  spawnProjectile(_huntAimFireOrigin, _huntAimFireDir, def.projectileSpeed, weaponId);
+  if (weaponId === 'musket') {
+    spawnMuzzleBurst(
+      _huntAimFireOrigin.x,
+      _huntAimFireOrigin.y,
+      _huntAimFireOrigin.z,
+      _huntAimFireDir.x,
+      _huntAimFireDir.y,
+      _huntAimFireDir.z,
+      0.85,
+    );
+  }
 
   if (weaponId === 'musket') {
     sfxMusket();
     window.dispatchEvent(new CustomEvent('musket-fired', {
-      detail: { x: origin.x, y: origin.y, z: origin.z, dirX: dir.x, dirZ: dir.z },
+      detail: {
+        x: _huntAimFireOrigin.x,
+        y: _huntAimFireOrigin.y,
+        z: _huntAimFireOrigin.z,
+        dirX: _huntAimFireDir.x,
+        dirY: _huntAimFireDir.y,
+        dirZ: _huntAimFireDir.z,
+      },
     }));
   } else {
     sfxBowRelease();
     window.dispatchEvent(new CustomEvent('bow-fired', {
-      detail: { x: origin.x, y: origin.y, z: origin.z },
+      detail: {
+        x: _huntAimFireOrigin.x,
+        y: _huntAimFireOrigin.y,
+        z: _huntAimFireOrigin.z,
+        dirX: _huntAimFireDir.x,
+        dirY: _huntAimFireDir.y,
+        dirZ: _huntAimFireDir.z,
+      },
     }));
   }
 }
@@ -753,18 +1370,14 @@ function ProjectileSystem() {
 
       // Land weapons fly mostly flat — only a tiny droop at distance.
       // Ship weapons keep their existing gravity arc.
-      p.vel.y -= (isLandWeapon ? 1.5 : 15) * delta;
+      p.vel.y -= (isLandWeapon ? LAND_PROJECTILE_GRAVITY : 15) * delta;
       p.pos.addScaledVector(p.vel, delta);
 
-      // Out-of-bounds drop: water for ship shots, terrain miss for land shots.
-      if (p.pos.y < 0) {
-        if (isLandWeapon) {
-          // Hit ground / vegetation — small puff, no splash sound.
-          spawnSplash(p.pos.x, p.pos.z, 0.2);
-        } else {
-          spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
-          sfxCannonSplash();
-        }
+      // Ship weapons still die at the water plane; land weapons handle terrain
+      // collision separately so hills and shorelines stop them correctly.
+      if (!isLandWeapon && p.pos.y < 0) {
+        spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
+        sfxCannonSplash();
         projectiles.splice(i, 1);
         continue;
       }
@@ -785,8 +1398,7 @@ function ProjectileSystem() {
             const damage = def.damage;
             w.hp = Math.max(0, w.hp - damage);
             w.hitAlert = Date.now() + 8000;
-            // Splatter puff — reuse splinter system for now
-            spawnSplinters(p.pos.x, p.pos.y, p.pos.z, 0.4);
+            spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, p.weaponType === 'musket' ? 0.65 : 0.4);
             if (w.hp <= 0) {
               w.dead = true;
               wildlifeKillQueue.add(id);
@@ -817,7 +1429,47 @@ function ProjectileSystem() {
           }
         }
         if (hit) continue;
-        // Land weapons don't hit ships — skip the NPC-ship hit test.
+        const npc = pointHitsNpcShip(p.pos);
+        if (npc) {
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, p.weaponType === 'musket' ? 0.35 : 0.18);
+          npc.hull = Math.max(0, npc.hull - LAND_SHIP_DAMAGE[p.weaponType as LandWeaponType]);
+          npc.hitAlert = Date.now() + 10000;
+          adjustReputation(npc.flag as any, -5);
+          const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
+          addNotification(`Hit the ${npc.shipName}. Hull: ${hullPct}%`, 'warning');
+          projectiles.splice(i, 1);
+          continue;
+        }
+        const building = pointHitsBuilding(p.pos);
+        if (building) {
+          const impactIntensity = p.weaponType === 'musket' ? 0.9 : 0.55;
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
+          spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.65);
+          spawnBuildingShake(building.id, impactIntensity);
+          projectiles.splice(i, 1);
+          continue;
+        }
+        const tree = pointHitsTree(p.pos);
+        if (tree) {
+          const impactIntensity = tree.kind === 'palm'
+            ? (p.weaponType === 'musket' ? 1.2 : 0.78)
+            : (p.weaponType === 'musket' ? 0.95 : 0.6);
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
+          spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.6 : 0.45));
+          spawnTreeShake(tree.kind, tree.index, impactIntensity);
+          if (tree.kind === 'palm') {
+            damagePalm(tree.index, impactIntensity);
+          }
+          projectiles.splice(i, 1);
+          continue;
+        }
+        const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
+        if (p.pos.y <= surfaceY) {
+          spawnLandSurfaceImpact(p.pos.x, p.pos.z, p.weaponType === 'musket' ? 0.55 : 0.35);
+          projectiles.splice(i, 1);
+          continue;
+        }
+        // No further ship-weapon hit logic applies to land projectiles.
         continue;
       }
 
@@ -884,6 +1536,101 @@ function ProjectileSystem() {
         toneMapped={false}
       />
     </instancedMesh>
+  );
+}
+
+function HuntAimMarker() {
+  const groupRef = useRef<THREE.Group>(null);
+  const ringMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const dotMatRef = useRef<THREE.MeshBasicMaterial>(null);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    const ringMat = ringMatRef.current;
+    const dotMat = dotMatRef.current;
+    if (!group || !ringMat || !dotMat) return;
+
+    const gs = useGameStore.getState();
+    if (gs.playerMode !== 'walking' || !gs.combatMode || !huntAimValid) {
+      group.visible = false;
+      return;
+    }
+
+    const def = LAND_WEAPON_DEFS[gs.activeLandWeapon];
+    if (!resolveCurrentHuntFire(_huntMarkerOrigin, _huntMarkerDir)) {
+      group.visible = false;
+      return;
+    }
+
+    const hitKind = predictLandImpactPoint(
+      _huntMarkerOrigin,
+      _huntMarkerDir,
+      def.projectileSpeed,
+      _huntMarkerImpact,
+      _huntMarkerNormal,
+    );
+    if (hitKind === 'none') {
+      group.visible = false;
+      return;
+    }
+
+    group.visible = true;
+    group.position.copy(_huntMarkerImpact).addScaledVector(_huntMarkerNormal, HUNT_MARKER_SURFACE_OFFSET);
+    group.quaternion.setFromUnitVectors(_markerBaseNormal, _huntMarkerNormal);
+
+    const distance = _huntMarkerOrigin.distanceTo(_huntMarkerImpact);
+    const inRange = distance <= def.range;
+    const pulse = 1 + Math.sin(state.clock.elapsedTime * 8) * 0.08;
+    group.scale.setScalar(inRange ? pulse : pulse * 1.04);
+
+    if (inRange) {
+      if (hitKind === 'wildlife') {
+        ringMat.color.set('#f6d78d');
+        dotMat.color.set('#fff2c4');
+        ringMat.opacity = 0.72;
+      } else if (hitKind === 'tree') {
+        ringMat.color.set('#8ca96b');
+        dotMat.color.set('#cfe3a9');
+        ringMat.opacity = 0.62;
+      } else {
+        ringMat.color.set('#d8c39b');
+        dotMat.color.set('#f3e2b8');
+        ringMat.opacity = 0.52;
+      }
+      dotMat.opacity = 0.88;
+    } else {
+      ringMat.color.set('#b25a32');
+      dotMat.color.set('#d68954');
+      ringMat.opacity = 0.44;
+      dotMat.opacity = 0.62;
+    }
+  });
+
+  return (
+    <group ref={groupRef} visible={false}>
+      <mesh renderOrder={1002} raycast={() => null}>
+        <ringGeometry args={[0.22, 0.34, 20]} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color="#d8c39b"
+          transparent
+          opacity={0.6}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[0, 0, 0.02]} renderOrder={1003} raycast={() => null}>
+        <sphereGeometry args={[0.08, 8, 8]} />
+        <meshBasicMaterial
+          ref={dotMatRef}
+          color="#fff2c4"
+          transparent
+          opacity={0.88}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }
 
@@ -1133,6 +1880,7 @@ export function GameScene() {
             <TouchSteerRaycaster />
             <InteractionController />
             <ProjectileSystem />
+            <HuntAimMarker />
             <SplashSystem />
             <TimeController />
             <AtmosphereSync />

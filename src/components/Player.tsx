@@ -13,7 +13,7 @@ import {
 import { spawnSplash } from '../utils/splashState';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { PLAYER_RADIUS } from '../utils/animalBump';
-import { huntAimAngle, landWeaponReload } from '../utils/combatState';
+import { huntAimAngle, huntAimPitch, landWeaponReload } from '../utils/combatState';
 import { touchWalkInput } from '../utils/touchInput';
 import { LAND_WEAPON_DEFS, Road } from '../store/gameStore';
 import { derivePlayerAppearance } from '../utils/playerAppearance';
@@ -22,6 +22,8 @@ import { Hat } from './playerParts/Hat';
 const CRAB_COLLECT_RADIUS_SQ = 1.5 * 1.5; // 1.5 units
 const STORE_SYNC_INTERVAL = 1 / 12;
 const THUD_COOLDOWN = 0.22; // seconds between thuds — prevents sliding-along-trunk chatter
+const TORSO_PITCH_FACTOR = 0.3;
+const WEAPON_PITCH_FACTOR = 0.72;
 
 // ── Rig measurements (single source of truth — change here to scale the figure) ──
 const RIG = {
@@ -337,14 +339,17 @@ export function Player() {
         while (aimDelta < -Math.PI) aimDelta += Math.PI * 2;
         const TORSO_TWIST_LIMIT = 1.75;  // ≈100°
         aimDelta = Math.max(-TORSO_TWIST_LIMIT, Math.min(TORSO_TWIST_LIMIT, aimDelta));
+        torso.current.rotation.x = huntAimPitch * TORSO_PITCH_FACTOR;
         torso.current.rotation.y = aimDelta;
       } else {
+        torso.current.rotation.x = 0;
         torso.current.rotation.y = 0;
       }
     }
     if (weaponPivot.current && musketGroup.current && bowGroup.current) {
       weaponPivot.current.visible = showWeapon;
       if (showWeapon) {
+        weaponPivot.current.rotation.x = huntAimPitch * WEAPON_PITCH_FACTOR;
         const active = store.activeLandWeapon;
         musketGroup.current.visible = active === 'musket';
         bowGroup.current.visible = active === 'bow';
@@ -358,6 +363,8 @@ export function Player() {
         const droop = reloadFrac * 0.7;
         musketGroup.current.rotation.x = active === 'musket' ? droop : 0;
         bowGroup.current.rotation.x = active === 'bow' ? droop : 0;
+      } else {
+        weaponPivot.current.rotation.x = 0;
       }
     }
 

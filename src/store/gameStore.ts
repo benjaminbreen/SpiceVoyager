@@ -260,7 +260,7 @@ export const LAND_WEAPON_DEFS: Record<LandWeaponType, LandWeapon> = {
     type: 'musket',
     name: 'Matchlock Musket',
     damage: 100,
-    range: 30,
+    range: 60,
     reloadTime: 2.0,
     projectileSpeed: 60,
     spread: 0.035,
@@ -613,6 +613,7 @@ export interface RenderDebugSettings {
   algae: boolean;
   coralReefs: boolean;
   wildlifeMotion: boolean;
+  worldMapChart: boolean;
 }
 
 interface GameState {
@@ -684,6 +685,10 @@ interface GameState {
   setForceMobileLayout: (v: boolean) => void;
   shipSteeringMode: 'tap' | 'joystick';
   setShipSteeringMode: (mode: 'tap' | 'joystick') => void;
+  // Mirrors touchShipInput.sailRaised but lives in the store so SailToggleButton
+  // re-renders when TouchSteerRaycaster auto-raises the sail on ocean tap.
+  touchSailRaised: boolean;
+  setTouchSailRaised: (v: boolean) => void;
   renderDebug: RenderDebugSettings;
   paused: boolean;
   anchored: boolean;
@@ -777,6 +782,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   algae: true,
   coralReefs: false,
   wildlifeMotion: true,
+  worldMapChart: true,
 };
 
 // ── Crew helper functions ──────────────────────────────────────────────
@@ -976,6 +982,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   waterPaletteSetting: 'auto',
   forceMobileLayout: false,
   shipSteeringMode: 'tap',
+  touchSailRaised: false,
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
   anchored: false,
@@ -1642,6 +1649,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setWaterPaletteSetting: (setting) => set({ waterPaletteSetting: setting }),
   setForceMobileLayout: (v) => set({ forceMobileLayout: v }),
   setShipSteeringMode: (mode) => set({ shipSteeringMode: mode }),
+  setTouchSailRaised: (v) => set({ touchSailRaised: v }),
   updateRenderDebug: (patch) => set((state) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),

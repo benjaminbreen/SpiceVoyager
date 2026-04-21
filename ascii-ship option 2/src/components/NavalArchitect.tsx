@@ -74,7 +74,7 @@ class Particle {
 export default function NavalArchitect() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number | null>(null);
   
   const [params, setParams] = useState<Params>({
     type: 'galleon',

@@ -13,6 +13,11 @@ import { swivelAimAngle, broadsideReload } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
+import { useIsMobile } from '../utils/useIsMobile';
+
+// Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
+// course corrections actually have time to register. Tuned by playtest.
+const MOBILE_SPEED_SCALE = 0.55;
 
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
@@ -31,6 +36,7 @@ export function Ship() {
   const damageShip = useGameStore((state) => state.damageShip);
   const addNotification = useGameStore((state) => state.addNotification);
   const paused = useGameStore((state) => state.paused);
+  const { isMobile } = useIsMobile();
   
   // Physics state
   const velocity = useRef(0);
@@ -530,7 +536,7 @@ export function Ship() {
     const steerMode = store.shipSteeringMode;
     let touchW = false, touchS = false, touchA = false, touchD = false;
     if (steerMode === 'tap') {
-      touchW = touchShipInput.sailRaised;
+      touchW = store.touchSailRaised;
       if (touchShipInput.targetHeading !== null) {
         const diff = Math.atan2(
           Math.sin(touchShipInput.targetHeading - rotation.current),
@@ -538,6 +544,10 @@ export function Ship() {
         );
         if (diff > 0.03) touchA = true;
         else if (diff < -0.03) touchD = true;
+        else {
+          // Heading matched — clear the target so the ship stops micro-correcting.
+          touchShipInput.targetHeading = null;
+        }
       }
     } else {
       const JOY_DEAD = 0.2;
@@ -556,7 +566,8 @@ export function Ship() {
       // Acceleration and Inertia
       const navBonus = getRoleBonus(store, 'Navigator', 'perception');
       const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
-      const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus;
+      const mobileScale = isMobile ? MOBILE_SPEED_SCALE : 1;
+      const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus * mobileScale;
       const windTrim = getWindTrimInfo(store.windDirection, rotation.current);
       // Wind trim requires going straight — Shift while turning is drift, not boost.
       const wantsWindTrim = inShift && inW && velocity.current > 0.5

@@ -1,14 +1,16 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { splashes, splinters, setSplashClock } from '../utils/splashState';
+import { splashes, splinters, impactBursts, muzzleBursts, setSplashClock } from '../utils/splashState';
 import { SEA_LEVEL } from '../constants/world';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 // ── Particle pools ──────────────────────────────────────────────────────────
 
 const SPLASH_PARTICLE_COUNT = 60;
-const SPLINTER_PARTICLE_COUNT = 40;
+const SPLINTER_PARTICLE_COUNT = 64;
+const IMPACT_PARTICLE_COUNT = 72;
+const MUZZLE_PARTICLE_COUNT = 48;
 
 interface Particle {
   pos: THREE.Vector3;
@@ -16,15 +18,28 @@ interface Particle {
   life: number;
 }
 
+interface BurstParticle {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  life: number;
+  maxLife: number;
+}
+
 export function SplashSystem() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const splinterMeshRef = useRef<THREE.InstancedMesh>(null);
+  const impactMeshRef = useRef<THREE.InstancedMesh>(null);
+  const muzzleMeshRef = useRef<THREE.InstancedMesh>(null);
   const rippleRef = useRef<THREE.Mesh>(null);
   const particles = useRef<Particle[]>([]);
   const splinterParticles = useRef<Particle[]>([]);
+  const impactParticles = useRef<BurstParticle[]>([]);
+  const muzzleParticles = useRef<BurstParticle[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const lastSplashCount = useRef(0);
   const lastSplinterCount = useRef(0);
+  const lastImpactCount = useRef(0);
+  const lastMuzzleCount = useRef(0);
 
   // Initialize particle pools
   useEffect(() => {
@@ -40,6 +55,22 @@ export function SplashSystem() {
         pos: new THREE.Vector3(0, -1000, 0),
         vel: new THREE.Vector3(),
         life: 0,
+      });
+    }
+    for (let i = 0; i < IMPACT_PARTICLE_COUNT; i++) {
+      impactParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
+    for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+      muzzleParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
       });
     }
   }, []);
@@ -81,7 +112,7 @@ export function SplashSystem() {
     if (splinters.length > lastSplinterCount.current) {
       for (let si = lastSplinterCount.current; si < splinters.length; si++) {
         const sp = splinters[si];
-        const count = Math.round(8 + sp.intensity * 10);
+        const count = Math.round(10 + sp.intensity * 14);
         let spawned = 0;
         for (let i = 0; i < SPLINTER_PARTICLE_COUNT && spawned < count; i++) {
           const p = splinterParticles.current[i];
@@ -106,6 +137,67 @@ export function SplashSystem() {
     }
     lastSplinterCount.current = splinters.length;
 
+    // ── Spawn land impact burst particles ──
+    if (impactBursts.length > lastImpactCount.current) {
+      for (let si = lastImpactCount.current; si < impactBursts.length; si++) {
+        const burst = impactBursts[si];
+        const count = Math.round(10 + burst.intensity * 14);
+        let spawned = 0;
+        for (let i = 0; i < IMPACT_PARTICLE_COUNT && spawned < count; i++) {
+          const p = impactParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const lateral = (1.8 + Math.random() * 2.4) * burst.intensity;
+            const upward = (1.1 + Math.random() * 2.2) * burst.intensity;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 0.3,
+              burst.y + 0.04 + Math.random() * 0.15,
+              burst.z + (Math.random() - 0.5) * 0.3,
+            );
+            p.vel.set(
+              Math.cos(angle) * lateral,
+              upward,
+              Math.sin(angle) * lateral,
+            );
+            p.maxLife = 0.25 + Math.random() * 0.35;
+            p.life = p.maxLife;
+            spawned++;
+          }
+        }
+      }
+    }
+    lastImpactCount.current = impactBursts.length;
+
+    // ── Spawn land muzzle smoke particles ──
+    if (muzzleBursts.length > lastMuzzleCount.current) {
+      for (let si = lastMuzzleCount.current; si < muzzleBursts.length; si++) {
+        const burst = muzzleBursts[si];
+        const count = Math.round(10 + burst.intensity * 12);
+        let spawned = 0;
+        for (let i = 0; i < MUZZLE_PARTICLE_COUNT && spawned < count; i++) {
+          const p = muzzleParticles.current[i];
+          if (p.life <= 0) {
+            const forward = 1.1 + Math.random() * 1.2;
+            const sideAngle = Math.random() * Math.PI * 2;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 0.12,
+              burst.y + (Math.random() - 0.5) * 0.12,
+              burst.z + (Math.random() - 0.5) * 0.12,
+            );
+            p.vel.set(
+              burst.dirX * forward + Math.cos(sideAngle) * 0.45,
+              Math.max(0.5, burst.dirY * 0.45) + 0.7 + Math.random() * 0.5,
+              burst.dirZ * forward + Math.sin(sideAngle) * 0.45,
+            );
+            p.maxLife = 0.45 + Math.random() * 0.45;
+            p.life = p.maxLife;
+            spawned++;
+          }
+        }
+      }
+    }
+    lastMuzzleCount.current = muzzleBursts.length;
+
     // ── Expire old events ──
     while (splashes.length > 0 && elapsed - splashes[0].time > 4) {
       splashes.shift();
@@ -114,6 +206,14 @@ export function SplashSystem() {
     while (splinters.length > 0 && elapsed - splinters[0].time > 3) {
       splinters.shift();
       lastSplinterCount.current = Math.max(0, lastSplinterCount.current - 1);
+    }
+    while (impactBursts.length > 0 && elapsed - impactBursts[0].time > 2) {
+      impactBursts.shift();
+      lastImpactCount.current = Math.max(0, lastImpactCount.current - 1);
+    }
+    while (muzzleBursts.length > 0 && elapsed - muzzleBursts[0].time > 2) {
+      muzzleBursts.shift();
+      lastMuzzleCount.current = Math.max(0, lastMuzzleCount.current - 1);
     }
 
     // ── Update water splash particles ──
@@ -179,6 +279,68 @@ export function SplashSystem() {
         }
       }
       if (needsUpdate) splinterMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update land impact burst particles ──
+    if (impactMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < IMPACT_PARTICLE_COUNT; i++) {
+        const p = impactParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 6.5 * delta;
+          p.vel.x *= 1 - 2.8 * delta;
+          p.vel.z *= 1 - 2.8 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const ageFrac = 1 - lifeFrac;
+          const s = (0.1 + ageFrac * 0.5) * (0.2 + lifeFrac * 0.8);
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          impactMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          impactMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) impactMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update land muzzle smoke particles ──
+    if (muzzleMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
+        const p = muzzleParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.x *= 1 - 1.5 * delta;
+          p.vel.z *= 1 - 1.5 * delta;
+          p.vel.y += 0.7 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const ageFrac = 1 - lifeFrac;
+          const s = (0.14 + ageFrac * 0.7) * (0.18 + lifeFrac * 0.82);
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          muzzleMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          muzzleMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) muzzleMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     // ── Update ripple shader uniforms ──
@@ -333,6 +495,34 @@ export function SplashSystem() {
           emissive="#332200"
           emissiveIntensity={0.4}
           roughness={0.9}
+        />
+      </instancedMesh>
+
+      {/* Land impact burst — dust/powder puff where musket ball or arrow lands */}
+      <instancedMesh ref={impactMeshRef} args={[undefined, undefined, IMPACT_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.35, 5, 5]} />
+        <meshStandardMaterial
+          color="#d7c0a1"
+          emissive="#8b6a42"
+          emissiveIntensity={0.18}
+          roughness={0.85}
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+        />
+      </instancedMesh>
+
+      {/* Land muzzle smoke — short forward burst that loosens into drifting smoke */}
+      <instancedMesh ref={muzzleMeshRef} args={[undefined, undefined, MUZZLE_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.3, 5, 5]} />
+        <meshStandardMaterial
+          color="#d7d2c9"
+          emissive="#7f7a72"
+          emissiveIntensity={0.1}
+          roughness={1}
+          transparent
+          opacity={0.42}
+          depthWrite={false}
         />
       </instancedMesh>
 

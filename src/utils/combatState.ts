@@ -17,7 +17,7 @@ export interface Projectile {
   weaponType: ProjectileWeaponType;
 }
 
-// Mouse world position on the water plane (y=0), updated by CameraController raycaster
+// Mouse world position on the active aim plane, updated by CameraController.
 export const mouseWorldPos = { x: 0, z: 0, valid: false };
 
 // Full mouse ray (camera origin + normalized direction), updated each frame.
@@ -81,7 +81,9 @@ export const broadsideReload = { port: 0, starboard: 0 };
 // Keyed by NPCShipIdentity.id
 export interface NpcLiveEntry {
   x: number;
+  y: number;
   z: number;
+  radius: number;
   flag: string;
   shipName: string;
   hitAlert?: number;
@@ -94,10 +96,20 @@ export const npcLivePositions: Map<string, NpcLiveEntry> = new Map();
 // ── Hunting (land combat) ───────────────────────────────────────────────────
 // Mirrors the swivel gun's aim/reload plumbing but for the walking character.
 
-// Hunt aim angle in world space (radians). Written by CameraController from
-// the mouse raycast, read by Player.tsx to rotate the musket/bow pivot.
+// Hunt aim state. CameraController solves a real 3D target under the cursor
+// (wildlife → terrain/water surface → fixed-distance fallback), then stores a
+// yaw for torso twist, a pitch for upper-body pose, and the exact target point
+// for projectile direction.
 export let huntAimAngle = 0;
-export function setHuntAimAngle(angle: number) { huntAimAngle = angle; }
+export let huntAimPitch = 0;
+export const huntAimTarget = new THREE.Vector3();
+export let huntAimValid = false;
+export function setHuntAim(angle: number, pitch: number, target: THREE.Vector3) {
+  huntAimAngle = angle;
+  huntAimPitch = pitch;
+  huntAimTarget.copy(target);
+  huntAimValid = true;
+}
 
 // Per-weapon reload timestamps (Date.now() ms). Keyed by land weapon id so
 // switching between musket and bow tracks independent cooldowns.
@@ -124,4 +136,3 @@ export const wildlifeLivePositions: Map<string, WildlifeLiveEntry> = new Map();
 // Kill events — wildlife components read & clear these to play death animations.
 // Projectile system writes the id of any animal whose HP dropped to 0.
 export const wildlifeKillQueue: Set<string> = new Set();
-

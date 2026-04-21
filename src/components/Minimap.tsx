@@ -198,32 +198,57 @@ export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: 
   return (
     <div
       onClick={onClick}
-      style={{ width: size, height: size }}
-      className={`rounded-full border-[5px] border-amber-900/90 bg-blue-900/50 shadow-[0_0_20px_rgba(0,0,0,0.6),inset_0_0_15px_rgba(0,0,0,0.8)] overflow-hidden flex items-center justify-center backdrop-blur-sm relative ${onClick ? 'cursor-pointer hover:border-amber-600 hover:shadow-[0_0_25px_rgba(245,158,11,0.3)] transition-all active:scale-95' : ''}`}
+      style={{
+        width: size,
+        height: size,
+        background:
+          'radial-gradient(circle at 30% 25%, #c9a25a 0%, #8a6a32 35%, #4a3619 75%, #241806 100%)',
+      }}
+      className={`rounded-full overflow-hidden relative shadow-[0_6px_22px_rgba(0,0,0,0.7),inset_0_2px_3px_rgba(255,225,160,0.35),inset_0_-2px_4px_rgba(0,0,0,0.55)] flex items-center justify-center ${onClick ? 'cursor-pointer transition-transform active:scale-95 hover:brightness-110' : ''}`}
     >
-      {/* Compass markings */}
-      <div className="absolute inset-0 pointer-events-none z-10">
-        <span className="absolute top-0.5 left-1/2 -translate-x-1/2 text-amber-500 font-bold text-[9px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">N</span>
-        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-amber-500 font-bold text-[9px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">S</span>
-        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-amber-500 font-bold text-[9px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">W</span>
-        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-amber-500 font-bold text-[9px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">E</span>
-
-        {/* Crosshair */}
-        <div className="absolute top-1/2 left-0 w-full h-[1px] bg-white/10" />
-        <div className="absolute top-0 left-1/2 w-[1px] h-full bg-white/10" />
-
-        {/* Inner ring */}
-        <div className="absolute inset-1.5 rounded-full border border-white/10" />
-        <div className="absolute inset-6 rounded-full border border-white/5" />
-      </div>
-
       <canvas
         ref={canvasRef}
         width={MAP_SIZE}
         height={MAP_SIZE}
-        className="rounded-full opacity-90"
-        style={{ width: '100%', height: '100%' }}
+        className="rounded-full opacity-90 bg-blue-900/50"
+        style={{ width: 'calc(100% - 12px)', height: 'calc(100% - 12px)' }}
       />
+
+      {/* Inner bezel — recessed dark ring between brass rim and map */}
+      <div
+        className="absolute rounded-full pointer-events-none"
+        style={{
+          inset: 6,
+          boxShadow:
+            'inset 0 0 0 1px rgba(0,0,0,0.7), inset 0 3px 6px rgba(0,0,0,0.85), inset 0 -1px 2px rgba(255,220,150,0.08)',
+        }}
+      />
+
+      {/* Vignette — darkens the map edges for an old-chart feel */}
+      <div
+        className="absolute rounded-full pointer-events-none z-10"
+        style={{
+          inset: 6,
+          background:
+            'radial-gradient(circle at 50% 50%, transparent 45%, rgba(20,10,0,0.35) 75%, rgba(10,5,0,0.75) 100%)',
+        }}
+      />
+
+      {/* Compass markings */}
+      <div className="absolute inset-0 pointer-events-none z-20">
+        <span className="absolute top-0.5 left-1/2 -translate-x-1/2 text-amber-400 font-bold text-[10px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">N</span>
+        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-amber-400 font-bold text-[10px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">S</span>
+        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold text-[10px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">W</span>
+        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold text-[10px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">E</span>
+
+        {/* Crosshair */}
+        <div className="absolute top-1/2 left-1.5 right-1.5 h-[1px] bg-white/10" />
+        <div className="absolute left-1/2 top-1.5 bottom-1.5 w-[1px] bg-white/10" />
+
+        {/* Inner rings */}
+        <div className="absolute inset-2 rounded-full border border-white/10" />
+        <div className="absolute inset-6 rounded-full border border-white/5" />
+      </div>
     </div>
   );
 }

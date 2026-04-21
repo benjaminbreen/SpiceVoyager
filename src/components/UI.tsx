@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { useGameStore, Port, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
 import { getWorldPortById } from '../utils/worldPorts';
 import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
@@ -38,6 +38,7 @@ const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default:
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const WorldMap = lazy(() => import('./WorldMap').then((module) => ({ default: module.WorldMap })));
 const WorldMapModal = lazy(() => import('./WorldMapModal').then((module) => ({ default: module.WorldMapModal })));
+const WorldMapModalChart = lazy(() => import('./WorldMapModalChart').then((module) => ({ default: module.WorldMapModalChart })));
 
 const PORT_RADIUS_SQ = 20 * 20;
 const WALKING_PORT_SEARCH_RADIUS_SQ = 120 * 120;
@@ -143,6 +144,93 @@ function findNearbyPort(
   if (!candidate) return null;
 
   return isInsideBuildingFootprint(walkingPos[0], walkingPos[2], candidate) ? candidate : null;
+}
+
+// ── Prompt bubble (SPACE / E / T) ───────────────────────────────────────────
+// The anchor and interaction prompts share layout + animation. On mobile the
+// whole bubble is tappable and dispatches a synthetic keyboard event so the
+// existing keydown handlers in GameScene.tsx / UI.tsx stay the single source
+// of truth for what SPACE/E/T actually do.
+
+function dispatchPromptKey(key: string) {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  if (key === ' ') {
+    // Some ship-fire code paths also listen for keyup to release fireHeld.
+    // Anchor toggle doesn't care, but fire it anyway for symmetry.
+    window.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+  }
+}
+
+function keyFromPrompt(prompt: string): string {
+  if (prompt.includes('T to Hail') || prompt.includes('t to hail')) return 't';
+  return 'e';
+}
+
+function mobilePromptLabel(prompt: string): string {
+  if (prompt.includes('T to Hail')) return 'Tap to hail';
+  if (prompt.includes('E to Embark')) return 'Tap to embark';
+  if (prompt.includes('E to Disembark')) return 'Tap to disembark';
+  return prompt;
+}
+
+const PROMPT_TONE: Record<'cyan' | 'amber', { border: string; shadow: string; text: string }> = {
+  cyan: {
+    border: 'border-cyan-500/50',
+    shadow: 'shadow-[0_0_20px_rgba(34,211,238,0.2)]',
+    text: 'text-cyan-400',
+  },
+  amber: {
+    border: 'border-amber-500/50',
+    shadow: 'shadow-[0_0_20px_rgba(245,158,11,0.3)]',
+    text: 'text-amber-400',
+  },
+};
+
+function PromptBubble({
+  children,
+  tone,
+  isMobile,
+  onTap,
+}: {
+  children: ReactNode;
+  tone: 'cyan' | 'amber';
+  isMobile: boolean;
+  onTap: () => void;
+}) {
+  const t = PROMPT_TONE[tone];
+  const common = `absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border ${t.border} ${t.shadow} ${t.text} font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`;
+
+  if (!isMobile) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 20 }}
+        className={common}
+      >
+        {children}
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.button
+      type="button"
+      onPointerDown={(e) => {
+        // Prevent the press from bubbling to the canvas (which would otherwise
+        // queue a tap-to-steer heading). pointerdown gives the snappiest feel.
+        e.stopPropagation();
+        onTap();
+      }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
+      className={`${common} pointer-events-auto cursor-pointer active:scale-95 transition-transform select-none`}
+      style={{ touchAction: 'none' }}
+    >
+      {children}
+    </motion.button>
+  );
 }
 
 // ── Combat Mode Banner ──────────────────────────────────────────────────────
@@ -371,6 +459,7 @@ export function UI() {
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
+  const useWorldMapChart = useGameStore((state) => state.renderDebug.worldMapChart);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const captainExpression = useGameStore((state) => state.captainExpression);
   const reputation = useGameStore((state) => state.reputation);
@@ -974,9 +1063,11 @@ export function UI() {
         {/* Minimap (top-right) — click to open full map */}
         <div className={`flex flex-col pointer-events-auto items-end ${isMobile ? 'gap-2' : 'gap-3'}`}>
           {minimapEnabled && (
-            <div className="relative">
-              <Minimap onClick={toggleLocalMap} size={isMobile ? 88 : 144} />
-              <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap ${isMobile ? 'px-1.5 py-0 text-[8px]' : 'px-2 py-0.5 text-[9px]'}`}>
+            <div className="relative group">
+              <Minimap onClick={toggleLocalMap} size={isMobile ? 104 : 172} />
+              <div
+                className={`absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap pointer-events-none ${isMobile ? 'px-1.5 py-0 text-[8px]' : 'px-2 py-0.5 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity duration-200'}`}
+              >
                 {isMobile ? 'Map' : 'Click for Map'}
               </div>
             </div>
@@ -1156,31 +1247,33 @@ export function UI() {
         )}
       </AnimatePresence>
 
-      {/* Anchor — bottom-center prompt (matches E to Embark style) */}
+      {/* Anchor — bottom-center prompt (matches E to Embark style).
+          On mobile, the bubble itself is tappable and dispatches the SPACE
+          handler that lives in GameScene.tsx — keeps a single source of truth. */}
       <AnimatePresence>
         {anchored && playerMode === 'ship' && !combatMode && !activePort && !showLocalMap && !showWorldMap && !showDashboard && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className={`absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.2)] text-cyan-400 font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`}
+          <PromptBubble
+            key="anchor-prompt"
+            tone="cyan"
+            isMobile={isMobile}
+            onTap={() => dispatchPromptKey(' ')}
           >
-            Press SPACE BAR to weigh anchor
-          </motion.div>
+            {isMobile ? 'Tap to weigh anchor' : 'Press SPACE BAR to weigh anchor'}
+          </PromptBubble>
         )}
       </AnimatePresence>
 
-      {/* Interaction Prompt */}
+      {/* Interaction Prompt (Press E to Embark/Disembark, Press T to Hail). */}
       <AnimatePresence>
         {interactionPrompt && !activePort && !showLocalMap && !showWorldMap && !startupOverlayActive && !showDashboard && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className={`absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.3)] text-amber-400 font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`}
+          <PromptBubble
+            key="interact-prompt"
+            tone="amber"
+            isMobile={isMobile}
+            onTap={() => dispatchPromptKey(keyFromPrompt(interactionPrompt))}
           >
-            {interactionPrompt}
-          </motion.div>
+            {isMobile ? mobilePromptLabel(interactionPrompt) : interactionPrompt}
+          </PromptBubble>
         )}
       </AnimatePresence>
 
@@ -1268,10 +1361,17 @@ export function UI() {
         )}
         {showWorldMap && (
           <Suspense fallback={null}>
-            <WorldMapModal
-              onClose={() => setShowWorldMap(false)}
-              onArrival={handleArrival}
-            />
+            {useWorldMapChart ? (
+              <WorldMapModalChart
+                onClose={() => setShowWorldMap(false)}
+                onArrival={handleArrival}
+              />
+            ) : (
+              <WorldMapModal
+                onClose={() => setShowWorldMap(false)}
+                onArrival={handleArrival}
+              />
+            )}
           </Suspense>
         )}
       </AnimatePresence>
