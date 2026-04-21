@@ -2,16 +2,17 @@ import { create } from 'zustand';
 import {
   commerceBuyTemplate, commerceSellTemplate, shipDamageTemplate,
   shipRepairTemplate, portDiscoverTemplate, tavernTemplate,
+  fraudRevealTemplate, windfallRevealTemplate,
 } from '../utils/journalTemplates';
 import { generateStartingCrew } from '../utils/crewGenerator';
 import { sfxCrabCollect, sfxDiscovery } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import { rollLoot, playLootSfx, CRAB_LOOT } from '../utils/lootRoll';
-import { NPCShipIdentity } from '../utils/npcShipGenerator';
+import { NPCShipIdentity, SHIP_NAMES } from '../utils/npcShipGenerator';
 import type { OceanEncounterDef } from '../utils/oceanEncounters';
 import type { FishType } from '../utils/fishTypes';
 import type { WaterPaletteSetting } from '../utils/waterPalettes';
-import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId } from '../utils/worldPorts';
+import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId, MARKET_TRUST } from '../utils/worldPorts';
 import {
   syncLiveShipTransform,
   syncLiveWalkingTransform,
@@ -27,6 +28,7 @@ import {
   getEffectiveKnowledge,
   getUnknownBuyDiscount,
   getMasterySellBonus,
+  rollPurchaseOutcome,
 } from '../utils/knowledgeSystem';
 
 export type { Commodity } from '../utils/commodities';
@@ -429,7 +431,9 @@ export function getPortUpgrades(portId: string, worldSeed: number): ShipUpgradeT
 // Max broadside cannons based on ship type
 const MAX_CANNONS: Record<string, number> = {
   Pinnace: 4,
+  Caravel: 4,
   Dhow: 4,
+  Fluyt: 6,
   Junk: 6,
   Carrack: 8,
   Galleon: 12,
@@ -523,7 +527,7 @@ export interface CrewMember {
 
 export interface ShipInfo {
   name: string;
-  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace';
+  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace' | 'Fluyt' | 'Caravel';
   flag: Nationality;
   armed: boolean;
 }
@@ -570,6 +574,23 @@ export interface JournalEntry {
   notes: JournalNote[];
 }
 
+/**
+ * Per-stack provenance for cargo. Every buy creates one. Sells consume FIFO.
+ * When `actualCommodity !== commodity`, the stack is mislabeled — reveal fires
+ * on sale. Provenance is kept in sync with the `cargo` bucket counts.
+ */
+export interface CargoStack {
+  id: string;
+  commodity: Commodity;        // claimed / bucket identity
+  actualCommodity: Commodity;  // what it really is (equals commodity for genuine stacks)
+  amount: number;
+  acquiredPort: string;        // port id
+  acquiredPortName: string;
+  acquiredDay: number;
+  purchasePrice: number;       // per-unit gold paid
+  knowledgeAtPurchase: KnowledgeLevel;
+}
+
 export interface FishShoalEntry {
   center: [number, number, number];
   fishType: FishType;
@@ -600,6 +621,7 @@ interface GameState {
   playerVelocity: number;
   gold: number;
   cargo: Record<Commodity, number>;
+  cargoProvenance: CargoStack[];
   stats: ShipStats;
   crew: CrewMember[];
   ship: ShipInfo;
@@ -660,6 +682,8 @@ interface GameState {
   waterPaletteSetting: WaterPaletteSetting;
   forceMobileLayout: boolean;
   setForceMobileLayout: (v: boolean) => void;
+  shipSteeringMode: 'tap' | 'joystick';
+  setShipSteeringMode: (mode: 'tap' | 'joystick') => void;
   renderDebug: RenderDebugSettings;
   paused: boolean;
   anchored: boolean;
@@ -816,19 +840,86 @@ export function grantCrewXp(
   return { crew: updated, levelledUp, newLevel };
 }
 
-// Generate crew first so we can read captain's luck for cargo generation
-const _startingFaction: Nationality = 'English';
+// Phase 1 playable factions: European merchants whose hull proportions match
+// the existing Ship.tsx mesh (the `european` visual family). Non-European
+// playables (dhow/junk) are phase 2 — see AGENTS.md.
+//
+// Each faction has a humble starter (the common case) and a grand one the
+// captain's luck unlocks. Picking tier from the captain roll avoids an extra
+// dice and ties ship quality to a stat the player can see.
+const EUROPEAN_FACTION_STARTS: Array<{
+  faction: Nationality;
+  humble: ShipInfo['type'];
+  grand: ShipInfo['type'];
+  homePortId: string;
+}> = [
+  { faction: 'English',    humble: 'Pinnace', grand: 'Galleon', homePortId: 'london'    },
+  { faction: 'Portuguese', humble: 'Caravel', grand: 'Carrack', homePortId: 'lisbon'    },
+  { faction: 'Dutch',      humble: 'Fluyt',   grand: 'Carrack', homePortId: 'amsterdam' },
+  { faction: 'Spanish',    humble: 'Caravel', grand: 'Galleon', homePortId: 'seville'   },
+];
+
+// Per-ship starting hold (tons) and purse (reals). Humble ships reflect a
+// minor merchant's capital; grand ships imply investor/state backing and a
+// fuller hold. Dhow/Junk are kept for type completeness — phase 2 starters.
+const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold: number }> = {
+  Pinnace: { cargoCapacity: 50,  gold: 600  },
+  Caravel: { cargoCapacity: 65,  gold: 700  },
+  Fluyt:   { cargoCapacity: 95,  gold: 850  },
+  Carrack: { cargoCapacity: 140, gold: 1400 },
+  Galleon: { cargoCapacity: 130, gold: 1500 },
+  Dhow:    { cargoCapacity: 60,  gold: 600  },
+  Junk:    { cargoCapacity: 100, gold: 900  },
+};
+
+const _factionStart = EUROPEAN_FACTION_STARTS[Math.floor(Math.random() * EUROPEAN_FACTION_STARTS.length)];
+const _startingFaction: Nationality = _factionStart.faction;
 const _startingCrewSize = 4 + Math.floor(Math.random() * 3); // 4-6
 const _startingCrew = generateStartingCrew(_startingFaction, _startingCrewSize);
 const _captainLuck = _startingCrew.find(c => c.role === 'Captain')?.stats.luck ?? 10;
-const _startingCargoCapacity = 100;
+
+// Captain luck is 1–20. Threshold 17 ≈ top ~20% of rolls upgrades the starter.
+const _luckyStart = _captainLuck >= 17;
+const _startingShipType: ShipInfo['type'] = _luckyStart ? _factionStart.grand : _factionStart.humble;
+
+const _shipNamePool = SHIP_NAMES[_startingShipType];
+const _startingShipName = _shipNamePool[Math.floor(Math.random() * _shipNamePool.length)];
+
+const _shipProfile = SHIP_START_PROFILE[_startingShipType];
+const _startingCargoCapacity = _shipProfile.cargoCapacity;
+const _startingGold = _shipProfile.gold;
+
+const _startingCargo = generateStartingCargo(_startingFaction, _startingCargoCapacity, _captainLuck);
+
+/** Build provenance stacks matching starting cargo. Treated as genuine goods
+ *  taken on before the voyage began — no acquisition port, no fraud roll. */
+function buildStartingProvenance(cargo: Record<Commodity, number>): CargoStack[] {
+  const stacks: CargoStack[] = [];
+  for (const [c, qty] of Object.entries(cargo)) {
+    if (qty > 0) {
+      stacks.push({
+        id: generateId(),
+        commodity: c as Commodity,
+        actualCommodity: c as Commodity,
+        amount: qty,
+        acquiredPort: 'home',
+        acquiredPortName: 'home port',
+        acquiredDay: 0,
+        purchasePrice: 0,
+        knowledgeAtPurchase: 1,
+      });
+    }
+  }
+  return stacks;
+}
 
 export const useGameStore = create<GameState>((set, get) => ({
   playerPos: [0, 0, 0],
   playerRot: 0,
   playerVelocity: 0,
-  gold: 1000,
-  cargo: generateStartingCargo(_startingFaction, _startingCargoCapacity, _captainLuck),
+  gold: _startingGold,
+  cargo: _startingCargo,
+  cargoProvenance: buildStartingProvenance(_startingCargo),
   stats: {
     hull: 100,
     maxHull: 100,
@@ -842,8 +933,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   crew: _startingCrew,
   ship: {
-    name: 'The Dorada',
-    type: 'Carrack',
+    name: _startingShipName,
+    type: _startingShipType,
     flag: _startingFaction,
     armed: true,
   },
@@ -881,9 +972,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 150,
   devSoloPort: null,
-  currentWorldPortId: null,
+  currentWorldPortId: _factionStart.homePortId,
   waterPaletteSetting: 'auto',
   forceMobileLayout: false,
+  shipSteeringMode: 'tap',
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
   anchored: false,
@@ -1099,16 +1191,21 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const now = Date.now();
 
-    // Dedupe: suppress identical port toast for same openPortId within 10s,
-    // or identical message within 2s (strict-mode double-fire guard).
+    // Dedupe: if an identical toast is already live, refresh its timestamp
+    // (bumps its visible duration) instead of stacking a duplicate.
+    // - port: same openPortId within 10s
+    // - other: same message+tier within 2s (strict-mode double-fire guard)
     const DEDUPE_PORT_MS = 10_000;
     const DEDUPE_MSG_MS = 2_000;
-    const isDup = state.notifications.some(n => {
+    const dupIdx = state.notifications.findIndex(n => {
       if (opts?.openPortId && n.openPortId === opts.openPortId && now - n.timestamp < DEDUPE_PORT_MS) return true;
       if (n.message === message && n.tier === tier && now - n.timestamp < DEDUPE_MSG_MS) return true;
       return false;
     });
-    if (isDup) return {};
+    if (dupIdx >= 0) {
+      const bumped = state.notifications.map((n, i) => i === dupIdx ? { ...n, timestamp: now } : n);
+      return { notifications: bumped };
+    }
 
     const incoming: Notification = {
       id: generateId(), message, type, tier, timestamp: now,
@@ -1193,9 +1290,30 @@ export const useGameStore = create<GameState>((set, get) => ({
           newPrices[c] = Math.max(1, Math.round(port.basePrices[c] * mod));
         }
       }
+
+      // Roll purchase outcome: only blind (Level 0) buys can be fraudulent or
+      // serendipitous. Identified buys are always genuine.
+      const outcome = knowledgeLevel === 0
+        ? rollPurchaseOutcome(commodity, port.id, MARKET_TRUST[port.id] ?? 0.5)
+        : { kind: 'genuine' as const };
+      const actualCommodity = outcome.kind === 'genuine' ? commodity : outcome.actual;
+
+      const newStack: CargoStack = {
+        id: generateId(),
+        commodity,
+        actualCommodity,
+        amount,
+        acquiredPort: port.id,
+        acquiredPortName: port.name,
+        acquiredDay: state.dayCount,
+        purchasePrice: price,
+        knowledgeAtPurchase: knowledgeLevel,
+      };
+
       set({
         gold: state.gold - totalCost,
         cargo: { ...state.cargo, [commodity]: state.cargo[commodity] + amount },
+        cargoProvenance: [...state.cargoProvenance, newStack],
         activePort: { ...port, inventory: newInventory, prices: newPrices },
         ports: state.ports.map(p => p.id === port.id
           ? { ...p, inventory: newInventory, prices: newPrices }
@@ -1227,64 +1345,148 @@ export const useGameStore = create<GameState>((set, get) => ({
     const state = get();
     const port = state.activePort;
     if (!port) return;
+    if (state.cargo[commodity] < amount) return;
 
-    if (state.cargo[commodity] >= amount) {
-      // Knowledge-aware sell pricing
-      const knowledgeLevel = getEffectiveKnowledge(commodity, state.knowledgeState, state.crew);
+    const factorBonus = getRoleBonus(state, 'Factor', 'charisma');
+    const traitBonus = captainHasTrait(state, 'Silver Tongue') ? 1.05 : 1.0;
 
-      // If port doesn't stock this commodity (basePrice = 0), sell at reduced global average
-      const portHasGood = port.basePrices[commodity] > 0;
-      const sdMod = portHasGood
-        ? supplyDemandModifier(port.inventory[commodity], port.baseInventory[commodity])
+    /** Compute per-unit sell price for any commodity at this port, applying
+     *  the standard factor/trait/mastery modifiers. Used for both the claimed
+     *  good and (on fraud/windfall) the revealed actual good. */
+    const perUnitSellPrice = (c: Commodity): number => {
+      const level = getEffectiveKnowledge(c, state.knowledgeState, state.crew);
+      const portHas = port.basePrices[c] > 0;
+      const sdMod = portHas
+        ? supplyDemandModifier(port.inventory[c], port.baseInventory[c])
         : 1.0;
-      const effectiveBase = portHasGood
-        ? Math.max(1, Math.round(port.basePrices[commodity] * sdMod))
+      const base = portHas
+        ? Math.max(1, Math.round(port.basePrices[c] * sdMod))
         : Math.max(1, Math.round(
-            (COMMODITY_DEFS[commodity].basePrice[0] + COMMODITY_DEFS[commodity].basePrice[1]) / 2 * 0.5
+            (COMMODITY_DEFS[c].basePrice[0] + COMMODITY_DEFS[c].basePrice[1]) / 2 * 0.5
           ));
-      const factorBonus = getRoleBonus(state, 'Factor', 'charisma');
-      const traitBonus = captainHasTrait(state, 'Silver Tongue') ? 1.05 : 1.0;
+      const mastery = level >= 2 ? getMasterySellBonus() : 1.0;
+      return Math.max(1, Math.floor(base * 0.8 * factorBonus * traitBonus * mastery));
+    };
 
-      // Mastered goods sell for 15-20% more (you know the best buyers)
-      const masteryBonus = knowledgeLevel >= 2 ? getMasterySellBonus() : 1.0;
-
-      const price = Math.max(1, Math.floor(effectiveBase * 0.8 * factorBonus * traitBonus * masteryBonus));
-      const totalGain = price * amount;
-
-      const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] + amount };
-      // Recalculate prices based on new supply levels
-      const newPrices = { ...port.prices };
-      for (const c of ALL_COMMODITIES_FULL) {
-        if (port.basePrices[c] > 0) {
-          const mod = supplyDemandModifier(newInventory[c], port.baseInventory[c]);
-          newPrices[c] = Math.max(1, Math.round(port.basePrices[c] * mod));
-        }
+    // Walk provenance stacks FIFO, consume `amount` total units, group by
+    // actualCommodity so reveals can be priced and announced per-revealed-good.
+    const consumed: { stack: CargoStack; taken: number }[] = [];
+    const newProvenance: CargoStack[] = [];
+    let remaining = amount;
+    for (const stack of state.cargoProvenance) {
+      if (stack.commodity !== commodity || remaining <= 0) {
+        newProvenance.push(stack);
+        continue;
       }
-
-      set({
-        gold: state.gold + totalGain,
-        cargo: { ...state.cargo, [commodity]: state.cargo[commodity] - amount },
-        activePort: { ...port, inventory: newInventory, prices: newPrices },
-        ports: state.ports.map(p => p.id === port.id
-          ? { ...p, inventory: newInventory, prices: newPrices }
-          : p
-        ),
-      });
-      get().addNotification(`Sold ${amount} ${commodity} for ${totalGain}g`, 'success');
-      get().addJournalEntry('commerce', commerceSellTemplate(commodity, amount, totalGain, port.name), port.name);
-      const faction = PORT_FACTION[port.id];
-      if (faction) get().adjustReputation(faction, 2);
-      const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
-      if (factor) {
-        get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
-        const tradeXp = 3 + Math.floor(totalGain / 80);
-        const r = grantCrewXp(get().crew, factor.id, tradeXp);
-        set({ crew: r.crew });
-        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
-      }
-      // Captain reacts to profitable sale
-      get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
+      const take = Math.min(stack.amount, remaining);
+      consumed.push({ stack, taken: take });
+      remaining -= take;
+      const left = stack.amount - take;
+      if (left > 0) newProvenance.push({ ...stack, amount: left });
     }
+    // Safety: if provenance is out of sync (shouldn't happen), fall back to
+    // treating the shortfall as genuine at the claimed price.
+    if (remaining > 0) {
+      consumed.push({
+        stack: {
+          id: generateId(), commodity, actualCommodity: commodity,
+          amount: remaining, acquiredPort: 'unknown', acquiredPortName: 'unknown',
+          acquiredDay: 0, purchasePrice: 0, knowledgeAtPurchase: 1,
+        },
+        taken: remaining,
+      });
+      remaining = 0;
+    }
+
+    // Compute actual gain and collect reveal events.
+    let totalGain = 0;
+    type Reveal = { stack: CargoStack; taken: number; claimedUnitPrice: number; actualUnitPrice: number };
+    const reveals: Reveal[] = [];
+    const claimedUnitPrice = perUnitSellPrice(commodity);
+    const newKnowledge = { ...state.knowledgeState };
+    for (const { stack, taken } of consumed) {
+      const actual = stack.actualCommodity;
+      if (actual === commodity) {
+        totalGain += claimedUnitPrice * taken;
+      } else {
+        const actualUnitPrice = perUnitSellPrice(actual);
+        totalGain += actualUnitPrice * taken;
+        reveals.push({ stack, taken, claimedUnitPrice, actualUnitPrice });
+        // A reveal teaches the player what the actual good is.
+        if ((newKnowledge[actual] ?? 0) < 1) newKnowledge[actual] = 1;
+      }
+    }
+
+    // Port inventory increases by the CLAIMED commodity — the buyer still
+    // thinks that's what they received (the player only learns on sale). This
+    // is a small simplification we can tighten later.
+    const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] + amount };
+    const newPrices = { ...port.prices };
+    for (const c of ALL_COMMODITIES_FULL) {
+      if (port.basePrices[c] > 0) {
+        const mod = supplyDemandModifier(newInventory[c], port.baseInventory[c]);
+        newPrices[c] = Math.max(1, Math.round(port.basePrices[c] * mod));
+      }
+    }
+
+    set({
+      gold: state.gold + totalGain,
+      cargo: { ...state.cargo, [commodity]: state.cargo[commodity] - amount },
+      cargoProvenance: newProvenance,
+      knowledgeState: newKnowledge,
+      activePort: { ...port, inventory: newInventory, prices: newPrices },
+      ports: state.ports.map(p => p.id === port.id
+        ? { ...p, inventory: newInventory, prices: newPrices }
+        : p
+      ),
+    });
+
+    // Standard sell notification + journal for the honest portion.
+    get().addNotification(`Sold ${amount} ${commodity} for ${totalGain}g`, 'success');
+    get().addJournalEntry('commerce', commerceSellTemplate(commodity, amount, totalGain, port.name), port.name);
+
+    // Reveals: one notification + journal entry per mislabeled stack consumed.
+    for (const r of reveals) {
+      const { stack, taken, claimedUnitPrice, actualUnitPrice } = r;
+      const delta = (actualUnitPrice - claimedUnitPrice) * taken;
+      if (delta < 0) {
+        const loss = -delta;
+        get().addNotification(
+          `"${stack.commodity}" from ${stack.acquiredPortName} was actually ${stack.actualCommodity} — ${loss}g lost`,
+          'warning',
+          { tier: 'event', subtitle: 'FRAUD REVEALED' },
+        );
+        get().addJournalEntry(
+          'commerce',
+          fraudRevealTemplate(stack.commodity, stack.actualCommodity, taken, stack.acquiredPortName, port.name, loss),
+          port.name,
+        );
+      } else {
+        get().addNotification(
+          `"${stack.commodity}" from ${stack.acquiredPortName} was actually ${stack.actualCommodity} — +${delta}g beyond expectation`,
+          'success',
+          { tier: 'event', subtitle: 'WINDFALL' },
+        );
+        get().addJournalEntry(
+          'commerce',
+          windfallRevealTemplate(stack.commodity, stack.actualCommodity, taken, stack.acquiredPortName, port.name, delta),
+          port.name,
+        );
+      }
+    }
+
+    const faction = PORT_FACTION[port.id];
+    if (faction) get().adjustReputation(faction, 2);
+    const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
+    if (factor) {
+      get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
+      const tradeXp = 3 + Math.floor(totalGain / 80);
+      const r = grantCrewXp(get().crew, factor.id, tradeXp);
+      set({ crew: r.crew });
+      if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
+    }
+    // Captain reacts to profitable sale
+    get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
   },
   
   advanceTime: (delta) => {
@@ -1439,6 +1641,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setDevSoloPort: (portId) => set({ devSoloPort: portId }),
   setWaterPaletteSetting: (setting) => set({ waterPaletteSetting: setting }),
   setForceMobileLayout: (v) => set({ forceMobileLayout: v }),
+  setShipSteeringMode: (mode) => set({ shipSteeringMode: mode }),
   updateRenderDebug: (patch) => set((state) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),
@@ -1633,6 +1836,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const currentTotal = Object.values(currentCargo).reduce((a, b) => a + b, 0);
     const capacity = state.stats.cargoCapacity;
     const salvaged: string[] = [];
+    const salvageProvenance: CargoStack[] = [];
     for (const [comm, qty] of Object.entries(npcCargo)) {
       if (qty && qty > 0) {
         const salvageAmt = Math.max(1, Math.floor(qty * (0.3 + Math.random() * 0.3)));
@@ -1641,6 +1845,18 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (taken > 0) {
           currentCargo[comm as Commodity] = (currentCargo[comm as Commodity] || 0) + taken;
           salvaged.push(`${taken} ${comm}`);
+          // Salvaged goods are always genuine — the player sees what was in the hold.
+          salvageProvenance.push({
+            id: generateId(),
+            commodity: comm as Commodity,
+            actualCommodity: comm as Commodity,
+            amount: taken,
+            acquiredPort: `wreck:${npcId}`,
+            acquiredPortName: `the ${shipName}`,
+            acquiredDay: state.dayCount,
+            purchasePrice: 0,
+            knowledgeAtPurchase: 1,
+          });
         }
       }
     }
@@ -1673,7 +1889,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (r.levelledUp) levelUps.push(`${r.levelledUp} (Lvl ${r.newLevel})`);
     }
 
-    set({ gold: state.gold + goldReward, cargo: currentCargo, crew: updatedCrew });
+    set({
+      gold: state.gold + goldReward,
+      cargo: currentCargo,
+      cargoProvenance: [...state.cargoProvenance, ...salvageProvenance],
+      crew: updatedCrew,
+    });
     // Remove from npcShips
     set((s) => ({ npcShips: s.npcShips.filter(n => n.id !== npcId) }));
     // Notifications

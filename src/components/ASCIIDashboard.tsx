@@ -426,6 +426,22 @@ function MiniShipSchematic({ shipType }: { shipType: string }) {
         <C c={h}>{'   ══════════════════════'}</C>
       </>
     ),
+    Fluyt: (
+      <>
+        <C c={m}>{'        |    |'}</C>{'\n'}
+        <C c={s}>{'       )_)  )_)'}</C>{'\n'}
+        <C c={s}>{'      )___))___)'}</C><C c={h}>{'\\'}</C>{'\n'}
+        <C c={h}>{'   ═══════════════════'}</C>
+      </>
+    ),
+    Caravel: (
+      <>
+        <C c={m}>{'       |     |'}</C>{'\n'}
+        <C c={s}>{'      /|    /|'}</C>{'\n'}
+        <C c={s}>{'     / |   / |'}</C>{'\n'}
+        <C c={h}>{'   ═════════════'}</C>
+      </>
+    ),
   };
 
   const carrack = (
@@ -1484,9 +1500,418 @@ const HUMOUR_INFO: Record<keyof Humours, { label: string; color: string; descrip
 
 const DEFAULT_HUMOURS: Humours = { sanguine: 5, choleric: 5, melancholic: 5, phlegmatic: 5, curiosity: 5 };
 
-function TemperamentBlock({ humours }: { humours?: Humours }) {
-  const h = humours ?? DEFAULT_HUMOURS;
-  const entries = (Object.keys(HUMOUR_INFO) as (keyof Humours)[])
+// ── Vices & tastes (period-flavoured, derived from humours + nationality) ──
+
+type HumourKey = keyof Humours;
+
+// Universal vices keyed to humour. Kept culture-agnostic — these work for any
+// crew member. Culture-specific drinks/games live in the nationality tables below.
+const HUMOUR_VICES: Record<HumourKey, string[]> = {
+  choleric:    ['Brawling', 'Dice', 'Fighting cocks', 'Quarrels', 'Feuds', 'Wrestling', 'Heavy-handed discipline'],
+  sanguine:    ['Song', 'Courtesans', 'Feasts', 'Dancing', 'Sailors\' yarns', 'Loud laughter', 'Vanity'],
+  melancholic: ['Solitude', 'Scripture', 'Keeping a journal', 'Mourning old shipmates', 'Long silences', 'Sighing', 'Dirges'],
+  phlegmatic:  ['Routine', 'Napping on watch', 'Fishing', 'Mending things', 'Plain fare', 'Knot-work', 'Whittling'],
+  curiosity:   ['Foreign tongues', 'Curiosities', 'Botanising', 'Astrology', 'Strange books', 'Map-collecting', 'Questioning priests'],
+};
+
+// Shadow vices — the hidden habit that contradicts the public humour.
+const SHADOW_VICES: Record<HumourKey, string[]> = {
+  choleric:    ['Gambling debts', 'Thievery', 'A hidden temper', 'Cowardice in private'],
+  sanguine:    ['A wife in each port', 'Debts to half the factory', 'Venereal sores', 'Plagiarising verse'],
+  melancholic: ['Quiet indulgence in opium', 'Mystical visions', 'Brooding over old grievances', 'Letters to a dead brother'],
+  phlegmatic:  ['Quiet drinking', 'Smuggled tobacco', 'Petty pilfering', 'Sleeping through his watch'],
+  curiosity:   ['Forbidden books', 'Heretical notions', 'Foreign women', 'Correspondence with Jesuits'],
+};
+
+// Culture-specific drinks (alcoholic or stimulant). Array per nationality so
+// crew members from the same culture don't all share identical vices.
+const NATIONAL_DRINKS: Partial<Record<Nationality, string[]>> = {
+  English:    ['Ale', 'Strong sack', 'Canary wine', 'Small beer', 'Usquebaugh'],
+  Dutch:      ['Jenever', 'Dutch gin', 'Beer', 'Brandewijn'],
+  Portuguese: ['Port wine', 'Madeira', 'Aguardente', 'Vinho verde'],
+  Spanish:    ['Aguardiente', 'Sherry', 'Malaga wine', 'Canary wine'],
+  French:     ['Brandy', 'Burgundy', 'Calvados', 'Claret'],
+  Danish:     ['Aquavit', 'Beer', 'Mjød'],
+  Mughal:     ['Bhang', 'Sharbat', 'Date wine', 'Fenny'],
+  Gujarati:   ['Toddy', 'Bhang lassi', 'Mahua liquor'],
+  Persian:    ['Coffee', 'Sharbat', 'Rosewater cordial', 'Pomegranate wine'],
+  Ottoman:    ['Coffee', 'Sherbet', 'Raki (sparingly)', 'Boza'],
+  Omani:      ['Coffee', 'Laban', 'Date wine'],
+  Swahili:    ['Palm wine', 'Tembo', 'Honey beer', 'Mbege'],
+  Malay:      ['Arrack', 'Toddy', 'Tuak'],
+  Acehnese:   ['Arrack', 'Palm toddy', 'Tuak'],
+  Javanese:   ['Arrack', 'Tuak', 'Brem rice wine'],
+  Moluccan:   ['Palm wine', 'Sagueir', 'Arrack'],
+  Siamese:    ['Lao rice wine', 'Toddy', 'Arrack'],
+  Chinese:    ['Rice wine', 'Huangjiu', 'Baijiu', 'Tea'],
+  Japanese:   ['Sake', 'Shōchū', 'Amazake', 'Tea'],
+};
+
+// Culture-specific non-alcohol substances (stimulants, narcotics, betel, etc.)
+const NATIONAL_SUBSTANCES: Partial<Record<Nationality, string[]>> = {
+  English:    ['Tobacco', 'Snuff'],
+  Dutch:      ['Tobacco', 'Snuff'],
+  Portuguese: ['Tobacco', 'Snuff'],
+  Spanish:    ['Tobacco', 'Cacao'],
+  French:     ['Snuff', 'Tobacco'],
+  Danish:     ['Tobacco'],
+  Mughal:     ['Paan', 'Opium', 'Bhang', 'Hashish'],
+  Gujarati:   ['Paan', 'Opium', 'Bhang'],
+  Persian:    ['Hashish', 'Opium', 'Tobacco (in a qalyan)'],
+  Ottoman:    ['Hashish', 'Tobacco (in a chibouk)', 'Opium', 'Coffee'],
+  Omani:      ['Qat', 'Dates', 'Frankincense smoke'],
+  Swahili:    ['Qat', 'Kola nut', 'Frankincense smoke'],
+  Malay:      ['Betel', 'Opium', 'Nutmeg dust'],
+  Acehnese:   ['Betel', 'Opium', 'Pepper chewing'],
+  Javanese:   ['Betel', 'Kretek (proto-)', 'Opium'],
+  Moluccan:   ['Betel', 'Clove chewing', 'Nutmeg'],
+  Siamese:    ['Betel', 'Opium'],
+  Chinese:    ['Tobacco', 'Tea', 'Opium (rare)', 'Ginseng'],
+  Japanese:   ['Tobacco', 'Tea', 'Incense'],
+};
+
+// Culture-specific pastimes and games.
+const NATIONAL_PASTIMES: Partial<Record<Nationality, string[]>> = {
+  English:    ['Cribbage', 'Skittles', 'Cockfighting', 'Bear-baiting tales', 'Ballad-singing'],
+  Dutch:      ['Kolf', 'Cards', 'Skating songs', 'Tulip talk'],
+  Portuguese: ['Cards', 'Fado', 'Bullfight tales', 'Dice'],
+  Spanish:    ['Cards', 'Bullfight tales', 'Tertulia gossip', 'Dice'],
+  French:     ['Cards', 'Tennis talk', 'Dueling tales'],
+  Danish:     ['Drinking songs', 'Dice', 'Runes'],
+  Mughal:     ['Shatranj', 'Pigeon-racing', 'Ghazal verse', 'Nautch dances'],
+  Gujarati:   ['Cards (ganjifa)', 'Kite-flying', 'Mercantile gossip'],
+  Persian:    ['Backgammon', 'Chess (shatranj)', 'Rubaiyat verse', 'Coffee-house talk'],
+  Ottoman:    ['Backgammon', 'Coffee-house gossip', 'Wrestling matches', 'Reciting verse'],
+  Omani:      ['Falconry talk', 'Sword-play', 'Camel-racing tales', 'Backgammon'],
+  Swahili:    ['Bao (mancala)', 'Drumming', 'Storytelling', 'Taarab music'],
+  Malay:      ['Cockfighting', 'Wayang shadow-plays', 'Pantun riddles', 'Sepak raga'],
+  Acehnese:   ['Cockfighting', 'Wayang', 'Rencong sword-play'],
+  Javanese:   ['Wayang kulit', 'Gamelan music', 'Cockfighting'],
+  Moluccan:   ['Cakalele dancing', 'Fishing contests', 'Nutmeg-market gossip'],
+  Siamese:    ['Muay (boxing)', 'Cockfighting', 'Kite-fighting'],
+  Chinese:    ['Weiqi (go)', 'Xiangqi', 'Calligraphy', 'Kite-flying', 'Tea-house gossip'],
+  Japanese:   ['Go', 'Shōgi', 'Calligraphy', 'Archery talk', 'Noh recitation'],
+};
+
+// Cosmopolitan vices — things any travelling trader might have acquired regardless
+// of birthplace. A Persian gunner can love dice, an English sailor can keep a
+// commonplace book. These exist to break pure cultural determinism. Period-appropriate
+// for 1612.
+const COSMOPOLITAN_VICES: string[] = [
+  'Gambling at dice',
+  'Tarocchi cards',
+  'Astrology',
+  'Numerology',
+  'Alchemical tracts',
+  'Hoarding maps',
+  'Coin-collecting',
+  'Collecting signet rings',
+  'Saints\' relics',
+  'Charms against the evil eye',
+  'A passion for cats',
+  'Caged songbirds',
+  'A commonplace book',
+  'Memorising the stars',
+  'A weakness for sweetmeats',
+  'A fondness for perfumes',
+  'Miniature portraits',
+  'Engraved daggers',
+  'Horse-racing tales',
+  'Unsent love letters',
+  'Buying curiosities in every port',
+  'Debating theology with strangers',
+  'Weighing every coin he is given',
+  'A devotion to one particular saint',
+  'Hoarding silver spoons',
+  'Palmistry',
+  'A hidden love of poetry',
+  'Keeping a diary in cipher',
+];
+
+// Universal quirks — true-to-period oddities anyone might have. Weighted light.
+const UNIVERSAL_QUIRKS: string[] = [
+  'Bad puns',
+  'Picking at scabs',
+  'Talks to himself at the wheel',
+  'Hums tunelessly',
+  'Collects curious shells',
+  'Superstitious about hats on beds',
+  'Will not sail on a Friday',
+  'Whittles endlessly',
+  'Grinds his teeth in sleep',
+  'Keeps a lock of his mother\'s hair',
+  'Whistles below deck (to the alarm of shipmates)',
+  'Chews the ends of his rope',
+  'Counts every biscuit twice',
+  'Names the ship\'s rats',
+  'Refuses to shave at sea',
+  'Always first to the salt pork',
+  'Eats fish-heads whole',
+  'Complains endlessly about his boots',
+  'Reads portents in clouds',
+  'Recounts the same three stories',
+  'Swats at invisible flies',
+  'Snores like a gun-barrel',
+  'Sleeps with one eye open',
+  'Saves his fingernail clippings',
+  'Converses with his shadow at dusk',
+  'Stiff-backed — refuses to sit in company',
+  'Crosses himself at the sight of porpoises',
+  'Insists on lucky socks',
+  'Arranges his dinner by colour',
+  'Knots and unknots the same cord all watch',
+  'Believes the moon addresses him personally',
+  'Cannot pass a cat without greeting it',
+  'Keeps a pet cockroach in a matchbox',
+  'Writes letters he never sends',
+  'Sneezes in threes',
+  'Sings hymns slightly off-key',
+  'Has a pet name for the anchor',
+];
+
+function strHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+type Vice = { label: string; secret: boolean; acquired?: boolean };
+
+// All nationalities with entries in at least one national table — used to pick a
+// *foreign* culture for the "acquired abroad" slot.
+const ALL_NATIONALITIES: Nationality[] = Array.from(new Set<Nationality>([
+  ...(Object.keys(NATIONAL_DRINKS)     as Nationality[]),
+  ...(Object.keys(NATIONAL_SUBSTANCES) as Nationality[]),
+  ...(Object.keys(NATIONAL_PASTIMES)   as Nationality[]),
+]));
+
+function deriveVices(member: CrewMember): Vice[] {
+  const h = member.humours ?? DEFAULT_HUMOURS;
+  const ordered = (Object.keys(HUMOUR_INFO) as HumourKey[])
+    .map(k => ({ key: k, value: h[k] }))
+    .sort((a, b) => b.value - a.value);
+  const seed = strHash(member.id);
+  const out: Vice[] = [];
+  const seen = new Set<string>();
+  const push = (label: string | undefined, opts: { secret?: boolean; acquired?: boolean } = {}) => {
+    if (!label) return;
+    const k = label.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ label, secret: !!opts.secret, acquired: opts.acquired });
+  };
+  const pickFrom = (arr: string[] | undefined, shift: number): string | undefined =>
+    arr && arr.length ? arr[(seed >>> shift) % arr.length] : undefined;
+
+  const drinks     = NATIONAL_DRINKS[member.nationality];
+  const substances = NATIONAL_SUBSTANCES[member.nationality];
+  const pastimes   = NATIONAL_PASTIMES[member.nationality];
+
+  // 1. National drink — most crew have some cultural tipple.
+  push(pickFrom(drinks, 0));
+
+  // 2. Dominant humour vice — universal, keyed to temperament.
+  push(pickFrom(HUMOUR_VICES[ordered[0].key], 4));
+
+  // 3. National substance or pastime — one of the two, biased by humour.
+  //    Curious/melancholic lean to substances; choleric/sanguine/phlegmatic lean to pastimes.
+  const leanSubstance = ordered[0].key === 'curiosity' || ordered[0].key === 'melancholic';
+  const altSlot = leanSubstance ? substances : pastimes;
+  const fallbackSlot = leanSubstance ? pastimes : substances;
+  push(pickFrom(altSlot, 8) ?? pickFrom(fallbackSlot, 8));
+
+  // 4. Cosmopolitan grab-bag — ~1 in 2. A personal obsession that cuts across
+  //    culture. These are travelling traders; a Persian can love dice, an
+  //    Englishman can keep a commonplace book.
+  if ((seed >>> 14) % 2 === 0) {
+    push(pickFrom(COSMOPOLITAN_VICES, 18));
+  }
+
+  // 5. Acquired abroad — ~1 in 3. Pull a drink/substance/pastime from a *different*
+  //    nationality; the crew member picked up the habit in a foreign port.
+  //    Pastimes are weighted most likely (most distinctive and most transmissible).
+  if ((seed >>> 22) % 3 === 0) {
+    const others = ALL_NATIONALITIES.filter(n => n !== member.nationality);
+    if (others.length) {
+      const foreign = others[(seed >>> 26) % others.length];
+      const categories: (string[] | undefined)[] = [
+        NATIONAL_PASTIMES[foreign],
+        NATIONAL_PASTIMES[foreign],  // doubled to bias toward pastimes
+        NATIONAL_SUBSTANCES[foreign],
+        NATIONAL_DRINKS[foreign],
+      ];
+      const valid = categories.filter((c): c is string[] => !!c && c.length > 0);
+      if (valid.length) {
+        const cat = valid[(seed >>> 28) % valid.length];
+        const item = cat[(seed >>> 30) % cat.length];
+        push(item, { acquired: true });
+      }
+    }
+  }
+
+  // 6. Secondary humour vice if pronounced (>=6).
+  if (ordered[1].value >= 6) {
+    push(pickFrom(HUMOUR_VICES[ordered[1].key], 12));
+  }
+
+  // 7. Universal quirk — ~1 in 3, the funny/weird period flavour.
+  if ((seed >>> 16) % 3 === 0) {
+    push(pickFrom(UNIVERSAL_QUIRKS, 16));
+  }
+
+  // 8. Secret shadow vice — ~1 in 4, from the *weakest* humour's shadow list,
+  //    so the hidden habit contradicts the public demeanour.
+  if ((seed >>> 20) % 4 === 0) {
+    const weakest = ordered[ordered.length - 1].key;
+    push(pickFrom(SHADOW_VICES[weakest], 24), { secret: true });
+  }
+
+  return out.slice(0, 4);
+}
+
+// ── "In a crisis" — one-liner keyed to humours + stats + role ─────────
+
+function deriveCrisisLine(member: CrewMember): string {
+  const h = member.humours ?? DEFAULT_HUMOURS;
+  const s = member.stats;
+  const r = member.role;
+  const q = member.quality;
+  const age = member.age;
+  const skill = member.skill;
+  const morale = member.morale;
+  const health = member.health;
+  const isLow  = q === 'disaster' || q === 'dud' || q === 'untried';
+  const isHigh = q === 'legendary' || q === 'renowned' || q === 'seasoned';
+  const seed = strHash(member.id);
+
+  // Tier-forced overrides — disasters and deep duds always read as liabilities.
+  if (q === 'disaster') {
+    const lines = [
+      'Freezes when the shot comes close; has to be hauled to his station.',
+      'Weeps in his hammock the night before any engagement.',
+      'Will vanish below decks the moment a sail is sighted to windward.',
+      'Soils himself when the first gun goes off and does not come up for hours.',
+      'Babbles prayers in three languages and does no work.',
+      'Has been known to cut a boat loose and row for the horizon.',
+    ];
+    return lines[seed % lines.length];
+  }
+  if (q === 'dud' && s.charisma <= 8 && s.strength <= 10) {
+    const lines = [
+      'Mumbles excuses and finds reasons to be elsewhere when work begins.',
+      'Sits down on a coil of rope and waits for the fuss to pass.',
+      'Complains loudly about his back the moment orders are given.',
+    ];
+    return lines[seed % lines.length];
+  }
+
+  // Weighted rule set — every matching line is eligible; one is picked by
+  // stable seed hash so the same crew member always shows the same line,
+  // but similar archetypes vary between members.
+  const rules: { cond: boolean; line: string }[] = [
+    // ── Negative: cowardice, breakdown, mutiny ──
+    { cond: isLow && s.charisma <= 4,                           line: 'Will demand his share before the fight is won.' },
+    { cond: isLow && h.melancholic >= 7,                        line: 'First to propose striking the colours.' },
+    { cond: isLow && s.luck <= 4,                               line: 'Whatever goes wrong will go wrong near him.' },
+    { cond: isLow && s.perception <= 5,                         line: 'Slow to recognise a threat; slower still to respond.' },
+    { cond: isLow && s.strength <= 6,                           line: 'Tires quickly under strain; better kept off the pumps.' },
+    { cond: isLow && morale <= 30,                              line: 'Grumbles openly about quitting the moment shore is in sight.' },
+    { cond: isLow && morale <= 20,                              line: 'Mutters of mutiny — only to those he thinks will agree.' },
+    { cond: isLow && h.sanguine <= 3 && h.phlegmatic <= 4,      line: 'Goes very quiet, and no one can say what he will do.' },
+    { cond: isLow && h.choleric >= 7,                           line: 'Lashes out at whoever is nearest when the fear takes him.' },
+    { cond: isLow && skill < 20,                                line: 'Stands gaping while better hands work around him.' },
+    { cond: isLow && h.curiosity >= 7,                          line: 'Asks questions no one has the time to answer.' },
+    { cond: isLow && s.luck <= 3 && h.melancholic >= 5,         line: 'Crosses himself until his lips are raw and does not move.' },
+    { cond: isLow && h.sanguine >= 7,                           line: 'Laughs too loudly and too often — the men know the sound.' },
+    { cond: isLow && age >= 55,                                 line: 'His hands shake on the ropes; the younger men steer around him.' },
+
+    // ── Superstition and religious panic ──
+    { cond: s.luck <= 5 && h.melancholic >= 6,                  line: 'Falls to his knees at the rail, muttering paternosters.' },
+    { cond: s.luck <= 4 && h.phlegmatic <= 5,                   line: 'Clutches his charm against the evil eye and will not stow it.' },
+    { cond: h.melancholic >= 8 && s.luck <= 6,                  line: 'Sees omens in every cloud and says so to whoever will listen.' },
+    { cond: s.luck <= 4 && h.sanguine <= 4 && !isHigh,          line: 'Will not work on a Friday, and will tell you why for an hour.' },
+
+    // ── Negative: role-specific failures ──
+    { cond: r === 'Navigator' && isLow && s.perception <= 7,    line: 'Fumbles his reckonings when the ship is under pressure.' },
+    { cond: r === 'Navigator' && skill < 25,                    line: 'Swears he has the bearing, then names the wrong island.' },
+    { cond: r === 'Gunner'    && isLow && skill < 25,           line: 'Fumbles his powder in the heat; the piece misfires half the time.' },
+    { cond: r === 'Gunner'    && isLow && s.perception <= 6,    line: 'Cuts his fuses short and curses the roll of the deck.' },
+    { cond: r === 'Surgeon'   && isLow,                         line: 'Sews a wound up wrong and walks off whistling.' },
+    { cond: r === 'Factor'    && isLow && s.charisma <= 6,      line: 'Makes a bad negotiation worse with his tongue.' },
+    { cond: r === 'Captain'   && isLow && s.charisma <= 7,      line: 'Gives the order and no one moves to obey it.' },
+    { cond: r === 'Sailor'    && isLow && s.strength <= 6,      line: 'Has to be replaced on the line before the work is done.' },
+
+    // ── Age and health tells ──
+    { cond: age <= 18 && isLow,                                 line: 'Looks to the older hands for a sign they are as afraid as he is.' },
+    { cond: age <= 20 && h.choleric >= 7,                       line: 'Throws himself into the work with more courage than sense.' },
+    { cond: age >= 50 && isHigh,                                line: 'Has seen worse, and the men can read it on him.' },
+    { cond: age >= 60,                                          line: 'Moves slower than the work demands, but knows where every line belongs.' },
+    { cond: health === 'injured' && !isHigh,                    line: 'Nurses his wound and leaves the heavy work to others.' },
+    { cond: health === 'injured' && isHigh,                     line: 'Works through the pain and does not mention it twice.' },
+    { cond: health === 'fevered',                               line: 'Shivers and sweats through his shirt whatever the weather.' },
+    { cond: health === 'scurvy',                                line: 'Gums bleed into his beard; he eats what he can stomach and curses.' },
+    { cond: health === 'sick' && isLow,                         line: 'Takes to his hammock as soon as the weather turns.' },
+
+    // ── Morale extremes ──
+    { cond: morale <= 25 && !isHigh,                            line: 'Answers every order with a shrug and a half-turn away.' },
+    { cond: morale <= 35 && h.melancholic >= 6,                 line: 'Speaks of the wife he should not have left.' },
+    { cond: morale <= 40 && h.choleric >= 6,                    line: 'Starts an argument over a ration of biscuit, and means it.' },
+    { cond: morale >= 80 && h.sanguine >= 6,                    line: 'Sings on the yards while other men hold their breath.' },
+    { cond: morale >= 75 && r === 'Sailor' && !isLow,           line: 'Works twice as hard as the pay warrants.' },
+
+    // ── Hot temperaments — active, risky, sometimes useful ──
+    { cond: h.choleric >= 8 && s.strength >= 14,                line: 'First to the boarding net, first to start a brawl.' },
+    { cond: h.choleric >= 7 && s.strength >= 12,                line: 'Eager to close and fight; hard to hold back.' },
+    { cond: h.choleric >= 8 && s.charisma <= 6,                 line: 'Starts shouting at men he has no business shouting at.' },
+    { cond: h.sanguine >= 7 && s.charisma >= 12,                line: 'Keeps the men steady with a joke when a shout would fail.' },
+    { cond: h.sanguine >= 8 && isLow,                           line: 'Makes the wrong joke at the wrong moment; half the deck glares.' },
+    { cond: h.curiosity >= 7 && s.perception >= 12,             line: 'Reads the situation swiftly, even in strange waters.' },
+    { cond: h.curiosity >= 8 && skill < 30,                     line: 'Tries something he has only read about, and generally regrets it.' },
+    { cond: h.melancholic >= 7 && s.perception >= 13,           line: 'Sees the worst coming, and says so too often.' },
+    { cond: h.phlegmatic >= 8,                                  line: 'Holds his station even when the ship is coming apart.' },
+    { cond: h.phlegmatic >= 7 && h.melancholic >= 6,            line: 'A sober anchor — says little but does not yield.' },
+    { cond: h.phlegmatic >= 7 && s.charisma <= 6,               line: 'Works on silently — neither panic nor command, just the work.' },
+
+    // ── Role-specific competence ──
+    { cond: r === 'Gunner'    && s.perception >= 14,            line: 'Calm at the piece; waits for the roll before he fires.' },
+    { cond: r === 'Gunner'    && isHigh && h.choleric >= 6,     line: 'Handles the great guns the way other men handle a ladle.' },
+    { cond: r === 'Navigator' && isHigh && s.perception >= 13,  line: 'Finds the channel where another man would run aground.' },
+    { cond: r === 'Surgeon'   && h.phlegmatic >= 6 && !isLow,   line: 'Works the surgeon\'s table with an unshaken hand.' },
+    { cond: r === 'Surgeon'   && isHigh && h.curiosity >= 6,    line: 'Tries a technique out of a Leyden pamphlet — and rather often it works.' },
+    { cond: r === 'Factor'    && s.charisma >= 13,              line: 'Can talk a hostile port into lowering its guns.' },
+    { cond: r === 'Factor'    && isHigh && h.curiosity >= 6,    line: 'Reads the other side of a bargain before the other side speaks.' },
+    { cond: r === 'Captain'   && h.choleric >= 7 && s.luck >= 12,line: 'Trusts his instincts and leads from the van.' },
+    { cond: r === 'Captain'   && isHigh && s.charisma >= 14,    line: 'Speaks once, quietly, and the deck settles around him.' },
+    { cond: r === 'Captain'   && h.phlegmatic >= 7 && isHigh,   line: 'Reads every face on the quarterdeck before he gives the order.' },
+    { cond: r === 'Sailor'    && isHigh && s.strength >= 13,    line: 'Does the work of two and makes no complaint about it.' },
+
+    // ── Positive, general ──
+    { cond: isHigh && h.curiosity >= 6,                         line: 'Thinks his way through the squall; rarely the same answer twice.' },
+    { cond: isHigh && s.luck >= 14,                             line: 'Has the unreasonable fortune of men who pick the right deck.' },
+    { cond: isHigh && h.melancholic >= 6,                       line: 'Bears bad news first and worst — but bears it.' },
+    { cond: isHigh && h.sanguine >= 6 && h.phlegmatic >= 6,     line: 'Cheerful when cheer helps, steady when it does not.' },
+    { cond: isHigh,                                             line: 'Moves through the work the way a veteran does, without fuss.' },
+  ];
+
+  const matches = rules.filter(r2 => r2.cond);
+  if (matches.length > 0) {
+    return matches[(seed >>> 8) % matches.length].line;
+  }
+  // Role-keyed fallback.
+  const fallback: Record<CrewRole, string> = {
+    Captain:   'Carries the weight of command as the ship decides whether to break.',
+    Navigator: 'Keeps his charts open and his head level.',
+    Gunner:    'Serves his piece with the steady rhythm of a man who has been here before.',
+    Sailor:    'Does the work set before him, neither more nor less.',
+    Factor:    'Watches for where profit or ruin lies in the turn.',
+    Surgeon:   'Lays out his instruments and waits for the butcher\'s bill.',
+  };
+  return fallback[r];
+}
+
+function TemperamentBlock({ member }: { member: CrewMember }) {
+  const h = member.humours ?? DEFAULT_HUMOURS;
+  const entries = (Object.keys(HUMOUR_INFO) as HumourKey[])
     .map(k => ({ key: k, value: h[k], ...HUMOUR_INFO[k] }))
     .sort((a, b) => b.value - a.value);
   const dominant = entries[0];
@@ -1495,6 +1920,9 @@ function TemperamentBlock({ humours }: { humours?: Humours }) {
   const temperamentLabel = secondary
     ? `${dominant.label} & ${secondary.label}`
     : dominant.label;
+
+  const vices = deriveVices(member);
+  const crisisLine = deriveCrisisLine(member);
 
   return (
     <div>
@@ -1512,26 +1940,83 @@ function TemperamentBlock({ humours }: { humours?: Humours }) {
           : dominant.description
         }
       </p>
-      <div className="space-y-1.5">
-        {entries.map(({ key, label, color, value }) => (
-          <div key={key} className="flex items-center gap-2">
-            <span className="text-[10px] w-[72px] text-right" style={{ color: CLR.dim, fontFamily: SANS }}>
-              {label}
+
+      {/* Two-column: humour bars left, vices + crisis right */}
+      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-x-6 gap-y-4">
+        {/* Humour bars */}
+        <div className="space-y-1.5">
+          {entries.map(({ key, label, color, value }) => (
+            <div key={key} className="flex items-center gap-2">
+              <span className="text-[10px] w-[72px] text-right" style={{ color: CLR.dim, fontFamily: SANS }}>
+                {label}
+              </span>
+              <div className="flex gap-[3px]">
+                {Array.from({ length: 10 }, (_, i) => (
+                  <div
+                    key={i}
+                    className="w-[6px] h-[10px] rounded-sm"
+                    style={{
+                      backgroundColor: i < value ? color : CLR.rule + '30',
+                      opacity: i < value ? 0.8 : 1,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Right column: vices + crisis line */}
+        <div className="flex flex-col gap-3 min-w-0">
+          <div>
+            <span className="text-[10px] tracking-[0.15em] uppercase block mb-1.5" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+              Vices & Tastes
             </span>
-            <div className="flex gap-[3px]">
-              {Array.from({ length: 10 }, (_, i) => (
-                <div
-                  key={i}
-                  className="w-[6px] h-[10px] rounded-sm"
-                  style={{
-                    backgroundColor: i < value ? color : CLR.rule + '30',
-                    opacity: i < value ? 0.8 : 1,
-                  }}
-                />
-              ))}
+            <div className="flex flex-wrap gap-1.5">
+              {vices.map((v, i) => {
+                const color = v.secret ? CLR.dim : dominant.color;
+                const title = v.secret
+                  ? 'A habit whispered of, not openly owned'
+                  : v.acquired
+                    ? 'A habit picked up abroad'
+                    : undefined;
+                return (
+                  <span
+                    key={i}
+                    className="text-[11px] px-2 py-0.5 rounded"
+                    style={{
+                      color,
+                      backgroundColor: color + (v.secret ? '08' : '10'),
+                      border: `1px ${v.acquired ? 'dotted' : 'dashed'} ${color}${v.secret ? '30' : '25'}`,
+                      borderStyle: v.secret ? 'dashed' : v.acquired ? 'dotted' : 'solid',
+                      fontFamily: SERIF,
+                      fontStyle: v.secret ? 'italic' : 'normal',
+                      fontWeight: 500,
+                      opacity: v.secret ? 0.78 : 1,
+                    }}
+                    title={title}
+                  >
+                    {v.secret ? `· ${v.label}` : v.label}
+                    {v.acquired && (
+                      <span style={{ color: CLR.dim, marginLeft: 4, fontStyle: 'italic', fontSize: '10px' }}>
+                        · abroad
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           </div>
-        ))}
+
+          <div>
+            <span className="text-[10px] tracking-[0.15em] uppercase block mb-1" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+              In a Crisis
+            </span>
+            <p className="text-[12px] leading-snug" style={{ color: CLR.txt, fontFamily: SERIF, fontStyle: 'italic' }}>
+              &ldquo;{crisisLine}&rdquo;
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2129,7 +2614,7 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
           className="p-3 rounded-lg mb-4"
           style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
         >
-          <TemperamentBlock humours={member.humours} />
+          <TemperamentBlock member={member} />
         </div>
 
         {/* Abilities */}
@@ -2263,6 +2748,14 @@ const SHIP_DESCRIPTIONS: Record<string, { tagline: string; description: string }
     tagline: 'Swift scout vessel',
     description: 'Small, fast, and maneuverable. Ideal for scouting, coastal trading, and quick getaways. Light armament and limited cargo, but nothing on the water can catch her.',
   },
+  Fluyt: {
+    tagline: 'Pear-hulled Dutch merchantman',
+    description: 'The workhorse of Dutch bulk trade — a broad, flat-bottomed hull built to carry more cargo with fewer hands than any rival. Lightly armed and unlovely, but cheap to run and hard to beat on margin.',
+  },
+  Caravel: {
+    tagline: 'Lateen-rigged Iberian trader',
+    description: 'The small explorer that opened the Atlantic a century ago, still useful for coastal runs and light blue-water work. Quick to windward on her lateen sails, cheap to man, but thin in the hold.',
+  },
 };
 
 // ── Large ship schematics ────────────────────────────────────────────────
@@ -2357,6 +2850,32 @@ function LargeShipSchematic({ shipType, hullPct, armament }: {
         <C c={hc}>{'          ║'}</C><C c={bowC}>{hasSwivel ? ' \u2295' : '  '}</C><C c={hc}>{'   '}</C><C c={midC}>{portMark(0)}</C><C c={hc}>{'   '}</C><C c={sternC}>{portMark(1)}</C><C c={hc}>{'   ║'}</C>{'\n'}
         <C c={hc}>{'          ╚══════════════╝'}</C>{'\n'}
         <C c={w}>{'        ≈≈≈≈'}</C><C c={wl}>{'≈≈≈≈≈≈≈'}</C><C c={w}>{'≈≈≈≈≈≈'}</C>{'\n'}
+        <C c={wl}>{'         ∼∼∼   ∼∼∼'}</C><C c={w}>{'   ∼∼∼'}</C>
+      </>
+    ),
+    Fluyt: (
+      <>
+        <C c={m}>{'                |    |'}</C>{'\n'}
+        <C c={s}>{'               )_)  )_)'}</C>{'\n'}
+        <C c={s}>{'              )___))___)'}</C>{'\n'}
+        <C c={s}>{'             )____)____)'}</C>{'\n'}
+        <C c={hc}>{'          ╔═════════════════════╗'}</C>{'\n'}
+        <C c={hc}>{'          ║'}</C><C c={bowC}>{hasSwivel ? ' ⊕' : '  '}</C><C c={hc}>{'    '}</C><C c={midC}>{portMark(0)}{' '}{portMark(1)}</C><C c={hc}>{'    '}</C><C c={sternC}>{portMark(2)}</C><C c={hc}>{'      ║'}</C>{'\n'}
+        <C c={hc}>{'          ╚═════════════════════╝'}</C>{'\n'}
+        <C c={w}>{'        ≈≈≈≈'}</C><C c={wl}>{'≈≈≈≈≈≈≈≈≈≈≈'}</C><C c={w}>{'≈≈≈≈≈≈≈≈'}</C>{'\n'}
+        <C c={wl}>{'         ∼∼∼   ∼∼∼'}</C><C c={w}>{'   ∼∼∼   ∼∼∼'}</C>
+      </>
+    ),
+    Caravel: (
+      <>
+        <C c={m}>{'              |      |'}</C>{'\n'}
+        <C c={s}>{'             /|     /|'}</C>{'\n'}
+        <C c={s}>{'            / |    / |'}</C>{'\n'}
+        <C c={s}>{'           /  |   /  |'}</C>{'\n'}
+        <C c={hc}>{'          ╔═════════════════╗'}</C>{'\n'}
+        <C c={hc}>{'          ║'}</C><C c={bowC}>{hasSwivel ? ' ⊕' : '  '}</C><C c={hc}>{'    '}</C><C c={midC}>{portMark(0)}</C><C c={hc}>{'    '}</C><C c={sternC}>{portMark(1)}</C><C c={hc}>{'     ║'}</C>{'\n'}
+        <C c={hc}>{'          ╚═════════════════╝'}</C>{'\n'}
+        <C c={w}>{'        ≈≈≈≈'}</C><C c={wl}>{'≈≈≈≈≈≈≈≈≈≈'}</C><C c={w}>{'≈≈≈≈≈≈≈'}</C>{'\n'}
         <C c={wl}>{'         ∼∼∼   ∼∼∼'}</C><C c={w}>{'   ∼∼∼'}</C>
       </>
     ),
@@ -3176,21 +3695,21 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
 
         {/* Name */}
         <h2
-          className="text-[20px] md:text-[24px] tracking-[0.2em] uppercase mt-3"
+          className="text-[20px] md:text-[24px] tracking-[0.2em] uppercase mt-2"
           style={{ color: CLR.bright, fontFamily: MONO }}
         >
           {commodity}
         </h2>
 
         {/* Tier + category line */}
-        <p className="text-[12px] mt-1 tracking-[0.08em]" style={{ color: CLR.dim, fontFamily: SANS }}>
+        <p className="text-[12px] mt-0 tracking-[0.08em]" style={{ color: CLR.dim, fontFamily: SANS }}>
           Tier {def.tier} &middot; {tierLabel}
           {def.weight > 1 && <> &middot; Weight: {def.weight} units</>}
         </p>
 
         {/* Description */}
         <p
-          className="text-[13px] mt-2 text-center max-w-md"
+          className="text-[13px] mt-1 text-center max-w-md"
           style={{ color: CLR.txt, fontFamily: SANS }}
         >
           {def.description}
@@ -3198,7 +3717,7 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
 
         {/* Physical description */}
         <p
-          className="text-[15px] md:text-[16px] mt-1.5 text-center leading-relaxed max-w-md"
+          className="text-[16px] md:text-[17px] mt-1.5 text-center leading-relaxed max-w-md"
           style={{ color: CLR.txt, fontFamily: SERIF, fontStyle: 'italic' }}
         >
           &ldquo;{def.physicalDescription}&rdquo;
@@ -3217,7 +3736,7 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
           style={{ backgroundColor: color + '08', border: `1px solid ${color}20` }}
         >
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+            <span className="text-[11px] tracking-[0.15em] uppercase" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
               In Hold
             </span>
             <span className="text-[14px] tabular-nums" style={{ color: CLR.bright, fontFamily: MONO }}>
@@ -3260,7 +3779,7 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
           transition={{ duration: 0.3, delay: 0.2 }}
           className="mt-3 w-full max-w-2xl px-3 md:px-6"
         >
-          <span className="text-[10px] tracking-[0.15em] uppercase block mb-1.5 px-1" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+          <span className="text-[11px] tracking-[0.15em] uppercase block mb-1.5 px-1" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
             Known Prices
           </span>
           <div
@@ -3280,7 +3799,7 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
                     borderBottom: i < portPrices.length - 1 ? `1px solid ${CLR.rule}15` : 'none',
                   }}
                 >
-                  <span className="text-[12px] w-[90px] md:w-[120px] truncate" style={{ color: p.isCurrent ? CLR.bright : CLR.txt, fontFamily: SANS }}>
+                  <span className="text-[14px] w-[90px] md:w-[120px] truncate" style={{ color: p.isCurrent ? CLR.bright : CLR.txt, fontFamily: SANS }}>
                     {p.name}
                     {p.isCurrent && <span className="text-[9px] ml-1" style={{ color: CLR.tabCargo }}>&larr;</span>}
                   </span>
@@ -3322,18 +3841,18 @@ function CargoDetailView({ commodity, onBack, onPrev, onNext, nearPort }: {
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.28 }}
-          className="mt-3 w-full max-w-2xl px-3 md:px-6 mb-2"
+          className="mt-3 w-full max-w-2xl px-3 md:px-2 mb-2"
         >
           <div className="h-[1px] mb-3" style={{ background: `linear-gradient(90deg, transparent, ${CLR.rule}40, transparent)` }} />
           <div
             className="px-4 py-3 md:px-5 md:py-4 rounded-lg"
             style={{ backgroundColor: CLR.warm + '06', border: `1px solid ${CLR.warm}15` }}
           >
-            <span className="text-[10px] tracking-[0.15em] uppercase block mb-2.5" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+            <span className="text-[11px] tracking-[0.15em] uppercase block mb-2.5" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
               Historical Note
             </span>
             <p
-              className="text-[14px] md:text-[15px] leading-[1.75]"
+              className="text-[15px] md:text-[18px] leading-[1.65]"
               style={{ color: CLR.txt, fontFamily: SERIF }}
             >
               {historicalNote.text}

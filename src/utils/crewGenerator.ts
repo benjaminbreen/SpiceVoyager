@@ -327,6 +327,251 @@ function rollCrewQuality(skill: number, morale: number): CrewQuality {
   return 'disaster';
 }
 
+// ── Backstory archetypes ───────────────────────────────
+// ~25% of crew roll a life-shaping archetype that colours stats, humours,
+// morale, language, and prepends a sentence to the backstory. The other 75%
+// stay generic. Keeps archetypes feeling special when they appear.
+
+type HumourKey = keyof Humours;
+
+interface Archetype {
+  id: string;
+  label: string;
+  statNudge?: Partial<Record<keyof CrewStats, number>>;
+  humourNudge?: Partial<Record<HumourKey, number>>;
+  moraleShift?: number;
+  addLanguage?: boolean;
+  roles?: CrewRole[];    // if set, only these roles can roll this archetype
+  minAge?: number;
+  backstoryPrefix: string[];
+}
+
+const ARCHETYPES: Archetype[] = [
+  {
+    id: 'freedman',
+    label: 'Freedman',
+    statNudge: { perception: 1 },
+    humourNudge: { phlegmatic: 1, melancholic: 1 },
+    moraleShift: -12,
+    roles: ['Sailor', 'Gunner', 'Surgeon'],
+    backstoryPrefix: [
+      'Born into bondage; earned or stole his freedom and took to sea.',
+      'A freedman of some years; keeps a written certificate of manumission in a wax-sealed pouch.',
+      'Freed after a master\'s death, with no family and nothing ashore to go back to.',
+    ],
+  },
+  {
+    id: 'fugitive',
+    label: 'Fugitive',
+    statNudge: { luck: 1, charisma: -1 },
+    humourNudge: { choleric: 2, melancholic: 1 },
+    moraleShift: -10,
+    backstoryPrefix: [
+      'Left one port for another a step ahead of the law.',
+      'There is a warrant for him somewhere, though he will not say where.',
+      'Signed aboard under a name that is almost certainly not his own.',
+    ],
+  },
+  {
+    id: 'noble',
+    label: 'Exile',
+    statNudge: { charisma: 2, strength: -1 },
+    humourNudge: { curiosity: 2, melancholic: 1 },
+    addLanguage: true,
+    minAge: 24,
+    roles: ['Captain', 'Navigator', 'Factor', 'Surgeon'],
+    backstoryPrefix: [
+      'Once of a noble house; some reversal of fortune put him to sea.',
+      'A younger son of consequence, left his inheritance to a brother and his name to a ship\'s register.',
+      'Carries himself with the manners of court, and will not say which court.',
+    ],
+  },
+  {
+    id: 'convert',
+    label: 'Convert',
+    statNudge: { perception: 1 },
+    humourNudge: { melancholic: 2, curiosity: 1 },
+    addLanguage: true,
+    minAge: 22,
+    backstoryPrefix: [
+      'Took the faith of a foreign port, for reasons of conscience or convenience.',
+      'Wears a new name and an older soul; the old faith is not wholly gone.',
+      'Converted in middle life; the men mock him gently, and he lets them.',
+    ],
+  },
+  {
+    id: 'debtor',
+    label: 'Debtor',
+    statNudge: { luck: -2, charisma: 1 },
+    humourNudge: { choleric: 1, melancholic: 1 },
+    moraleShift: -14,
+    backstoryPrefix: [
+      'Left behind a ledger of debts no wage will clear.',
+      'The factors in his last port still send letters; he reads none of them.',
+      'Took ship to outrun creditors; watches every new sail for the bailiff\'s flag.',
+    ],
+  },
+  {
+    id: 'deserter',
+    label: 'Deserter',
+    statNudge: { strength: 2, charisma: -1 },
+    humourNudge: { choleric: 1, phlegmatic: 1 },
+    moraleShift: -8,
+    roles: ['Sailor', 'Gunner', 'Navigator', 'Surgeon'],
+    backstoryPrefix: [
+      'Slipped away from a king\'s ship in a friendly port and has kept moving since.',
+      'Once wore another flag\'s uniform; will not speak of what ended his service.',
+      'A deserter from military service — the scars are military, the discipline is not.',
+    ],
+  },
+  {
+    id: 'pirate',
+    label: 'Ex-Pirate',
+    statNudge: { strength: 2, luck: 1, charisma: -1 },
+    humourNudge: { choleric: 2 },
+    moraleShift: 4,
+    roles: ['Sailor', 'Gunner', 'Navigator', 'Captain'],
+    backstoryPrefix: [
+      'Sailed under a black flag for a season and came ashore when the purse was spent.',
+      'Has forgotten more about rigging and close-quarters work than most of the crew will learn.',
+      'The tattoos are pirate work; the smile is not entirely pleasant.',
+    ],
+  },
+  {
+    id: 'merchant_son',
+    label: 'Merchant\'s Son',
+    statNudge: { charisma: 2, strength: -2 },
+    humourNudge: { curiosity: 2, sanguine: 1 },
+    moraleShift: 8,
+    addLanguage: true,
+    minAge: 18,
+    roles: ['Factor', 'Sailor', 'Surgeon', 'Navigator'],
+    backstoryPrefix: [
+      'The restless son of a counting-house; signed on to see the ports his father only writes letters to.',
+      'Left a comfortable clerkship out of boredom and a cousin\'s taunt.',
+      'A merchant\'s son playing at mariner — keen, green, and liable to surprise.',
+    ],
+  },
+  {
+    id: 'scholar',
+    label: 'Scholar',
+    statNudge: { perception: 2, strength: -2 },
+    humourNudge: { curiosity: 3, melancholic: 1 },
+    addLanguage: true,
+    minAge: 22,
+    roles: ['Navigator', 'Surgeon', 'Factor', 'Sailor'],
+    backstoryPrefix: [
+      'Studied letters before he studied the sea, and carries a travelling library of some kind.',
+      'A self-taught philosopher who took to voyages for what the books could not tell him.',
+      'Keeps a notebook of observations on winds, plants, and the words of foreign tongues.',
+    ],
+  },
+  {
+    id: 'pressganged',
+    label: 'Press-ganged',
+    humourNudge: { choleric: 2, melancholic: 2 },
+    moraleShift: -28,
+    roles: ['Sailor', 'Gunner'],
+    backstoryPrefix: [
+      'Taken aboard against his will in a waterfront tavern, and has not forgiven it.',
+      'Signed on at the point of a cudgel; the bruise is gone and the mood is not.',
+      'Woke up aboard with no memory of signing articles and every intention of leaving at the first port.',
+    ],
+  },
+  {
+    id: 'castaway',
+    label: 'Castaway',
+    statNudge: { perception: 1, luck: 1 },
+    humourNudge: { phlegmatic: 2, melancholic: 1 },
+    moraleShift: -12,
+    minAge: 20,
+    backstoryPrefix: [
+      'Sole survivor of a wreck that took everyone else; was found clinging to a spar two days later.',
+      'Lost a ship, a crew, and most of his kit to the reef; signed on with what he could carry.',
+      'The only man alive who knows exactly what happened to his last ship, and he will not speak of it.',
+    ],
+  },
+];
+
+function rollArchetype(role: CrewRole): Archetype | null {
+  if (Math.random() > 0.25) return null;
+  const eligible = ARCHETYPES.filter(a => !a.roles || a.roles.includes(role));
+  if (!eligible.length) return null;
+  return pick(eligible);
+}
+
+function applyArchetypeStats(stats: CrewStats, a: Archetype | null): CrewStats {
+  if (!a?.statNudge) return stats;
+  const clamp = (v: number) => Math.max(1, Math.min(20, v));
+  return {
+    strength:   clamp(stats.strength   + (a.statNudge.strength   ?? 0)),
+    perception: clamp(stats.perception + (a.statNudge.perception ?? 0)),
+    charisma:   clamp(stats.charisma   + (a.statNudge.charisma   ?? 0)),
+    luck:       clamp(stats.luck       + (a.statNudge.luck       ?? 0)),
+  };
+}
+
+function applyArchetypeHumours(h: Humours, a: Archetype | null): Humours {
+  if (!a?.humourNudge) return h;
+  const clamp = (v: number) => Math.max(1, Math.min(10, v));
+  return {
+    sanguine:    clamp(h.sanguine    + (a.humourNudge.sanguine    ?? 0)),
+    choleric:    clamp(h.choleric    + (a.humourNudge.choleric    ?? 0)),
+    melancholic: clamp(h.melancholic + (a.humourNudge.melancholic ?? 0)),
+    phlegmatic:  clamp(h.phlegmatic  + (a.humourNudge.phlegmatic  ?? 0)),
+    curiosity:   clamp(h.curiosity   + (a.humourNudge.curiosity   ?? 0)),
+  };
+}
+
+// ── Age ────────────────────────────────────────────────
+// Tied to quality: veterans skew older, untried skew younger. Rare tails (prodigy
+// teenagers for able+, venerable 65+ for seasoned+) give age genuine meaning.
+
+function rollAge(role: CrewRole, quality: CrewQuality, archetype: Archetype | null): number {
+  const captainFloor = 28;
+  let minAge = role === 'Captain' ? captainFloor : 16;
+  let maxAge = 50;
+
+  switch (quality) {
+    case 'legendary':
+    case 'renowned':
+      minAge = Math.max(minAge, 40);
+      maxAge = 65;
+      if (Math.random() < 0.10) maxAge = 72;
+      break;
+    case 'seasoned':
+      minAge = Math.max(minAge, 30);
+      maxAge = 58;
+      break;
+    case 'able':
+    case 'passable':
+      minAge = Math.max(minAge, role === 'Captain' ? captainFloor : 22);
+      maxAge = 48;
+      break;
+    case 'untried':
+      minAge = Math.max(minAge, role === 'Captain' ? captainFloor : 16);
+      maxAge = role === 'Captain' ? 36 : 30;
+      break;
+    case 'dud':
+      minAge = Math.max(minAge, role === 'Captain' ? captainFloor : 18);
+      maxAge = 60;
+      break;
+    case 'disaster':
+      minAge = Math.max(minAge, role === 'Captain' ? captainFloor : 18);
+      maxAge = 62;
+      break;
+  }
+
+  // Rare prodigy — non-captain able/seasoned occasionally very young.
+  if (role !== 'Captain' && (quality === 'able' || quality === 'seasoned') && Math.random() < 0.05) {
+    return randInt(16, 19);
+  }
+
+  if (archetype?.minAge) minAge = Math.max(minAge, archetype.minAge);
+  if (minAge > maxAge) [minAge, maxAge] = [maxAge, minAge];
+  return randInt(minAge, maxAge);
+}
+
 // ── Stat generation (D&D-style 1-20) ─────────────────
 
 // Role bonuses: each role has primary/secondary stats that get a boost
@@ -356,17 +601,46 @@ function rollStats(role: CrewRole, quality: CrewQuality): CrewStats {
   const qBonus = QUALITY_STAT_BONUS[quality];
 
   const clamp = (v: number) => Math.max(1, Math.min(20, v));
-  return {
+  const stats: CrewStats = {
     strength:   clamp(base() + (bonus.strength ?? 0) + qBonus),
     perception: clamp(base() + (bonus.perception ?? 0) + qBonus),
     charisma:   clamp(base() + (bonus.charisma ?? 0) + qBonus),
     luck:       clamp(base() + (bonus.luck ?? 0) + qBonus),
   };
+
+  // Spike + flaw: one stat gets +3, a different one gets -3. Creates memorable
+  // specialists instead of averaged-out crew — the navigator who can read the
+  // stars but can't hold a fistfight, the brawler with a keen eye but no luck.
+  const keys: (keyof CrewStats)[] = ['strength', 'perception', 'charisma', 'luck'];
+  const spikeKey = pick(keys);
+  const flawKey = pick(keys.filter(k => k !== spikeKey));
+  stats[spikeKey] = clamp(stats[spikeKey] + 3);
+  stats[flawKey]  = clamp(stats[flawKey]  - 3);
+
+  return stats;
+}
+
+// Apply age-related decay: old hands trade strength for perception.
+function applyAgeToStats(stats: CrewStats, age: number): CrewStats {
+  const clamp = (v: number) => Math.max(1, Math.min(20, v));
+  if (age >= 60) {
+    return {
+      ...stats,
+      strength:   clamp(stats.strength - randInt(2, 3)),
+      perception: clamp(stats.perception + 1),
+    };
+  }
+  if (age >= 52) {
+    return {
+      ...stats,
+      strength:   clamp(stats.strength - 1),
+      perception: clamp(stats.perception + 1),
+    };
+  }
+  return stats;
 }
 
 // ── Humour generation (historicized Big 5 personality) ──────────────────
-
-type HumourKey = keyof Humours;
 
 // Role tendencies: what temperaments are drawn to each profession
 const ROLE_HUMOUR_BIAS: Record<CrewRole, Partial<Record<HumourKey, number>>> = {
@@ -584,7 +858,7 @@ const INCIDENT_LINES: Record<CrewRole, IncidentSet> = {
   },
 };
 
-function generateBackstory(role: CrewRole, nationality: Nationality, birthplace: string, age: number, quality: CrewQuality, humours: Humours, stats: CrewStats): string {
+function generateBackstory(role: CrewRole, nationality: Nationality, birthplace: string, age: number, quality: CrewQuality, humours: Humours, stats: CrewStats, archetype: Archetype | null = null): string {
   // 1. Origin sentence (role template)
   const templates = BACKSTORY_TEMPLATES[role];
   let origin = pick(templates);
@@ -629,8 +903,9 @@ function generateBackstory(role: CrewRole, nationality: Nationality, birthplace:
     else incident = pick(incidents.default);
   }
 
-  // Combine
-  let text = origin + ' ' + character;
+  // Combine — archetype sentence comes first, as the shaping life event.
+  const archetypeLine = archetype ? pick(archetype.backstoryPrefix) : '';
+  let text = archetypeLine ? archetypeLine + ' ' + origin + ' ' + character : origin + ' ' + character;
   if (incident) text += ' ' + incident;
 
   // Tier suffix — closing note keyed to quality.
@@ -661,13 +936,39 @@ export function generateCrewMember(
   const last = pick(pool.last);
   const [minSkill, maxSkill] = SKILL_RANGE[role];
   const skill = randInt(minSkill, maxSkill);
-  const morale = randInt(45, 85);
-  const age = randInt(role === 'Captain' ? 32 : 18, role === 'Captain' ? 55 : 50);
+
+  // Base morale: widened from the old 45-85 band so new hires cover a
+  // realistic range from the broken-in-spirit to the eager. Archetype shift
+  // and final clamp happen after.
+  const baseMorale = randInt(30, 90);
+  const quality = rollCrewQuality(skill, baseMorale);
+
+  // Archetype roll — ~25% of crew carry a life-shaping backstory archetype.
+  const archetype = rollArchetype(role);
+  const morale = Math.max(10, Math.min(98, baseMorale + (archetype?.moraleShift ?? 0)));
+
+  const age = rollAge(role, quality, archetype);
   const birthplace = pick(pool.birthplaces);
-  const quality = rollCrewQuality(skill, morale);
-  const stats = rollStats(role, quality);
-  const humours = rollHumours(role, nationality, stats);
-  const backstory = generateBackstory(role, nationality, birthplace, age, quality, humours, stats);
+
+  // Stats: base roll → spike/flaw → archetype nudge → age decay.
+  let stats = rollStats(role, quality);
+  stats = applyArchetypeStats(stats, archetype);
+  stats = applyAgeToStats(stats, age);
+
+  // Humours: base roll → archetype nudge.
+  let humours = rollHumours(role, nationality, stats);
+  humours = applyArchetypeHumours(humours, archetype);
+
+  // Languages — archetype may add a contact language (nobles, merchants,
+  // scholars, converts all tend to pick up a second tongue through class or travel).
+  let languages = rollLanguages(nationality, role, stats, quality);
+  if (archetype?.addLanguage) {
+    const contacts = CONTACT_LANGUAGES[nationality] ?? [];
+    const unused = contacts.filter(l => !languages.includes(l));
+    if (unused.length) languages = [...languages, pick(unused)];
+  }
+
+  const backstory = generateBackstory(role, nationality, birthplace, age, quality, humours, stats, archetype);
 
   // Randomize starting level (1-3) with weighted distribution
   // Higher quality and older crew are more likely to be experienced
@@ -699,7 +1000,7 @@ export function generateCrewMember(
     morale,
     age,
     nationality,
-    languages: rollLanguages(nationality, role, stats, quality),
+    languages,
     birthplace,
     health: 'healthy' as HealthFlag,
     quality,

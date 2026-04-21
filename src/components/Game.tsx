@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { UI } from './UI';
+import { TouchControls } from './TouchControls';
 import { CrewDeathModal } from './CrewDeathModal';
 import { GameOverScreen } from './GameOverScreen';
 import { PERFORMANCE_STATS_EVENT, type PerformanceStats } from '../utils/performanceStats';
@@ -46,6 +47,7 @@ export function Game() {
         <GameScene />
       </Suspense>
       <UI />
+      <TouchControls />
       <CrewDeathModal />
       <GameOverScreen />
       {showPerformance && <PerformanceOverlay stats={performanceStats} />}

@@ -479,6 +479,13 @@ export function generateCity(
   // for Huge ports with wide channels, which silently dropped their bridge.
   const bridgeScanSteps = Math.max(18, Math.round(gridRadius * 0.7));
 
+  if (bridgeCount > 0 && !dualBank) {
+    // Estuary-style geographies often produce a single connected bank even
+    // when a river is visible, because the two sides meet around the upstream
+    // end of the river. Switching such a port to `tidal_river` (which cuts
+    // across the whole map) fixes this.
+    console.warn(`[bridges] ${portName}: requested=${bridgeCount} but dualBank=false — no bridges will be placed. Banks=[${bankSizes.join(',')}] totalLand=${totalLand}`);
+  }
   if (bridgeCount > 0 && dualBank) {
     const bankABeach = grid.filter(c => c.bank === bankA && c.isBeach);
     const shuffled = [...bankABeach];
@@ -530,7 +537,10 @@ export function generateCity(
         }
       }
 
-      if (!best) break;
+      if (!best) {
+        console.warn(`[bridges] ${portName}: failed to place bridge ${bi + 1}/${bridgeCount} (no valid crossing found)`);
+        break;
+      }
       for (const w of best.water) {
         const k = `${w.x},${w.z}`;
         bridgeCells.add(k);

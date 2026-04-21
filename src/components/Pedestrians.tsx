@@ -297,6 +297,7 @@ export function Pedestrians() {
     const system = initPedestrianSystem(
       port.buildings, port.culture, port.scale,
       port.position[0], port.position[2], worldSeed,
+      port.roads,
     );
     systemRef.current = system;
     colorsNeedInit.current = true; // mark for color assignment in useFrame

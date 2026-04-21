@@ -12,6 +12,7 @@ import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
 import { ShiftSelectOverlay } from './ShiftSelectOverlay';
+import { TouchSteerRaycaster } from './TouchControls';
 import { getTerrainHeight, getTerrainData, BiomeType } from '../utils/terrain';
 import { SEA_LEVEL } from '../constants/world';
 import {
@@ -1129,6 +1130,7 @@ export function GameScene() {
             <Pedestrians />
 
             <CameraController />
+            <TouchSteerRaycaster />
             <InteractionController />
             <ProjectileSystem />
             <SplashSystem />

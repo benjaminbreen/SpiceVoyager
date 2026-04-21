@@ -13,7 +13,7 @@ const BUFFER_SIZE = MAP_SIZE + 40; // extra padding for smooth panning
 const ROWS_PER_FRAME = 15; // rows of terrain to compute per frame (~2,850 samples)
 const REDRAW_DIST = 10; // world units before triggering a new terrain build
 
-export function Minimap({ onClick }: { onClick?: () => void }) {
+export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Double-buffered offscreen canvases: display from one while building the other
   const bufferA = useRef<HTMLCanvasElement | null>(null);
@@ -198,7 +198,8 @@ export function Minimap({ onClick }: { onClick?: () => void }) {
   return (
     <div
       onClick={onClick}
-      className={`w-36 h-36 rounded-full border-[5px] border-amber-900/90 bg-blue-900/50 shadow-[0_0_20px_rgba(0,0,0,0.6),inset_0_0_15px_rgba(0,0,0,0.8)] overflow-hidden flex items-center justify-center backdrop-blur-sm ${onClick ? 'cursor-pointer hover:border-amber-600 hover:shadow-[0_0_25px_rgba(245,158,11,0.3)] transition-all active:scale-95' : ''}`}
+      style={{ width: size, height: size }}
+      className={`rounded-full border-[5px] border-amber-900/90 bg-blue-900/50 shadow-[0_0_20px_rgba(0,0,0,0.6),inset_0_0_15px_rgba(0,0,0,0.8)] overflow-hidden flex items-center justify-center backdrop-blur-sm relative ${onClick ? 'cursor-pointer hover:border-amber-600 hover:shadow-[0_0_25px_rgba(245,158,11,0.3)] transition-all active:scale-95' : ''}`}
     >
       {/* Compass markings */}
       <div className="absolute inset-0 pointer-events-none z-10">

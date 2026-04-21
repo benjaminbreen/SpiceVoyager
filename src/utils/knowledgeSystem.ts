@@ -267,3 +267,90 @@ export function getUnknownBuyDiscount(): number {
 export function getMasterySellBonus(): number {
   return 1.15 + Math.random() * 0.05; // 1.15-1.20x
 }
+
+// ── Fraud & serendipity on Unknown (Level 0) purchases ────────────────────
+//
+// Three outcomes when buying blind:
+//   - genuine      — it's what the seller claimed
+//   - substituted  — it's the commodity's commonSubstitute (fraud, downside)
+//   - windfall     — it's something from the port's regional rarity pool (upside)
+//
+// Chance scales inversely with port market trust. Major hubs are efficient
+// in both directions: low fraud, but also no undervalued finds. Remote ports
+// are where both the scams and the serendipitous treasures happen.
+
+export type PurchaseOutcome =
+  | { kind: 'genuine' }
+  | { kind: 'substituted'; actual: Commodity }
+  | { kind: 'windfall'; actual: Commodity };
+
+/**
+ * Pools of tier-4/5 rarities that might plausibly surface as windfalls at
+ * each region's ports. Keeping these tight and period-specific: the player
+ * should feel like the surprise could only have come from *this* coast.
+ */
+const WINDFALL_POOLS: Record<string, Commodity[]> = {
+  // East African / Arabian coast — Socotra is the canonical source
+  socotra:   ["Dragon's Blood", 'Ambergris', 'Aloes'],
+  aden:      ['Ambergris', 'Mumia'],
+  mocha:     ['Ambergris'],
+  mogadishu: ['Ambergris', 'Aloes'],
+  kilwa:     ['Ambergris', 'Ivory'],
+  zanzibar:  ['Ambergris', 'Ivory'],
+  mombasa:   ['Ambergris', 'Ivory'],
+  // Arabian Peninsula
+  muscat:    ['Ambergris', 'Pearls'],
+  // Spice islands / East Indies — Banda-proximate traders dump odd lots
+  aceh:      ['Bhang'],
+  bantam:    ['Bhang'],
+  // South Asia — court-adjacent rarities
+  diu:       ['Bezoar Stones'],
+  calicut:   ['Bezoar Stones'],
+  // Atlantic / colonial frontier
+  jamestown: ['Virginia Tobacco'],
+  luanda:    ['Ivory'],
+  elmina:    ['Ivory'],
+};
+
+/**
+ * Roll for purchase outcome when buying blind (knowledge level 0).
+ * @param claimed - what the seller is claiming to sell
+ * @param portId - current port (determines trust + windfall pool)
+ * @param marketTrust - 0-1 trust level for this port (default 0.5)
+ */
+export function rollPurchaseOutcome(
+  claimed: Commodity,
+  portId: string,
+  marketTrust: number,
+): PurchaseOutcome {
+  const def = COMMODITY_DEFS[claimed];
+  const trust = Math.max(0, Math.min(1, marketTrust));
+
+  // Fraud chance: base commodity risk amplified at low-trust ports. Capped.
+  // At a port with trust 0.3 and a commodity with fraudRisk 0.20:
+  //   fraudChance = 0.20 * (1 - 0.3) = 0.14
+  // At the same commodity at trust 0.85: 0.20 * 0.15 = 0.03
+  const rawFraudChance = def.fraudRisk * (1 - trust);
+  const fraudChance = Math.min(0.6, rawFraudChance);
+
+  // Windfall chance: only meaningful at low-trust ports. Max ~5% at trust 0.
+  const windfallPool = WINDFALL_POOLS[portId];
+  const windfallChance = windfallPool && windfallPool.length > 0
+    ? 0.05 * (1 - trust)
+    : 0;
+
+  const roll = Math.random();
+
+  if (roll < fraudChance && def.commonSubstitute) {
+    return { kind: 'substituted', actual: def.commonSubstitute };
+  }
+  if (roll < fraudChance + windfallChance && windfallPool) {
+    // Don't let the windfall be the same as what was claimed (pointless).
+    const candidates = windfallPool.filter(c => c !== claimed);
+    if (candidates.length > 0) {
+      const pick = candidates[Math.floor(Math.random() * candidates.length)];
+      return { kind: 'windfall', actual: pick };
+    }
+  }
+  return { kind: 'genuine' };
+}

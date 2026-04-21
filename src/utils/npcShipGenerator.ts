@@ -159,7 +159,7 @@ const NAME_POOLS: Record<NamePoolId, [string[], string[]]> = {
   caribbean: [['Diego', 'Juan', 'Manuel', 'Tomas', 'Pedro', 'Gaspar', 'Andre'], ['Mulato', 'de Trinidad', 'Cimarron', 'de la Costa', 'Zambo', 'de la Mar']],
 };
 
-const SHIP_NAMES: Record<ShipType, string[]> = {
+export const SHIP_NAMES: Record<ShipType, string[]> = {
   Carrack: ['Sao Gabriel', 'Santa Maria', 'Flor de la Mar', 'Madre de Deus', 'Bom Jesus', 'Santa Catarina', 'Esperanca'],
   Galleon: ['San Felipe', 'Nossa Senhora', 'Revenge', 'Triumph', 'Batavia', 'Mauritius', 'Neptune'],
   Dhow: ['al-Rahma', 'al-Buraq', 'Safina', 'al-Najm', 'al-Qamar', 'al-Salam', 'al-Huda', 'Noor'],

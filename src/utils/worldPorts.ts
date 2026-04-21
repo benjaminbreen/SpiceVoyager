@@ -74,6 +74,52 @@ export const PORT_REGIONS: Record<string, WorldRegion> = {
   jamestown: 'atlantic',
 };
 
+/**
+ * Market trust per port. Scales fraud risk and serendipitous-upside chance on
+ * Unknown (Level 0) purchases.
+ *   1.0 = perfectly trustworthy major hub (no fraud, no surprises)
+ *   0.0 = total shadiness (maximum fraud, maximum chance of hidden treasure)
+ * Default when unset is 0.5. Major hubs have sophisticated regulation AND
+ * sophisticated buyers who don't let undervalued goods slip through cheaply —
+ * which is why low-trust remote ports are where both scams and finds happen.
+ */
+export const MARKET_TRUST: Record<string, number> = {
+  // Major hubs — regulated, efficient, little fraud but also few surprises
+  surat:     0.80,
+  lisbon:    0.80,
+  amsterdam: 0.85,
+  london:    0.80,
+  goa:       0.75,
+  malacca:   0.75,
+  macau:     0.75,
+  hormuz:    0.70,
+  seville:   0.75,
+
+  // Mid-tier — mixed reputation
+  calicut:   0.60,
+  muscat:    0.60,
+  bantam:    0.60,
+  cochin:    0.60,
+  havana:    0.65,
+  cartagena: 0.60,
+  mombasa:   0.55,
+  diu:       0.55,
+  zanzibar:  0.50,
+  salvador:  0.55,
+  mocha:     0.50,
+
+  // Remote / shady — high fraud, high chance of unrecognized treasures
+  aden:      0.40,
+  aceh:      0.40,
+  socotra:   0.30,
+  mogadishu: 0.30,
+  kilwa:     0.30,
+  luanda:    0.35,
+  elmina:    0.40,
+  jamestown: 0.45,  // colonial frontier; honest but inexpert
+  // cape: no market
+};
+
 /** Preset zoom views for the region quick-nav buttons */
 export const REGION_VIEWS: Record<WorldRegion | 'world', { center: [number, number]; scale: number }> = {
   world:       { center: [30, 10],   scale: 0.35 },

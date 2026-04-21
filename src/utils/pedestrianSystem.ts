@@ -6,9 +6,10 @@
  * movement patterns driven by building layout and time of day.
  */
 
-import { Building, BuildingType, Culture } from '../store/gameStore';
+import { Building, BuildingType, Culture, Road } from '../store/gameStore';
 import { getLandCharacter } from './landCharacter';
 import { getTerrainHeight } from './terrain';
+import { extractBridges, getGroundHeight } from './bridgeNavigation';
 import { SEA_LEVEL } from '../constants/world';
 
 // ── Seeded PRNG ─────────────────────────────────────────────────────────────
@@ -27,8 +28,11 @@ export type PedestrianType = 'merchant' | 'laborer' | 'religious' | 'sailor' | '
 export type FigureType = 'man' | 'woman' | 'child';
 
 export interface Corridor {
-  ax: number; az: number;  // start point (offset from building center)
-  bx: number; bz: number;  // end point (offset from building center)
+  // Polyline of (x, z) waypoints. A plain straight corridor has 2 entries;
+  // road-aware corridors weave through intermediate road-polyline points.
+  waypoints: [number, number][];
+  segLengths: number[];     // length per segment (waypoints.length - 1 entries)
+  totalLength: number;
   weight: number;           // traffic importance (higher = more pedestrians assigned)
   type: PedestrianType;     // dominant pedestrian type for this corridor
 }
@@ -61,13 +65,18 @@ export interface PedestrianSystemState {
   culture: Culture;
   portX: number;
   portZ: number;
+  bridges: Road[];          // bridge-tier roads, used for walkable deck queries
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Check if a world position is walkable land (above sea level with margin) */
-function isWalkable(x: number, z: number): boolean {
-  return getTerrainHeight(x, z) > SEA_LEVEL + 0.3;
+/**
+ * Walkable if terrain is above sea level, OR if the point is on a bridge deck.
+ * Bridges are passed in so corridor generation (which runs before the
+ * PedestrianSystemState is finalized) can use the same rule.
+ */
+function isWalkable(x: number, z: number, bridges?: Road[]): boolean {
+  return getGroundHeight(x, z, bridges) > SEA_LEVEL + 0.3;
 }
 
 function distSq(ax: number, az: number, bx: number, bz: number) {
@@ -101,6 +110,139 @@ function pedestrianTypeForBuilding(b: Building): PedestrianType {
   return 'laborer';
 }
 
+// ── Road snapping ───────────────────────────────────────────────────────────
+
+interface RoadSnap {
+  segIdx: number;  // segment index on the road polyline
+  t: number;       // 0..1 along that segment
+  x: number;
+  z: number;
+  dist: number;    // distance from query point to snap
+}
+
+/** Closest point on a road polyline to (x, z), in world-space xz only. */
+function nearestPointOnRoad(x: number, z: number, road: Road): RoadSnap | null {
+  const pts = road.points;
+  if (pts.length < 2) return null;
+  let best: RoadSnap | null = null;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const ax = pts[i][0], az = pts[i][2];
+    const bx = pts[i + 1][0], bz = pts[i + 1][2];
+    const dx = bx - ax;
+    const dz = bz - az;
+    const segLen2 = dx * dx + dz * dz;
+    if (segLen2 < 1e-6) continue;
+    let t = ((x - ax) * dx + (z - az) * dz) / segLen2;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const sx = ax + dx * t;
+    const sz = az + dz * t;
+    const d = Math.sqrt((x - sx) ** 2 + (z - sz) ** 2);
+    if (!best || d < best.dist) {
+      best = { segIdx: i, t, x: sx, z: sz, dist: d };
+    }
+  }
+  return best;
+}
+
+/** Walk the road polyline from snap a to snap b, returning 2D waypoints. */
+function sampleRoadBetween(road: Road, a: RoadSnap, b: RoadSnap): [number, number][] {
+  const pts = road.points;
+  const out: [number, number][] = [[a.x, a.z]];
+  if (a.segIdx < b.segIdx) {
+    for (let i = a.segIdx + 1; i <= b.segIdx; i++) out.push([pts[i][0], pts[i][2]]);
+  } else if (a.segIdx > b.segIdx) {
+    for (let i = a.segIdx; i > b.segIdx; i--) out.push([pts[i][0], pts[i][2]]);
+  }
+  out.push([b.x, b.z]);
+  return out;
+}
+
+function dedupeNearby(pts: [number, number][], tol: number): [number, number][] {
+  if (pts.length === 0) return pts;
+  const out: [number, number][] = [pts[0]];
+  const t2 = tol * tol;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = out[out.length - 1];
+    const dx = pts[i][0] - prev[0];
+    const dz = pts[i][1] - prev[1];
+    if (dx * dx + dz * dz > t2) out.push(pts[i]);
+  }
+  return out;
+}
+
+/**
+ * Try to build a path from (ax,az) to (bx,bz) that snaps onto an existing road.
+ * Returns null when no road gives a reasonable detour.
+ * Picks the single road that minimizes total snap distance, requiring that the
+ * road actually spans a meaningful fraction of the gap (otherwise we're just
+ * crossing perpendicular to it).
+ */
+function tryRoadAwarePath(
+  ax: number, az: number,
+  bx: number, bz: number,
+  roads: Road[] | undefined,
+): [number, number][] | null {
+  if (!roads || roads.length === 0) return null;
+  const straightLen = Math.sqrt((bx - ax) ** 2 + (bz - az) ** 2);
+  if (straightLen < 10) return null;
+
+  const MAX_SNAP = 14;
+  let bestWaypoints: [number, number][] | null = null;
+  let bestScore = Infinity;
+
+  for (const road of roads) {
+    const snapA = nearestPointOnRoad(ax, az, road);
+    const snapB = nearestPointOnRoad(bx, bz, road);
+    if (!snapA || !snapB) continue;
+    if (snapA.dist > MAX_SNAP || snapB.dist > MAX_SNAP) continue;
+    const snapSpan = Math.sqrt((snapA.x - snapB.x) ** 2 + (snapA.z - snapB.z) ** 2);
+    if (snapSpan < straightLen * 0.35) continue;
+    const score = snapA.dist + snapB.dist;
+    if (score < bestScore) {
+      const mid = sampleRoadBetween(road, snapA, snapB);
+      const raw: [number, number][] = [[ax, az], ...mid, [bx, bz]];
+      bestWaypoints = dedupeNearby(raw, 0.5);
+      bestScore = score;
+    }
+  }
+  return bestWaypoints;
+}
+
+function validateWaypoints(waypoints: [number, number][], bridges?: Road[]): boolean {
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const [ax, az] = waypoints[i];
+    const [bx, bz] = waypoints[i + 1];
+    const mx = (ax + bx) * 0.5;
+    const mz = (az + bz) * 0.5;
+    if (!isWalkable(mx, mz, bridges)) return false;
+    const len = Math.sqrt((bx - ax) ** 2 + (bz - az) ** 2);
+    if (len > 20) {
+      if (!isWalkable(ax + (bx - ax) * 0.25, az + (bz - az) * 0.25, bridges)) return false;
+      if (!isWalkable(ax + (bx - ax) * 0.75, az + (bz - az) * 0.75, bridges)) return false;
+    }
+  }
+  return true;
+}
+
+function buildCorridor(
+  waypoints: [number, number][],
+  weight: number,
+  type: PedestrianType,
+): Corridor | null {
+  if (waypoints.length < 2) return null;
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const dx = waypoints[i + 1][0] - waypoints[i][0];
+    const dz = waypoints[i + 1][1] - waypoints[i][1];
+    const len = Math.sqrt(dx * dx + dz * dz);
+    segLengths.push(len);
+    total += len;
+  }
+  if (total < 0.5) return null;
+  return { waypoints, segLengths, totalLength: total, weight, type };
+}
+
 // ── Corridor generation ─────────────────────────────────────────────────────
 
 // How much traffic weight each building type generates
@@ -118,6 +260,7 @@ function corridorEndpoint(
   bx: number, bz: number, // building center
   tx: number, tz: number, // target building center
   clearance: number,
+  bridges?: Road[],
 ): [number, number] {
   const dx = tx - bx;
   const dz = tz - bz;
@@ -126,8 +269,8 @@ function corridorEndpoint(
   // Offset from building center toward the other building
   const ox = bx + (dx / len) * clearance;
   const oz = bz + (dz / len) * clearance;
-  // If this lands in water, pull it back toward center
-  if (!isWalkable(ox, oz)) return [bx, bz];
+  // If this lands in water (and not a bridge), pull it back toward center
+  if (!isWalkable(ox, oz, bridges)) return [bx, bz];
   return [ox, oz];
 }
 
@@ -140,7 +283,7 @@ function corridorEndpoint(
  * Endpoints are offset so pedestrians walk outside buildings.
  * Corridors that cross water are rejected.
  */
-function generateCorridors(buildings: Building[], rng: () => number): Corridor[] {
+function generateCorridors(buildings: Building[], rng: () => number, roads?: Road[], bridges?: Road[]): Corridor[] {
   const corridors: Corridor[] = [];
   const seen = new Set<string>();
 
@@ -152,26 +295,28 @@ function generateCorridors(buildings: Building[], rng: () => number): Corridor[]
     // Offset endpoints to building edges
     const clearA = BUILDING_CLEARANCE[a.type] ?? 2.5;
     const clearB = BUILDING_CLEARANCE[b.type] ?? 2.5;
-    const [ax, az] = corridorEndpoint(a.position[0], a.position[2], b.position[0], b.position[2], clearA);
-    const [bx, bz] = corridorEndpoint(b.position[0], b.position[2], a.position[0], a.position[2], clearB);
-
-    // Reject corridors that cross water — sample midpoint
-    const mx = (ax + bx) * 0.5;
-    const mz = (az + bz) * 0.5;
-    if (!isWalkable(mx, mz)) return;
-    // Also sample quarter-points for longer corridors
-    const len = Math.sqrt(distSq(ax, az, bx, bz));
-    if (len > 20) {
-      if (!isWalkable(ax + (bx - ax) * 0.25, az + (bz - az) * 0.25)) return;
-      if (!isWalkable(ax + (bx - ax) * 0.75, az + (bz - az) * 0.75)) return;
-    }
+    const [ax, az] = corridorEndpoint(a.position[0], a.position[2], b.position[0], b.position[2], clearA, bridges);
+    const [bx, bz] = corridorEndpoint(b.position[0], b.position[2], a.position[0], a.position[2], clearB, bridges);
 
     // Determine dominant pedestrian type from the higher-traffic endpoint
     const aTraffic = BUILDING_TRAFFIC[a.type];
     const bTraffic = BUILDING_TRAFFIC[b.type];
     const dominant = aTraffic >= bTraffic ? a : b;
+    const type = pedestrianTypeForBuilding(dominant);
 
-    corridors.push({ ax, az, bx, bz, weight, type: pedestrianTypeForBuilding(dominant) });
+    // Try a road-following path first; it gets a weight bonus because roads
+    // are visually the "right" place for foot traffic.
+    const roadPath = tryRoadAwarePath(ax, az, bx, bz, roads);
+    if (roadPath && validateWaypoints(roadPath, bridges)) {
+      const c = buildCorridor(roadPath, weight * 1.3, type);
+      if (c) { corridors.push(c); return; }
+    }
+
+    // Fallback: straight corridor from building edge to building edge.
+    const straight: [number, number][] = [[ax, az], [bx, bz]];
+    if (!validateWaypoints(straight, bridges)) return;
+    const c = buildCorridor(straight, weight, type);
+    if (c) corridors.push(c);
   };
 
   // Sort buildings into categories
@@ -292,9 +437,11 @@ export function initPedestrianSystem(
   portX: number,
   portZ: number,
   seed: number,
+  roads?: Road[],
 ): PedestrianSystemState {
   const rng = mulberry32(seed * 13 + 9901);
-  const corridors = generateCorridors(buildings, rng);
+  const bridges = extractBridges(roads);
+  const corridors = generateCorridors(buildings, rng, roads, bridges);
   const maxActive = MAX_PEDESTRIANS_BY_SCALE[portScale] ?? 60;
 
   // Pre-compute total corridor weight for weighted selection
@@ -358,7 +505,7 @@ export function initPedestrianSystem(
     }
   }
 
-  return { corridors, pedestrians, maxActive, culture, portX, portZ };
+  return { corridors, pedestrians, maxActive, culture, portX, portZ, bridges };
 }
 
 function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number): Pedestrian {
@@ -387,7 +534,7 @@ export function updatePedestrians(
   delta: number,
   hourOfDay: number,
 ): number {
-  const { corridors, pedestrians, maxActive } = state;
+  const { corridors, pedestrians, maxActive, bridges } = state;
   const density = getCrowdDensity(hourOfDay);
   const activeCount = Math.max(1, Math.floor(maxActive * density));
 
@@ -400,38 +547,47 @@ export function updatePedestrians(
     if (p.corridorIdx >= 0) {
       // ── Corridor walker ────────────────────────────────────────────
       const c = corridors[p.corridorIdx];
-      if (!c) continue;
+      if (!c || c.totalLength < 0.5) continue;
 
-      const cdx = c.bx - c.ax;
-      const cdz = c.bz - c.az;
-      const length = Math.sqrt(cdx * cdx + cdz * cdz);
-      if (length < 0.5) continue;
-
-      // Advance along corridor
-      const progressDelta = (p.speed * dt) / length;
-      p.progress += progressDelta * p.direction;
-
-      // Bounce at endpoints (clamp and reverse)
+      // Advance along the full polyline (progress is 0..1 over totalLength)
+      p.progress += (p.speed * dt / c.totalLength) * p.direction;
       if (p.progress >= 1) { p.progress = 2 - p.progress; p.direction = -1; }
       else if (p.progress <= 0) { p.progress = -p.progress; p.direction = 1; }
-      // Safety clamp
       if (p.progress < 0) p.progress = 0;
       if (p.progress > 1) p.progress = 1;
 
-      // Interpolate position along corridor
-      const lx = c.ax + cdx * p.progress;
-      const lz = c.az + cdz * p.progress;
+      // Find which segment the current progress lands on
+      const targetDist = p.progress * c.totalLength;
+      const segCount = c.segLengths.length;
+      let segIdx = 0;
+      let accum = 0;
+      while (segIdx < segCount - 1 && accum + c.segLengths[segIdx] < targetDist) {
+        accum += c.segLengths[segIdx];
+        segIdx++;
+      }
+      const segLen = c.segLengths[segIdx];
+      const localT = segLen > 1e-6 ? (targetDist - accum) / segLen : 0;
 
-      // Subtle perpendicular wobble (simulates not walking in a perfectly straight line)
-      const perpX = -cdz / length;
-      const perpZ = cdx / length;
+      const [sx, sz] = c.waypoints[segIdx];
+      const [ex, ez] = c.waypoints[segIdx + 1];
+      const cdx = ex - sx;
+      const cdz = ez - sz;
+
+      const lx = sx + cdx * localT;
+      const lz = sz + cdz * localT;
+
+      // Perpendicular wobble along the current segment
+      const perpX = segLen > 1e-6 ? -cdz / segLen : 0;
+      const perpZ = segLen > 1e-6 ? cdx / segLen : 0;
       const wobble = Math.sin(time * 2.5 + p.phase) * p.wobbleAmp;
 
       const newX = lx + perpX * wobble;
       const newZ = lz + perpZ * wobble;
-      const newY = getTerrainHeight(newX, newZ);
+      // Bridge-aware: over a deck the polyline Y takes over, so corridor
+      // walkers assigned to road-aware paths that cross a bridge actually
+      // walk the deck instead of hanging stuck at the abutment.
+      const newY = getGroundHeight(newX, newZ, bridges);
 
-      // Only update position if it's on walkable land
       if (newY > SEA_LEVEL + 0.2) {
         p.x = newX;
         p.z = newZ;
@@ -439,7 +595,7 @@ export function updatePedestrians(
       }
       // else: hold previous position (don't walk into water)
 
-      // Face direction of travel (not multiplied by direction!)
+      // Face direction of travel along this segment
       p.angle = Math.atan2(cdx * p.direction, cdz * p.direction);
 
     } else {
@@ -480,7 +636,7 @@ export function updatePedestrians(
         const moveZ = (dtz / distToTarget) * moveSpeed;
         const newX = p.x + moveX;
         const newZ = p.z + moveZ;
-        const newY = getTerrainHeight(newX, newZ);
+        const newY = getGroundHeight(newX, newZ, bridges);
 
         // Only move if destination is walkable
         if (newY > SEA_LEVEL + 0.3) {

@@ -38,6 +38,10 @@ export interface CommodityDef {
   color: string;               // UI display color
   icon: string;                // unicode icon for compact display
   iconImage?: string;          // path to icon image in /public/wares/
+  // Period-accurate adulterant. When fraud hits on an Unknown purchase, this
+  // is what the player actually took aboard. Undefined = no specific swap;
+  // fraudRisk falls back to "damaged/poor quality" (unused in phase 1).
+  commonSubstitute?: Commodity;
 }
 
 // ── Full commodity catalog ──
@@ -61,6 +65,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Rolled quills of fragrant reddish bark',
     color: '#c47a3a', icon: '⌇',
     iconImage: '/wares/cinnamon_icon.png',
+    commonSubstitute: 'Cassia Fistula',
   },
   'Cardamom': {
     id: 'Cardamom', tier: 1,
@@ -153,6 +158,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Waxy white crystals with a sharp, penetrating smell',
     color: '#b0c4de', icon: '◇',
     iconImage: '/wares/camphor_icon.png',
+    commonSubstitute: 'Benzoin',
   },
   'Benzoin': {
     id: 'Benzoin', tier: 2,
@@ -171,6 +177,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Pale, translucent tears of hardened tree resin',
     color: '#c9b87a', icon: '△',
     iconImage: '/wares/frankincense_icon.png',
+    commonSubstitute: 'Myrrh',
   },
   'Myrrh': {
     id: 'Myrrh', tier: 2,
@@ -189,6 +196,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Thick dried root slices, yellow inside, with a bitter purgative taste',
     color: '#c62828', icon: '⌠',
     iconImage: '/wares/rhubarb_root_icon.png',
+    commonSubstitute: 'China Root',
   },
   'China Root': {
     id: 'China Root', tier: 2,
@@ -346,6 +354,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'A waxy grey-black lump with a strange, sweet marine odor',
     color: '#b8860b', icon: '◈',
     iconImage: '/wares/amber_icon.png',
+    commonSubstitute: 'Benzoin',
   },
   'Bezoar Stones': {
     id: 'Bezoar Stones', tier: 4,
@@ -355,6 +364,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Smooth, layered stones found inside animal stomachs',
     color: '#a1887f', icon: '◎',
     iconImage: '/wares/bezoar_stone_icon.png',
+    commonSubstitute: 'Horn',
   },
   'Bhang': {
     id: 'Bhang', tier: 4,
@@ -373,6 +383,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Deep crimson resin that shatters like glass when struck',
     color: '#b71c1c', icon: '⬥',
     iconImage: '/wares/dragons_blood_icon.png',
+    commonSubstitute: 'Myrrh',
   },
   'Virginia Tobacco': {
     id: 'Virginia Tobacco', tier: 4,
@@ -506,8 +517,8 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
   calicut: {
     produces: ['Black Pepper', 'Cardamom', 'Cinnamon', 'Timber', 'Rice', 'Ginger',
                'Tamarind', 'Cassia Fistula'],
-    trades:   ['Iron', 'Aloes', 'Tea', 'Munitions', 'Sugar'],
-    demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Pearls', 'Musk', 'Ivory',
+    trades:   ['Iron', 'Aloes', 'Munitions', 'Sugar'],
+    demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Tea', 'Pearls', 'Musk', 'Ivory',
                'Red Coral', 'Rose Water', 'Quicksilver', 'Saffron'],
   },
   goa: {
@@ -583,9 +594,11 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
                'Sugar'],
   },
   malacca: {
-    produces: ['Cloves', 'Nutmeg', 'Aloes', 'Timber', 'Camphor', 'Benzoin'],
-    trades:   ['Black Pepper', 'Tea', 'Rice', 'Iron', 'Munitions', 'Opium', 'Bhang',
-               'Ginger', 'Sugar', 'Tobacco', 'China Root'],
+    // Transshipment hub for Maluku spices, not a production site — cloves/nutmeg
+    // are here as `trades` (0.8–1.2×) so Bantam remains the cheap source.
+    produces: ['Aloes', 'Timber', 'Camphor', 'Benzoin'],
+    trades:   ['Cloves', 'Nutmeg', 'Black Pepper', 'Tea', 'Rice', 'Iron', 'Munitions',
+               'Opium', 'Bhang', 'Ginger', 'Sugar', 'Tobacco', 'China Root'],
     demands:  ['Indigo', 'Bezoar Stones', 'Ivory', 'Coffee',
                'Pearls', 'Musk', 'Saffron', 'Red Coral', 'Quicksilver',
                'Frankincense', 'Rose Water'],
@@ -599,9 +612,9 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
   },
   macau: {
     produces: ['Chinese Porcelain', 'Tea', 'Musk', 'Rhubarb', 'China Root'],
-    trades:   ['Bhang', 'Iron', 'Munitions', 'Aloes', 'Nutmeg', 'Sugar',
+    trades:   ['Bhang', 'Iron', 'Munitions', 'Aloes', 'Sugar',
                'Tobacco', 'Quicksilver', 'Camphor'],
-    demands:  ['Black Pepper', 'Cloves', 'Opium', 'Bezoar Stones',
+    demands:  ['Black Pepper', 'Cloves', 'Nutmeg', 'Opium', 'Bezoar Stones',
                'Cinnamon', 'Ivory', 'Coffee', 'Ambergris', 'Saffron',
                'Frankincense', 'Red Coral', 'Rose Water'],
   },
@@ -623,6 +636,143 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
     demands:  ['Iron', 'Munitions', 'Sugar', 'Rice',
                'Cinnamon', 'Black Pepper', 'Aloes', 'Quicksilver',
                'Indigo', 'Rose Water'],
+  },
+
+  // ── European terminal markets (cont.) ──
+
+  // Lisbon — metropole of the Portuguese Estado da Índia. The endpoint of the
+  // Carreira. Produces Iberian iron, wool, munitions (royal arsenal). Trades
+  // Brazilian and Mediterranean goods passing through. Demands every Asian
+  // spice and drug at the highest prices in the game.
+  lisbon: {
+    produces: ['Iron', 'Wool', 'Munitions', 'Hides'],
+    trades:   ['Tobacco', 'Sugar', 'Cassia Fistula', 'Red Coral', 'Rose Water',
+               'Tamarind', 'Timber'],
+    demands:  ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg', 'Ginger',
+               'Chinese Porcelain', 'Tea', 'Coffee', 'Musk', 'Saffron',
+               'Opium', 'Ambergris', 'Mumia', 'Bezoar Stones', 'Rhubarb',
+               'China Root', 'Camphor', 'Benzoin', 'Frankincense', 'Myrrh',
+               'Pearls', 'Indigo', 'Sassafras', 'Virginia Tobacco'],
+  },
+
+  // Amsterdam — VOC headquarters, rising challenger to the Portuguese. Strong
+  // appetite for fine spices (their main trade focus). Produces Dutch cloth
+  // and munitions. Somewhat hostile to Iberian flags (gameplay reputation).
+  amsterdam: {
+    produces: ['Iron', 'Wool', 'Munitions', 'Hides'],
+    trades:   ['Indigo', 'Sugar', 'Tobacco', 'Timber', 'Tamarind'],
+    demands:  ['Cloves', 'Nutmeg', 'Black Pepper', 'Cinnamon', 'Ginger',
+               'Chinese Porcelain', 'Tea', 'Coffee', 'Camphor', 'Benzoin',
+               'Musk', 'Saffron', 'Rhubarb', 'China Root', 'Opium',
+               'Pearls', 'Ambergris', 'Frankincense', 'Rose Water',
+               'Virginia Tobacco'],
+  },
+
+  // Seville — Spanish Atlantic gateway. Almadén mercury funnels through here
+  // on its way to New Spain's silver amalgamation mines — historically the
+  // defining local export. Demands Asian luxuries for Atlantic re-export.
+  seville: {
+    produces: ['Quicksilver', 'Wool', 'Iron', 'Munitions'],
+    trades:   ['Tobacco', 'Sugar', 'Red Coral', 'Timber', 'Hides'],
+    demands:  ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg', 'Chinese Porcelain',
+               'Rose Water', 'Saffron', 'Ambergris', 'Musk', 'Cassia Fistula',
+               'Mumia', 'Bezoar Stones', 'Rhubarb', 'Pearls', 'Indigo'],
+  },
+
+  // ── Other Indian Ocean / Spice Islands (cont.) ──
+
+  // Cochin — Portuguese-controlled Malabar port, the original Estado foothold
+  // before Goa eclipsed it. Still a major pepper and cardamom producer.
+  cochin: {
+    produces: ['Black Pepper', 'Cardamom', 'Ginger', 'Cassia Fistula', 'Timber',
+               'Rice', 'Tamarind'],
+    trades:   ['Cinnamon', 'Iron', 'Munitions', 'Aloes', 'Sugar'],
+    demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Musk', 'Saffron',
+               'Red Coral', 'Rose Water', 'Tea', 'Quicksilver'],
+  },
+
+  // Aceh — powerful Sumatran sultanate, a major pepper producer and a
+  // challenger to the Portuguese. Home of camphor and benzoin.
+  aceh: {
+    produces: ['Black Pepper', 'Camphor', 'Benzoin', 'Timber', 'Rice'],
+    trades:   ['Ginger', 'Aloes', 'Sugar', 'Bhang'],
+    demands:  ['Indigo', 'Chinese Porcelain', 'Iron', 'Munitions', 'Opium',
+               'Rose Water', 'Saffron', 'Red Coral', 'Tea', 'Ivory'],
+  },
+
+  // ── East African Swahili coast (cont.) ──
+
+  // Mogadishu — Somali Swahili port. Historically a major producer of
+  // frankincense and myrrh (Horn of Africa), plus ambergris from the beaches.
+  mogadishu: {
+    produces: ['Frankincense', 'Myrrh', 'Ivory', 'Ambergris'],
+    trades:   ['Aloes', 'Hides', 'Tamarind', 'Rice'],
+    demands:  ['Black Pepper', 'Chinese Porcelain', 'Iron', 'Munitions',
+               'Indigo', 'Cloves', 'Sugar', 'Red Coral', 'Opium'],
+  },
+
+  // Kilwa — once the greatest city of the Swahili coast, in decline by 1612
+  // under Portuguese rule. Ivory trade persists. Sparser market, shadier feel.
+  kilwa: {
+    produces: ['Ivory'],
+    trades:   ['Ambergris', 'Aloes', 'Tamarind', 'Hides', 'Rice'],
+    demands:  ['Black Pepper', 'Iron', 'Munitions', 'Chinese Porcelain',
+               'Sugar', 'Red Coral', 'Indigo', 'Cloves'],
+  },
+
+  // ── West Africa ──
+
+  // Elmina — Portuguese São Jorge da Mina on the Gold Coast. Iron had
+  // astonishing demand in West African trade; Akan hinterland supplied hides,
+  // horn, and forest products traded to the fort.
+  elmina: {
+    produces: ['Hides', 'Horn', 'Ivory', 'Timber'],
+    trades:   ['Tamarind', 'Rice'],
+    demands:  ['Iron', 'Munitions', 'Sugar', 'Indigo', 'Red Coral',
+               'Rose Water', 'Cassia Fistula', 'Black Pepper', 'Cinnamon',
+               'Wool'],
+  },
+
+  // Luanda — Portuguese São Paulo de Luanda in Angola. Ivory, wax, and
+  // forest products traded inland. Iron and textiles in high demand.
+  luanda: {
+    produces: ['Ivory', 'Hides', 'Horn', 'Timber'],
+    trades:   ['Tamarind', 'Aloes', 'Rice'],
+    demands:  ['Iron', 'Munitions', 'Sugar', 'Wool', 'Indigo', 'Red Coral',
+               'Black Pepper', 'Cinnamon', 'Cassia Fistula'],
+  },
+
+  // ── Atlantic Americas ──
+
+  // Salvador da Bahia — capital of Portuguese Brazil, the engine of the
+  // early sugar trade. Brazilian tobacco is also in ascendancy.
+  salvador: {
+    produces: ['Sugar', 'Tobacco', 'Timber', 'Hides'],
+    trades:   ['Tamarind', 'Rice'],
+    demands:  ['Iron', 'Munitions', 'Wool', 'Cinnamon', 'Black Pepper',
+               'Red Coral', 'Cassia Fistula', 'Chinese Porcelain',
+               'Rose Water', 'Opium', 'Quicksilver', 'Indigo'],
+  },
+
+  // Havana — Spanish treasure-fleet staging point. Cuban tobacco is already
+  // famous in 1612. Hides and sugar also abundant; a busy re-export hub.
+  havana: {
+    produces: ['Tobacco', 'Sugar', 'Hides'],
+    trades:   ['Timber', 'Quicksilver', 'Rice'],
+    demands:  ['Iron', 'Munitions', 'Wool', 'Cinnamon', 'Black Pepper',
+               'Chinese Porcelain', 'Rose Water', 'Saffron', 'Cloves',
+               'Red Coral', 'Indigo'],
+  },
+
+  // Cartagena de Indias — Spanish fortified port, the transshipment point
+  // for Potosí silver coming up from Panama. Quicksilver from Seville passes
+  // through here on its way to Peru. Tobacco and sugar from the hinterland.
+  cartagena: {
+    produces: ['Tobacco', 'Sugar'],
+    trades:   ['Hides', 'Timber', 'Quicksilver', 'Rice'],
+    demands:  ['Iron', 'Munitions', 'Wool', 'Black Pepper', 'Cinnamon',
+               'Chinese Porcelain', 'Red Coral', 'Rose Water', 'Cloves',
+               'Cassia Fistula', 'Indigo'],
   },
 };
 

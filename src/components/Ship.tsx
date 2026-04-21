@@ -10,6 +10,7 @@ import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
 import { swivelAimAngle, broadsideReload } from '../utils/combatState';
+import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 
@@ -523,6 +524,34 @@ export function Ship() {
       initialized.current = true;
     }
 
+    // Effective input: touch overlays keyboard (keyboard wins when held).
+    // In 'tap' mode, a target heading synthesises A/D. In 'joystick' mode,
+    // the joystick's x/y axes map directly onto A/D/W/S.
+    const steerMode = store.shipSteeringMode;
+    let touchW = false, touchS = false, touchA = false, touchD = false;
+    if (steerMode === 'tap') {
+      touchW = touchShipInput.sailRaised;
+      if (touchShipInput.targetHeading !== null) {
+        const diff = Math.atan2(
+          Math.sin(touchShipInput.targetHeading - rotation.current),
+          Math.cos(touchShipInput.targetHeading - rotation.current),
+        );
+        if (diff > 0.03) touchA = true;
+        else if (diff < -0.03) touchD = true;
+      }
+    } else {
+      const JOY_DEAD = 0.2;
+      if (touchShipInput.throttleInput > JOY_DEAD) touchW = true;
+      else if (touchShipInput.throttleInput < -JOY_DEAD) touchS = true;
+      if (touchShipInput.turnInput < -JOY_DEAD) touchA = true;
+      else if (touchShipInput.turnInput > JOY_DEAD) touchD = true;
+    }
+    const inW = keys.current.w || touchW;
+    const inS = keys.current.s || touchS;
+    const inA = keys.current.a || touchA;
+    const inD = keys.current.d || touchD;
+    const inShift = keys.current.shift;
+
     if (playerMode === 'ship' && !paused && !store.activePort) {
       // Acceleration and Inertia
       const navBonus = getRoleBonus(store, 'Navigator', 'perception');
@@ -530,8 +559,8 @@ export function Ship() {
       const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus;
       const windTrim = getWindTrimInfo(store.windDirection, rotation.current);
       // Wind trim requires going straight — Shift while turning is drift, not boost.
-      const wantsWindTrim = keys.current.shift && keys.current.w && velocity.current > 0.5
-        && !keys.current.a && !keys.current.d;
+      const wantsWindTrim = inShift && inW && velocity.current > 0.5
+        && !inA && !inD;
       const windTrimActive = wantsWindTrim && windTrim.score > 0;
       const windTrimLerp = 1 - Math.exp(-delta * (windTrimActive ? 2.4 : 4.2));
       windTrimCharge.current = THREE.MathUtils.lerp(
@@ -558,7 +587,7 @@ export function Ship() {
         } else {
           velocity.current = 0;
         }
-      } else if (keys.current.w) {
+      } else if (inW) {
         const trimAcceleration = windTrimActive ? 1 + windTrim.score * 0.6 : 1;
         // Only accelerate up to maxSpeed — don't snap velocity down if we're
         // already overspeed (e.g. boost just ended). The overspeed handler
@@ -566,7 +595,7 @@ export function Ship() {
         if (velocity.current < maxSpeed) {
           velocity.current = Math.min(velocity.current + accel * trimAcceleration, maxSpeed);
         }
-      } else if (keys.current.s) {
+      } else if (inS) {
         velocity.current = Math.max(velocity.current - accel, -baseMaxSpeed / 2);
       } else {
         // Apply drag
@@ -587,13 +616,13 @@ export function Ship() {
       // Turning (only turn if moving, or turn slowly if stopped).
       // Drift: Shift+A/D gives a tighter turn radius — no speed penalty,
       // just a sharper response for expressive piloting.
-      const isDrifting = keys.current.shift && (keys.current.a || keys.current.d);
+      const isDrifting = inShift && (inA || inD);
       const turnFactor = Math.abs(velocity.current) > 0.1 ? 1 : 0.2;
       const driftTurnMult = isDrifting ? 1.3 : 1;
       const turnSpeed = stats.turnSpeed * delta * turnFactor * driftTurnMult;
 
-      if (keys.current.a) rotation.current += turnSpeed;
-      if (keys.current.d) rotation.current -= turnSpeed;
+      if (inA) rotation.current += turnSpeed;
+      if (inD) rotation.current -= turnSpeed;
 
       // Apply movement
       const moveX = Math.sin(rotation.current) * velocity.current * delta;
@@ -763,7 +792,7 @@ export function Ship() {
       // Intensity combines turn input and speed so it only fires when the
       // player is actively banking at pace. Drifting (Shift+A/D) lowers the
       // bar and amplifies the effect — even mid-speed drifts throw big spray.
-      const turnKey = (keys.current.a ? 1 : 0) - (keys.current.d ? 1 : 0);
+      const turnKey = (inA ? 1 : 0) - (inD ? 1 : 0);
       const turnIntensity = Math.abs(turnKey) * spdRatio;
       const HARD_TURN_THRESH = isDrifting ? 0.15 : 0.4;
       if (turnIntensity > HARD_TURN_THRESH && !store.anchored) {
@@ -845,8 +874,8 @@ export function Ship() {
     const sailSetTarget = THREE.MathUtils.lerp(0.18, 1, speedRatio);
     const sailSetLerp = 1 - Math.exp(-delta * 8);
     visualSailSet.current = THREE.MathUtils.lerp(visualSailSet.current, sailSetTarget, sailSetLerp);
-    const steerIntent = (keys.current.d ? 1 : 0) - (keys.current.a ? 1 : 0); // right turn = positive
-    const heelDrifting = keys.current.shift && steerIntent !== 0;
+    const steerIntent = (inD ? 1 : 0) - (inA ? 1 : 0); // right turn = positive
+    const heelDrifting = inShift && steerIntent !== 0;
     const driftHeelBonus = heelDrifting ? 1.4 : 1;
     // Steering input → base bank (scales strongly with speed for arcade feel).
     const steerHeel = -steerIntent * (0.14 + speedRatio * 0.28) * driftHeelBonus;
@@ -864,7 +893,7 @@ export function Ship() {
     heel.current += heelVelocity.current * delta;
 
     // Pitch: planing lift at speed + throttle dig when reversing.
-    const throttle = keys.current.w ? 1 : keys.current.s ? -1 : 0;
+    const throttle = inW ? 1 : inS ? -1 : 0;
     const throttlePitch = -throttle * speedRatio * 0.06; // W lifts bow, S digs bow
     const planingPitch = -speedRatio * 0.04;             // sustained bow-up at cruise
 

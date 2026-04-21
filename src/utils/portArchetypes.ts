@@ -623,39 +623,38 @@ export const CORE_PORTS: PortDefinition[] = [
   {
     id: 'amsterdam',
     name: 'Amsterdam',
-    geography: 'estuary',
+    geography: 'tidal_river',
     climate: 'temperate',
     culture: 'European',
     buildingStyle: 'dutch-brick',
     scale: 'Very Large',
     description: 'The IJ waterfront is all activity — cranes swinging bales from lighters into canal-side warehouses, VOC clerks tallying inventories, shipwrights caulking hulls in the yards. The city is flat and wet, and smells of tar and herring. The new Bourse is barely a year old but already thick with merchants trading pepper futures and Baltic grain contracts. Sephardic refugees from Iberia have settled along the canals, and their networks reach from Antwerp to Goa. Even in summer the wind off the Zuiderzee cuts through the rigging.',
     openDirection: 'N',
-    channelWidth: 0.7,
-    enclosure: 0.15,
-    riverMouthWidth: 0.32,       // IJ + Zuiderzee — wide flat water
-    riverInlandWidth: 0.18,
-    riverLength: 0.75,
+    // IJ-scale waterway: slightly wider than London's Thames (0.5) since the
+    // historical IJ was roughly twice the Thames width. Capped at 0.55 so the
+    // channel stays within the bridge scanner's reach on Very Large ports.
+    channelWidth: 0.55,
+    channelTaper: 0.1,           // IJ is fairly uniform across the city
     riverSinuosity: 0.04,        // mostly straight channels
-    coastRuggedness: 0.5,        // flat marshy banks
+    bridgeCount: 3,              // Amsterdam was already famous for its canal bridges by 1612
     flagColor: [0.92, 0.55, 0.10],  // Prinsenvlag orange (Dutch Republic, c. 1612)
     landmark: 'oude-kerk-spire',
   },
   {
     id: 'seville',
     name: 'Seville',
-    geography: 'estuary',
+    geography: 'tidal_river',
     climate: 'mediterranean',
     culture: 'European',
     buildingStyle: 'iberian',
     scale: 'Large',
     description: 'The river is shallow — ocean-going ships unload downstream at Sanlúcar de Barrameda, and flat-bottomed barges ferry cargo up the Guadalquivir to the city. The Torre del Oro marks the old river quay where goods from the Americas are landed and tallied by the Casa de Contratación. Genoese bankers have offices near the cathedral, converting Potosí silver into credit. The streets smell of olive oil, tobacco smoke, and orange blossom. Merchants grumble that Cádiz would be better, but the monopoly stays.',
-    openDirection: 'S',
-    channelWidth: 0.6,
-    enclosure: 0.2,
-    riverMouthWidth: 0.14,       // Guadalquivir is narrower than other estuaries
-    riverInlandWidth: 0.07,
-    riverLength: 0.95,           // extends far inland — Seville is well upstream
+    openDirection: 'S',          // Guadalquivir flows north-south through the city
+    // Guadalquivir at Seville was historically narrower than the Thames at
+    // London. Capped for Large-scale bridge reach (~54 world units max span).
+    channelWidth: 0.38,
     riverSinuosity: 0.2,         // famously meandering
+    bridgeCount: 1,              // Puente de Barcas — floating pontoon bridge to Triana (1171–1852)
     landmark: 'giralda-tower',
   },
   {

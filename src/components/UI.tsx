@@ -1,19 +1,22 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useGameStore, Port, WEAPON_DEFS } from '../store/gameStore';
+import { useGameStore, Port, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
+import { getWorldPortById } from '../utils/worldPorts';
 import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
-  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight
+  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal
 } from 'lucide-react';
+import { useIsMobile } from '../utils/useIsMobile';
 import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
 import { ArrivalCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
+import { FACTIONS } from '../constants/factions';
 import { CrewPortraitSquare } from './CrewPortrait';
 import { Opening } from './Opening';
 import { EventModalMobile } from './EventModalMobile';
@@ -148,6 +151,7 @@ function CombatModeBanner() {
   const [frame, setFrame] = useState(0);
   const cannons = useGameStore((state) => state.stats.cannons);
   const cannonballs = useGameStore((state) => state.cargo.Munitions);
+  const { isMobile } = useIsMobile();
 
   useEffect(() => {
     const id = setInterval(() => setFrame(f => f + 1), 400);
@@ -166,7 +170,7 @@ function CombatModeBanner() {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -20, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+      className={`absolute ${isMobile ? 'top-3' : 'top-20'} left-1/2 -translate-x-1/2 z-50`}
     >
       <div className="relative">
         {/* Glow backdrop */}
@@ -257,6 +261,7 @@ function HuntingModeBanner() {
 // ASCII-style top-center indicator when at anchor — calmer counterpart to fight mode
 function AnchorBanner() {
   const [frame, setFrame] = useState(0);
+  const { isMobile } = useIsMobile();
   useEffect(() => {
     const id = setInterval(() => setFrame(f => f + 1), 800);
     return () => clearInterval(id);
@@ -271,7 +276,7 @@ function AnchorBanner() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -15 }}
       transition={{ type: 'spring', stiffness: 200, damping: 18 }}
-      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+      className={`absolute ${isMobile ? 'top-3' : 'top-20'} left-1/2 -translate-x-1/2 z-50`}
     >
       <div className="relative">
         <div className="absolute inset-0 rounded-lg bg-cyan-600/10 blur-lg" />
@@ -301,6 +306,7 @@ function AnchorBanner() {
 // Temporary orange warning that flashes when you crash into an NPC ship
 function CollisionBanner({ shipDesc }: { shipDesc: string }) {
   const [frame, setFrame] = useState(0);
+  const { isMobile } = useIsMobile();
   useEffect(() => {
     const id = setInterval(() => setFrame(f => f + 1), 350);
     return () => clearInterval(id);
@@ -316,7 +322,7 @@ function CollisionBanner({ shipDesc }: { shipDesc: string }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -20, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+      className={`absolute ${isMobile ? 'top-3' : 'top-20'} left-1/2 -translate-x-1/2 z-50`}
     >
       <div className="relative">
         <div className="absolute inset-0 rounded-lg bg-orange-600/20 blur-xl animate-pulse" />
@@ -367,6 +373,8 @@ export function UI() {
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const captainExpression = useGameStore((state) => state.captainExpression);
+  const reputation = useGameStore((state) => state.reputation);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -406,7 +414,12 @@ export function UI() {
   const [showJournal, setShowJournal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWind, setShowWind] = useState(false);
+  const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
+
+  // Mobile layout branching. `isMobile` is true on coarse-pointer viewports
+  // ≤900px, or when Settings → Force Mobile Layout is on. See `useIsMobile.ts`.
+  const { isMobile } = useIsMobile();
   const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
   const [splashComplete, setSplashComplete] = useState(false);
@@ -665,17 +678,8 @@ export function UI() {
   // the hail panel when the NPC drifts out of range — player closes it manually.
   useGameStore((state) => state.nearestHailableNpc);
 
-  // Auto-dismiss notifications — duration keyed to tier, with a legendary bump
-  useEffect(() => {
-    if (notifications.length === 0) return;
-    const latest = notifications[notifications.length - 1];
-    const baseDuration = latest.tier === 'port' ? 7000
-      : latest.tier === 'event' ? 6000
-      : 3800;
-    const duration = latest.type === 'legendary' ? Math.max(baseDuration, 8000) : baseDuration;
-    const timer = setTimeout(() => removeNotification(latest.id), duration);
-    return () => clearTimeout(timer);
-  }, [notifications, removeNotification]);
+  // Auto-dismiss is handled per-toast inside <ASCIIToast> via useAutoDismiss.
+  // That fixes the "only the latest toast auto-dismisses" bug and enables pause-on-hover.
 
   const toggleLocalMap = useCallback(() => { sfxOpen(); setShowLocalMap(prev => !prev); }, []);
   const toggleWorldMap = useCallback(() => { sfxOpen(); setShowWorldMap(prev => !prev); }, []);
@@ -754,8 +758,9 @@ export function UI() {
           className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto
             shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]"
         >
-          {/* Top row: captain, gold, time, crew */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-[#3a3530]/30">
+          {/* Top section — portrait on the left, right column holds the
+              identity strip over the info row (gold/food · time · crew). */}
+          <div className={`flex items-stretch border-b border-[#3a3530]/30 ${isMobile ? 'gap-2 px-2.5 py-2' : 'gap-3 px-4 py-3'}`}>
             {(() => {
               // Ring color reflects captain's current expression/mood
               const ringColor = captainExpression === 'Friendly' ? '#22c55e'
@@ -786,16 +791,18 @@ export function UI() {
                     btn.style.boxShadow = `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`;
                     btn.style.transform = 'scale(1)';
                   }}
-                  className="w-[72px] h-[72px] rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
+                  className="rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
                     transition-all duration-300 active:scale-95"
                   style={{
+                    width: isMobile ? 52 : 72,
+                    height: isMobile ? 52 : 72,
                     border: `3px solid ${ringColor}`,
                     boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`,
                   }}
                   title={captain ? `${captain.name} — Ship Dashboard` : 'Ship Dashboard'}
                 >
                   {captain ? (
-                    <CrewPortraitSquare member={captain} size={64} expressionOverride={captainExpression} />
+                    <CrewPortraitSquare member={captain} size={isMobile ? 46 : 64} expressionOverride={captainExpression} />
                   ) : (
                     <Users size={22} className="text-amber-400/80" />
                   )}
@@ -803,56 +810,139 @@ export function UI() {
               );
             })()}
 
-            <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <div className="flex items-center gap-1.5 text-amber-400 font-bold text-lg tabular-nums">
-                <Coins size={18} className="text-amber-500" />
-                <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
-                  {gold.toLocaleString()}
-                </ValueFlash>
+            {/* Right column: identity strip over the info row */}
+            <div className={`flex flex-col justify-center flex-1 min-w-0 ${isMobile ? 'gap-1' : 'gap-2'}`}>
+              {/* Identity strip — captain · faction · ship.
+                  Ship names use italic (traditional print convention for
+                  vessels); faction gets a warm heraldic tint.
+                  On mobile, the captain button is dropped (tap portrait). */}
+              <div
+                className={`flex items-baseline gap-2 border-b border-[#3a3530]/40
+                  text-[11px] leading-none whitespace-nowrap min-w-0
+                  ${isMobile ? 'pb-1' : 'pb-1.5'}`}
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
+              >
+                {!isMobile && (captain ? (
+                  <>
+                    <button
+                      onClick={() => { sfxOpen(); setDashboardState({ tab: 'crew', crewId: captain.id }); }}
+                      onMouseEnter={() => sfxHover()}
+                      className="group flex items-baseline gap-1 text-slate-200 hover:text-amber-200 transition-colors duration-200
+                        decoration-dotted decoration-slate-600 underline-offset-[3px] hover:underline"
+                      title={`${captain.name} — open captain dashboard`}
+                    >
+                      <span className="text-[9px] font-semibold tracking-[0.14em] uppercase text-slate-500 group-hover:text-amber-500/80 transition-colors duration-200">
+                        Capt.
+                      </span>
+                      <span className="font-medium">{captain.name}</span>
+                    </button>
+                    <span className="text-slate-600/80" aria-hidden>·</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-slate-600">Capt. —</span>
+                    <span className="text-slate-600/80" aria-hidden>·</span>
+                  </>
+                ))}
+                <button
+                  onClick={() => { sfxOpen(); setShowWorldMap(true); }}
+                  onMouseEnter={() => sfxHover()}
+                  className="group flex items-center gap-1.5 text-amber-200/80 hover:text-amber-200 transition-colors duration-200
+                    decoration-dotted decoration-amber-600/60 underline-offset-[3px] hover:underline"
+                  title={`${FACTIONS[ship.flag].displayName} — open world map`}
+                >
+                  <span className="transition-transform duration-200 group-hover:scale-110">
+                    <FactionFlag nationality={ship.flag} size={12} />
+                  </span>
+                  <span className="text-[10px] font-semibold tracking-[0.14em] uppercase">
+                    {FACTIONS[ship.flag].shortName}
+                  </span>
+                </button>
+                <span className="text-slate-600/80" aria-hidden>·</span>
+                <button
+                  onClick={() => { sfxOpen(); setDashboardState({ tab: 'ship' }); }}
+                  onMouseEnter={() => sfxHover()}
+                  className="group flex items-baseline gap-[3px] text-amber-100/90 hover:text-amber-200 transition-colors duration-200"
+                  title={`${ship.name} — open ship dashboard`}
+                >
+                  <span className="text-[10px] text-amber-100/55 group-hover:text-amber-200/80 transition-colors duration-200"
+                    style={{ fontFamily: '"Fraunces", serif' }}>
+                    the
+                  </span>
+                  <span className="italic text-[13px] decoration-dotted decoration-amber-600/60 underline-offset-[3px] group-hover:underline"
+                    style={{ fontFamily: '"Fraunces", serif', fontWeight: 500 }}>
+                    {ship.name}
+                  </span>
+                </button>
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-emerald-400/80 -mt-0.5">
-                <Fish size={11} className="text-emerald-500/70" />
-                <ValueFlash value={provisions} upColor="#86efac" downColor="#f87171">
-                  {provisions}
-                </ValueFlash>
-                <span className="text-emerald-400/60">food</span>
+
+              {/* Info row — gold/food · time · crew.
+                  Mobile: drop food sub-line, drop date sub-line, hide crew
+                  button (crew roster is reachable via the portrait tap). */}
+              <div className={`flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
+                <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                  <div className={`flex items-center gap-1.5 text-amber-400 font-bold tabular-nums ${isMobile ? 'text-base' : 'text-lg'}`}>
+                    <Coins size={isMobile ? 15 : 18} className="text-amber-500" />
+                    <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
+                      {gold.toLocaleString()}
+                    </ValueFlash>
+                  </div>
+                  {!isMobile && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-400/80 -mt-0.5">
+                      <Fish size={11} className="text-emerald-500/70" />
+                      <ValueFlash value={provisions} upColor="#86efac" downColor="#f87171">
+                        {provisions}
+                      </ValueFlash>
+                      <span className="text-emerald-400/60">food</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
+
+                <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                  <div className={`text-slate-300 font-medium ${isMobile ? 'text-[12px]' : 'text-[13px]'}`}>
+                    {formatTime(timeOfDay)} <span className="text-slate-600">·</span> <span className="text-slate-400">Day {dayCount}</span>
+                  </div>
+                  {!isMobile && (
+                    <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-500">
+                      {formatDate(dayCount)}
+                    </div>
+                  )}
+                </div>
+
+                {!isMobile && (
+                  <>
+                    <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
+
+                    <button
+                      onClick={() => { sfxOpen(); setDashboardState({ tab: 'crew' }); }}
+                      onMouseEnter={() => sfxHover()}
+                      className="flex flex-col items-start text-slate-400 hover:text-amber-300 transition-colors duration-200"
+                      title="View crew roster"
+                      style={{ fontFamily: '"DM Sans", sans-serif' }}
+                    >
+                      <span className="text-[13px] leading-none">
+                        <span className="font-bold text-slate-200 tabular-nums">{crew.length}</span>
+                        <span className="ml-1 text-slate-400">crew</span>
+                      </span>
+                      <span className="mt-1 text-[10px] font-semibold tracking-[0.12em] uppercase text-slate-500">
+                        {ship.type}
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
             </div>
-
-            <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
-
-            <div className="flex flex-col items-start" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <div className="text-[13px] text-slate-300 font-medium">
-                {formatTime(timeOfDay)} <span className="text-slate-600">·</span> <span className="text-slate-400">Day {dayCount}</span>
-              </div>
-              <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-500">
-                {formatDate(dayCount)}
-              </div>
-            </div>
-
-            <div className="h-8 w-px bg-gradient-to-b from-transparent via-white/[0.1] to-transparent" />
-
-            <button
-              onClick={() => setShowDashboard(true)}
-              className="flex flex-col items-start text-[13px] text-slate-400 hover:text-amber-300 transition-colors duration-200"
-              title="View crew roster"
-              style={{ fontFamily: '"DM Sans", sans-serif' }}
-            >
-              <span className="flex items-center gap-1.5 leading-none mb-1">
-                <FactionFlag nationality={ship.flag} size={18} />
-                <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-slate-400">{ship.name}</span>
-              </span>
-              <span><span className="font-bold text-slate-300">{crew.length}</span> crew</span>
-            </button>
           </div>
 
           {/* Bottom row: stat bars */}
-          <div className="flex items-center gap-5 px-4 py-2.5">
-            <StatBar icon={<Shield size={15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull}
+          <div className={`flex items-center ${isMobile ? 'gap-2 px-2.5 py-1.5' : 'gap-5 px-4 py-2.5'}`}>
+            <StatBar icon={<Shield size={isMobile ? 12 : 15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull}
               active={expandedStat === 'hull'} onClick={() => setExpandedStat(expandedStat === 'hull' ? null : 'hull')} />
-            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
+            <StatBar icon={<Users size={isMobile ? 12 : 15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
               active={expandedStat === 'morale'} onClick={() => setExpandedStat(expandedStat === 'morale' ? null : 'morale')} />
-            <StatBar icon={<Anchor size={15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo}
+            <StatBar icon={<Anchor size={isMobile ? 12 : 15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo}
               active={expandedStat === 'cargo'} onClick={() => setExpandedStat(expandedStat === 'cargo' ? null : 'cargo')} />
           </div>
 
@@ -882,12 +972,12 @@ export function UI() {
         </motion.div>
 
         {/* Minimap (top-right) — click to open full map */}
-        <div className="flex flex-col gap-3 pointer-events-auto items-end">
+        <div className={`flex flex-col pointer-events-auto items-end ${isMobile ? 'gap-2' : 'gap-3'}`}>
           {minimapEnabled && (
             <div className="relative">
-              <Minimap onClick={toggleLocalMap} />
-              <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 px-2 py-0.5 rounded text-[9px] text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap">
-                Click for Map
+              <Minimap onClick={toggleLocalMap} size={isMobile ? 88 : 144} />
+              <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap ${isMobile ? 'px-1.5 py-0 text-[8px]' : 'px-2 py-0.5 text-[9px]'}`}>
+                {isMobile ? 'Map' : 'Click for Map'}
               </div>
             </div>
           )}
@@ -927,8 +1017,116 @@ export function UI() {
               )}
             </AnimatePresence>
           </div>
+
+          {/* Mobile-only Journal button — lives in the top-right cluster to
+              avoid colliding with the 5-button action bar at the bottom. */}
+          {isMobile && (
+            <button
+              onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
+              aria-pressed={showJournal}
+              className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+                bg-[#1a1e2e] border-2
+                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+                transition-all active:scale-95
+                ${showJournal
+                  ? 'border-amber-500/60 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-400 hover:border-[#6a6545]/80'
+                }`}
+              title="Journal"
+            >
+              <BookOpen size={15} />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Port-map marker (top-center, desktop only) — tells the player which
+          local port map they're on, plus faction standing and heading. Reads
+          like a caption on a period sea chart: minimal frame, hierarchy in
+          typography. Hidden on mobile and whenever any modal overlay is up. */}
+      <AnimatePresence>
+        {!isMobile && !startupOverlayActive && !showLocalMap && !showWorldMap
+          && !activePort && !showDashboard && playerMode === 'ship'
+          && currentWorldPortId && (() => {
+          const port = getWorldPortById(currentWorldPortId);
+          if (!port) return null;
+          const faction = PORT_FACTION[port.id];
+          const rep = faction ? (reputation[faction] ?? 0) : 0;
+          const repColor = rep >= 60 ? 'text-amber-300'
+            : rep >= 25 ? 'text-emerald-300/90'
+            : rep <= -60 ? 'text-red-400'
+            : rep <= -25 ? 'text-orange-400/90'
+            : 'text-slate-400/80';
+          return (
+            <motion.button
+              key="port-marker"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3 }}
+              onClick={() => { sfxOpen(); setShowWorldMap(true); }}
+              onMouseEnter={() => sfxHover()}
+              className="group absolute top-5 left-1/2 -translate-x-1/2 pointer-events-auto
+                flex flex-col items-center gap-[7px]
+                transition-opacity duration-300"
+              title={`${port.name} — open world map`}
+            >
+              {/* Port name flanked by hairlines — period sea-chart cartouche */}
+              <span className="flex items-center gap-3">
+                <span
+                  className="h-px w-12 bg-gradient-to-r from-transparent to-slate-300/35
+                    group-hover:to-amber-300/55 transition-colors duration-300"
+                  aria-hidden
+                />
+                <span
+                  className="text-slate-50 group-hover:text-amber-50 transition-colors duration-200"
+                  style={{
+                    fontFamily: '"Fraunces", serif',
+                    fontSize: 18,
+                    fontWeight: 400,
+                    letterSpacing: '0.26em',
+                    textTransform: 'uppercase',
+                    fontVariationSettings: '"opsz" 48',
+                    textShadow:
+                      '0 1px 2px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.75), 0 0 24px rgba(0,0,0,0.45)',
+                    paddingLeft: '0.26em', // optically center the letter-spaced word
+                  }}
+                >
+                  {port.name}
+                </span>
+                <span
+                  className="h-px w-12 bg-gradient-to-l from-transparent to-slate-300/35
+                    group-hover:to-amber-300/55 transition-colors duration-300"
+                  aria-hidden
+                />
+              </span>
+              {/* Meta line — faction · reputation */}
+              <span
+                className="flex items-center gap-2 text-[10px] uppercase leading-none"
+                style={{
+                  fontFamily: '"DM Sans", sans-serif',
+                  fontWeight: 600,
+                  letterSpacing: '0.14em',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.85), 0 0 8px rgba(0,0,0,0.55)',
+                }}
+              >
+                {faction && (
+                  <>
+                    <span className="text-amber-200/80 group-hover:text-amber-200 transition-colors duration-200">
+                      {faction}
+                    </span>
+                    <span className="text-slate-500/70" aria-hidden>·</span>
+                    <span className={`${repColor} tabular-nums normal-case tracking-normal`}>
+                      {rep >= 0 ? '+' : ''}{rep}
+                      <span className="ml-1 text-slate-400/80 uppercase tracking-[0.14em]">reputation</span>
+                    </span>
+                  </>
+                )}
+              </span>
+            </motion.button>
+          );
+        })()}
+      </AnimatePresence>
 
       {/* Combat Mode Banner */}
       <AnimatePresence>
@@ -965,7 +1163,7 @@ export function UI() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.2)] text-cyan-400 font-bold tracking-wider"
+            className={`absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.2)] text-cyan-400 font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`}
           >
             Press SPACE BAR to weigh anchor
           </motion.div>
@@ -979,7 +1177,7 @@ export function UI() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.3)] text-amber-400 font-bold tracking-wider"
+            className={`absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.3)] text-amber-400 font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`}
           >
             {interactionPrompt}
           </motion.div>
@@ -1088,39 +1286,70 @@ export function UI() {
         </Suspense>
       )}
 
-      {/* Journal Button — lower left, separate */}
-      <div className="absolute bottom-4 left-4 pointer-events-auto">
-        <button
-          onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
-          aria-pressed={showJournal}
-          className={`group relative w-11 h-11 rounded-full flex items-center justify-center
-            bg-[#1a1e2e] border-2
-            shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
-            transition-all active:scale-95
-            ${showJournal
-              ? 'border-amber-500/60 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(245,158,11,0.25)]'
-              : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-400 hover:border-[#6a6545]/80'
-            }`}
-          title="Journal"
-        >
-          <BookOpen size={15} />
-          <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-            Journal
-          </span>
-        </button>
-      </div>
+      {/* Journal Button — desktop: lower-left. Mobile version is rendered
+          inside the top-right cluster to avoid colliding with the action bar. */}
+      {!isMobile && (
+        <div className="absolute bottom-4 left-4 pointer-events-auto">
+          <button
+            onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
+            aria-pressed={showJournal}
+            className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+              bg-[#1a1e2e] border-2
+              shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+              transition-all active:scale-95
+              ${showJournal
+                ? 'border-amber-500/60 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(245,158,11,0.25)]'
+                : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-400 hover:border-[#6a6545]/80'
+              }`}
+            title="Journal"
+          >
+            <BookOpen size={15} />
+            <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              Journal
+            </span>
+          </button>
+        </div>
+      )}
 
-      {/* Bottom Action Bar — Sunless Sea style */}
+      {/* Bottom Action Bar — Sunless Sea style.
+          Desktop: 7 buttons in one row.
+          Mobile: 4 buttons [Pause][Navigate][Dashboard][⋯] with the remaining
+          five (Learn/Help/Settings/View/Quests) tucked into the overflow popover. */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-auto">
+        {/* Mobile overflow popover — opens above the action bar */}
+        <AnimatePresence>
+          {isMobile && showOverflowMenu && (
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.95 }}
+              transition={{ duration: 0.18 }}
+              className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-[#0a0e18]/80 backdrop-blur-xl border border-[#2a2d3a]/60 rounded-xl px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+            >
+              <div className="flex items-center gap-3">
+                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" accentColor="#60a5fa" glowColor="96,165,250" onClick={() => setShowOverflowMenu(false)} />
+                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => setShowOverflowMenu(false)} />
+                <ActionBarButton icon={<Settings size={13} />} label="Settings" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); setShowOverflowMenu(false); }} />
+                <ViewModeButton />
+                <ActionBarButton icon={<Scroll size={13} />} label="Quests" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => setShowOverflowMenu(false)} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Semi-transparent rectangular landing pad */}
-        <div className="relative bg-[#0a0e18]/50 backdrop-blur-md border border-[#2a2d3a]/40 rounded-xl px-4 py-2.5 shadow-[0_4px_20px_rgba(0,0,0,0.4)]">
+        <div className={`relative bg-[#0a0e18]/50 backdrop-blur-md border border-[#2a2d3a]/40 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.4)] ${isMobile ? 'px-3 py-2' : 'px-4 py-2.5'}`}>
           {/* Horizontal connecting rail */}
           <div className="absolute top-1/2 left-5 right-5 h-[2px] -translate-y-1/2 bg-gradient-to-r from-[#2a2520]/30 via-[#3a3530]/50 to-[#2a2520]/30 rounded-full" />
-          <div className="relative flex items-center gap-3">
-            {/* Left group: Learn - Help - Settings */}
-            <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" />
-            <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" />
-            <ActionBarButton icon={<Settings size={13} />} label="Settings" hotkey="3" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
+          <div className={`relative flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
+            {!isMobile && (
+              <>
+                {/* Left group: Learn - Help - Settings */}
+                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" />
+                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" />
+                <ActionBarButton icon={<Settings size={13} />} label="Settings" hotkey="3" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
+              </>
+            )}
             {/* Center — pause/play, bigger */}
             <button
               onClick={() => { sfxClick(); setPaused(!paused); }}
@@ -1137,10 +1366,21 @@ export function UI() {
                 {paused ? 'Resume' : 'Pause'}<span className="ml-1 text-slate-500">[4]</span>
               </span>
             </button>
-            {/* Right group: View - Quests - Navigate */}
-            <ViewModeButton />
-            <ActionBarButton icon={<Scroll size={13} />} label="Quests" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" />
-            <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
+            {!isMobile && (
+              <>
+                {/* Right group: View - Quests - Navigate */}
+                <ViewModeButton />
+                <ActionBarButton icon={<Scroll size={13} />} label="Quests" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" />
+                <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
+              </>
+            )}
+            {isMobile && (
+              <>
+                <ActionBarButton icon={<Compass size={13} />} label="Navigate" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
+                <ActionBarButton icon={<Users size={13} />} label="Dashboard" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxOpen(); setDashboardState({}); }} />
+                <ActionBarButton icon={<MoreHorizontal size={13} />} label="More" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => setShowOverflowMenu(v => !v)} />
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1606,6 +1846,8 @@ const SHIP_TYPE_INFO: Record<string, { crew: number; speed: string; desc: string
   Dhow:     { crew: 4,  speed: 'Fast',    desc: 'Lateen-rigged coaster, nimble in shallow waters' },
   Junk:     { crew: 6,  speed: 'Medium',  desc: 'Chinese deep-sea trader, balanced and reliable' },
   Pinnace:  { crew: 4,  speed: 'Fast',    desc: 'Small, swift scout vessel, limited cargo' },
+  Fluyt:    { crew: 6,  speed: 'Medium',  desc: 'Dutch bulk merchantman, outsize hold for a small crew' },
+  Caravel:  { crew: 5,  speed: 'Fast',    desc: 'Lateen-rigged trader, agile in coastal waters' },
 };
 
 function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; ship: ShipInfo; onOpenDashboard: () => void }) {

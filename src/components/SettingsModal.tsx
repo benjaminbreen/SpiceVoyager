@@ -342,6 +342,8 @@ function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize
   const worldSizeEntries = Object.entries(WORLD_SIZE_VALUES) as [WorldSize, number][];
   const forceMobileLayout = useGameStore(s => s.forceMobileLayout);
   const setForceMobileLayout = useGameStore(s => s.setForceMobileLayout);
+  const shipSteeringMode = useGameStore(s => s.shipSteeringMode);
+  const setShipSteeringMode = useGameStore(s => s.setShipSteeringMode);
 
   return (
     <div className="space-y-6">
@@ -362,6 +364,28 @@ function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize
             >
               {forceMobileLayout ? 'Forced On' : 'Auto'}
             </button>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-300">Ship Steering (Touch)</div>
+              <div className="text-[11px] text-slate-500">Tap sets a target heading; joystick mirrors WASD.</div>
+            </div>
+            <div className="flex gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5">
+              {(['tap', 'joystick'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => { sfxClick(); setShipSteeringMode(mode); }}
+                  className={`rounded px-3 py-1.5 text-xs font-medium capitalize transition-all ${
+                    shipSteeringMode === mode
+                      ? 'bg-emerald-600/20 text-emerald-300'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
 
         </div>

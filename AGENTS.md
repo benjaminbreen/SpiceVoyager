@@ -1,11 +1,11 @@
-# Agent Notes — Merchant of the Indian Ocean
+# Agent Notes — Spice Voyager, 1612
 
 ## Who you're working with
 
 Benjamin Breen — history professor at UC Santa Cruz, author of *The Age of Intoxication: Origins of the Global Drug Trade* (Penn, 2019) and *Tripping on Utopia* (Grand Central, 2024). His scholarship centers on early modern drug/commodity trades, the Portuguese Estado da Índia, and the intellectual history of pharmacology.
 
 Practical implications for this project:
-- The simulation target is 1612 Indian Ocean + Atlantic trade. Historical accuracy matters — period-specific, not generic "age of sail."
+- The simulation target is 1612 Indian Ocean + Atlantic and Pacific trade. Historical accuracy matters — period-specific, not generic "age of sail."
 - Drugs, spices, and medicines are the mechanical core, not generic commodities. Treat them with the specificity he'd bring to a monograph.
 - His writing voice is grounded and experiential, not literary-ornate. Avoid LLM flourishes in NPC dialogue, journal entries, and UI copy. If you'd describe it as "evocative," you've probably overdone it.
 - He's written on the ethics of representing colonial violence. Slavery is excluded from procgen entirely (no Afro-diasporic names in generators, no compensating structural labels). When the trade touches it, the game handles it through discrete hand-written content, not randomization.
@@ -240,6 +240,13 @@ Deferred until the dashboard redesign.
 
 ### Manila + Lima / Callao
 Planned when Pacific expansion ships. Two new building styles: `spanish-andean` (adobe, max 2 stories, deep eaves, arcaded plaza) and `manila-hybrid` (weighted mix: 30% `luso-colonial` stone, 40% `malay-stilted` bahay kubo, 20% Chinese shophouse with `upturnedEave`, 10% thatch). Only one new feature primitive needed: `upturnedEave`.
+
+### Playable factions / randomized start
+Currently the game always starts as English captain of "The Dorada". Plan: 7 playable factions (English, Portuguese, Dutch, Spanish, Gujarati, Omani, Chinese), randomized on new game. All faction-keyed infrastructure (crew, cargo, starting knowledge, ship name pools, hull/sail palettes) already exists in `npcShipGenerator.ts` + `crewGenerator.ts` + `commodities.ts` + `knowledgeSystem.ts`.
+
+- **Phase 1 (done / in progress)**: the 4 European factions. All four map to the `european` visual family so `Ship.tsx` renders correctly without changes. Wiring is faction → `{ shipType, shipName, homePortId }` in `gameStore.ts`, with `shipName` pulled from `SHIP_NAMES` in `npcShipGenerator.ts`. Home ports: London / Lisbon / Amsterdam / Seville.
+- **Phase 2 (deferred)**: Gujarati + Omani (dhow family) and Chinese (junk family). Requires extracting `DhowLikeModel` and `JunkModel` from `NPCShip.tsx` into shared components, making `Ship.tsx` swap its visual mesh by family, and re-anchoring cannons / anchor / sail-trim for non-european hull proportions. Also needs home-port verification for Surat, Muscat, Quanzhou.
+- **Not doing**: per-faction hull/sail colors in phase 1. `Ship.tsx` colors are hardcoded in ~20 `meshStandardMaterial` tags; plumbing them through is phase 2 scope.
 
 ### Hunting polish
 Loot tables exist and basic hit detection works. Still rough: animal scatter should be more aggressive after being shot, death/butcher animation, species-specific drops that matter economically (ivory from elephants if added, hides, exotic feathers).

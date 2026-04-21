@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getTerrainData } from '../utils/terrain';
+import { extractBridges, getGroundHeight } from '../utils/bridgeNavigation';
 import { getCrabData, getCollectedCrabs, collectCrabAt } from './World';
 import { sfxFootstep, sfxThud } from '../audio/SoundEffects';
 import {
@@ -13,7 +14,8 @@ import { spawnSplash } from '../utils/splashState';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { PLAYER_RADIUS } from '../utils/animalBump';
 import { huntAimAngle, landWeaponReload } from '../utils/combatState';
-import { LAND_WEAPON_DEFS } from '../store/gameStore';
+import { touchWalkInput } from '../utils/touchInput';
+import { LAND_WEAPON_DEFS, Road } from '../store/gameStore';
 import { derivePlayerAppearance } from '../utils/playerAppearance';
 import { Hat } from './playerParts/Hat';
 
@@ -67,6 +69,14 @@ export function Player() {
   const playerMode = useGameStore((state) => state.playerMode);
   const paused = useGameStore((state) => state.paused);
   const viewMode = useGameStore((state) => state.viewMode);
+
+  // Bridges for the current port. Pre-filter once and stash in a ref so the
+  // useFrame loop doesn't iterate every road tier on every frame.
+  const portRoads = useGameStore((s) => s.ports[0]?.roads);
+  const bridgesRef = useRef<Road[]>([]);
+  useEffect(() => {
+    bridgesRef.current = extractBridges(portRoads);
+  }, [portRoads]);
 
   // ── Captain identity → appearance ──
   // Subscribe to the captain. Keep the selector cheap by only returning the
@@ -149,13 +159,17 @@ export function Player() {
     camForward.normalize();
     const camRight = _camRight.current.set(-camForward.z, 0, camForward.x);
 
-    // Build input vector
+    // Build input vector. Touch joystick overlays keyboard — whichever is
+    // larger wins per axis so holding the stick past the keyboard doesn't
+    // cancel it out.
     let inputX = 0;
     let inputZ = 0;
     if (keys.current.w) inputZ += 1;
     if (keys.current.s) inputZ -= 1;
     if (keys.current.d) inputX += 1;
     if (keys.current.a) inputX -= 1;
+    if (Math.abs(touchWalkInput.x) > Math.abs(inputX)) inputX = touchWalkInput.x;
+    if (Math.abs(touchWalkInput.y) > Math.abs(inputZ)) inputZ = touchWalkInput.y;
 
     // Transform input by camera orientation
     let moveX = 0;
@@ -181,8 +195,9 @@ export function Player() {
         isJumping.current = false;
         jumpVelocity.current = 0;
 
-        // Check if we landed in water → death
-        const terrainH = getTerrainHeight(walkingPos[0], walkingPos[2]);
+        // Check if we landed in water → death. Bridges count as solid
+        // ground so you can jump onto a deck without drowning.
+        const terrainH = getGroundHeight(walkingPos[0], walkingPos[2], bridgesRef.current);
         if (terrainH < -1) {
           spawnSplash(walkingPos[0], walkingPos[2], 0.7);
           store.triggerGameOver('Drowned after a fatal plunge into the depths.');
@@ -234,7 +249,7 @@ export function Player() {
         }
       }
 
-      const terrainY = getTerrainHeight(newX, newZ);
+      const terrainY = getGroundHeight(newX, newZ, bridgesRef.current);
 
       // While jumping, allow movement over water
       if (isJumping.current) {
@@ -263,8 +278,9 @@ export function Player() {
       group.current.rotation.y = walkingRot;
     }
 
-    // Drowning timer — track time spent in water
-    const currentTerrainH = getTerrainHeight(walkingPos[0], walkingPos[2]);
+    // Drowning timer — track time spent in water. Bridges override so
+    // standing on a deck over water doesn't drown the player.
+    const currentTerrainH = getGroundHeight(walkingPos[0], walkingPos[2], bridgesRef.current);
     if (currentTerrainH < -0.5 && !isJumping.current) {
       // Splash on first entry into water
       if (waterTimer.current === 0) {
@@ -307,46 +323,97 @@ export function Player() {
       }
     }
 
-    // ── Hunting weapon pivot ─────────────────────────────────────────────────
-    // Visible only in combat mode. Rotated to face the cursor (huntAimAngle is
-    // in world space; subtract walker rotation for local space). Switches
-    // between musket / bow based on activeLandWeapon. While reloading, the
-    // pivot droops slightly so the player can read the cooldown without UI.
+    // ── Combat aim: upper body tracks the cursor ────────────────────────────
+    // The torso (and everything parented to it — head, arms, weapons) rotates
+    // to face huntAimAngle. Pelvis/legs keep facing the movement direction.
+    // The aim delta is clamped to ±100° so the torso doesn't do a full
+    // backwards twist relative to the hips when you aim behind you while
+    // moving forward.
+    const showWeapon = store.combatMode;
+    if (torso.current) {
+      if (showWeapon) {
+        let aimDelta = huntAimAngle - walkingRot;
+        while (aimDelta > Math.PI) aimDelta -= Math.PI * 2;
+        while (aimDelta < -Math.PI) aimDelta += Math.PI * 2;
+        const TORSO_TWIST_LIMIT = 1.75;  // ≈100°
+        aimDelta = Math.max(-TORSO_TWIST_LIMIT, Math.min(TORSO_TWIST_LIMIT, aimDelta));
+        torso.current.rotation.y = aimDelta;
+      } else {
+        torso.current.rotation.y = 0;
+      }
+    }
     if (weaponPivot.current && musketGroup.current && bowGroup.current) {
-      const showWeapon = store.combatMode;
       weaponPivot.current.visible = showWeapon;
       if (showWeapon) {
-        const localAim = huntAimAngle - walkingRot;
-        weaponPivot.current.rotation.y = localAim;
         const active = store.activeLandWeapon;
         musketGroup.current.visible = active === 'musket';
         bowGroup.current.visible = active === 'bow';
-        // Reload droop — pivot tilts down while reloading, levels off when ready
+        // Reload droop — tilt the *active* weapon around its own anchor
+        // (grip for musket, riser for bow) so the muzzle/arrow dips while
+        // reloading and levels off when ready.
         const def = LAND_WEAPON_DEFS[active];
         const readyAt = landWeaponReload[active] ?? 0;
         const remaining = Math.max(0, readyAt - Date.now());
         const reloadFrac = Math.min(1, remaining / (def.reloadTime * 1000));
-        weaponPivot.current.rotation.x = reloadFrac * 0.7;  // 0 = level, 0.7 = pointing down
+        const droop = reloadFrac * 0.7;
+        musketGroup.current.rotation.x = active === 'musket' ? droop : 0;
+        bowGroup.current.rotation.x = active === 'bow' ? droop : 0;
       }
     }
 
     // ── Limb animation ───────────────────────────────────────────────────────
-    // Drives shoulders/hips for walk, jump, and idle. Pose system (Step 2)
-    // will replace this branch with a unified pose blend.
+    // Drives shoulders/elbows/hips for jump, combat aim, walk, and idle.
+    // Combat pose overrides the walk cycle so the shot holds steady.
     const lSh = lShoulder.current;
     const rSh = rShoulder.current;
+    const lEl = lElbow.current;
+    const rEl = rElbow.current;
     const lHi = lHip.current;
     const rHi = rHip.current;
     const lKn = lKnee.current;
     const rKn = rKnee.current;
 
     if (isJumping.current) {
-      if (lSh) lSh.rotation.x = -2.2;
-      if (rSh) rSh.rotation.x = -2.2;
+      if (lSh) { lSh.rotation.x = -2.2; lSh.rotation.z = 0; }
+      if (rSh) { rSh.rotation.x = -2.2; rSh.rotation.z = 0; }
+      if (lEl) lEl.rotation.x = 0;
+      if (rEl) rEl.rotation.x = 0;
       if (lHi) lHi.rotation.x = 0.4;
       if (rHi) rHi.rotation.x = -0.4;
       if (lKn) lKn.rotation.x = -0.6;
       if (rKn) rKn.rotation.x = -0.6;
+    } else if (showWeapon) {
+      // Aiming pose. Hand-positions were computed analytically from these
+      // angles (forward kinematics through shoulder→elbow with Euler XYZ),
+      // then each weapon was anchored at the resulting hand point so the
+      // grip actually lands under the hand instead of floating in space.
+      if (store.activeLandWeapon === 'musket') {
+        // Right hand on the grip. Upper arm tilts forward + down; forearm
+        // folds sharply so the hand comes up near the right shoulder.
+        // Resulting right-hand position ≈ torso-local (0.21, 0.56, 0.43).
+        if (rSh) { rSh.rotation.x = -0.9; rSh.rotation.z = 0.0; }
+        if (rEl) rEl.rotation.x = -1.7;
+        // Left hand forward on the barrel, reaching across the body.
+        // Resulting left-hand position ≈ torso-local (0.22, 0.56, 0.50) —
+        // 7cm forward of the right hand, so both hands align along +Z.
+        if (lSh) { lSh.rotation.x = -1.6; lSh.rotation.z = 0.7; }
+        if (lEl) lEl.rotation.x = -0.2;
+      } else {
+        // Bow: left arm extended forward to hold the riser.
+        // Resulting left-hand position ≈ torso-local (-0.11, 0.53, 0.65).
+        if (lSh) { lSh.rotation.x = -1.57; lSh.rotation.z = 0.15; }
+        if (lEl) lEl.rotation.x = -0.1;
+        // Right hand drawn back. The arm can't reach fully to the face
+        // given the rig's shoulder width, so the draw anchors off the
+        // right temple — it reads as "drawing" without cheating the skeleton.
+        if (rSh) { rSh.rotation.x = -1.3; rSh.rotation.z = 0.3; }
+        if (rEl) rEl.rotation.x = -2.3;
+      }
+      // Legs stay planted — no walk cycle while the shot is held.
+      if (lHi) lHi.rotation.x = 0;
+      if (rHi) rHi.rotation.x = 0;
+      if (lKn) lKn.rotation.x = 0;
+      if (rKn) rKn.rotation.x = 0;
     } else if (isMoving.current) {
       const t = state.clock.elapsedTime * 10;
       const sinT = Math.sin(t);
@@ -355,8 +422,10 @@ export function Player() {
       // Bend knees on backswing for a slightly more natural step
       if (lKn) lKn.rotation.x = Math.max(0, -sinT) * 0.4;
       if (rKn) rKn.rotation.x = Math.max(0, sinT) * 0.4;
-      if (lSh) lSh.rotation.x = -sinT * 0.5;
-      if (rSh) rSh.rotation.x = sinT * 0.5;
+      if (lSh) { lSh.rotation.x = -sinT * 0.5; lSh.rotation.z = 0; }
+      if (rSh) { rSh.rotation.x = sinT * 0.5; rSh.rotation.z = 0; }
+      if (lEl) lEl.rotation.x = 0;
+      if (rEl) rEl.rotation.x = 0;
 
       // Footstep sound — fires when leg swings through zero (foot strikes ground)
       const currentSign = sinT >= 0 ? 1 : -1;
@@ -367,8 +436,10 @@ export function Player() {
         sfxFootstep(terrain.biome);
       }
     } else {
-      if (lSh) lSh.rotation.x = 0;
-      if (rSh) rSh.rotation.x = 0;
+      if (lSh) { lSh.rotation.x = 0; lSh.rotation.z = 0; }
+      if (rSh) { rSh.rotation.x = 0; rSh.rotation.z = 0; }
+      if (lEl) lEl.rotation.x = 0;
+      if (rEl) rEl.rotation.x = 0;
       if (lHi) lHi.rotation.x = 0;
       if (rHi) rHi.rotation.x = 0;
       if (lKn) lKn.rotation.x = 0;
@@ -515,6 +586,113 @@ export function Player() {
               </mesh>
             </group>
           </group>
+
+          {/* ── Hunting weapons ─────────────────────────────────────────
+              Parented to the torso so the whole upper body + weapon rotates
+              together under torso.rotation.y (combat aim). Each weapon group
+              is anchored at the torso-local point where the holding hand
+              actually lands given the combat pose — so the grip/riser sits
+              under the hand instead of floating. Each weapon's own mesh
+              origin is the grip/riser; its local +Z is the barrel / arrow
+              direction; rotation.x on the weapon group is the reload droop. */}
+          <group ref={weaponPivot} visible={false}>
+            {/* Musket — anchored at right-hand grip position.
+                Grip at origin; stock extends along -Z behind the grip; barrel
+                extends along +Z forward. When the combat pose fires, this
+                point coincides with the right hand and the barrel runs
+                forward through the left hand's cradle position. */}
+            <group ref={musketGroup} position={[0.21, 0.56, 0.43]}>
+              {/* Stock — butt is behind the grip, tucked toward the front
+                  of the right shoulder. */}
+              <mesh position={[0, -0.04, -0.24]} castShadow>
+                <boxGeometry args={[0.08, 0.11, 0.34]} />
+                <meshStandardMaterial color="#5a3a20" roughness={0.9} />
+              </mesh>
+              {/* Wrist of stock — narrow connector between stock and lock */}
+              <mesh position={[0, -0.02, -0.04]} castShadow>
+                <boxGeometry args={[0.05, 0.07, 0.1]} />
+                <meshStandardMaterial color="#6a4626" roughness={0.9} />
+              </mesh>
+              {/* Lock / trigger housing — right where the grip is */}
+              <mesh position={[0.04, -0.03, 0.02]} castShadow>
+                <boxGeometry args={[0.035, 0.07, 0.1]} />
+                <meshStandardMaterial color="#6a6a6a" metalness={0.65} roughness={0.45} />
+              </mesh>
+              {/* Trigger itself — thin loop under the lock */}
+              <mesh position={[0, -0.08, 0.02]} castShadow>
+                <boxGeometry args={[0.012, 0.04, 0.03]} />
+                <meshStandardMaterial color="#3a3a3a" metalness={0.7} roughness={0.4} />
+              </mesh>
+              {/* Barrel — long, forward of the grip */}
+              <mesh position={[0, 0.01, 0.5]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                <cylinderGeometry args={[0.022, 0.02, 0.95, 10]} />
+                <meshStandardMaterial color="#2a2a2a" roughness={0.35} metalness={0.75} />
+              </mesh>
+              {/* Muzzle ring */}
+              <mesh position={[0, 0.01, 0.97]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                <cylinderGeometry args={[0.027, 0.027, 0.03, 10]} />
+                <meshStandardMaterial color="#1a1a1a" roughness={0.5} metalness={0.6} />
+              </mesh>
+            </group>
+
+            {/* Bow — anchored at left-hand riser position.
+                Riser at origin, limbs along ±Y, arrow along +Z pointing at
+                the target. String is pulled back into a V toward the right
+                hand's anchor (no single cylinder reads as "drawn", so the
+                string is omitted — the pulled-back arrow sells the pose). */}
+            <group ref={bowGroup} position={[-0.11, 0.53, 0.65]} visible={false}>
+              {/* Upper limb — tapered, curving back from riser */}
+              <mesh position={[0, 0.22, -0.02]} rotation={[0.25, 0, -0.3]} castShadow>
+                <cylinderGeometry args={[0.018, 0.012, 0.46, 6]} />
+                <meshStandardMaterial color="#4a2a18" roughness={0.85} />
+              </mesh>
+              {/* Lower limb */}
+              <mesh position={[0, -0.22, -0.02]} rotation={[-0.25, 0, 0.3]} castShadow>
+                <cylinderGeometry args={[0.012, 0.018, 0.46, 6]} />
+                <meshStandardMaterial color="#4a2a18" roughness={0.85} />
+              </mesh>
+              {/* Riser / grip — short box centered at origin */}
+              <mesh position={[0, 0, 0]} castShadow>
+                <boxGeometry args={[0.04, 0.14, 0.05]} />
+                <meshStandardMaterial color="#3a1f10" roughness={0.95} />
+              </mesh>
+              {/* String — two segments forming a V, apex pulled back toward
+                  the drawing hand. Upper and lower halves meet at the nock. */}
+              <mesh position={[0, 0.18, -0.14]} rotation={[0.9, 0, 0]}>
+                <cylinderGeometry args={[0.004, 0.004, 0.52, 4]} />
+                <meshStandardMaterial color="#e8dcb0" roughness={0.9} />
+              </mesh>
+              <mesh position={[0, -0.18, -0.14]} rotation={[-0.9, 0, 0]}>
+                <cylinderGeometry args={[0.004, 0.004, 0.52, 4]} />
+                <meshStandardMaterial color="#e8dcb0" roughness={0.9} />
+              </mesh>
+              {/* Arrow — shaft runs from nock (drawn back) forward past the
+                  riser. Shaft centered at z=-0.1 so ~55cm is behind the
+                  riser (drawn) and ~25cm forward (toward the target). */}
+              <mesh position={[0, 0, -0.1]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                <cylinderGeometry args={[0.007, 0.007, 0.80, 5]} />
+                <meshStandardMaterial color="#c8a878" roughness={0.8} />
+              </mesh>
+              {/* Arrowhead — small cone at the tip */}
+              <mesh position={[0, 0, 0.30]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                <coneGeometry args={[0.012, 0.05, 5]} />
+                <meshStandardMaterial color="#4a4038" metalness={0.5} roughness={0.5} />
+              </mesh>
+              {/* Fletching — three small fins near the nock */}
+              <mesh position={[0, 0.015, -0.44]} rotation={[0, 0, 0]} castShadow>
+                <boxGeometry args={[0.002, 0.025, 0.06]} />
+                <meshStandardMaterial color="#c8b890" roughness={0.95} />
+              </mesh>
+              <mesh position={[0.013, -0.008, -0.44]} rotation={[0, 0, 1.05]} castShadow>
+                <boxGeometry args={[0.002, 0.025, 0.06]} />
+                <meshStandardMaterial color="#c8b890" roughness={0.95} />
+              </mesh>
+              <mesh position={[-0.013, -0.008, -0.44]} rotation={[0, 0, -1.05]} castShadow>
+                <boxGeometry args={[0.002, 0.025, 0.06]} />
+                <meshStandardMaterial color="#c8b890" roughness={0.95} />
+              </mesh>
+            </group>
+          </group>
         </group>
 
         {/* ── Hips → Legs ──────────────────────────────────────────────── */}
@@ -573,50 +751,6 @@ export function Player() {
         )}
       </group>
 
-      {/* ── Hunting weapon pivot ─────────────────────────────────────────────
-          Anchored at chest height — Step 2 (pose system) will move this onto
-          the right hand for the musket and left hand for the bow.            */}
-      <group ref={weaponPivot} position={[0, 1.4, 0]} visible={false}>
-        {/* Musket: long stock + barrel along +Z */}
-        <group ref={musketGroup}>
-          <mesh position={[0, -0.05, -0.2]} castShadow>
-            <boxGeometry args={[0.08, 0.12, 0.35]} />
-            <meshStandardMaterial color="#5a3a20" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-            <cylinderGeometry args={[0.025, 0.025, 1.1, 8]} />
-            <meshStandardMaterial color="#2a2a2a" roughness={0.4} metalness={0.7} />
-          </mesh>
-          <mesh position={[0.04, -0.02, 0.15]} castShadow>
-            <boxGeometry args={[0.04, 0.06, 0.1]} />
-            <meshStandardMaterial color="#666" metalness={0.6} roughness={0.5} />
-          </mesh>
-        </group>
-
-        {/* Bow */}
-        <group ref={bowGroup} visible={false}>
-          <mesh position={[0, 0.18, 0.05]} rotation={[0, 0, -0.35]} castShadow>
-            <cylinderGeometry args={[0.018, 0.014, 0.42, 6]} />
-            <meshStandardMaterial color="#4a2a18" roughness={0.85} />
-          </mesh>
-          <mesh position={[0, -0.18, 0.05]} rotation={[0, 0, 0.35]} castShadow>
-            <cylinderGeometry args={[0.014, 0.018, 0.42, 6]} />
-            <meshStandardMaterial color="#4a2a18" roughness={0.85} />
-          </mesh>
-          <mesh position={[0, 0, 0.06]} castShadow>
-            <boxGeometry args={[0.04, 0.12, 0.04]} />
-            <meshStandardMaterial color="#3a1f10" roughness={0.95} />
-          </mesh>
-          <mesh position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]}>
-            <cylinderGeometry args={[0.005, 0.005, 0.36, 4]} />
-            <meshStandardMaterial color="#e8dcb0" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-            <cylinderGeometry args={[0.008, 0.008, 0.7, 5]} />
-            <meshStandardMaterial color="#c8a878" roughness={0.8} />
-          </mesh>
-        </group>
-      </group>
     </group>
   );
 }

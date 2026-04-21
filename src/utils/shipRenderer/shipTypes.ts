@@ -2,7 +2,7 @@
 // The game uses capitalised ship names (Carrack, Galleon, Dhow, Junk, Pinnace).
 // The renderer uses lowercase keys; a few renderer-only historic variants are also supported.
 
-export type GameShipType = 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace';
+export type GameShipType = 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace' | 'Fluyt' | 'Caravel';
 export type RendererShipType =
   | 'carrack'
   | 'galleon'
@@ -25,6 +25,12 @@ export function mapShipType(t: GameShipType | string): RendererShipType {
     case 'Junk':
       return 'junk';
     case 'Pinnace':
+      return 'pinnace';
+    case 'Fluyt':
+      return 'fluyt';
+    case 'Caravel':
+      // No dedicated caravel silhouette yet — pinnace is the closest small
+      // single-deck European match. A proper variant can come later.
       return 'pinnace';
     default:
       return 'carrack';

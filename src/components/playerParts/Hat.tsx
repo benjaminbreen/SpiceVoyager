@@ -57,7 +57,7 @@ export function Hat({ type, color, accent, castShadow = true }: HatProps) {
         <group position={[0, 0.18, 0]}>
           {/* Brim — flat disc */}
           <mesh position={[0, 0, 0]} castShadow={castShadow}>
-            <cylinderGeometry args={[0.42, 0.42, 0.025, 18]} />
+            <cylinderGeometry args={[0.34, 0.34, 0.025, 18]} />
             <meshStandardMaterial color={color} roughness={0.85} />
           </mesh>
           {/* Crown — short cylinder */}
@@ -78,7 +78,7 @@ export function Hat({ type, color, accent, castShadow = true }: HatProps) {
       return (
         <group position={[0, 0.18, 0]}>
           <mesh position={[0, 0, 0]} castShadow={castShadow}>
-            <cylinderGeometry args={[0.45, 0.45, 0.025, 18]} />
+            <cylinderGeometry args={[0.36, 0.36, 0.025, 18]} />
             <meshStandardMaterial color={color} roughness={0.85} />
           </mesh>
           <mesh position={[0, 0.09, 0]} castShadow={castShadow}>

@@ -22,24 +22,35 @@ const BG       = '#0c0b08';
 // BW = inner content width between the outer rail borders.
 const PORT_BW   = 48;
 const EVENT_BW  = 48;
-const TICKER_IW = 40;   // inner width between │ borders
+const TICKER_IW = 40;
 
 const MAX_WRAP_LINES = 3;
 
-// Port banner geometry (when withImage=true).
-// Banner row layout in the pre:
-//   ║ <sp> ┌ ── × BANNER_INNER ──┐ <sp> ║      ← banner top border
-//   ║ <sp> │      (BANNER_INNER sp)   │ <sp> ║ ← BANNER_IMAGE_ROWS rows
-//   ║ <sp> └ ── × BANNER_INNER ──┘ <sp> ║      ← banner bottom border
-// where BANNER_INNER = PORT_BW - 4 (1 sp margin + 1 │ on each side)
+// Banner geometry (port tier only)
 const BANNER_IMAGE_ROWS = 5;
 
 const SPARKLE_CHARS = ['✦', '✧', '·', '✧', '✦', '◇'];
 const MONO_FONT = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 
-// Monospace line metrics must match the <pre> font-size and line-height below.
+// Monospace metrics — must match the <pre> styles below.
 const PRE_FONT_SIZE_PX = 11;
 const PRE_LINE_HEIGHT = 1.5;
+
+// Auto-dismiss durations by tier (ms). Legendary bumps to at least LEGENDARY_MIN.
+const DURATIONS = { port: 7000, event: 6000, ticker: 3800 } as const;
+const LEGENDARY_MIN = 8000;
+
+function durationFor(n: Notification): number {
+  const base = DURATIONS[n.tier];
+  return n.type === 'legendary' ? Math.max(base, LEGENDARY_MIN) : base;
+}
+
+// Title color by type — legendary stays gold (it's a celebratory catch),
+// warning/error tint toward the accent so they're scannable at a glance.
+function titleColor(type: Notification['type']): string {
+  if (type === 'warning' || type === 'error') return ACCENT[type].ornament;
+  return GOLD;
+}
 
 function C({ c, children }: { c: string; children: React.ReactNode }) {
   return <span style={{ color: c }}>{children}</span>;
@@ -47,8 +58,8 @@ function C({ c, children }: { c: string; children: React.ReactNode }) {
 
 function sp(n: number) { return ' '.repeat(Math.max(0, n)); }
 
-// Word-wrap a string into lines of max `width`. Word-boundary-aware, hard-breaks
-// over-long words, ellipsizes if content exceeds `maxLines`.
+// Word-wrap a string into lines of max `width`. Word-boundary aware; hard-breaks
+// over-long words; ellipsizes if content exceeds `maxLines`.
 function wrapText(text: string, width: number, maxLines: number): string[] {
   if (!text) return [];
   if (width <= 0 || maxLines <= 0) return [];
@@ -57,9 +68,7 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
   const lines: string[] = [];
   let cur = '';
 
-  const pushCur = () => {
-    if (cur.length > 0) { lines.push(cur); cur = ''; }
-  };
+  const pushCur = () => { if (cur.length > 0) { lines.push(cur); cur = ''; } };
 
   for (const w of words) {
     if (lines.length >= maxLines) break;
@@ -98,19 +107,57 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
   return lines;
 }
 
+// ── Auto-dismiss with pause-on-hover and timestamp-bump restart ──────────────
+// Returns hover handlers to wire to the outer motion.div. The timer is owned
+// per-toast (fixes the "only the latest toast auto-dismisses" bug), resets when
+// `timestamp` changes (so dedupe bumps refresh the visible duration), and
+// accumulates remaining time across hover pauses.
+function useAutoDismiss({
+  timestamp,
+  duration,
+  onDismiss,
+}: {
+  timestamp: number;
+  duration: number;
+  onDismiss: () => void;
+}) {
+  const [paused, setPaused] = useState(false);
+
+  // Mutable cursors.
+  const remainingRef = useRef(duration);
+  const resumeAtRef = useRef(Date.now());
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+
+  // Restart fresh whenever the toast is created or its timestamp bumps.
+  useEffect(() => {
+    remainingRef.current = duration;
+    resumeAtRef.current = Date.now();
+  }, [timestamp, duration]);
+
+  useEffect(() => {
+    if (paused) {
+      const elapsed = Date.now() - resumeAtRef.current;
+      remainingRef.current = Math.max(0, remainingRef.current - elapsed);
+      return;
+    }
+    resumeAtRef.current = Date.now();
+    const t = window.setTimeout(() => dismissRef.current(), remainingRef.current);
+    return () => clearTimeout(t);
+  }, [paused, timestamp, duration]);
+
+  return {
+    onHoverStart: useCallback(() => setPaused(true), []),
+    onHoverEnd: useCallback(() => setPaused(false), []),
+  };
+}
+
 // ── Banner image (absolutely positioned over reserved rows in the ASCII frame)
 function ToastBannerImage({
-  candidates,
-  top,
-  left,
-  width,
-  height,
+  candidates, top, left, width, height,
 }: {
   candidates?: string[];
-  top: string;
-  left: string;
-  width: string;
-  height: string;
+  top: string; left: string; width: string; height: string;
 }) {
   const [idx, setIdx] = useState(0);
   const src = candidates?.[idx];
@@ -136,26 +183,23 @@ function ToastBannerImage({
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          // Subtle aquatint / engraving tint
           filter: 'saturate(0.72) contrast(0.96) brightness(0.74) sepia(0.08)',
         }}
         onError={() => setIdx(i => i + 1)}
       />
-      {/* Inner vignette + thin gold edge — imitates a plate impression */}
       <div
         style={{
           position: 'absolute',
           inset: 0,
           pointerEvents: 'none',
-          boxShadow:
-            'inset 0 0 24px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(201,168,76,0.22)',
+          boxShadow: 'inset 0 0 24px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(201,168,76,0.22)',
         }}
       />
     </div>
   );
 }
 
-// ── Ref-based sparkle — no re-renders ────────────────────────────────────────
+// ── Ref-based sparkle (no re-renders) ────────────────────────────────────────
 function useSparkle(interval = 400) {
   const refs = useRef<(HTMLSpanElement | null)[]>([]);
 
@@ -183,14 +227,16 @@ function useSparkle(interval = 400) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function TickerToast({
-  notification,
-  onClick,
+  notification, onClick, onHoverStart, onHoverEnd,
 }: {
   notification: Notification;
   onClick: () => void;
+  onHoverStart: () => void;
+  onHoverEnd: () => void;
 }) {
   const accent = ACCENT[notification.type];
-  const sparkle = useSparkle(450);
+  // Legendary toasts sparkle faster to feel more alive.
+  const sparkle = useSparkle(notification.type === 'legendary' ? 260 : 450);
 
   const BODY_W = TICKER_IW - 6;
   const wrapped = wrapText(notification.message, BODY_W, MAX_WRAP_LINES);
@@ -205,17 +251,22 @@ function TickerToast({
     : notification.type === 'legendary' ? '★'
     : '•';
 
+  const glowBoost = notification.type === 'legendary' ? 42 : 24;
+
   return (
     <motion.div
+      layout
       initial={{ opacity: 0, x: 30 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClick}
+      onHoverStart={onHoverStart}
+      onHoverEnd={onHoverEnd}
       className="pointer-events-auto cursor-pointer flex items-stretch"
       style={{
         background: `linear-gradient(135deg, ${BG}, #100f0c)`,
-        boxShadow: `0 3px 14px rgba(0,0,0,0.45), inset 0 0 24px ${accent.glow}`,
+        boxShadow: `0 3px 14px rgba(0,0,0,0.45), inset 0 0 ${glowBoost}px ${accent.glow}`,
         borderRadius: '2px',
         padding: '1px',
         willChange: 'opacity, transform',
@@ -225,7 +276,7 @@ function TickerToast({
         style={{
           width: '2px',
           background: accent.ornament,
-          boxShadow: `0 0 6px ${accent.ornament}`,
+          boxShadow: `0 0 ${notification.type === 'legendary' ? 10 : 6}px ${accent.ornament}`,
           marginRight: '4px',
         }}
       />
@@ -262,34 +313,21 @@ function TickerToast({
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Grand frame — port (with banner image) and event tiers.
-// Layout (rows, top→bottom):
-//   1.  top rail (sparkle … ╤ … sparkle)
-//   2.  blank                                  ↓ reserved for banner when withImage
-//   3.  banner top border   (┌ ── ┐)
-//   4.  banner row 1        (│    │)
-//   …
-//   3+N. banner row N
-//   3+N+1. banner bottom border (└ ── ┘)
-//   3+N+2. blank                                 ↑
-//   cartouche top, title line(s), cartouche bottom
-//   blank, divider, blank, subtitle line(s)
-//   blank
-//   bottom rail
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function GrandFrame({
-  notification,
-  bw,
-  withImage,
-  onClick,
+  notification, bw, withImage, onClick, onHoverStart, onHoverEnd,
 }: {
   notification: Notification;
   bw: number;
   withImage: boolean;
   onClick: () => void;
+  onHoverStart: () => void;
+  onHoverEnd: () => void;
 }) {
   const accent = ACCENT[notification.type];
-  const sparkle = useSparkle(350);
+  // Legendary toasts pulse faster.
+  const sparkle = useSparkle(notification.type === 'legendary' ? 240 : 350);
 
   const halfL = Math.floor((bw - 1) / 2);
   const halfR = bw - 1 - halfL;
@@ -303,8 +341,11 @@ function GrandFrame({
   const divL = Math.floor((bw - 9) / 2);
   const divR = bw - 9 - divL;
 
-  // Banner geometry
-  const bannerInner = bw - 4; // 1 sp margin + 1 │ + bannerInner + 1 │ + 1 sp margin = bw
+  const bannerInner = bw - 4;
+
+  const titleCol = titleColor(notification.type);
+  const isLegendary = notification.type === 'legendary';
+  const glowPx = isLegendary ? 68 : 50;
 
   const B = (children: React.ReactNode) => (
     <span>
@@ -315,11 +356,8 @@ function GrandFrame({
     </span>
   );
 
-  // Overlay position (in CSS). The <pre> sits inside a padded container;
-  // we position the image absolutely relative to the motion.div wrapper.
-  // Vertical offset: top-rail (row 0) + blank (row 1) + banner-top-border (row 2) = 3 rows.
-  // Horizontal offset: ║ (1) + space-margin (1) + │ (1) = 3ch from the <pre>'s left edge.
-  const FRAME_PAD = 3; // px — motion.div padding
+  // Image overlay position (only matters when withImage).
+  const FRAME_PAD = 3;
   const lineHeightEm = PRE_LINE_HEIGHT;
   const imageTop = `calc(${FRAME_PAD}px + ${3 * lineHeightEm}em)`;
   const imageLeft = `calc(${FRAME_PAD}px + 3ch)`;
@@ -328,19 +366,46 @@ function GrandFrame({
 
   return (
     <motion.div
+      layout
       initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
+      animate={
+        isLegendary
+          ? {
+              opacity: 1,
+              y: 0,
+              boxShadow: [
+                `0 8px 40px rgba(0,0,0,0.6), inset 0 0 ${glowPx}px ${accent.glow}, 0 0 1px ${accent.border}`,
+                `0 8px 40px rgba(0,0,0,0.6), inset 0 0 ${glowPx + 18}px rgba(176,106,204,0.26), 0 0 2px ${accent.ornament}`,
+                `0 8px 40px rgba(0,0,0,0.6), inset 0 0 ${glowPx}px ${accent.glow}, 0 0 1px ${accent.border}`,
+              ],
+            }
+          : { opacity: 1, y: 0 }
+      }
       exit={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      transition={
+        isLegendary
+          ? {
+              duration: 0.4,
+              ease: [0.22, 1, 0.36, 1],
+              boxShadow: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' },
+            }
+          : { duration: 0.4, ease: [0.22, 1, 0.36, 1] }
+      }
       onClick={onClick}
+      onHoverStart={onHoverStart}
+      onHoverEnd={onHoverEnd}
       className="pointer-events-auto cursor-pointer relative"
       style={{
         background: `linear-gradient(180deg, #0e0d0a, ${BG})`,
-        boxShadow: `0 8px 40px rgba(0,0,0,0.6), inset 0 0 50px ${accent.glow}, 0 0 1px ${accent.border}`,
+        boxShadow: `0 8px 40px rgba(0,0,0,0.6), inset 0 0 ${glowPx}px ${accent.glow}, 0 0 1px ${accent.border}`,
         borderRadius: '2px',
         padding: `${FRAME_PAD}px`,
         willChange: 'opacity, transform',
-        fontSize: 0, // kill stray inline-space gaps around <pre>
+        // Must match the <pre>'s font metrics so em/ch in the image overlay
+        // resolve correctly (em = font-size; ch = width of '0' in monospace).
+        fontFamily: MONO_FONT,
+        fontSize: `${PRE_FONT_SIZE_PX}px`,
+        lineHeight: PRE_LINE_HEIGHT,
       }}
     >
       <pre
@@ -364,36 +429,13 @@ function GrandFrame({
 
         {withImage && (
           <>
-            {/* banner top border */}
-            {B(
-              <>
-                {sp(1)}
-                <C c={DIM_GOLD}>{'┌'}{'─'.repeat(bannerInner)}{'┐'}</C>
-                {sp(1)}
-              </>
-            )}
-            {/* banner interior rows (blank; image overlays them) */}
+            {B(<>{sp(1)}<C c={DIM_GOLD}>{'┌'}{'─'.repeat(bannerInner)}{'┐'}</C>{sp(1)}</>)}
             {Array.from({ length: BANNER_IMAGE_ROWS }).map((_, i) => (
               <span key={`b${i}`}>
-                {B(
-                  <>
-                    {sp(1)}
-                    <C c={DIM_GOLD}>{'│'}</C>
-                    {sp(bannerInner)}
-                    <C c={DIM_GOLD}>{'│'}</C>
-                    {sp(1)}
-                  </>
-                )}
+                {B(<>{sp(1)}<C c={DIM_GOLD}>{'│'}</C>{sp(bannerInner)}<C c={DIM_GOLD}>{'│'}</C>{sp(1)}</>)}
               </span>
             ))}
-            {/* banner bottom border */}
-            {B(
-              <>
-                {sp(1)}
-                <C c={DIM_GOLD}>{'└'}{'─'.repeat(bannerInner)}{'┘'}</C>
-                {sp(1)}
-              </>
-            )}
+            {B(<>{sp(1)}<C c={DIM_GOLD}>{'└'}{'─'.repeat(bannerInner)}{'┘'}</C>{sp(1)}</>)}
             {B(<>{sp(bw)}</>)}
           </>
         )}
@@ -407,7 +449,7 @@ function GrandFrame({
           </>
         )}
 
-        {/* title line(s) */}
+        {/* title lines */}
         {renderedTitleLines.map((ln, i) => {
           const padL = Math.floor((cartInner - ln.length) / 2);
           const padR = cartInner - ln.length - padL;
@@ -418,7 +460,7 @@ function GrandFrame({
                   {sp(2)}
                   <C c={accent.border}>{'│'}</C>
                   {sp(padL)}
-                  <C c={GOLD}>{ln}</C>
+                  <C c={titleCol}>{ln}</C>
                   {sp(padR)}
                   <C c={accent.border}>{'│'}</C>
                   {sp(2)}
@@ -442,11 +484,16 @@ function GrandFrame({
           <>
             {B(<>{sp(bw)}</>)}
 
+            {/* Ornamental divider — legendary gets a fixed ★ center ornament. */}
             {B(
               <>
                 {sp(3)}
                 <C c={accent.border}>{('─ ').repeat(Math.ceil(divL / 2)).slice(0, divL)}</C>
-                <C c={accent.ornament}>{' '}{sparkle(2)}{' '}</C>
+                {isLegendary ? (
+                  <C c={accent.ornament}>{' ★ '}</C>
+                ) : (
+                  <C c={accent.ornament}>{' '}{sparkle(2)}{' '}</C>
+                )}
                 <C c={accent.border}>{(' ─').repeat(Math.ceil(divR / 2)).slice(0, divR)}</C>
                 {sp(3)}
               </>
@@ -496,7 +543,8 @@ function GrandFrame({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Public dispatcher.
+// Public dispatcher — owns per-toast auto-dismiss (with pause-on-hover) and
+// routes to the correct tier frame.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function ASCIIToast({
@@ -508,14 +556,50 @@ export function ASCIIToast({
   onDismiss: () => void;
   onClick?: () => void;
 }) {
+  const duration = durationFor(notification);
+  const hover = useAutoDismiss({
+    timestamp: notification.timestamp,
+    duration,
+    onDismiss,
+  });
+
   const rawClick = onClick ?? onDismiss;
-  const handleClick = () => { sfxDismiss(); rawClick(); };
+  // Suppress the dismiss sfx when the click has a meaningful target (e.g. open port).
+  const handleClick = () => {
+    if (!onClick) sfxDismiss();
+    rawClick();
+  };
 
   if (notification.tier === 'port') {
-    return <GrandFrame notification={notification} bw={PORT_BW} withImage onClick={handleClick} />;
+    return (
+      <GrandFrame
+        notification={notification}
+        bw={PORT_BW}
+        withImage
+        onClick={handleClick}
+        onHoverStart={hover.onHoverStart}
+        onHoverEnd={hover.onHoverEnd}
+      />
+    );
   }
   if (notification.tier === 'event') {
-    return <GrandFrame notification={notification} bw={EVENT_BW} withImage={false} onClick={handleClick} />;
+    return (
+      <GrandFrame
+        notification={notification}
+        bw={EVENT_BW}
+        withImage={false}
+        onClick={handleClick}
+        onHoverStart={hover.onHoverStart}
+        onHoverEnd={hover.onHoverEnd}
+      />
+    );
   }
-  return <TickerToast notification={notification} onClick={handleClick} />;
+  return (
+    <TickerToast
+      notification={notification}
+      onClick={handleClick}
+      onHoverStart={hover.onHoverStart}
+      onHoverEnd={hover.onHoverEnd}
+    />
+  );
 }
