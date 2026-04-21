@@ -15,8 +15,8 @@ import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
 import { ArrivalCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { CrewPortraitSquare } from './CrewPortrait';
-import { OpeningASCII } from './OpeningASCII';
-import { EventModalASCII } from './EventModalASCII';
+import { Opening } from './Opening';
+import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
@@ -28,7 +28,6 @@ import {
 import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
-// import { OpeningPamphlet } from './OpeningPamphlet'; // Option B — swap in to test
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
@@ -197,6 +196,63 @@ function CombatModeBanner() {
   );
 }
 
+// ── Hunting Mode Banner ─────────────────────────────────────────────────────
+// Land counterpart to CombatModeBanner. Earthy palette so the player can feel
+// the mode shift between sea-combat (red) and hunting (amber/forest).
+function HuntingModeBanner() {
+  const [tick, setTick] = useState(0);
+  const activeWeapon = useGameStore((s) => s.activeLandWeapon);
+  const ownedWeapons = useGameStore((s) => s.landWeapons);
+  const munitions = useGameStore((s) => s.cargo.Munitions ?? 0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, []);
+
+  // Import dynamically through the module to avoid circular deps in render
+  const weaponLabel = activeWeapon === 'musket' ? 'Matchlock Musket' : 'Hunting Bow';
+  const ammoLine = activeWeapon === 'musket'
+    ? `Powder & shot: ${munitions}`
+    : 'No ammunition required';
+  const swapHint = ownedWeapons.length > 1 ? ' · [TAB] swap weapon' : '';
+  const icon = tick % 2 === 0 ? '⌖' : '◎';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -20, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -20, scale: 0.9 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      className="absolute top-3 left-1/2 -translate-x-1/2 z-50"
+    >
+      <div className="relative">
+        <div className="absolute inset-0 rounded-lg bg-amber-700/15 blur-xl" />
+        <div className="relative bg-[#1a1208]/90 backdrop-blur-md border border-amber-600/50 rounded-lg px-5 py-2
+          shadow-[0_0_24px_rgba(180,120,40,0.25),inset_0_1px_0_rgba(220,170,90,0.1)]">
+          <pre className="text-center font-mono text-[11px] leading-tight select-none" style={{ textShadow: '0 0 8px rgba(217,150,60,0.5)' }}>
+            <span className="text-amber-500/60">╫{'═'.repeat(3)}╫</span>
+            <span className="text-amber-300 font-bold mx-2">{icon}</span>
+            <motion.span
+              animate={{ opacity: [1, 0.7, 1] }}
+              transition={{ duration: 1.4, repeat: Infinity }}
+              className="text-amber-300 font-bold tracking-[0.3em]"
+            >HUNTING</motion.span>
+            <span className="text-amber-300 font-bold mx-2">{icon}</span>
+            <span className="text-amber-500/60">╫{'═'.repeat(3)}╫</span>
+          </pre>
+          <div className="text-center text-amber-500/60 text-[9px] font-mono tracking-wider mt-0.5">
+            [CLICK] fire · [F] holster{swapHint}
+          </div>
+          <div className="text-center text-amber-500/45 text-[9px] font-mono tracking-wider mt-0.5">
+            ● {weaponLabel} · {ammoLine}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Anchor Banner ───────────────────────────────────────────────────────────
 // ASCII-style top-center indicator when at anchor — calmer counterpart to fight mode
 function AnchorBanner() {
@@ -353,7 +409,8 @@ export function UI() {
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
   const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
-  const [loadingReady, setLoadingReady] = useState(false);
+  const [splashComplete, setSplashComplete] = useState(false);
+  const worldReady = portCount > 0;
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -411,12 +468,12 @@ export function UI() {
 
   const captain = crew.find(c => c.role === 'Captain');
   const closeOpeningOverlay = useCallback(() => {
-    if (loadingReady) {
+    if (splashComplete) {
       sfxSail();
       setShowInstructions(false);
       setShowCommission(true);
     }
-  }, [loadingReady]);
+  }, [splashComplete]);
 
   const closeCommission = useCallback(() => {
     setShowCommission(false);
@@ -434,34 +491,40 @@ export function UI() {
     };
   }, []);
 
-  // SimCity-style loading messages — cycle until the world is actually ready
+  // Splash loader — purely cosmetic, fully decoupled from world-gen. The
+  // world renders behind the commission modal (which comes next), so the
+  // splash only needs to feel like a brief curtain. We use setTimeout (not
+  // rAF) to flip splashComplete, because rAF callbacks are starved during
+  // heavy GameScene initialization — setTimeout fires reliably from the
+  // timer queue as soon as the main thread yields.
   useEffect(() => {
-    if (!showInstructions) return;
+    if (!showInstructions || splashComplete) return;
+
+    const SPLASH_DURATION_MS = 2400;
+    const MESSAGE_INTERVAL_MS = 380;
+
+    setLoadingMessage(LOADING_MESSAGES[0]);
+    setLoadingProgress(100); // Opening.tsx drives its own bar via CSS; this is kept for the legacy splash path.
 
     let i = 0;
-    setLoadingMessage(LOADING_MESSAGES[0]);
-    setLoadingProgress(12);
-    const interval = setInterval(() => {
+    const msgTimer = setInterval(() => {
       i = (i + 1) % LOADING_MESSAGES.length;
       setLoadingMessage(LOADING_MESSAGES[i]);
-      setLoadingProgress((current) => Math.min(current + 11, 94));
-    }, 850);
-    return () => clearInterval(interval);
-  }, [showInstructions]);
+    }, MESSAGE_INTERVAL_MS);
 
-  // Ready the moment ports exist — no artificial delay
-  useEffect(() => {
-    if (portCount > 0 && !loadingReady) setLoadingReady(true);
-  }, [portCount, loadingReady]);
+    const doneTimer = setTimeout(() => {
+      setLoadingMessage('Harbors charted. Holds secured. The monsoon favors departure.');
+      setSplashComplete(true);
+    }, SPLASH_DURATION_MS);
 
-  useEffect(() => {
-    if (!loadingReady) return;
-    setLoadingMessage('Harbors charted. Holds secured. The monsoon favors departure.');
-    setLoadingProgress(100);
-  }, [loadingReady]);
+    return () => {
+      clearInterval(msgTimer);
+      clearTimeout(doneTimer);
+    };
+  }, [showInstructions, splashComplete]);
 
   useEffect(() => {
-    if (!showInstructions || !loadingReady) return;
+    if (!showInstructions || !splashComplete) return;
 
     const handleLaunchKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -472,7 +535,7 @@ export function UI() {
 
     window.addEventListener('keydown', handleLaunchKey);
     return () => window.removeEventListener('keydown', handleLaunchKey);
-  }, [showInstructions, loadingReady, closeOpeningOverlay]);
+  }, [showInstructions, splashComplete, closeOpeningOverlay]);
 
   // Check for nearby ports — approach toast + activation
   const PORT_APPROACH_RADIUS_SQ = 60 * 60; // grand toast at ~60 units
@@ -529,8 +592,7 @@ export function UI() {
               port.name,
               'info',
               {
-                size: 'grand',
-                subtitle: `${port.scale} port \u00b7 ${port.culture}`,
+                subtitle: `${port.scale} port · ${port.culture}`,
                 imageCandidates: getDefaultPortImageCandidates(port.id),
                 openPortId: port.id,
               },
@@ -603,11 +665,14 @@ export function UI() {
   // the hail panel when the NPC drifts out of range — player closes it manually.
   useGameStore((state) => state.nearestHailableNpc);
 
-  // Auto-dismiss notifications — grand toasts last longer
+  // Auto-dismiss notifications — duration keyed to tier, with a legendary bump
   useEffect(() => {
     if (notifications.length === 0) return;
     const latest = notifications[notifications.length - 1];
-    const duration = latest.type === 'legendary' ? 8000 : latest.size === 'grand' ? 6000 : 4000;
+    const baseDuration = latest.tier === 'port' ? 7000
+      : latest.tier === 'event' ? 6000
+      : 3800;
+    const duration = latest.type === 'legendary' ? Math.max(baseDuration, 8000) : baseDuration;
     const timer = setTimeout(() => removeNotification(latest.id), duration);
     return () => clearTimeout(timer);
   }, [notifications, removeNotification]);
@@ -872,6 +937,13 @@ export function UI() {
         )}
       </AnimatePresence>
 
+      {/* Hunting Mode Banner — land equivalent of CombatModeBanner */}
+      <AnimatePresence>
+        {combatMode && playerMode === 'walking' && (
+          <HuntingModeBanner />
+        )}
+      </AnimatePresence>
+
       {/* Anchor Indicator — top-center ASCII banner */}
       <AnimatePresence>
         {anchored && playerMode === 'ship' && !combatMode && (
@@ -946,27 +1018,46 @@ export function UI() {
         )}
       </AnimatePresence>
 
-      {/* Notifications */}
-      <div className="absolute bottom-20 right-4 flex flex-col gap-2 items-end">
-        <AnimatePresence>
-          {notifications.map(n => (
-            <ASCIIToast
-              key={n.id}
-              notification={n}
-              onDismiss={() => removeNotification(n.id)}
-              onClick={n.openPortId ? () => {
-                const port = useGameStore.getState().ports.find(p => p.id === n.openPortId);
-                if (port) {
-                  openedFromToastPortRef.current = port.id;
-                  dismissedPortRef.current = null;
-                  setActivePort(port);
-                }
-                removeNotification(n.id);
-              } : undefined}
-            />
-          ))}
-        </AnimatePresence>
-      </div>
+      {/* Notifications — three tiered stacks, each right-aligned */}
+      {(() => {
+        const portNotes   = notifications.filter(n => n.tier === 'port');
+        const eventNotes  = notifications.filter(n => n.tier === 'event');
+        const tickerNotes = notifications.filter(n => n.tier === 'ticker');
+
+        const renderToast = (n: typeof notifications[number]) => (
+          <ASCIIToast
+            key={n.id}
+            notification={n}
+            onDismiss={() => removeNotification(n.id)}
+            onClick={n.openPortId ? () => {
+              const port = useGameStore.getState().ports.find(p => p.id === n.openPortId);
+              if (port) {
+                openedFromToastPortRef.current = port.id;
+                dismissedPortRef.current = null;
+                setActivePort(port);
+              }
+              removeNotification(n.id);
+            } : undefined}
+          />
+        );
+
+        return (
+          <div className="absolute bottom-20 right-4 flex flex-col gap-3 items-end pointer-events-none">
+            {/* Port tier (top) — max 1 */}
+            <div className="flex flex-col gap-2 items-end">
+              <AnimatePresence>{portNotes.map(renderToast)}</AnimatePresence>
+            </div>
+            {/* Event tier (middle) — max 2 */}
+            <div className="flex flex-col gap-2 items-end">
+              <AnimatePresence>{eventNotes.map(renderToast)}</AnimatePresence>
+            </div>
+            {/* Ticker tier (bottom) — max 3 */}
+            <div className="flex flex-col gap-1 items-end">
+              <AnimatePresence>{tickerNotes.map(renderToast)}</AnimatePresence>
+            </div>
+          </div>
+        );
+      })()}
 
       {showDevPanel && !showInstructions && <RenderTestPanel />}
 
@@ -1061,11 +1152,11 @@ export function UI() {
         </Suspense>
       )}
 
-      {/* Instructions Overlay — swap OpeningASCII / OpeningPamphlet here */}
+      {/* Instructions Overlay */}
       <AnimatePresence>
         {showInstructions && (
-          <OpeningASCII
-            ready={loadingReady}
+          <Opening
+            ready={splashComplete}
             loadingMessage={loadingMessage}
             loadingProgress={loadingProgress}
             shipName={ship.name}
@@ -1076,13 +1167,14 @@ export function UI() {
             gold={gold}
             onStart={closeOpeningOverlay}
           />
+
         )}
       </AnimatePresence>
 
       {/* Commission of Voyage — shown after splash dismisses */}
       <AnimatePresence>
         {showCommission && (
-          <EventModalASCII onDismiss={closeCommission} />
+          <EventModalMobile onDismiss={closeCommission} worldReady={worldReady} />
         )}
       </AnimatePresence>
 

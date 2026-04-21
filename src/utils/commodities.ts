@@ -14,12 +14,14 @@ export type Commodity =
   // Tier 3: Staples & Trade Goods
   | 'Indigo' | 'Iron' | 'Timber' | 'Sugar'
   | 'Ivory' | 'Chinese Porcelain' | 'Pearls' | 'Red Coral' | 'Rose Water'
+  // Tier 3: Hunted goods
+  | 'Hides' | 'Wool' | 'Horn'
   // Tier 4: Precious Rarities
   | 'Ambergris' | 'Bezoar Stones' | 'Bhang' | "Dragon's Blood" | 'Virginia Tobacco'
   // Tier 5: Extraordinary
   | 'Mumia' | 'Lapis de Goa'
   // Non-tradable (provisions/supplies, not shown in market)
-  | 'Rice' | 'Munitions';
+  | 'Rice' | 'Munitions' | 'Salted Meat';
 
 export type CommodityTier = 1 | 2 | 3 | 4 | 5;
 
@@ -419,6 +421,38 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     physicalDescription: 'Barrels of powder and crates of iron shot',
     color: '#78909c', icon: '●',
   },
+  'Salted Meat': {
+    id: 'Salted Meat', tier: 1,
+    basePrice: [3, 8], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0,
+    description: 'Cured meat from hunted animals. Feeds the crew on long voyages.',
+    physicalDescription: 'Strips of dark, salt-crusted meat in a cloth bundle',
+    color: '#7a3a2a', icon: '◫',
+  },
+  'Hides': {
+    id: 'Hides', tier: 3,
+    basePrice: [12, 40], weight: 2,
+    spoilable: true, breakable: false, fraudRisk: 0.05,
+    description: 'Cured animal hides — leather for boots, saddles, jerkins. Steady demand in every port.',
+    physicalDescription: 'Stiff, salted hides folded into stacks',
+    color: '#8b5a3c', icon: '▤',
+  },
+  'Wool': {
+    id: 'Wool', tier: 1,
+    basePrice: [4, 12], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0,
+    description: 'Raw fleece. European staple — Mediterranean and Atlantic ports buy in bulk.',
+    physicalDescription: 'Rough cream-coloured fleece, oily and matted',
+    color: '#e8dcc8', icon: '☁',
+  },
+  'Horn': {
+    id: 'Horn', tier: 3,
+    basePrice: [10, 35], weight: 1,
+    spoilable: false, breakable: true, fraudRisk: 0.1,
+    description: 'Polished animal horn — used for combs, powder flasks, ornaments. Light cargo, decent margin.',
+    physicalDescription: 'Curved, polished horn pieces tied in a bundle',
+    color: '#5c4033', icon: '⌒',
+  },
 };
 
 // ── Ordered list for market/UI display (excludes non-tradable Rice & Munitions) ──
@@ -433,6 +467,7 @@ export const ALL_COMMODITIES: Commodity[] = [
   // Tier 3: Staples & Trade Goods
   'Indigo', 'Iron', 'Timber', 'Sugar',
   'Ivory', 'Chinese Porcelain', 'Pearls', 'Red Coral', 'Rose Water',
+  'Hides', 'Wool', 'Horn',
   // Tier 4: Precious Rarities
   'Ambergris', 'Bezoar Stones', 'Bhang', "Dragon's Blood", 'Virginia Tobacco',
   // Tier 5: Extraordinary
@@ -442,7 +477,7 @@ export const ALL_COMMODITIES: Commodity[] = [
 // Full list including non-tradable items (for cargo tracking, NPC loot, etc.)
 export const ALL_COMMODITIES_FULL: Commodity[] = [
   ...ALL_COMMODITIES,
-  'Rice', 'Munitions',
+  'Rice', 'Munitions', 'Salted Meat',
 ];
 
 export const TIER_LABELS: Record<CommodityTier, string> = {

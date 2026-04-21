@@ -279,7 +279,12 @@ function rollLanguages(nationality: Nationality, role: CrewRole, stats: CrewStat
     : role === 'Surgeon' ? 0.34
     : 0.22;
   const charismaBonus = Math.max(0, stats.charisma - 10) * 0.025;
-  const qualityBonus = quality === 'legendary' ? 0.24 : quality === 'rare' ? 0.12 : 0;
+  const qualityBonus =
+      quality === 'legendary' ? 0.24
+    : quality === 'renowned'  ? 0.18
+    : quality === 'seasoned'  ? 0.12
+    : quality === 'able'      ? 0.05
+    : 0;
 
   if (contacts.length && Math.random() < extraChance + charismaBonus + qualityBonus) {
     languages.add(pick(contacts));
@@ -296,8 +301,9 @@ function rollLanguages(nationality: Nationality, role: CrewRole, stats: CrewStat
 
 // ── Quality tiers ──────────────────────────────────────
 // Based on a composite score of skill + morale (range ~90-200).
-// The percentile thresholds match the loot tier distribution:
-//   bottom 20% = dud, middle 70% = normal, top 10% = rare, top 1% = legendary.
+// Eight-tier ladder running from disaster → legendary, with rough weights:
+//   disaster ~3% · dud ~15% · untried ~20% · passable ~24%
+//   able ~20% · seasoned ~12% · renowned ~4.5% · legendary ~1.5%
 // We roll quality directly rather than computing percentiles across the crew,
 // so each crew member's quality is independent.
 
@@ -311,10 +317,14 @@ function rollCrewQuality(skill: number, morale: number): CrewQuality {
   // crew member can still be legendary (lucky find) and vice versa.
   const roll = normalized * 0.6 + Math.random() * 0.4;
 
-  if (roll >= 0.99) return 'legendary';
-  if (roll >= 0.90) return 'rare';
-  if (roll < 0.20) return 'dud';
-  return 'normal';
+  if (roll >= 0.985) return 'legendary';
+  if (roll >= 0.94)  return 'renowned';
+  if (roll >= 0.82)  return 'seasoned';
+  if (roll >= 0.62)  return 'able';
+  if (roll >= 0.38)  return 'passable';
+  if (roll >= 0.18)  return 'untried';
+  if (roll >= 0.03)  return 'dud';
+  return 'disaster';
 }
 
 // ── Stat generation (D&D-style 1-20) ─────────────────
@@ -330,7 +340,14 @@ const ROLE_STAT_BONUS: Record<CrewRole, Partial<Record<keyof CrewStats, number>>
 };
 
 const QUALITY_STAT_BONUS: Record<CrewQuality, number> = {
-  dud: -2, normal: 0, rare: 2, legendary: 4,
+  disaster: -4,
+  dud:      -2,
+  untried:  -1,
+  passable:  0,
+  able:      1,
+  seasoned:  2,
+  renowned:  3,
+  legendary: 5,
 };
 
 function rollStats(role: CrewRole, quality: CrewQuality): CrewStats {
@@ -493,12 +510,21 @@ const HUMOUR_CHARACTER_LINES: Record<HumourKey, string[]> = {
 };
 
 // Incident sentences keyed to role + stat highlights
-const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: string[]; high_strength: string[]; high_perception: string[]; default: string[] }> = {
+type IncidentSet = {
+  high_luck: string[]; high_charisma: string[]; high_strength: string[]; high_perception: string[];
+  low_luck: string[]; low_charisma: string[]; low_strength: string[]; low_perception: string[];
+  default: string[];
+};
+const INCIDENT_LINES: Record<CrewRole, IncidentSet> = {
   Captain: {
     high_luck: ['Once narrowly escaped a shipwreck that claimed two other vessels.', 'Survived a mutiny through an extraordinary stroke of fortune.'],
     high_charisma: ['Talked down a hostile port garrison with nothing but words and nerve.', 'Once convinced a pirate captain to release his ship without a shot fired.'],
     high_strength: ['Personally led a boarding action that decided a battle at sea.', 'Hauled a drowning man from the sea in a storm that should have killed them both.'],
     high_perception: ['Spotted a hidden reef that would have torn the hull apart.', 'Noticed the signs of a coming storm a full day before it struck.'],
+    low_luck: ['Has buried two ships already; the factors in Surat mutter when his name is entered in the ledger.'],
+    low_charisma: ['Struggles to hold the quarterdeck — more than one hand has walked off the moment shore was sighted.'],
+    low_strength: ['A soft body for the work; leaves the rough of it to the mates and tires quickly at the pumps.'],
+    low_perception: ['Has run aground twice in charted waters, and once blamed the pilot for it.'],
     default: ['Has weathered more than one crisis of command at sea.', 'Carries the quiet confidence of a man who has faced the worst and endured.'],
   },
   Navigator: {
@@ -506,6 +532,10 @@ const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: str
     high_charisma: ['Learned secret routes from a local pilot through patient friendship.'],
     high_strength: ['Swam to shore through heavy surf to take bearings when the ship could not approach.'],
     high_perception: ['Can determine latitude by starlight alone with uncanny accuracy.'],
+    low_luck: ['Last voyage put his ship on a reef off Socotra; still blames the chart.'],
+    low_charisma: ['Keeps to himself and to his rutter; the mates find his silences unnerving rather than wise.'],
+    low_strength: ['Thin and ink-stained; of little use when the ship needs hands more than heads.'],
+    low_perception: ['His reckonings wander by leagues in a week, though he will not admit as much.'],
     default: ['Has guided ships safely through waters that have wrecked lesser navigators.'],
   },
   Gunner: {
@@ -513,6 +543,10 @@ const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: str
     high_charisma: ['Keeps the gun crew loyal and sharp through rough humour and steady praise.'],
     high_strength: ['Can single-handedly shift a cannon that normally requires four men.'],
     high_perception: ['Landed a shot on a distant target that seasoned gunners called impossible.'],
+    low_luck: ['Lost two fingers to a burst breech and expects the third any day now.'],
+    low_charisma: ['Snaps at the powder boys and quarrels with the mates; no one volunteers to serve his gun.'],
+    low_strength: ['Run-down and short-winded; struggles to run out a nine-pounder without a mate\'s help.'],
+    low_perception: ['Wastes powder at ranges no seasoned gunner would attempt.'],
     default: ['Has seen action enough to know the cost of both good and poor gunnery.'],
   },
   Sailor: {
@@ -520,6 +554,10 @@ const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: str
     high_charisma: ['The other hands look to him when spirits are low.'],
     high_strength: ['Can climb the mainmast faster than any man aboard.'],
     high_perception: ['Has a gift for reading the wind before it shifts.'],
+    low_luck: ['Has been flogged on three ships and shipwrecked on a fourth; bad fortune follows him aboard.'],
+    low_charisma: ['Slow to speak and quick to sulk; the watch keeps him at arm\'s length.'],
+    low_strength: ['Scrawny and slow at the halyards; better kept off the yards in a blow.'],
+    low_perception: ['Sleeps through his watch as often as not, and misses the hail when he doesn\'t.'],
     default: ['An experienced hand who knows the ways of rope and canvas.'],
   },
   Factor: {
@@ -527,6 +565,10 @@ const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: str
     high_charisma: ['Has contacts in ports spanning three oceans.'],
     high_strength: ['Survived a robbery in a foreign port by fighting off the assailants.'],
     high_perception: ['Can spot adulterated spices by smell alone.'],
+    low_luck: ['Lost his last master\'s capital to a Gujarati broker and fled the consequences by sea.'],
+    low_charisma: ['Gives offence without meaning to; haggles badly and takes it personally.'],
+    low_strength: ['A soft merchant\'s body that has never shifted a bale without help.'],
+    low_perception: ['Has been cheated on weights and measures more than once, and will be again.'],
     default: ['Has a merchant\'s instinct for where profit lies and where danger hides.'],
   },
   Surgeon: {
@@ -534,6 +576,10 @@ const INCIDENT_LINES: Record<CrewRole, { high_luck: string[]; high_charisma: str
     high_charisma: ['Has a bedside manner that reassures even the most frightened patient.'],
     high_strength: ['Performed an amputation at sea in heavy weather without losing his footing or the patient.'],
     high_perception: ['Diagnoses ailments with an almost uncanny swiftness.'],
+    low_luck: ['Has buried more patients than he has saved, by the crew\'s reckoning.'],
+    low_charisma: ['Brusque and bitter at the bedside; men prefer the bottle to his care.'],
+    low_strength: ['Hands shake at the amputation saw, and the work shows it.'],
+    low_perception: ['Mistakes one fever for another and dosing accordingly, with uneven results.'],
     default: ['Has treated enough wounds and fevers to know that nature is the true physician.'],
   },
 };
@@ -558,10 +604,23 @@ function generateBackstory(role: CrewRole, nationality: Nationality, birthplace:
   const dominant = humourEntries[0][0];
   const character = pick(HUMOUR_CHARACTER_LINES[dominant]);
 
-  // 3. Incident sentence (stat-based, for rare+ quality or high stats)
+  // 3. Incident sentence — high-stat feat for competent tiers, low-stat blemish for poor tiers.
+  const incidents = INCIDENT_LINES[role];
+  const isLowTier  = quality === 'disaster' || quality === 'dud' || quality === 'untried';
+  const isHighTier = quality === 'legendary' || quality === 'renowned' || quality === 'seasoned';
   let incident = '';
-  if (quality === 'legendary' || quality === 'rare' || Math.random() < 0.4) {
-    const incidents = INCIDENT_LINES[role];
+  if (isLowTier) {
+    // Lowest *role-relevant* stat drives the blemish; disaster/dud always get one, untried sometimes.
+    const show = quality === 'disaster' || quality === 'dud' || Math.random() < 0.6;
+    if (show) {
+      const lowest = Math.min(stats.strength, stats.perception, stats.charisma, stats.luck);
+      if (stats.luck === lowest && stats.luck <= 8) incident = pick(incidents.low_luck);
+      else if (stats.charisma === lowest && stats.charisma <= 8) incident = pick(incidents.low_charisma);
+      else if (stats.strength === lowest && stats.strength <= 8) incident = pick(incidents.low_strength);
+      else if (stats.perception === lowest && stats.perception <= 8) incident = pick(incidents.low_perception);
+      else incident = pick(incidents.default);
+    }
+  } else if (isHighTier || Math.random() < 0.4) {
     const highest = Math.max(stats.strength, stats.perception, stats.charisma, stats.luck);
     if (stats.luck === highest && stats.luck >= 12) incident = pick(incidents.high_luck);
     else if (stats.charisma === highest && stats.charisma >= 12) incident = pick(incidents.high_charisma);
@@ -574,12 +633,17 @@ function generateBackstory(role: CrewRole, nationality: Nationality, birthplace:
   let text = origin + ' ' + character;
   if (incident) text += ' ' + incident;
 
-  // Quality suffix
-  if (quality === 'legendary') {
-    text += ' Spoken of with reverence by those who\'ve sailed with them.';
-  } else if (quality === 'dud') {
-    text += ' Though somewhat unreliable, they were the best available.';
-  }
+  // Tier suffix — closing note keyed to quality.
+  const tierSuffix: Partial<Record<CrewQuality, string>> = {
+    legendary: ' Spoken of with reverence by those who\'ve sailed with them.',
+    renowned:  ' A name the factors know in every port from Aden to Malacca.',
+    seasoned:  ' The kind of hand you hope to find when the weather turns.',
+    able:      ' Solid work, steadily done — the sort a voyage is built on.',
+    untried:   ' Still green; the voyage itself will be the making or breaking of him.',
+    dud:       ' Though somewhat unreliable, they were the best available.',
+    disaster:  ' Signed on only because no one else would — a liability, plainly.',
+  };
+  if (tierSuffix[quality]) text += tierSuffix[quality];
 
   return text;
 }
@@ -609,7 +673,15 @@ export function generateCrewMember(
   // Higher quality and older crew are more likely to be experienced
   const levelRoll = Math.random();
   const ageBonus = age > 35 ? 0.15 : age > 25 ? 0.05 : 0;
-  const qualityBonus = quality === 'legendary' ? 0.3 : quality === 'rare' ? 0.15 : quality === 'dud' ? -0.15 : 0;
+  const qualityBonus =
+      quality === 'legendary' ?  0.30
+    : quality === 'renowned'  ?  0.22
+    : quality === 'seasoned'  ?  0.15
+    : quality === 'able'      ?  0.05
+    : quality === 'untried'   ? -0.10
+    : quality === 'dud'       ? -0.18
+    : quality === 'disaster'  ? -0.28
+    : 0;
   const lvl3Chance = 0.1 + ageBonus + qualityBonus;
   const lvl2Chance = 0.3 + ageBonus + qualityBonus;
   const startLevel = levelRoll < lvl3Chance ? 3 : levelRoll < lvl3Chance + lvl2Chance ? 2 : 1;

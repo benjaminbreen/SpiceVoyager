@@ -47,9 +47,13 @@ const HEALTH_LABEL: Record<string, { text: string; color: string }> = {
 
 // Quality tier → portrait border + card accent
 const QUALITY_PORTRAIT: Record<CrewQuality, { border: string; cardBorder: string; cardBg: string; glow?: string }> = {
-  dud:       { border: 'border-amber-800/50',    cardBorder: 'border-amber-900/25',   cardBg: 'bg-amber-950/10' },
-  normal:    { border: 'border-slate-600',        cardBorder: 'border-white/[0.06]',   cardBg: 'bg-white/[0.015]' },
-  rare:      { border: 'border-emerald-500/60',   cardBorder: 'border-emerald-800/30', cardBg: 'bg-emerald-950/15', glow: 'shadow-[0_0_6px_rgba(52,211,153,0.15)]' },
+  disaster:  { border: 'border-red-800/60',       cardBorder: 'border-red-900/35',     cardBg: 'bg-red-950/15',     glow: 'shadow-[0_0_8px_rgba(185,28,28,0.22)]' },
+  dud:       { border: 'border-amber-800/50',     cardBorder: 'border-amber-900/25',   cardBg: 'bg-amber-950/10' },
+  untried:   { border: 'border-zinc-500/50',      cardBorder: 'border-zinc-700/25',    cardBg: 'bg-zinc-900/10' },
+  passable:  { border: 'border-slate-600',        cardBorder: 'border-white/[0.06]',   cardBg: 'bg-white/[0.015]' },
+  able:      { border: 'border-sky-500/55',       cardBorder: 'border-sky-800/25',     cardBg: 'bg-sky-950/10' },
+  seasoned:  { border: 'border-emerald-500/60',   cardBorder: 'border-emerald-800/30', cardBg: 'bg-emerald-950/15', glow: 'shadow-[0_0_6px_rgba(52,211,153,0.15)]' },
+  renowned:  { border: 'border-cyan-400/65',      cardBorder: 'border-cyan-800/30',    cardBg: 'bg-cyan-950/15',    glow: 'shadow-[0_0_8px_rgba(34,211,238,0.18)]' },
   legendary: { border: 'border-purple-400/70',    cardBorder: 'border-purple-800/35',  cardBg: 'bg-purple-950/15',  glow: 'shadow-[0_0_10px_rgba(168,85,247,0.2)]' },
 };
 

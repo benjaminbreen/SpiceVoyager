@@ -322,7 +322,13 @@ export function CrewDeathModal() {
           </L>
           <L>
             <C c={DIM}>{' Days served: '}</C><C c={BRIGHT}>{padR(String(daysServed), 6)}</C>
-            <C c={DIM}>{'Quality: '}</C><C c={m.quality === 'legendary' ? GOLD : m.quality === 'rare' ? WARM : DIM}>{padR(m.quality, IW - 31)}</C>
+            <C c={DIM}>{'Quality: '}</C><C c={
+              m.quality === 'legendary' ? GOLD
+              : m.quality === 'renowned' ? GOLD
+              : m.quality === 'seasoned' ? WARM
+              : m.quality === 'able'     ? WARM
+              : DIM
+            }>{padR(m.quality, IW - 31)}</C>
           </L>
 
           {/* History */}

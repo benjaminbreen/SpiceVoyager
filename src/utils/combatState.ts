@@ -3,13 +3,18 @@
 // and the Projectiles component manages cannonball flight + hit detection.
 
 import * as THREE from 'three';
-import type { WeaponType } from '../store/gameStore';
+import type { WeaponType, LandWeaponType } from '../store/gameStore';
+
+// Union: projectiles may come from ship or land weapons. Hit detection branches
+// on whether the weaponType is a land weapon (targets wildlife) or ship weapon
+// (targets NPC ships).
+export type ProjectileWeaponType = WeaponType | LandWeaponType;
 
 export interface Projectile {
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;       // seconds remaining
-  weaponType: WeaponType; // determines damage on hit
+  weaponType: ProjectileWeaponType;
 }
 
 // Mouse world position on the water plane (y=0), updated by CameraController raycaster
@@ -35,7 +40,7 @@ export function spawnProjectile(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   speed: number,
-  weaponType: WeaponType = 'swivelGun',
+  weaponType: ProjectileWeaponType = 'swivelGun',
 ) {
   const p: Projectile = {
     pos: origin.clone(),
@@ -64,7 +69,7 @@ export interface BroadsideShot {
   origin: THREE.Vector3;
   direction: THREE.Vector3;
   speed: number;
-  weaponType: WeaponType;
+  weaponType: ProjectileWeaponType;
   fired: boolean;
 }
 export const broadsideQueue: BroadsideShot[] = [];
@@ -85,4 +90,38 @@ export interface NpcLiveEntry {
   sunk?: boolean;
 }
 export const npcLivePositions: Map<string, NpcLiveEntry> = new Map();
+
+// ── Hunting (land combat) ───────────────────────────────────────────────────
+// Mirrors the swivel gun's aim/reload plumbing but for the walking character.
+
+// Hunt aim angle in world space (radians). Written by CameraController from
+// the mouse raycast, read by Player.tsx to rotate the musket/bow pivot.
+export let huntAimAngle = 0;
+export function setHuntAimAngle(angle: number) { huntAimAngle = angle; }
+
+// Per-weapon reload timestamps (Date.now() ms). Keyed by land weapon id so
+// switching between musket and bow tracks independent cooldowns.
+export const landWeaponReload: Record<string, number> = {};
+
+// Live positions of shootable wildlife instances. Each animal component
+// (Grazers, eventually Primates/Reptiles/WadingBirds) writes its per-instance
+// state here every frame so the projectile system can find hits without
+// walking React tree refs.
+export interface WildlifeLiveEntry {
+  x: number;
+  y: number;
+  z: number;
+  hp: number;
+  maxHp: number;
+  template: 'grazer' | 'primate' | 'reptile' | 'wadingBird';
+  variant: string;      // e.g. 'goat', 'sheep' — drives loot table lookup
+  dead: boolean;
+  hitAlert?: number;    // Date.now() when last hit — animal panics for a while after
+  radius: number;       // hit radius in world units
+}
+export const wildlifeLivePositions: Map<string, WildlifeLiveEntry> = new Map();
+
+// Kill events — wildlife components read & clear these to play death animations.
+// Projectile system writes the id of any animal whose HP dropped to 0.
+export const wildlifeKillQueue: Set<string> = new Set();
 

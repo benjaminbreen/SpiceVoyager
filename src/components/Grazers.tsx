@@ -9,6 +9,7 @@ import { sfxHoofbeats } from '../audio/SoundEffects';
 import { BODY_RADIUS, PLAYER_RADIUS, computeCirclePush, separateHerd } from '../utils/animalBump';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN, resolveTerrainStep } from '../utils/animalTerrain';
+import { wildlifeLivePositions } from '../utils/combatState';
 import { tintFlat, tintGradient } from '../utils/animalTint';
 import {
   createStaminaBarGeometry,
@@ -42,7 +43,29 @@ interface GrazerOffset {
   stamina: number;                  // 1 = fresh, 0 = exhausted — drained while fleeing
   fleeJitter: number;               // ±π/12 perturbation on flee heading, re-rolled on an interval
   fleeJitterNext: number;           // clock time to re-roll the jitter
+  panic: boolean;                   // shot at — flees harder and never returns
+  deathTime: number;                // 0 = alive, otherwise clock time of death (used to fade carcass)
 }
+
+// HP per grazer kind — most game animals are one-shot kills with the musket;
+// big animals soak more punishment. The bow is weaker so it takes 2 shots to
+// drop a goat or sheep, and a buffalo will take several arrows.
+const GRAZER_MAX_HP: Record<GrazerKind, number> = {
+  antelope: 80,
+  deer:     90,
+  goat:     60,
+  camel:    140,
+  sheep:    60,
+  bovine:   200,
+  pig:      90,
+  capybara: 60,
+};
+
+// Body radius for hit detection — slightly larger than the visual body so
+// shots that visually clip the animal still register.
+const HIT_RADIUS_MULT = 1.1;
+
+let grazerInstanceCounter = 0;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export type GrazerKind = 'antelope' | 'deer' | 'goat' | 'camel' | 'sheep' | 'bovine' | 'pig' | 'capybara';
@@ -404,6 +427,9 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
   const radiiRef = useRef<number[]>([]);
   const staminaBarMeshRef = useRef<THREE.InstancedMesh>(null);
   const staminaBarDummyRef = useRef(new THREE.Object3D());
+  // Stable id prefix for this Grazers instance — used as the key into
+  // wildlifeLivePositions so projectile hits can find this herd.
+  const idPrefixRef = useRef<string>('');
 
   const geometry = useMemo(() => buildGeometryForKind(kind ?? 'antelope'), [kind]);
   const staminaBarGeometry = useMemo(() => createStaminaBarGeometry(), []);
@@ -430,7 +456,30 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
       stamina: 1,
       fleeJitter: 0,
       fleeJitterNext: 0,
+      panic: false,
+      deathTime: 0,
     }));
+
+    // Register this herd in wildlifeLivePositions so projectiles can hit them.
+    // Use a unique prefix per Grazers instance so multiple herds don't collide.
+    const variant = kind ?? 'antelope';
+    const maxHp = GRAZER_MAX_HP[variant];
+    const prefix = `grazer_${variant}_${grazerInstanceCounter++}`;
+    idPrefixRef.current = prefix;
+    data.forEach((g, i) => {
+      const id = `${prefix}_${i}`;
+      wildlifeLivePositions.set(id, {
+        x: g.position[0],
+        y: g.position[1],
+        z: g.position[2],
+        hp: maxHp,
+        maxHp,
+        template: 'grazer',
+        variant,
+        dead: false,
+        radius: BODY_RADIUS.grazer * g.scale * HIT_RADIUS_MULT,
+      });
+    });
     if (!meshRef.current) return;
     const dummy = dummyRef.current;
     const col = new THREE.Color();
@@ -459,7 +508,15 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
       staminaBarMeshRef.current.instanceMatrix.needsUpdate = true;
       if (staminaBarMeshRef.current.instanceColor) staminaBarMeshRef.current.instanceColor.needsUpdate = true;
     }
-  }, [data]);
+
+    // Cleanup: remove this herd's entries from the wildlife map on unmount or
+    // when the data array changes (port reload, scene swap).
+    return () => {
+      for (let i = 0; i < data.length; i++) {
+        wildlifeLivePositions.delete(`${prefix}_${i}`);
+      }
+    };
+  }, [data, kind]);
 
   // Scatter + wander animation
   const footOffset = FOOT_OFFSET[kind ?? 'antelope'];
@@ -492,10 +549,41 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
     radii.length = 0;
     const nearIndices: number[] = [];
 
+    const prefix = idPrefixRef.current;
+    const dummy2 = dummyRef.current;
     data.forEach((g, i) => {
       const spawnX = g.position[0];
       const spawnZ = g.position[2];
       const off = offsetsRef.current[i];
+      const id = `${prefix}_${i}`;
+      const liveEntry = wildlifeLivePositions.get(id);
+
+      // Dead animals: collapse instance scale to zero so they disappear.
+      // (Phase 2 polish will leave a visible carcass — for now they vanish.)
+      if (liveEntry?.dead) {
+        if (off.deathTime === 0) {
+          off.deathTime = time;
+          // Hide the stamina bar
+          const bar = staminaBarMeshRef.current;
+          if (bar) {
+            setStaminaBarInstance(staminaBarDummyRef.current, 0, 0, 0, g.scale, 0, false);
+            bar.setMatrixAt(i, staminaBarDummyRef.current.matrix);
+          }
+          // Collapse instance to zero
+          dummy2.position.set(0, -1000, 0);
+          dummy2.scale.set(0, 0, 0);
+          dummy2.updateMatrix();
+          meshRef.current!.setMatrixAt(i, dummy2.matrix);
+          anyUpdated = true;
+        }
+        return;
+      }
+
+      // Wounded but alive: enable persistent panic flag so they don't drift back.
+      if (liveEntry && liveEntry.hp < liveEntry.maxHp) {
+        off.panic = true;
+      }
+
       const curX = spawnX + off.dx + off.wDx;
       const curZ = spawnZ + off.dz + off.wDz;
 
@@ -503,13 +591,24 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
       const toPlayerZ = curZ - pz;
       const distSq = toPlayerX * toPlayerX + toPlayerZ * toPlayerZ;
 
+      // Always update live position so projectile hit tests can see them, even
+      // when the grazer is offscreen and not animating.
+      if (liveEntry) {
+        liveEntry.x = curX;
+        liveEntry.y = g.position[1];
+        liveEntry.z = curZ;
+      }
+
       // Skip distant grazers that aren't displaced
       const totalOffSq = off.dx * off.dx + off.dz * off.dz + off.wDx * off.wDx + off.wDz * off.wDz;
-      if (distSq > ANIM_RANGE_SQ && totalOffSq < 1) return;
+      if (distSq > ANIM_RANGE_SQ && totalOffSq < 1 && !off.panic) return;
       anyUpdated = true;
 
-      // Hysteresis: enter flee at SCATTER_SQ, exit at SCATTER_EXIT_SQ to prevent flicker
-      if (distSq < SCATTER_SQ) off.fleeing = true;
+      // Hysteresis: enter flee at SCATTER_SQ, exit at SCATTER_EXIT_SQ to prevent flicker.
+      // Panicked (shot at) animals stay fleeing until they recover stamina far from the player.
+      if (off.panic) {
+        off.fleeing = true;
+      } else if (distSq < SCATTER_SQ) off.fleeing = true;
       else if (distSq > SCATTER_EXIT_SQ) off.fleeing = false;
       const isFleeing = off.fleeing;
       if (isFleeing) {

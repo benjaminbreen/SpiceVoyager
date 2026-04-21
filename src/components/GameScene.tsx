@@ -7,7 +7,7 @@ import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
 import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
-import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon } from '../audio/SoundEffects';
+import { sfxDisembark, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
@@ -26,14 +26,20 @@ import {
   projectiles,
   spawnProjectile,
   setSwivelAimAngle,
+  setHuntAimAngle,
+  huntAimAngle,
   swivelAimAngle,
   npcLivePositions,
+  wildlifeLivePositions,
+  wildlifeKillQueue,
+  landWeaponReload,
   fireHeld,
   setFireHeld,
   broadsideQueue,
   broadsideReload,
 } from '../utils/combatState';
-import { WEAPON_DEFS, type WeaponType } from '../store/gameStore';
+import { WEAPON_DEFS, LAND_WEAPON_DEFS, type WeaponType, type LandWeaponType } from '../store/gameStore';
+import { lootForKill } from '../utils/huntLoot';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { PERFORMANCE_STATS_EVENT, type PerformanceStats } from '../utils/performanceStats';
 import { sampleCameraShake } from '../utils/cameraShakeState';
@@ -131,6 +137,8 @@ function CameraController() {
   const raycaster = useRef(new THREE.Raycaster());
   const mouseNDC = useRef(new THREE.Vector2());
   const waterPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+  // Walking-mode aim plane — y constant updated each frame to walker's foot height
+  const walkPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
   const hitVec = useRef(new THREE.Vector3());
 
   useEffect(() => {
@@ -313,23 +321,98 @@ function CameraController() {
     camera.position.y += shake.y;
     camera.position.z += shake.z;
 
-    // Raycast mouse onto water plane — always active so aiming is ready when combat starts
+    // Raycast mouse onto a horizontal plane — always active so aiming is ready when combat starts.
+    // In ship mode, use the y=0 water plane. In walking mode, use a plane at the walker's
+    // foot height so aiming on hilly terrain doesn't skew the cursor target.
     raycaster.current.setFromCamera(mouseNDC.current, camera);
     mouseRay.origin.copy(raycaster.current.ray.origin);
     mouseRay.direction.copy(raycaster.current.ray.direction);
     mouseRay.valid = true;
-    if (raycaster.current.ray.intersectPlane(waterPlane.current, hitVec.current)) {
+
+    const inWalkingMode = playerMode === 'walking';
+    const aimPlane = inWalkingMode ? walkPlane.current : waterPlane.current;
+    if (inWalkingMode) {
+      // Update plane height to walker's y each frame (player can climb hills).
+      walkPlane.current.constant = -walkingTransform.pos[1];
+    }
+
+    if (raycaster.current.ray.intersectPlane(aimPlane, hitVec.current)) {
       mouseWorldPos.x = hitVec.current.x;
       mouseWorldPos.z = hitVec.current.z;
       mouseWorldPos.valid = true;
-      if (useGameStore.getState().combatMode) {
+      const combat = useGameStore.getState().combatMode;
+      if (combat && !inWalkingMode) {
         const shipPos = getLiveShipTransform().pos;
         setSwivelAimAngle(Math.atan2(hitVec.current.x - shipPos[0], hitVec.current.z - shipPos[2]));
+      } else if (combat && inWalkingMode) {
+        const wp = walkingTransform.pos;
+        setHuntAimAngle(Math.atan2(hitVec.current.x - wp[0], hitVec.current.z - wp[2]));
       }
     }
   });
 
   return null;
+}
+
+// ── Land weapon fire ────────────────────────────────────────────────────────
+// Mirrors the swivel gun fire path, but originates from the walking player
+// and targets wildlife. Reload is per-weapon (musket and bow tracked
+// independently in landWeaponReload).
+function tryFireLandWeapon() {
+  const state = useGameStore.getState();
+  if (!state.combatMode || state.playerMode !== 'walking') return;
+  if (!mouseWorldPos.valid) return;
+
+  const weaponId = state.activeLandWeapon;
+  const def = LAND_WEAPON_DEFS[weaponId];
+  const now = Date.now();
+  const readyAt = landWeaponReload[weaponId] ?? 0;
+  if (now < readyAt) return;
+
+  // Ammo check (musket needs Munitions, bow is free)
+  if (def.ammoCommodity) {
+    const have = state.cargo[def.ammoCommodity] ?? 0;
+    if (have < def.ammoPerShot) {
+      state.addNotification(`Out of ${def.ammoCommodity}!`, 'warning');
+      // Penalty cooldown so we don't spam the warning
+      landWeaponReload[weaponId] = now + 1000;
+      return;
+    }
+    useGameStore.setState({
+      cargo: { ...state.cargo, [def.ammoCommodity]: have - def.ammoPerShot },
+    });
+  }
+
+  landWeaponReload[weaponId] = now + def.reloadTime * 1000;
+
+  const wp = getLiveWalkingTransform().pos;
+  // Muzzle origin: chest height + a short way along aim direction
+  const aimX = Math.sin(huntAimAngle);
+  const aimZ = Math.cos(huntAimAngle);
+  const origin = new THREE.Vector3(
+    wp[0] + aimX * 0.8,
+    wp[1] + 1.4,
+    wp[2] + aimZ * 0.8,
+  );
+
+  // Direction with slight random spread cone
+  const spread = (Math.random() - 0.5) * 2 * def.spread;
+  const angle = huntAimAngle + spread;
+  const dir = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).normalize();
+
+  spawnProjectile(origin, dir, def.projectileSpeed, weaponId);
+
+  if (weaponId === 'musket') {
+    sfxMusket();
+    window.dispatchEvent(new CustomEvent('musket-fired', {
+      detail: { x: origin.x, y: origin.y, z: origin.z, dirX: dir.x, dirZ: dir.z },
+    }));
+  } else {
+    sfxBowRelease();
+    window.dispatchEvent(new CustomEvent('bow-fired', {
+      detail: { x: origin.x, y: origin.y, z: origin.z },
+    }));
+  }
 }
 
 // Interaction controller
@@ -572,6 +655,22 @@ function InteractionController() {
           audioManager.stopFightMusic();
           state.addNotification('Standing down.', 'info');
         }
+      } else if (key === 'f' && state.playerMode === 'walking') {
+        // Toggle hunting mode on land
+        const next = !state.combatMode;
+        state.setCombatMode(next);
+        if (next) {
+          const weaponName = LAND_WEAPON_DEFS[state.activeLandWeapon].name;
+          state.addNotification(`${weaponName} drawn. Click to fire.`, 'info');
+        } else {
+          state.addNotification('Weapon lowered.', 'info');
+        }
+      } else if (key === 'tab' && state.playerMode === 'walking' && state.combatMode) {
+        // Cycle through owned land weapons (musket → bow → musket …)
+        e.preventDefault();
+        state.cycleLandWeapon();
+        const next = useGameStore.getState().activeLandWeapon;
+        state.addNotification(`Switched to ${LAND_WEAPON_DEFS[next].name}.`, 'info');
       } else if (key === ' ' && state.playerMode === 'ship') {
         e.preventDefault();
         if (state.combatMode) {
@@ -616,8 +715,13 @@ function ProjectileSystem() {
   useFrame((_, delta) => {
     if (!meshRef.current) return;
 
-    // Auto-fire while mouse is held in combat mode
-    if (fireHeld) tryFireSwivel();
+    // Auto-fire while mouse is held in combat mode — routes to the right weapon
+    // based on player mode. Each weapon's own reload timer prevents spam.
+    if (fireHeld) {
+      const pm = useGameStore.getState().playerMode;
+      if (pm === 'ship') tryFireSwivel();
+      else if (pm === 'walking') tryFireLandWeapon();
+    }
 
     // ── Process broadside queue (rolling fire) ──
     const now = Date.now();
@@ -643,17 +747,80 @@ function ProjectileSystem() {
         projectiles.splice(i, 1);
         continue;
       }
-      p.vel.y -= 15 * delta;
+
+      const isLandWeapon = p.weaponType === 'musket' || p.weaponType === 'bow';
+
+      // Land weapons fly mostly flat — only a tiny droop at distance.
+      // Ship weapons keep their existing gravity arc.
+      p.vel.y -= (isLandWeapon ? 1.5 : 15) * delta;
       p.pos.addScaledVector(p.vel, delta);
 
+      // Out-of-bounds drop: water for ship shots, terrain miss for land shots.
       if (p.pos.y < 0) {
-        spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
-        sfxCannonSplash();
+        if (isLandWeapon) {
+          // Hit ground / vegetation — small puff, no splash sound.
+          spawnSplash(p.pos.x, p.pos.z, 0.2);
+        } else {
+          spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
+          sfxCannonSplash();
+        }
         projectiles.splice(i, 1);
         continue;
       }
 
       let hit = false;
+
+      // ── Land weapon: hit-test against wildlife ──
+      if (isLandWeapon) {
+        for (const [id, w] of wildlifeLivePositions) {
+          if (w.dead) continue;
+          const dx = p.pos.x - w.x;
+          const dz = p.pos.z - w.z;
+          // Vertical tolerance — animal centers sit roughly at terrain height + 0.5
+          const dy = p.pos.y - (w.y + 0.5);
+          const r = w.radius;
+          if (dx * dx + dz * dz < r * r && Math.abs(dy) < 1.5) {
+            const def = LAND_WEAPON_DEFS[p.weaponType as LandWeaponType];
+            const damage = def.damage;
+            w.hp = Math.max(0, w.hp - damage);
+            w.hitAlert = Date.now() + 8000;
+            // Splatter puff — reuse splinter system for now
+            spawnSplinters(p.pos.x, p.pos.y, p.pos.z, 0.4);
+            if (w.hp <= 0) {
+              w.dead = true;
+              wildlifeKillQueue.add(id);
+              // Award loot
+              const loot = lootForKill(w.template, w.variant);
+              if (loot) {
+                const gs = useGameStore.getState();
+                const newCargo = { ...gs.cargo };
+                const dropParts: string[] = [];
+                for (const drop of loot.drops) {
+                  newCargo[drop.commodity] = (newCargo[drop.commodity] ?? 0) + drop.amount;
+                  dropParts.push(`+${drop.amount} ${drop.commodity}`);
+                }
+                useGameStore.setState({ cargo: newCargo });
+                addNotification(`Killed a ${loot.commonName}.`, 'success', {
+                  subtitle: dropParts.join(' · '),
+                });
+              } else {
+                addNotification(`Killed a ${w.variant}.`, 'success');
+              }
+            } else {
+              const hpPct = Math.round((w.hp / w.maxHp) * 100);
+              addNotification(`Hit the ${w.variant}. (${hpPct}% HP)`, 'warning');
+            }
+            projectiles.splice(i, 1);
+            hit = true;
+            break;
+          }
+        }
+        if (hit) continue;
+        // Land weapons don't hit ships — skip the NPC-ship hit test.
+        continue;
+      }
+
+      // ── Ship weapon: hit-test against NPC ships ──
       for (const [, npc] of npcLivePositions) {
         if (npc.sunk) continue;
         const dx = p.pos.x - npc.x;
@@ -666,7 +833,7 @@ function ProjectileSystem() {
           const gunner = getCrewByRole(gState, 'Gunner');
           const gunnerMod = gunner ? 1.0 + (gunner.stats.strength / 200) + (gunner.stats.perception / 400) : 1.0;
           const abilityMod = captainHasAbility(gState, 'Broadside Master') ? 1.15 : 1.0;
-          const damage = Math.floor(WEAPON_DEFS[p.weaponType].damage * gunnerMod * abilityMod);
+          const damage = Math.floor(WEAPON_DEFS[p.weaponType as WeaponType].damage * gunnerMod * abilityMod);
           npc.hull = Math.max(0, npc.hull - damage);
           // Reputation penalty scaled: swivel = -5, broadside = -15
           const repPenalty = p.weaponType === 'swivelGun' ? -5 : -15;
@@ -684,12 +851,15 @@ function ProjectileSystem() {
       if (hit) continue;
     }
 
-    // Update instanced mesh — scale broadside cannonballs larger
+    // Update instanced mesh — broadside cannonballs larger, musket/bow smaller
     for (let i = 0; i < PROJECTILE_COUNT; i++) {
       if (i < projectiles.length) {
         dummy.position.copy(projectiles[i].pos);
-        // Broadside projectiles are visually bigger
-        const s = projectiles[i].weaponType === 'swivelGun' ? 1 : 1.6;
+        const wt = projectiles[i].weaponType;
+        const s = wt === 'musket' ? 0.35
+                : wt === 'bow' ? 0.4
+                : wt === 'swivelGun' ? 1
+                : 1.6;
         dummy.scale.setScalar(s);
       } else {
         dummy.position.set(0, -1000, 0);
@@ -998,7 +1168,7 @@ function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boole
         distanceFalloff={1.0}
         halfRes
       />
-      {bloomEnabled && <Bloom luminanceThreshold={0.65} luminanceSmoothing={0.9} height={300} intensity={0.8} />}
+      {bloomEnabled && <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} height={300} intensity={1.0} />}
       <BrightnessContrast brightness={brightness} contrast={contrast} />
       <HueSaturation hue={hue} saturation={saturation} />
       {vignetteEnabled && <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} />}

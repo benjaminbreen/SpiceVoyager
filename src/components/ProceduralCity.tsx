@@ -480,9 +480,15 @@ function pickVariant(variants: HouseVariant[], rng: () => number): HouseVariant 
 export function ProceduralCity() {
   const ports = useGameStore(s => s.ports);
 
-  // Dark material created separately for per-frame emissive updates (window glow)
+  // Dark material created separately for per-frame emissive updates (window glow).
+  // polygonOffset biases these decal-like parts forward so they don't z-fight with
+  // the wall face they sit against (doors/windows are placed at wall + 0.05).
   const darkMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#1e1a14', roughness: 0.95,
+    color: '#1e1a14',
+    roughness: 0.95,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   }), []);
 
   // Animate window glow based on time of day
@@ -1568,6 +1574,7 @@ function CityRoads({ ports }: { ports: PortsProp }) {
 
 function CityTorches({ spots }: { spots: TorchSpot[] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const haloRef = useRef<THREE.InstancedMesh>(null);
   const lightsRef = useRef<(THREE.PointLight | null)[]>([]);
 
   const flameGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 6), []);
@@ -1579,6 +1586,39 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     transparent: true,
     opacity: 0,
   }), []);
+
+  // Horizontal disc for each torch halo — reads as a ground-glow in the
+  // default top-down camera. Plane is rotated flat and additively blended.
+  const haloGeo = useMemo(() => {
+    const g = new THREE.PlaneGeometry(1, 1);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  }, []);
+
+  const haloTexture = useMemo(() => {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0.0, 'rgba(255, 190, 110, 1.0)');
+    grad.addColorStop(0.35, 'rgba(255, 140, 60, 0.45)');
+    grad.addColorStop(1.0, 'rgba(255, 100, 40, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+
+  const haloMat = useMemo(() => new THREE.MeshBasicMaterial({
+    map: haloTexture,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    opacity: 0,
+  }), [haloTexture]);
 
   // Position all flame instances once
   useEffect(() => {
@@ -1593,6 +1633,29 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     meshRef.current.instanceMatrix.needsUpdate = true;
   }, [spots]);
 
+  // Position halo discs once (per-instance scale wobble happens in useFrame)
+  useEffect(() => {
+    if (!haloRef.current || spots.length === 0) return;
+    const dummy = new THREE.Object3D();
+    spots.forEach((s, i) => {
+      dummy.position.set(s.pos[0], s.pos[1] + 0.05, s.pos[2]);
+      dummy.scale.set(2.6, 2.6, 2.6);
+      dummy.updateMatrix();
+      haloRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    haloRef.current.instanceMatrix.needsUpdate = true;
+  }, [spots]);
+
+  // Per-torch phase offsets so each flame flickers independently
+  const phaseOffsets = useMemo(
+    () => spots.map((_, i) => {
+      const h = ((i + 1) * 2654435761) >>> 0;
+      return (h / 0xffffffff) * Math.PI * 2;
+    }),
+    [spots],
+  );
+  const dummyRef = useRef(new THREE.Object3D());
+
   // Animate flame intensity + point light brightness based on time of day
   useFrame(({ clock }) => {
     const timeOfDay = useGameStore.getState().timeOfDay;
@@ -1600,17 +1663,62 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     const sunH = Math.sin(sunAngle);
     const nightFactor = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
 
-    // Organic flicker from overlapping sine waves
     const t = clock.elapsedTime;
-    const flicker = 0.82 + Math.sin(t * 7.3) * 0.09 + Math.sin(t * 13.1) * 0.05 + Math.sin(t * 3.7) * 0.04;
-
-    flameMat.emissiveIntensity = nightFactor * 3.0 * flicker;
+    // Shared material gets a gentle baseline drift (can't be per-instance without a custom shader)
+    const baseFlicker = 0.9 + Math.sin(t * 2.3) * 0.05;
+    flameMat.emissiveIntensity = nightFactor * 3.0 * baseFlicker;
     flameMat.opacity = nightFactor * 0.85;
+    haloMat.opacity = nightFactor * 0.45 * baseFlicker;
 
-    for (const light of lightsRef.current) {
-      if (light) {
-        light.intensity = nightFactor * 4 * flicker;
+    // Per-instance scale flicker reads as brightness variation since the flame is a small glow
+    if (meshRef.current && nightFactor > 0) {
+      const dummy = dummyRef.current;
+      for (let i = 0; i < spots.length; i++) {
+        const phase = phaseOffsets[i];
+        const f =
+          0.78 +
+          Math.sin(t * 7.3 + phase) * 0.12 +
+          Math.sin(t * 13.1 + phase * 1.7) * 0.07 +
+          Math.sin(t * 3.7 + phase * 0.5) * 0.05;
+        const s = spots[i].pos;
+        dummy.position.set(s[0], s[1], s[2]);
+        dummy.scale.set(0.18 * f, 0.28 * f, 0.18 * f);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
       }
+      meshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // Halo discs: gentler per-instance wobble so the warm bleed around each torch breathes
+    if (haloRef.current && nightFactor > 0) {
+      const dummy = dummyRef.current;
+      for (let i = 0; i < spots.length; i++) {
+        const phase = phaseOffsets[i];
+        const h =
+          0.92 +
+          Math.sin(t * 4.1 + phase * 0.8) * 0.06 +
+          Math.sin(t * 9.3 + phase * 1.3) * 0.03;
+        const s = spots[i].pos;
+        dummy.position.set(s[0], s[1] + 0.05, s[2]);
+        const scale = 2.6 * h;
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        haloRef.current.setMatrixAt(i, dummy.matrix);
+      }
+      haloRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // PointLights each get their own phase
+    for (let i = 0; i < lightsRef.current.length; i++) {
+      const light = lightsRef.current[i];
+      if (!light) continue;
+      const phase = phaseOffsets[i];
+      const lf =
+        0.82 +
+        Math.sin(t * 7.3 + phase) * 0.09 +
+        Math.sin(t * 13.1 + phase * 1.7) * 0.05 +
+        Math.sin(t * 3.7 + phase) * 0.04;
+      light.intensity = nightFactor * 4 * lf;
     }
   });
 
@@ -1621,7 +1729,13 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
 
   return (
     <group>
-      <instancedMesh ref={meshRef} args={[flameGeo, flameMat, spots.length]} />
+      <instancedMesh
+        ref={haloRef}
+        args={[haloGeo, haloMat, spots.length]}
+        frustumCulled={false}
+        renderOrder={1}
+      />
+      <instancedMesh ref={meshRef} args={[flameGeo, flameMat, spots.length]} frustumCulled={false} />
       {spots.slice(0, lightCount).map((s, i) => (
         <pointLight
           key={i}
@@ -1742,6 +1856,7 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry
       args={[geometry, material, parts.length]}
       castShadow
       receiveShadow
+      frustumCulled={false}
     />
   );
 }

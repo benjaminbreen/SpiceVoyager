@@ -234,6 +234,54 @@ export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabe
   basilisk:     { flavor: 'Rare bronze long gun with extreme reach',      rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Medium' },
 };
 
+// ── Land Weapons (hunting) ──
+// Separate from ship armament: no broadside slot, no weight, carried by the
+// walking character. Extend this union to add new hunting weapons.
+export type LandWeaponType = 'musket' | 'bow';
+
+export interface LandWeapon {
+  type: LandWeaponType;
+  name: string;
+  damage: number;             // per-shot damage vs animals
+  range: number;              // effective range in world units (accuracy falls off past this)
+  reloadTime: number;         // seconds between shots
+  projectileSpeed: number;    // world units/sec
+  spread: number;             // random cone in radians added to aim
+  noise: number;              // 0-1, how much this scares animals within earshot
+  ammoCommodity: Commodity | null;  // null = no ammo consumed
+  ammoPerShot: number;
+  description: string;
+}
+
+export const LAND_WEAPON_DEFS: Record<LandWeaponType, LandWeapon> = {
+  musket: {
+    type: 'musket',
+    name: 'Matchlock Musket',
+    damage: 100,
+    range: 30,
+    reloadTime: 2.0,
+    projectileSpeed: 60,
+    spread: 0.035,
+    noise: 1.0,
+    ammoCommodity: 'Munitions',
+    ammoPerShot: 1,
+    description: 'A matchlock firearm. Loud, slow to reload, but one ball can drop a buffalo.',
+  },
+  bow: {
+    type: 'bow',
+    name: 'Hunting Bow',
+    damage: 55,
+    range: 22,
+    reloadTime: 1.0,
+    projectileSpeed: 40,
+    spread: 0.05,
+    noise: 0.2,
+    ammoCommodity: null,
+    ammoPerShot: 0,
+    description: 'A simple hunting bow. Quiet, quick to draw, no powder required.',
+  },
+};
+
 // ── Ship Upgrades ──
 export type ShipUpgradeType =
   | 'copperSheathing'
@@ -419,7 +467,15 @@ export type CaptainTrait =
   | 'Battle Hardened' // reduced hull damage
   | 'Lucky Star';     // random bonus events
 
-export type CrewQuality = 'dud' | 'normal' | 'rare' | 'legendary';
+export type CrewQuality =
+  | 'disaster'  // bottom ~3%, actively harmful
+  | 'dud'       // ~15%, unreliable
+  | 'untried'   // ~20%, green / unproven
+  | 'passable'  // ~24%, serviceable, unremarkable
+  | 'able'      // ~20%, competent
+  | 'seasoned'  // ~12%, experienced
+  | 'renowned'  // ~4.5%, famed in ports
+  | 'legendary';// ~1.5%, peerless
 
 export interface CrewStats {
   strength: number;    // 1-20, physical power — boarding, repairs, hauling
@@ -483,11 +539,13 @@ export type CaptainAbility =
 // Captain portrait expression (mirrors portraitConfig.Personality)
 export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce';
 
+export type NotificationTier = 'port' | 'event' | 'ticker';
+
 export interface Notification {
   id: string;
   message: string;
   type: 'info' | 'success' | 'warning' | 'error' | 'legendary';
-  size?: 'normal' | 'grand';
+  tier: NotificationTier;
   subtitle?: string;
   imageCandidates?: string[];
   openPortId?: string;
@@ -547,7 +605,6 @@ interface GameState {
   ship: ShipInfo;
   ports: Port[];
   timeOfDay: number; // 0 to 24
-  weather: 'clear' | 'rain' | 'storm';
   notifications: Notification[];
   activePort: Port | null;
   cameraZoom: number;
@@ -601,10 +658,18 @@ interface GameState {
   devSoloPort: string | null;
   currentWorldPortId: string | null;
   waterPaletteSetting: WaterPaletteSetting;
+  forceMobileLayout: boolean;
+  setForceMobileLayout: (v: boolean) => void;
   renderDebug: RenderDebugSettings;
   paused: boolean;
   anchored: boolean;
   combatMode: boolean;
+
+  // Hunting (land combat)
+  landWeapons: LandWeaponType[];        // weapons the player owns and can switch between
+  activeLandWeapon: LandWeaponType;     // currently equipped land weapon
+  setActiveLandWeapon: (w: LandWeaponType) => void;
+  cycleLandWeapon: () => void;          // tab key handler — cycles through owned weapons
   requestWorldMap: boolean;
   setRequestWorldMap: (v: boolean) => void;
 
@@ -643,7 +708,7 @@ interface GameState {
   setCrewRole: (crewId: string, role: CrewRole) => void;
   addCrewHistory: (crewId: string, event: string) => void;
 
-  addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; subtitle?: string; imageCandidates?: string[]; openPortId?: string }) => void;
+  addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; tier?: NotificationTier; subtitle?: string; imageCandidates?: string[]; openPortId?: string }) => void;
   removeNotification: (id: string) => void;
   addJournalEntry: (category: JournalCategory, message: string, portName?: string) => void;
   addJournalNote: (entryId: string, text: string) => void;
@@ -784,7 +849,6 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   ports: [],
   timeOfDay: 8, // Start at 8 AM
-  weather: 'clear',
   notifications: [],
   activePort: null,
   cameraZoom: 50,
@@ -819,10 +883,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   devSoloPort: null,
   currentWorldPortId: null,
   waterPaletteSetting: 'auto',
+  forceMobileLayout: false,
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
   anchored: false,
   combatMode: false,
+  landWeapons: ['musket', 'bow'],
+  activeLandWeapon: 'musket',
   requestWorldMap: false,
   setRequestWorldMap: (v) => set({ requestWorldMap: v }),
   captainExpression: null,
@@ -1013,24 +1080,52 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (nav) {
           const r = grantCrewXp(crew, nav.id, 15 + Math.floor(Math.random() * 10));
           crew = r.crew;
-          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
         }
         if (cap && cap.id !== nav?.id) {
           const r = grantCrewXp(crew, cap.id, 10);
           crew = r.crew;
-          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
         }
         set({ crew });
       }
     }
   },
   
-  addNotification: (message, type = 'info', opts) => set((state) => ({
-    notifications: [...state.notifications, {
-      id: generateId(), message, type, timestamp: Date.now(),
-      size: opts?.size, subtitle: opts?.subtitle, imageCandidates: opts?.imageCandidates, openPortId: opts?.openPortId,
-    }].slice(-5)
-  })),
+  addNotification: (message, type = 'info', opts) => set((state) => {
+    // Derive tier: explicit > openPortId → port > size:'grand' → event > ticker
+    const tier: NotificationTier = opts?.tier
+      ?? (opts?.openPortId ? 'port' : (opts?.size === 'grand' ? 'event' : 'ticker'));
+
+    const now = Date.now();
+
+    // Dedupe: suppress identical port toast for same openPortId within 10s,
+    // or identical message within 2s (strict-mode double-fire guard).
+    const DEDUPE_PORT_MS = 10_000;
+    const DEDUPE_MSG_MS = 2_000;
+    const isDup = state.notifications.some(n => {
+      if (opts?.openPortId && n.openPortId === opts.openPortId && now - n.timestamp < DEDUPE_PORT_MS) return true;
+      if (n.message === message && n.tier === tier && now - n.timestamp < DEDUPE_MSG_MS) return true;
+      return false;
+    });
+    if (isDup) return {};
+
+    const incoming: Notification = {
+      id: generateId(), message, type, tier, timestamp: now,
+      subtitle: opts?.subtitle, imageCandidates: opts?.imageCandidates, openPortId: opts?.openPortId,
+    };
+
+    // Per-tier cap: port 1, event 2, ticker 3. Evict oldest within tier.
+    const CAPS: Record<NotificationTier, number> = { port: 1, event: 2, ticker: 3 };
+    const next = [...state.notifications, incoming];
+    const byTier: Record<NotificationTier, Notification[]> = { port: [], event: [], ticker: [] };
+    for (const n of next) byTier[n.tier].push(n);
+    const trimmed = (['port', 'event', 'ticker'] as NotificationTier[])
+      .flatMap(t => byTier[t].slice(-CAPS[t]))
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    return { notifications: trimmed };
+  }),
   
   removeNotification: (id) => set((state) => ({
     notifications: state.notifications.filter(n => n.id !== id)
@@ -1121,7 +1216,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         const tradeXp = 3 + Math.floor(totalCost / 100);
         const r = grantCrewXp(get().crew, factor.id, tradeXp);
         set({ crew: r.crew });
-        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
       }
     } else {
       get().addNotification('Not enough gold or port inventory!', 'error');
@@ -1185,7 +1280,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         const tradeXp = 3 + Math.floor(totalGain / 80);
         const r = grantCrewXp(get().crew, factor.id, tradeXp);
         set({ crew: r.crew });
-        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
       }
       // Captain reacts to profitable sale
       get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
@@ -1316,7 +1411,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (surgeon) {
           const r = grantCrewXp(get().crew, surgeon.id, 8 + Math.floor(Math.random() * 5));
           set({ crew: r.crew });
-          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+          if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
         }
       }
 
@@ -1343,6 +1438,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setWorldSize: (size) => set({ worldSize: size }),
   setDevSoloPort: (portId) => set({ devSoloPort: portId }),
   setWaterPaletteSetting: (setting) => set({ waterPaletteSetting: setting }),
+  setForceMobileLayout: (v) => set({ forceMobileLayout: v }),
   updateRenderDebug: (patch) => set((state) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),
@@ -1441,6 +1537,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   setPaused: (paused) => set({ paused }),
   setAnchored: (anchored) => set({ anchored }),
   setCombatMode: (combatMode) => set({ combatMode }),
+  setActiveLandWeapon: (w) => {
+    const state = get();
+    if (!state.landWeapons.includes(w)) return;
+    set({ activeLandWeapon: w });
+  },
+  cycleLandWeapon: () => {
+    const state = get();
+    if (state.landWeapons.length < 2) return;
+    const idx = state.landWeapons.indexOf(state.activeLandWeapon);
+    const next = state.landWeapons[(idx + 1) % state.landWeapons.length];
+    set({ activeLandWeapon: next });
+  },
   buyUpgrade: (upgradeType) => {
     const state = get();
     const upgrade = SHIP_UPGRADES[upgradeType];
@@ -1571,7 +1679,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     // Notifications
     const salvagedStr = salvaged.length > 0 ? ` Salvaged: ${salvaged.join(', ')}.` : '';
     get().addNotification(`Sank the ${shipName}! +${goldReward} gold.${salvagedStr}`, 'success', { size: 'grand', subtitle: 'SHIP DEFEATED' });
-    for (const lu of levelUps) get().addNotification(`${lu} leveled up!`, 'legendary', { size: 'grand', subtitle: 'LEVEL UP' });
+    for (const lu of levelUps) get().addNotification(`${lu} leveled up!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
     // Captain savors victory
     get().setCaptainExpression('Smug', 5000);
     // Journal

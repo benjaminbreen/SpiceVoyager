@@ -1559,6 +1559,54 @@ export function sfxCannonSplash() {
   noise(ac, 0.25, v, 600, 0.8);
 }
 
+/** Matchlock musket fire — sharper, drier, higher than the swivel boom. */
+export function sfxMusket() {
+  const ac = getCtx();
+  const v = masterVolume * 0.35;
+  const t = ac.currentTime;
+
+  // Sharp crack — quick pitch drop, much shorter envelope than a cannon
+  const crack = ac.createOscillator();
+  crack.type = 'sawtooth';
+  crack.frequency.setValueAtTime(180, t);
+  crack.frequency.exponentialRampToValueAtTime(60, t + 0.08);
+  const crackGain = ac.createGain();
+  crackGain.gain.setValueAtTime(v * 0.7, t);
+  crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  crack.connect(crackGain).connect(ac.destination);
+  crack.start(t);
+  crack.stop(t + 0.2);
+
+  // White noise burst — the powder report
+  noise(ac, 0.09, v * 0.8, 2400, 1.2);
+  // Brief metallic ring from the lock plate
+  ping(ac, 3200, 0.05, v * 0.12, 'square');
+  // Distant rolling echo tail
+  noise(ac, 0.35, v * 0.15, 400, 0.7);
+}
+
+/** Hunting bow release — taut twang plus a soft arrow whoosh. */
+export function sfxBowRelease() {
+  const ac = getCtx();
+  const v = masterVolume * 0.3;
+  const t = ac.currentTime;
+
+  // String twang — pitched body that decays fast
+  const twang = ac.createOscillator();
+  twang.type = 'triangle';
+  twang.frequency.setValueAtTime(420, t);
+  twang.frequency.exponentialRampToValueAtTime(180, t + 0.18);
+  const twangGain = ac.createGain();
+  twangGain.gain.setValueAtTime(v * 0.6, t);
+  twangGain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  twang.connect(twangGain).connect(ac.destination);
+  twang.start(t);
+  twang.stop(t + 0.25);
+
+  // Short whoosh — the arrow leaving
+  noise(ac, 0.18, v * 0.25, 1500, 0.9);
+}
+
 /** Funeral bell — single solemn toll for crew death */
 export function sfxFuneralBell() {
   const ac = getCtx();

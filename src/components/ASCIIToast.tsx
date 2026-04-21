@@ -18,8 +18,28 @@ const TXT      = '#c4b896';
 const DIM      = '#5a5445';
 const BG       = '#0c0b08';
 
-const SPARKLE_CHARS = ['\u2726', '\u2727', '\u00b7', '\u2727', '\u2726', '\u25c7'];
+// Per-tier fixed widths keep the right edge column clean.
+// BW = inner content width between the outer rail borders.
+const PORT_BW   = 48;
+const EVENT_BW  = 48;
+const TICKER_IW = 40;   // inner width between │ borders
+
+const MAX_WRAP_LINES = 3;
+
+// Port banner geometry (when withImage=true).
+// Banner row layout in the pre:
+//   ║ <sp> ┌ ── × BANNER_INNER ──┐ <sp> ║      ← banner top border
+//   ║ <sp> │      (BANNER_INNER sp)   │ <sp> ║ ← BANNER_IMAGE_ROWS rows
+//   ║ <sp> └ ── × BANNER_INNER ──┘ <sp> ║      ← banner bottom border
+// where BANNER_INNER = PORT_BW - 4 (1 sp margin + 1 │ on each side)
+const BANNER_IMAGE_ROWS = 5;
+
+const SPARKLE_CHARS = ['✦', '✧', '·', '✧', '✦', '◇'];
 const MONO_FONT = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
+
+// Monospace line metrics must match the <pre> font-size and line-height below.
+const PRE_FONT_SIZE_PX = 11;
+const PRE_LINE_HEIGHT = 1.5;
 
 function C({ c, children }: { c: string; children: React.ReactNode }) {
   return <span style={{ color: c }}>{children}</span>;
@@ -27,34 +47,108 @@ function C({ c, children }: { c: string; children: React.ReactNode }) {
 
 function sp(n: number) { return ' '.repeat(Math.max(0, n)); }
 
-function ToastImageMedallion({ candidates }: { candidates?: string[] }) {
+// Word-wrap a string into lines of max `width`. Word-boundary-aware, hard-breaks
+// over-long words, ellipsizes if content exceeds `maxLines`.
+function wrapText(text: string, width: number, maxLines: number): string[] {
+  if (!text) return [];
+  if (width <= 0 || maxLines <= 0) return [];
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = '';
+
+  const pushCur = () => {
+    if (cur.length > 0) { lines.push(cur); cur = ''; }
+  };
+
+  for (const w of words) {
+    if (lines.length >= maxLines) break;
+
+    if (w.length > width) {
+      if (cur) { pushCur(); if (lines.length >= maxLines) break; }
+      let rest = w;
+      while (rest.length > width && lines.length < maxLines - 1) {
+        lines.push(rest.slice(0, width));
+        rest = rest.slice(width);
+      }
+      cur = rest;
+      continue;
+    }
+
+    const candidate = cur ? cur + ' ' + w : w;
+    if (candidate.length <= width) {
+      cur = candidate;
+    } else {
+      pushCur();
+      if (lines.length >= maxLines) break;
+      cur = w;
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+
+  const usedChars = lines.join(' ').length;
+  if (usedChars < text.replace(/\s+/g, ' ').trim().length && lines.length === maxLines) {
+    const last = lines[maxLines - 1];
+    const ell = '…';
+    lines[maxLines - 1] = last.length + ell.length <= width
+      ? last + ell
+      : last.slice(0, Math.max(0, width - ell.length)) + ell;
+  }
+
+  return lines;
+}
+
+// ── Banner image (absolutely positioned over reserved rows in the ASCII frame)
+function ToastBannerImage({
+  candidates,
+  top,
+  left,
+  width,
+  height,
+}: {
+  candidates?: string[];
+  top: string;
+  left: string;
+  width: string;
+  height: string;
+}) {
   const [idx, setIdx] = useState(0);
   const src = candidates?.[idx];
-
   if (!src) return null;
 
   return (
     <div
-      className="relative h-[76px] w-[76px] shrink-0 overflow-hidden border select-none"
+      className="select-none"
       style={{
-        borderColor: 'rgba(201,168,76,0.42)',
-        borderRadius: '50%',
+        position: 'absolute',
+        top, left, width, height,
+        overflow: 'hidden',
         background: '#090806',
-        boxShadow: 'inset 0 0 20px rgba(0,0,0,0.62), 0 0 18px rgba(201,168,76,0.16)',
+        pointerEvents: 'none',
+        boxShadow: 'inset 0 0 22px rgba(0,0,0,0.65)',
       }}
     >
       <img
         key={src}
         src={src}
         alt=""
-        className="h-full w-full object-cover"
-        style={{ filter: 'saturate(0.78) contrast(0.95) brightness(0.72)' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          // Subtle aquatint / engraving tint
+          filter: 'saturate(0.72) contrast(0.96) brightness(0.74) sepia(0.08)',
+        }}
         onError={() => setIdx(i => i + 1)}
       />
+      {/* Inner vignette + thin gold edge — imitates a plate impression */}
       <div
-        className="absolute inset-0 pointer-events-none"
         style={{
-          boxShadow: 'inset 0 0 0 2px rgba(12,11,8,0.7), inset 0 0 28px rgba(0,0,0,0.8)',
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          boxShadow:
+            'inset 0 0 24px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(201,168,76,0.22)',
         }}
       />
     </div>
@@ -85,16 +179,10 @@ function useSparkle(interval = 400) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Normal toast — compact single-line border
-//
-// Width system:
-//   IW = inner content width between │ borders
-//   Total line width = │(1) + IW + │(1) = IW + 2
-//   Border line width = sparkle(1) + ─*halfL + ` · `(3) + ─*halfR + sparkle(1)
-//                     = 5 + (IW - 3) = IW + 2  ✓
+// Ticker toast — compact multi-line body with left accent bar.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function NormalToast({
+function TickerToast({
   notification,
   onClick,
 }: {
@@ -102,58 +190,70 @@ function NormalToast({
   onClick: () => void;
 }) {
   const accent = ACCENT[notification.type];
-  const sparkle = useSparkle(400);
+  const sparkle = useSparkle(450);
 
-  const msg = notification.message;
-  const IW = Math.max(24, msg.length + 6);
-  const halfL = Math.floor((IW - 3) / 2);
-  const halfR = IW - 3 - halfL;
+  const BODY_W = TICKER_IW - 6;
+  const wrapped = wrapText(notification.message, BODY_W, MAX_WRAP_LINES);
+  const lines = wrapped.length > 0 ? wrapped : [''];
 
-  const icon = notification.type === 'success' ? '\u2713'
-    : notification.type === 'error' ? '\u2717'
-    : notification.type === 'warning' ? '\u26a0'
-    : notification.type === 'legendary' ? '\u2605'
-    : '\u2022';
+  const halfL = Math.floor((TICKER_IW - 3) / 2);
+  const halfR = TICKER_IW - 3 - halfL;
+
+  const icon = notification.type === 'success' ? '✓'
+    : notification.type === 'error' ? '✗'
+    : notification.type === 'warning' ? '⚠'
+    : notification.type === 'legendary' ? '★'
+    : '•';
 
   return (
     <motion.div
       initial={{ opacity: 0, x: 30 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClick}
-      className="pointer-events-auto cursor-pointer"
+      className="pointer-events-auto cursor-pointer flex items-stretch"
       style={{
         background: `linear-gradient(135deg, ${BG}, #100f0c)`,
-        boxShadow: `0 4px 20px rgba(0,0,0,0.5), inset 0 0 30px ${accent.glow}`,
+        boxShadow: `0 3px 14px rgba(0,0,0,0.45), inset 0 0 24px ${accent.glow}`,
         borderRadius: '2px',
-        padding: '2px',
+        padding: '1px',
         willChange: 'opacity, transform',
       }}
     >
+      <div
+        style={{
+          width: '2px',
+          background: accent.ornament,
+          boxShadow: `0 0 6px ${accent.ornament}`,
+          marginRight: '4px',
+        }}
+      />
       <pre
         className="text-[10px] leading-[1.5] whitespace-pre select-none"
-        style={{ fontFamily: MONO_FONT, color: TXT }}
+        style={{ fontFamily: MONO_FONT, color: TXT, margin: 0, padding: '1px 2px' }}
       >
-        {/* Top border: sparkle + ─*halfL + ' · ' + ─*halfR + sparkle = IW+2 */}
         <C c={accent.ornament}>{sparkle(0)}</C>
-        <C c={accent.border}>{'\u2500'.repeat(halfL)}</C>
+        <C c={accent.border}>{'─'.repeat(halfL)}</C>
         <C c={accent.ornament}>{' '}{sparkle(1)}{' '}</C>
-        <C c={accent.border}>{'\u2500'.repeat(halfR)}</C>
+        <C c={accent.border}>{'─'.repeat(halfR)}</C>
         <C c={accent.ornament}>{sparkle(2)}</C>{'\n'}
 
-        {/* Content: │ + body(IW) + │ = IW+2 */}
-        <C c={accent.border}>{'\u2502'}</C>
-        {sp(2)}<C c={accent.ornament}>{icon}</C>{' '}
-        <C c={TXT}>{msg}</C>
-        {sp(IW - 4 - msg.length)}
-        <C c={accent.border}>{'\u2502'}</C>{'\n'}
+        {lines.map((line, i) => (
+          <span key={i}>
+            <C c={accent.border}>{'│'}</C>
+            {sp(2)}
+            {i === 0 ? <><C c={accent.ornament}>{icon}</C>{' '}</> : sp(2)}
+            <C c={TXT}>{line}</C>
+            {sp(TICKER_IW - 4 - line.length)}
+            <C c={accent.border}>{'│'}</C>{'\n'}
+          </span>
+        ))}
 
-        {/* Bottom border: same as top = IW+2 */}
         <C c={accent.ornament}>{sparkle(3)}</C>
-        <C c={accent.border}>{'\u2500'.repeat(halfL)}</C>
+        <C c={accent.border}>{'─'.repeat(halfL)}</C>
         <C c={accent.ornament}>{' '}{sparkle(4)}{' '}</C>
-        <C c={accent.border}>{'\u2500'.repeat(halfR)}</C>
+        <C c={accent.border}>{'─'.repeat(halfR)}</C>
         <C c={accent.ornament}>{sparkle(5)}</C>
       </pre>
     </motion.div>
@@ -161,55 +261,70 @@ function NormalToast({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Grand toast — double-line border, inner cartouche
-//
-// Width system:
-//   BW = inner content width between ║ borders
-//   Body line  = ║(1) + BW + ║(1)                       = BW + 2
-//   Rail line  = sparkle(1) + ═*halfL + ╤(1) + ═*halfR + sparkle(1)
-//              = 3 + (BW - 1)                            = BW + 2  ✓
+// Grand frame — port (with banner image) and event tiers.
+// Layout (rows, top→bottom):
+//   1.  top rail (sparkle … ╤ … sparkle)
+//   2.  blank                                  ↓ reserved for banner when withImage
+//   3.  banner top border   (┌ ── ┐)
+//   4.  banner row 1        (│    │)
+//   …
+//   3+N. banner row N
+//   3+N+1. banner bottom border (└ ── ┘)
+//   3+N+2. blank                                 ↑
+//   cartouche top, title line(s), cartouche bottom
+//   blank, divider, blank, subtitle line(s)
+//   blank
+//   bottom rail
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function GrandToast({
+function GrandFrame({
   notification,
+  bw,
+  withImage,
   onClick,
 }: {
   notification: Notification;
+  bw: number;
+  withImage: boolean;
   onClick: () => void;
 }) {
   const accent = ACCENT[notification.type];
   const sparkle = useSparkle(350);
 
-  const title = notification.message;
-  const subtitle = notification.subtitle ?? '';
-  const BW = Math.max(32, title.length + 8, subtitle ? subtitle.length + 6 : 0);
+  const halfL = Math.floor((bw - 1) / 2);
+  const halfR = bw - 1 - halfL;
 
-  // Rail halves: halfL + 1(╤) + halfR = BW, so halfL + halfR = BW - 1
-  const halfL = Math.floor((BW - 1) / 2);
-  const halfR = BW - 1 - halfL;
+  const cartInner = bw - 6;
+  const titleLines = wrapText(notification.message, cartInner, MAX_WRAP_LINES);
+  const renderedTitleLines = titleLines.length > 0 ? titleLines : [''];
 
-  // Inner cartouche: 2 margin + 1 border each side = 6, inner = BW - 6
-  const cartInner = BW - 6;
-  const titlePadL = Math.floor((cartInner - title.length) / 2);
-  const titlePadR = cartInner - title.length - titlePadL;
+  const subtitleLines = wrapText(notification.subtitle ?? '', bw, 2);
 
-  // Divider halves: 3 margin + ' · '(3) + 3 margin = 9, dashes = BW - 9
-  const divL = Math.floor((BW - 9) / 2);
-  const divR = BW - 9 - divL;
+  const divL = Math.floor((bw - 9) / 2);
+  const divR = bw - 9 - divL;
 
-  // Subtitle centering
-  const subPadL = Math.floor((BW - subtitle.length) / 2);
-  const subPadR = BW - subtitle.length - subPadL;
+  // Banner geometry
+  const bannerInner = bw - 4; // 1 sp margin + 1 │ + bannerInner + 1 │ + 1 sp margin = bw
 
-  // ║-wrapped line helper — every child must be exactly BW chars
   const B = (children: React.ReactNode) => (
     <span>
-      <C c={DIM_GOLD}>{'\u2551'}</C>
+      <C c={DIM_GOLD}>{'║'}</C>
       {children}
-      <C c={DIM_GOLD}>{'\u2551'}</C>
+      <C c={DIM_GOLD}>{'║'}</C>
       {'\n'}
     </span>
   );
+
+  // Overlay position (in CSS). The <pre> sits inside a padded container;
+  // we position the image absolutely relative to the motion.div wrapper.
+  // Vertical offset: top-rail (row 0) + blank (row 1) + banner-top-border (row 2) = 3 rows.
+  // Horizontal offset: ║ (1) + space-margin (1) + │ (1) = 3ch from the <pre>'s left edge.
+  const FRAME_PAD = 3; // px — motion.div padding
+  const lineHeightEm = PRE_LINE_HEIGHT;
+  const imageTop = `calc(${FRAME_PAD}px + ${3 * lineHeightEm}em)`;
+  const imageLeft = `calc(${FRAME_PAD}px + 3ch)`;
+  const imageWidth = `${bannerInner}ch`;
+  const imageHeight = `${BANNER_IMAGE_ROWS * lineHeightEm}em`;
 
   return (
     <motion.div
@@ -218,101 +333,170 @@ function GrandToast({
       exit={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClick}
-      className="pointer-events-auto cursor-pointer flex items-center gap-3"
+      className="pointer-events-auto cursor-pointer relative"
       style={{
         background: `linear-gradient(180deg, #0e0d0a, ${BG})`,
         boxShadow: `0 8px 40px rgba(0,0,0,0.6), inset 0 0 50px ${accent.glow}, 0 0 1px ${accent.border}`,
         borderRadius: '2px',
-        padding: notification.imageCandidates?.length ? '6px 8px 6px 6px' : '3px',
+        padding: `${FRAME_PAD}px`,
         willChange: 'opacity, transform',
+        fontSize: 0, // kill stray inline-space gaps around <pre>
       }}
     >
-      <ToastImageMedallion candidates={notification.imageCandidates} />
       <pre
-        className="text-[11px] leading-[1.5] whitespace-pre select-none"
-        style={{ fontFamily: MONO_FONT, color: TXT }}
+        className="whitespace-pre select-none"
+        style={{
+          fontFamily: MONO_FONT,
+          color: TXT,
+          fontSize: `${PRE_FONT_SIZE_PX}px`,
+          lineHeight: PRE_LINE_HEIGHT,
+          margin: 0,
+        }}
       >
-        {/* Top rail: sparkle + ═*halfL + ╤ + ═*halfR + sparkle = BW+2 */}
+        {/* top rail */}
         <C c={GOLD}>{sparkle(0)}</C>
-        <C c={DIM_GOLD}>{'\u2550'.repeat(halfL)}</C>
-        <C c={GOLD}>{'\u2564'}</C>
-        <C c={DIM_GOLD}>{'\u2550'.repeat(halfR)}</C>
+        <C c={DIM_GOLD}>{'═'.repeat(halfL)}</C>
+        <C c={GOLD}>{'╤'}</C>
+        <C c={DIM_GOLD}>{'═'.repeat(halfR)}</C>
         <C c={GOLD}>{sparkle(1)}</C>{'\n'}
 
-        {/* Empty */}
-        {B(<>{sp(BW)}</>)}
+        {B(<>{sp(bw)}</>)}
 
-        {/* Title cartouche */}
+        {withImage && (
+          <>
+            {/* banner top border */}
+            {B(
+              <>
+                {sp(1)}
+                <C c={DIM_GOLD}>{'┌'}{'─'.repeat(bannerInner)}{'┐'}</C>
+                {sp(1)}
+              </>
+            )}
+            {/* banner interior rows (blank; image overlays them) */}
+            {Array.from({ length: BANNER_IMAGE_ROWS }).map((_, i) => (
+              <span key={`b${i}`}>
+                {B(
+                  <>
+                    {sp(1)}
+                    <C c={DIM_GOLD}>{'│'}</C>
+                    {sp(bannerInner)}
+                    <C c={DIM_GOLD}>{'│'}</C>
+                    {sp(1)}
+                  </>
+                )}
+              </span>
+            ))}
+            {/* banner bottom border */}
+            {B(
+              <>
+                {sp(1)}
+                <C c={DIM_GOLD}>{'└'}{'─'.repeat(bannerInner)}{'┘'}</C>
+                {sp(1)}
+              </>
+            )}
+            {B(<>{sp(bw)}</>)}
+          </>
+        )}
+
+        {/* cartouche top */}
         {B(
           <>
             {sp(2)}
-            <C c={accent.border}>{'\u256d'}{'\u2500'.repeat(cartInner)}{'\u256e'}</C>
-            {sp(2)}
-          </>
-        )}
-        {B(
-          <>
-            {sp(2)}
-            <C c={accent.border}>{'\u2502'}</C>
-            {sp(titlePadL)}
-            <C c={GOLD}>{title}</C>
-            {sp(titlePadR)}
-            <C c={accent.border}>{'\u2502'}</C>
-            {sp(2)}
-          </>
-        )}
-        {B(
-          <>
-            {sp(2)}
-            <C c={accent.border}>{'\u2570'}{'\u2500'.repeat(cartInner)}{'\u256f'}</C>
+            <C c={accent.border}>{'╭'}{'─'.repeat(cartInner)}{'╮'}</C>
             {sp(2)}
           </>
         )}
 
-        {/* Subtitle section (optional) */}
-        {subtitle ? (
-          <>
-            {B(<>{sp(BW)}</>)}
+        {/* title line(s) */}
+        {renderedTitleLines.map((ln, i) => {
+          const padL = Math.floor((cartInner - ln.length) / 2);
+          const padR = cartInner - ln.length - padL;
+          return (
+            <span key={`t${i}`}>
+              {B(
+                <>
+                  {sp(2)}
+                  <C c={accent.border}>{'│'}</C>
+                  {sp(padL)}
+                  <C c={GOLD}>{ln}</C>
+                  {sp(padR)}
+                  <C c={accent.border}>{'│'}</C>
+                  {sp(2)}
+                </>
+              )}
+            </span>
+          );
+        })}
 
-            {/* Ornamental divider */}
+        {/* cartouche bottom */}
+        {B(
+          <>
+            {sp(2)}
+            <C c={accent.border}>{'╰'}{'─'.repeat(cartInner)}{'╯'}</C>
+            {sp(2)}
+          </>
+        )}
+
+        {/* subtitle block */}
+        {subtitleLines.length > 0 ? (
+          <>
+            {B(<>{sp(bw)}</>)}
+
             {B(
               <>
                 {sp(3)}
-                <C c={accent.border}>{('\u2500 ').repeat(Math.ceil(divL / 2)).slice(0, divL)}</C>
+                <C c={accent.border}>{('─ ').repeat(Math.ceil(divL / 2)).slice(0, divL)}</C>
                 <C c={accent.ornament}>{' '}{sparkle(2)}{' '}</C>
-                <C c={accent.border}>{(' \u2500').repeat(Math.ceil(divR / 2)).slice(0, divR)}</C>
+                <C c={accent.border}>{(' ─').repeat(Math.ceil(divR / 2)).slice(0, divR)}</C>
                 {sp(3)}
               </>
             )}
 
-            {B(<>{sp(BW)}</>)}
+            {B(<>{sp(bw)}</>)}
 
-            {B(
-              <>
-                {sp(subPadL)}
-                <C c={DIM}>{subtitle}</C>
-                {sp(subPadR)}
-              </>
-            )}
+            {subtitleLines.map((ln, i) => {
+              const padL = Math.floor((bw - ln.length) / 2);
+              const padR = bw - ln.length - padL;
+              return (
+                <span key={`s${i}`}>
+                  {B(
+                    <>
+                      {sp(padL)}
+                      <C c={DIM}>{ln}</C>
+                      {sp(padR)}
+                    </>
+                  )}
+                </span>
+              );
+            })}
           </>
         ) : null}
 
-        {/* Empty */}
-        {B(<>{sp(BW)}</>)}
+        {B(<>{sp(bw)}</>)}
 
-        {/* Bottom rail: sparkle + ═*halfL + ╧ + ═*halfR + sparkle = BW+2 */}
+        {/* bottom rail */}
         <C c={GOLD}>{sparkle(3)}</C>
-        <C c={DIM_GOLD}>{'\u2550'.repeat(halfL)}</C>
-        <C c={GOLD}>{'\u2567'}</C>
-        <C c={DIM_GOLD}>{'\u2550'.repeat(halfR)}</C>
+        <C c={DIM_GOLD}>{'═'.repeat(halfL)}</C>
+        <C c={GOLD}>{'╧'}</C>
+        <C c={DIM_GOLD}>{'═'.repeat(halfR)}</C>
         <C c={GOLD}>{sparkle(4)}</C>
       </pre>
+
+      {withImage && (
+        <ToastBannerImage
+          candidates={notification.imageCandidates}
+          top={imageTop}
+          left={imageLeft}
+          width={imageWidth}
+          height={imageHeight}
+        />
+      )}
     </motion.div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Public component — dispatches to normal or grand based on notification.size
+// Public dispatcher.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function ASCIIToast({
@@ -327,8 +511,11 @@ export function ASCIIToast({
   const rawClick = onClick ?? onDismiss;
   const handleClick = () => { sfxDismiss(); rawClick(); };
 
-  if (notification.size === 'grand') {
-    return <GrandToast notification={notification} onClick={handleClick} />;
+  if (notification.tier === 'port') {
+    return <GrandFrame notification={notification} bw={PORT_BW} withImage onClick={handleClick} />;
   }
-  return <NormalToast notification={notification} onClick={handleClick} />;
+  if (notification.tier === 'event') {
+    return <GrandFrame notification={notification} bw={EVENT_BW} withImage={false} onClick={handleClick} />;
+  }
+  return <TickerToast notification={notification} onClick={handleClick} />;
 }

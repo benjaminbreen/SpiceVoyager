@@ -669,8 +669,14 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
       {config.quality === 'legendary' && showBg && (
         <rect width="200" height="250" fill="none" stroke="rgba(168,85,247,0.25)" strokeWidth="3" rx="2" />
       )}
-      {config.quality === 'rare' && showBg && (
+      {config.quality === 'renowned' && showBg && (
+        <rect width="200" height="250" fill="none" stroke="rgba(34,211,238,0.22)" strokeWidth="2.5" rx="2" />
+      )}
+      {config.quality === 'seasoned' && showBg && (
         <rect width="200" height="250" fill="none" stroke="rgba(52,211,153,0.2)" strokeWidth="2" rx="2" />
+      )}
+      {config.quality === 'disaster' && showBg && (
+        <rect width="200" height="250" fill="none" stroke="rgba(185,28,28,0.25)" strokeWidth="2" rx="2" />
       )}
     </g>
   );

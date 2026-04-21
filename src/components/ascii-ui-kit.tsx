@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 // Shared ASCII UI primitives — color palette, helpers, reusable components
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── Color palette (matches OpeningASCII / ASCIIToast) ────────────────────
+// ── Color palette (matches ASCIIToast) ───────────────────────────────────
 
 export const ASCII_COLORS = {
   gold: '#c9a84c',
@@ -216,7 +216,7 @@ export function cargoColor(pct: number) {
   return ASCII_COLORS.yellow; // amber — wealth in hold
 }
 
-// ── Baroque border SVG components (enhanced from OpeningASCII) ───────────
+// ── Baroque border SVG components ────────────────────────────────────────
 
 export function BaroqueCorner({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (

@@ -281,11 +281,11 @@ const CULTURAL_GROUP_MAP: Record<Nationality, CulturalGroup> = {
 
 function derivePersonality(rng: () => number, role: CrewRole, quality: CrewQuality, stats: { charisma: number; strength: number; perception: number; luck: number }): Personality {
   // Quality-driven tendencies
-  if (quality === 'legendary') {
+  if (quality === 'legendary' || quality === 'renowned') {
     const opts: Personality[] = ['Stern', 'Curious', 'Fierce'];
     return opts[Math.floor(rng() * opts.length)];
   }
-  if (quality === 'dud') {
+  if (quality === 'disaster' || quality === 'dud') {
     const opts: Personality[] = ['Melancholy', 'Neutral', 'Weathered'];
     return opts[Math.floor(rng() * opts.length)];
   }
@@ -320,8 +320,9 @@ function ageToRange(age: number): AgeRange {
 // ── Social class from role/quality ───────────────────────
 
 function deriveSocialClass(role: CrewRole, quality: CrewQuality): SocialClass {
+  const isHigh = quality === 'legendary' || quality === 'renowned' || quality === 'seasoned';
   if (role === 'Captain') return quality === 'legendary' ? 'Noble' : 'Merchant';
-  if (role === 'Factor') return quality === 'rare' || quality === 'legendary' ? 'Noble' : 'Merchant';
+  if (role === 'Factor') return isHigh ? 'Noble' : 'Merchant';
   if (role === 'Navigator' || role === 'Surgeon') return 'Merchant';
   if (role === 'Gunner') return 'Working';
   return 'Working'; // Sailor
@@ -660,7 +661,7 @@ export function tavernNpcToPortraitConfig(npc: TavernNpcPortraitInput): Portrait
     eyeColorIndex,
     hairColorIndex,
     role: crewRole,
-    quality: 'normal',
+    quality: 'passable',
     isScarred,
     hasEarring,
     isSailor,

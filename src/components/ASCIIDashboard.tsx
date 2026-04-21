@@ -218,7 +218,7 @@ function getCrewDialogue(member: CrewMember): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ANIMATED WAVE DIVIDER (from EventModalASCII pattern)
+// ANIMATED WAVE DIVIDER
 // ═══════════════════════════════════════════════════════════════════════════
 
 function WaveDivider({ width = 48 }: { width?: number }) {
@@ -1245,9 +1245,13 @@ function FactionRow({ factionId, isPlayerFaction, rep, expanded, onToggle, delay
 const ASSIGNABLE_ROLES: CrewRole[] = ['Sailor', 'Navigator', 'Gunner', 'Factor', 'Surgeon'];
 
 const QUALITY_STYLE: Record<CrewQuality, { label: string; color: string; bg: string; border: string }> = {
-  dud:       { label: 'Dud',       color: '#92400e', bg: 'rgba(120,80,20,0.08)',  border: 'rgba(120,80,20,0.2)' },
-  normal:    { label: 'Common',    color: CLR.txt,   bg: 'transparent',            border: CLR.rule + '30' },
-  rare:      { label: 'Rare',      color: '#34d399', bg: 'rgba(52,211,153,0.05)',  border: 'rgba(52,211,153,0.2)' },
+  disaster:  { label: 'Disaster',  color: '#b91c1c', bg: 'rgba(185,28,28,0.10)',   border: 'rgba(185,28,28,0.30)' },
+  dud:       { label: 'Dud',       color: '#92400e', bg: 'rgba(120,80,20,0.08)',   border: 'rgba(120,80,20,0.2)' },
+  untried:   { label: 'Untried',   color: '#a1a1aa', bg: 'rgba(161,161,170,0.06)', border: 'rgba(161,161,170,0.22)' },
+  passable:  { label: 'Passable',  color: CLR.txt,   bg: 'transparent',            border: CLR.rule + '30' },
+  able:      { label: 'Able',      color: '#60a5fa', bg: 'rgba(96,165,250,0.06)',  border: 'rgba(96,165,250,0.22)' },
+  seasoned:  { label: 'Seasoned',  color: '#34d399', bg: 'rgba(52,211,153,0.06)',  border: 'rgba(52,211,153,0.24)' },
+  renowned:  { label: 'Renowned',  color: '#22d3ee', bg: 'rgba(34,211,238,0.06)',  border: 'rgba(34,211,238,0.26)' },
   legendary: { label: 'Legendary', color: '#a78bfa', bg: 'rgba(167,139,250,0.06)', border: 'rgba(167,139,250,0.25)' },
 };
 
@@ -1610,7 +1614,12 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
               backgroundColor: (isCaptain ? CLR.gold : roleColor) + '0a',
               boxShadow: isCaptain
                 ? `inset 0 2px 6px rgba(0,0,0,0.4), 0 0 16px ${CLR.gold}18`
-                : member.quality === 'legendary' ? `0 0 10px ${CLR.purple}25` : member.quality === 'rare' ? `0 0 8px ${CLR.teal}18` : `inset 0 2px 4px rgba(0,0,0,0.35)`,
+                : member.quality === 'legendary' ? `0 0 10px ${CLR.purple}25`
+                : member.quality === 'renowned'  ? `0 0 9px #22d3ee22`
+                : member.quality === 'seasoned'  ? `0 0 8px ${CLR.teal}18`
+                : member.quality === 'disaster'  ? `0 0 8px rgba(185,28,28,0.22), inset 0 2px 4px rgba(0,0,0,0.5)`
+                : member.quality === 'dud'       ? `inset 0 2px 6px rgba(0,0,0,0.55)`
+                : `inset 0 2px 4px rgba(0,0,0,0.35)`,
             }}
           >
             <CrewPortraitSquare member={member} size={isCaptain ? 88 : 64} />
@@ -1625,7 +1634,7 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
               {member.name}
             </span>
             <FactionFlag nationality={member.nationality} size={isCaptain ? 22 : 18} />
-            {member.quality !== 'normal' && (
+            {(
               <span
                 className={`${isCaptain ? 'text-[9px]' : 'text-[8px]'} tracking-wider uppercase px-1.5 py-0.5 rounded shrink-0`}
                 style={{ color: qs.color, backgroundColor: qs.bg, border: `1px solid ${qs.border}`, fontFamily: SANS, fontWeight: 600 }}
@@ -1861,7 +1870,7 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
             <span className="text-[11px] tabular-nums" style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: MONO, fontWeight: 600 }}>
               Lvl {member.level}
             </span>
-            {member.quality !== 'normal' && (
+            {member.quality !== 'passable' && (
               <span
                 className="text-[9px] tracking-wider uppercase px-1.5 py-0.5 rounded"
                 style={{ color: qs.color, backgroundColor: qs.bg, border: `1px solid ${qs.border}`, fontFamily: SANS, fontWeight: 600 }}

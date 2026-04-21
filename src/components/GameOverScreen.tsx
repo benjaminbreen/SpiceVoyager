@@ -78,7 +78,7 @@ function SkullPanel() {
   );
 }
 
-// Baroque border matching OpeningASCII style
+// Baroque border
 function BaroqueCorner({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <svg
