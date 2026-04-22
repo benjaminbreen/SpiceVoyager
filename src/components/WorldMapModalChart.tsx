@@ -17,12 +17,14 @@ import {
   getAllSeaLaneEdges,
   getSeaLaneWaypoints,
   getPortRegion,
+  GATEWAYS,
   REGION_VIEWS,
   REGION_LABELS,
   type WorldRegion,
 } from '../utils/worldPorts';
 import TravelModalB from './TravelModalB';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
+import { useIsMobile } from '../utils/useIsMobile';
 
 interface WorldMapModalChartProps {
   onClose: () => void;
@@ -97,6 +99,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   const [expandedRegions, setExpandedRegions] = useState<Set<WorldRegion>>(new Set());
   const [devMode, setDevMode] = useState(false);
 
+  const { isMobile } = useIsMobile();
   const dayCount = useGameStore(s => s.dayCount);
   const fastTravel = useGameStore(s => s.fastTravel);
   const worldSeed = useGameStore(s => s.worldSeed);
@@ -255,6 +258,30 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       .attr('stroke', COLORS.landStroke)
       .attr('stroke-width', 0.5);
 
+    // Gateway labels — italic sea / strait names that give the chart its
+    // cartographic voice. Kept faint so they recede behind port labels.
+    const gatewayGroup = g.append('g').attr('class', 'gateway-labels').attr('pointer-events', 'none');
+    for (const [id, gw] of Object.entries(GATEWAYS)) {
+      if (!gw.label) continue;
+      const pos = projection(gw.coords);
+      if (!pos) continue;
+      const offset = gw.labelOffset ?? [0, 0];
+      gatewayGroup.append('text')
+        .attr('class', 'gateway-label')
+        .attr('data-x', pos[0] + offset[0])
+        .attr('data-y', pos[1] + offset[1])
+        .attr('x', pos[0] + offset[0])
+        .attr('y', pos[1] + offset[1])
+        .attr('text-anchor', 'middle')
+        .attr('fill', 'rgba(180, 200, 220, 0.38)')
+        .attr('font-size', '11px')
+        .attr('font-weight', '400')
+        .attr('font-style', 'italic')
+        .attr('font-family', '"Fraunces", serif')
+        .attr('letter-spacing', '0.04em')
+        .text(gw.label);
+    }
+
     // Decorative compass rose — placed in mid-Atlantic (empty quadrant)
     const compassPos = projection([-40, -20]);
     if (compassPos) {
@@ -299,14 +326,16 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
         .text('N');
     }
 
-    // Sea lane — only the selected route is drawn. Other edges exist in the
-    // data graph but we keep the chart uncluttered until the player picks a
-    // destination.
+    // Sea lane — only the selected route is drawn. Waypoints come from the
+    // gateway-graph Dijkstra search (see `buildSeaRoute` in worldPorts.ts);
+    // each gateway is hand-placed in deep ocean, so segments between them
+    // never cross land by construction. Catmull-Rom alpha(1) is chordal,
+    // which hews tightly to the waypoints instead of overshooting.
     const seaLaneGroup = g.append('g').attr('class', 'sea-lanes');
     const lineGen = d3.line<[number, number]>()
       .x(d => d[0])
       .y(d => d[1])
-      .curve(d3.curveCatmullRom.alpha(0.5));
+      .curve(d3.curveCatmullRom.alpha(1));
 
     const selectedEdge = (selectedPort && selectedPort !== nearestPortId)
       ? seaLaneEdges.find(([a, b]) =>
@@ -321,14 +350,15 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       const from = fromCoords && projection(fromCoords);
       const to = toCoords && projection(toCoords);
 
-      if (from && to) {
-        const waypoints = getSeaLaneWaypoints(fromId, toId);
-        const projectedPoints: [number, number][] = [from as [number, number]];
-        for (const wp of waypoints) {
-          const p = projection(wp);
+      if (from && to && fromCoords && toCoords) {
+        const gatewayCoords = getSeaLaneWaypoints(fromId, toId);
+        const geoPath: [number, number][] = [fromCoords, ...gatewayCoords, toCoords];
+
+        const projectedPoints: [number, number][] = [];
+        for (const c of geoPath) {
+          const p = projection(c);
           if (p) projectedPoints.push(p as [number, number]);
         }
-        projectedPoints.push(to as [number, number]);
 
         const pathD = lineGen(projectedPoints);
         if (pathD) {
@@ -567,6 +597,18 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
         const fontSize = Math.min(11, Math.max(7, 11 * invK));
         g.selectAll('.port-label').attr('font-size', `${fontSize}px`);
 
+        // Gateway (sea/strait) labels — hidden at extreme zoom, counter-scaled otherwise
+        const gatewayFontSize = Math.min(12, Math.max(8, 11 * invK));
+        g.selectAll('.gateway-label')
+          .attr('font-size', `${gatewayFontSize}px`)
+          .attr('display', (k < 0.55 || k > 3.5) ? 'none' : null)
+          .each(function() {
+            const el = d3.select(this);
+            const bx = parseFloat(el.attr('data-x'));
+            const by = parseFloat(el.attr('data-y'));
+            el.attr('x', bx).attr('y', by);
+          });
+
         g.selectAll('.port-dot')
           .attr('r', function() {
             return parseFloat(d3.select(this).attr('data-r')) * invK;
@@ -607,10 +649,22 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
     svg.call(zoom);
     zoomRef.current = zoom;
 
-    const initialTransform = getRegionTransform(playerRegion, width, height);
+    // Initial view: pull back from the tight regional framing so the player
+    // can see neighboring sea lanes on open. Region nav buttons still use the
+    // full regional scale.
+    const regionTransform = getRegionTransform(playerRegion, width, height);
+    const initialZoomOut = 0.5;
+    const cx = width / 2;
+    const cy = height / 2;
+    const initialTransform = d3.zoomIdentity
+      .translate(
+        cx + (regionTransform.x - cx) * initialZoomOut,
+        cy + (regionTransform.y - cy) * initialZoomOut,
+      )
+      .scale(regionTransform.k * initialZoomOut);
     svg.call(zoom.transform, initialTransform);
 
-  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, getBaseProjection, getRegionTransform, devMode]);
+  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, getBaseProjection, getRegionTransform, devMode, isMobile]);
 
   const handleSetSail = () => {
     if (!selectedPort) return;
@@ -671,15 +725,15 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   return (
     <motion.div
       {...modalBackdropMotion}
-      className="absolute inset-0 bg-black/65 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-4 z-40"
+      className={`absolute inset-0 bg-black/65 backdrop-blur-sm pointer-events-auto flex items-center justify-center z-40 ${isMobile ? 'p-0' : 'p-4'}`}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
         {...modalPanelMotion}
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-6xl h-[82vh] rounded-[18px]"
+        className={`relative rounded-[18px] ${isMobile ? 'w-full h-[100dvh]' : 'w-full max-w-6xl h-[82vh]'}`}
         style={{
-          padding: 7,
+          padding: isMobile ? 3 : 7,
           background:
             'radial-gradient(ellipse at 22% 12%, #d4b16a 0%, #a78845 22%, #6b4f22 48%, #2c1f0c 100%)',
           boxShadow:
@@ -694,19 +748,23 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
 
         {/* ── Inner glass panel ──────────────────────────────── */}
         <div
-          className="relative w-full h-full rounded-[12px] overflow-hidden flex
-            bg-[#070b14]/95 backdrop-blur-xl"
+          className={`relative w-full h-full rounded-[12px] overflow-hidden flex
+            bg-[#070b14]/95 backdrop-blur-xl ${isMobile ? 'flex-col' : 'flex-row'}`}
           style={{
             boxShadow:
               'inset 0 0 0 1px #b89a6a, inset 0 0 0 2px rgba(0,0,0,0.5), inset 0 4px 12px rgba(0,0,0,0.7)',
           }}
         >
-          {/* ── Left: Map ──────────────────────────────── */}
-          <div className="flex-1 relative flex flex-col min-w-0">
+          {/* ── Map (top on mobile, left on desktop) ─────────── */}
+          <div className="flex-1 relative flex flex-col min-w-0 min-h-0">
             {/* Region tab ruler — chart-edge navigation */}
-            <div className="relative flex items-stretch justify-center px-4 pt-3 pb-2 border-b border-[#3a3020]/50
-              bg-gradient-to-b from-[#0a0f1a]/90 to-transparent z-[5]">
-              <div className="flex items-stretch gap-0">
+            <div className={`relative flex items-stretch border-b border-[#3a3020]/50
+              bg-gradient-to-b from-[#0a0f1a]/90 to-transparent z-[5] ${
+                isMobile
+                  ? 'justify-start px-2 pt-2 pb-1.5 overflow-x-auto scrollbar-thin'
+                  : 'justify-center px-4 pt-3 pb-2'
+              }`}>
+              <div className="flex items-stretch gap-0 shrink-0">
                 {REGION_NAV_ORDER.map((region, i) => {
                   const active = activeRegion === region;
                   return (
@@ -718,7 +776,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
                         onClick={() => { sfxClick(); navigateToRegion(region); }}
                         onMouseEnter={() => sfxHover()}
                         aria-selected={active}
-                        className="group relative px-3.5 py-1.5 transition-all duration-200"
+                        className={`group relative transition-all duration-200 ${isMobile ? 'px-2.5 py-1' : 'px-3.5 py-1.5'}`}
                         style={{ fontFamily: '"Fraunces", serif' }}
                       >
                         <span
@@ -817,18 +875,19 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
             />
           </div>
 
-          {/* ── Vertical brass rule separating map & sidebar ─── */}
+          {/* ── Brass rule separating map & sidebar ─── */}
           <div
             aria-hidden
-            className="w-px self-stretch shrink-0"
+            className={`shrink-0 ${isMobile ? 'h-px w-full' : 'w-px self-stretch'}`}
             style={{
-              background:
-                'linear-gradient(to bottom, transparent 0%, rgba(201,162,90,0.08) 10%, rgba(201,162,90,0.55) 50%, rgba(201,162,90,0.08) 90%, transparent 100%)',
+              background: isMobile
+                ? 'linear-gradient(to right, transparent 0%, rgba(201,162,90,0.08) 10%, rgba(201,162,90,0.55) 50%, rgba(201,162,90,0.08) 90%, transparent 100%)'
+                : 'linear-gradient(to bottom, transparent 0%, rgba(201,162,90,0.08) 10%, rgba(201,162,90,0.55) 50%, rgba(201,162,90,0.08) 90%, transparent 100%)',
             }}
           />
 
-          {/* ── Right: Sidebar ─────────────────────────── */}
-          <div className="w-72 shrink-0 flex flex-col bg-[#080c14]/70">
+          {/* ── Sidebar (bottom on mobile, right on desktop) ─── */}
+          <div className={`shrink-0 flex flex-col bg-[#080c14]/70 ${isMobile ? 'w-full max-h-[44%]' : 'w-72'}`}>
             {/* Sidebar header — cartouche */}
             <div className="relative px-4 pt-3.5 pb-3 border-b border-[#2a2520]/50">
               <div className="flex items-center justify-between">

@@ -9,11 +9,12 @@ import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorW
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
-import { swivelAimAngle, broadsideReload } from '../utils/combatState';
+import { swivelAimAngle, swivelAimPitch, broadsideReload } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { useIsMobile } from '../utils/useIsMobile';
+import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
 
 // Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
 // course corrections actually have time to register. Tuned by playtest.
@@ -22,20 +23,102 @@ const MOBILE_SPEED_SCALE = 0.55;
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
 
+/**
+ * Triangular lateen sail + diagonal yard. The yard runs through the group
+ * ORIGIN (local x=0, spanning ±height/2 along Y). The whole group tilts by
+ * `sail.roll` around Z — since the yard passes through the origin, it stays
+ * attached to the mast regardless of roll angle. The clew extends along +X
+ * (flipped to -X for positive roll, i.e. the Dhow mizzen mirror).
+ *
+ * `sail.height` is the yard length (long axis of the triangle).
+ * `sail.width`  is the leech extent (how far the clew sweeps from the yard).
+ *
+ * Position the group at the point where the yard crosses the mast — usually
+ * about 1/3 from the masthead.
+ */
+function LateenSailMesh({
+  sail,
+  fallbackColor,
+  yardColor,
+}: {
+  sail: SailConfig;
+  fallbackColor: string;
+  yardColor: string;
+}) {
+  const roll = sail.roll ?? -0.46;
+  const mirrored = roll > 0;
+
+  const geometry = useMemo(() => {
+    const w = sail.width;
+    const h = sail.height;
+    const clewX = mirrored ? -w : w;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, h * 0.5);          // head — top of yard
+    shape.lineTo(0, -h * 0.5);         // tack — bottom of yard
+    shape.lineTo(clewX, -h * 0.15);    // clew — extends lateral, slightly low
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }, [sail.width, sail.height, mirrored]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return (
+    <group position={sail.position} rotation={[0, 0, roll]}>
+      <mesh geometry={geometry} castShadow>
+        <meshStandardMaterial
+          color={sail.color ?? fallbackColor}
+          roughness={1}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {/* Yard — vertical cylinder at the origin, crosses the mast after the
+          group's Z-rotation tilts it into a diagonal spar. */}
+      <mesh position={[0, 0, 0.02]} castShadow>
+        <cylinderGeometry args={[0.05, 0.05, sail.height * 1.08, 7]} />
+        <meshStandardMaterial color={yardColor} roughness={0.85} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Build a narrow triangular pennant as a subdivided PlaneGeometry tapered to
+ * a point. Hoist along local X=0; fly tip at X=length. Enough segments along
+ * X for a visible travelling wave; 1 segment in Y (pennants are skinny so the
+ * vertical bend is negligible).
+ */
+function buildPennantGeometry(length: number, height: number) {
+  const geo = new THREE.PlaneGeometry(length, height, 10, 1);
+  const arr = geo.attributes.position.array as Float32Array;
+  const halfLen = length * 0.5;
+  // Taper: scale each vert's Y by (1 - xNorm) so the fly end collapses to a
+  // point, leaving a triangular silhouette while keeping the subdivision grid.
+  for (let i = 0; i < arr.length; i += 3) {
+    const bx = arr[i];
+    const xNorm = (bx + halfLen) / length; // 0 at hoist, 1 at fly
+    arr[i + 1] *= 1 - xNorm;
+    // Shift so hoist edge sits at local x=0 (group position is the hoist point)
+    arr[i] = bx + halfLen;
+  }
+  geo.attributes.position.needsUpdate = true;
+  return geo;
+}
+
 export function Ship() {
   const group = useRef<THREE.Group>(null);
   const visualGroup = useRef<THREE.Group>(null);
   const hullMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const torchLightRef = useRef<THREE.PointLight>(null);
   const torchMeshRef = useRef<THREE.MeshStandardMaterial>(null);
-  const mainSailRef = useRef<THREE.Mesh>(null);
-  const foreSailRef = useRef<THREE.Mesh>(null);
+  const sailRefs = useRef<(THREE.Mesh | null)[]>([]);
   const setPlayerTransform = useGameStore((state) => state.setPlayerTransform);
   const stats = useGameStore((state) => state.stats);
   const playerMode = useGameStore((state) => state.playerMode);
   const damageShip = useGameStore((state) => state.damageShip);
   const addNotification = useGameStore((state) => state.addNotification);
   const paused = useGameStore((state) => state.paused);
+  const shipType = useGameStore((state) => state.ship.type);
+  const profile = useMemo(() => getShipProfile(shipType), [shipType]);
   const { isMobile } = useIsMobile();
   
   // Physics state
@@ -92,6 +175,9 @@ export function Ship() {
 
   // Swivel gun pivot ref + muzzle flash
   const swivelPivotRef = useRef<THREE.Group>(null);
+  // Inner pivot for barrel pitch — kept separate so the mounting post stays
+  // vertical while the barrel tilts up/down with the cursor.
+  const swivelPitchRef = useRef<THREE.Group>(null);
   const muzzleFlashRef = useRef<THREE.InstancedMesh>(null);
   const muzzleParticles = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number }[]>([]);
   const MUZZLE_PARTICLE_COUNT = 20;
@@ -226,25 +312,192 @@ export function Ship() {
     return tex;
   }, [shipFlag]);
 
-  // Mast flag
+  // Mast flag — geometry scales with hull length so Pinnaces don't fly
+  // Galleon-sized banners. Baseline 1.4 × 0.9 tuned for a ~5m hull.
   const flagMeshRef = useRef<THREE.Mesh>(null);
   const flagPivotRef = useRef<THREE.Group>(null);
-  const flagGeometry = useMemo(() => new THREE.PlaneGeometry(1.4, 0.9, 10, 6), []);
+  const flagScale = useMemo(
+    () => THREE.MathUtils.clamp(profile.hull.length / 5.0, 0.75, 1.25),
+    [profile],
+  );
+  const flagGeometry = useMemo(
+    () => new THREE.PlaneGeometry(1.4 * flagScale, 0.9 * flagScale, 10, 6),
+    [flagScale],
+  );
   const flagBase = useMemo(
     () => Float32Array.from(flagGeometry.attributes.position.array as Float32Array),
     [flagGeometry]
   );
   const flagWindAngle = useRef(0);
 
-  const mainSailGeometry = useMemo(() => new THREE.PlaneGeometry(3.5, 4, 12, 14), []);
-  const foreSailGeometry = useMemo(() => new THREE.PlaneGeometry(2.5, 3, 10, 12), []);
-  const mainSailBase = useMemo(
-    () => Float32Array.from(mainSailGeometry.attributes.position.array as Float32Array),
-    [mainSailGeometry]
+  // Pennant color — use the faction's base flag color so streamers read as
+  // the captain's colors. If that color is too light to show against sky
+  // (e.g. English/French/Japanese white fields), fall back to the device
+  // color so the pennant stays visible.
+  const pennantColor = useMemo(() => {
+    const faction = FACTIONS[shipFlag];
+    if (!faction) return profile.hull.trimColor;
+    const [c1, c2] = faction.colors;
+    const lum = (hex: string) => {
+      const n = parseInt(hex.slice(1), 16);
+      const r = (n >> 16) & 0xff;
+      const g = (n >> 8) & 0xff;
+      const b = n & 0xff;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    };
+    return lum(c1) > 0.82 ? c2 : c1;
+  }, [shipFlag, profile.hull.trimColor]);
+
+  // Per-sail painted decals. Only renders a texture when the sail has a
+  // matching decal declared in the profile AND the ship's flag allows it
+  // (Order of Christ is Portuguese-only — an English caravel just flies plain
+  // canvas). Returns an array aligned with profile.sails: each entry is a
+  // THREE.CanvasTexture or null.
+  const sailTextures = useMemo(() => {
+    return profile.sails.map((sail) => {
+      if (sail.decal !== 'cross_of_christ') return null;
+      if (shipFlag !== 'Portuguese') return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 160;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      // Canvas field — match the sail cloth color so seams disappear
+      ctx.fillStyle = sail.color ?? profile.hull.sailColor;
+      ctx.fillRect(0, 0, 128, 160);
+      // Order of Christ cross — broad red cross with flared arm ends, white
+      // inlay bar down the middle. Centered on the sail, sized ~60% of width.
+      const cx = 64;
+      const cy = 80;
+      const armLen = 40;
+      const armThick = 14;
+      const flareOut = 6;
+      ctx.fillStyle = '#B4161B'; // deep crimson
+      // Vertical arm
+      ctx.beginPath();
+      ctx.moveTo(cx - armThick / 2 - flareOut, cy - armLen);
+      ctx.lineTo(cx + armThick / 2 + flareOut, cy - armLen);
+      ctx.lineTo(cx + armThick / 2, cy - armLen + flareOut);
+      ctx.lineTo(cx + armThick / 2, cy + armLen - flareOut);
+      ctx.lineTo(cx + armThick / 2 + flareOut, cy + armLen);
+      ctx.lineTo(cx - armThick / 2 - flareOut, cy + armLen);
+      ctx.lineTo(cx - armThick / 2, cy + armLen - flareOut);
+      ctx.lineTo(cx - armThick / 2, cy - armLen + flareOut);
+      ctx.closePath();
+      ctx.fill();
+      // Horizontal arm
+      ctx.beginPath();
+      ctx.moveTo(cx - armLen, cy - armThick / 2 - flareOut);
+      ctx.lineTo(cx - armLen, cy + armThick / 2 + flareOut);
+      ctx.lineTo(cx - armLen + flareOut, cy + armThick / 2);
+      ctx.lineTo(cx + armLen - flareOut, cy + armThick / 2);
+      ctx.lineTo(cx + armLen, cy + armThick / 2 + flareOut);
+      ctx.lineTo(cx + armLen, cy - armThick / 2 - flareOut);
+      ctx.lineTo(cx + armLen - flareOut, cy - armThick / 2);
+      ctx.lineTo(cx - armLen + flareOut, cy - armThick / 2);
+      ctx.closePath();
+      ctx.fill();
+      // White inlay — thin cross inside the red one
+      ctx.fillStyle = '#F5F1DC';
+      ctx.fillRect(cx - 2, cy - armLen + 4, 4, armLen * 2 - 8);
+      ctx.fillRect(cx - armLen + 4, cy - 2, armLen * 2 - 8, 4);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      return tex;
+    });
+  }, [profile, shipFlag]);
+
+  useEffect(() => {
+    return () => {
+      sailTextures.forEach((t) => t?.dispose());
+    };
+  }, [sailTextures]);
+
+  // Oculus (painted eye) texture for junks. White sclera + dark pupil with
+  // a red surround ring, painted over a hull-colored plank background so it
+  // reads as paint on the hull rather than a decal stuck on top.
+  const oculusTexture = useMemo(() => {
+    if (!profile.hull.hasOculus) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = profile.hull.hullColor;
+    ctx.fillRect(0, 0, 128, 128);
+    // Red rim (almond shape)
+    ctx.fillStyle = '#8a2a1a';
+    ctx.beginPath();
+    ctx.ellipse(64, 64, 58, 42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // White sclera
+    ctx.fillStyle = '#f0e8d2';
+    ctx.beginPath();
+    ctx.ellipse(64, 64, 48, 34, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Iris ring (dark amber)
+    ctx.fillStyle = '#3a1a0a';
+    ctx.beginPath();
+    ctx.arc(64, 64, 22, 0, Math.PI * 2);
+    ctx.fill();
+    // Pupil (black)
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.arc(64, 64, 11, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight fleck
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(58, 58, 3, 0, Math.PI * 2);
+    ctx.fill();
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    return tex;
+  }, [profile]);
+  useEffect(() => () => oculusTexture?.dispose(), [oculusTexture]);
+
+  // Pennants — one per non-main mast when profile.hasPennants. Each gets its
+  // own subdivided geometry and a cached base array so the animation loop can
+  // rewrite Z without reallocating. Pivot groups rotate around Y to trail the
+  // same apparent wind the main flag uses.
+  const pennants = useMemo(() => {
+    if (!profile.hasPennants) return [];
+    return profile.masts.slice(1).map((mast) => {
+      const length = THREE.MathUtils.clamp(mast.height * 0.18, 0.55, 1.1);
+      const height = length * 0.22;
+      const geometry = buildPennantGeometry(length, height);
+      const base = Float32Array.from(geometry.attributes.position.array as Float32Array);
+      return {
+        mastIdx: null as number | null,
+        length,
+        height,
+        geometry,
+        base,
+        topY: mast.position[1] + mast.height * 0.5 + 0.12,
+        z: mast.position[2],
+      };
+    });
+  }, [profile]);
+  const pennantMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const pennantPivotRefs = useRef<(THREE.Group | null)[]>([]);
+
+  // Per-sail geometry + cached base positions, keyed to profile.sails order.
+  const sailGeometries = useMemo(
+    () =>
+      profile.sails.map(
+        (s) =>
+          new THREE.PlaneGeometry(s.width, s.height, s.segmentsX ?? 10, s.segmentsY ?? 12),
+      ),
+    [profile],
   );
-  const foreSailBase = useMemo(
-    () => Float32Array.from(foreSailGeometry.attributes.position.array as Float32Array),
-    [foreSailGeometry]
+  const sailBases = useMemo(
+    () =>
+      sailGeometries.map(
+        (g) => Float32Array.from(g.attributes.position.array as Float32Array),
+      ),
+    [sailGeometries],
   );
   const normalFrame = useRef(0);
 
@@ -311,12 +564,12 @@ export function Ship() {
 
   useEffect(() => {
     return () => {
-      mainSailGeometry.dispose();
-      foreSailGeometry.dispose();
+      sailGeometries.forEach((g) => g.dispose());
       flagGeometry.dispose();
+      pennants.forEach((p) => p.geometry.dispose());
       if (exclamationTimer.current) clearTimeout(exclamationTimer.current);
     };
-  }, [mainSailGeometry, foreSailGeometry, flagGeometry]);
+  }, [sailGeometries, flagGeometry, pennants]);
 
   const triggerCollision = (source: 'shore' | 'ship' = 'shore') => {
     const now = Date.now();
@@ -396,12 +649,22 @@ export function Ship() {
       const shipPos = group.current.position;
       const shipRot = rotation.current;
       const aimAngle = swivelAimAngle;
-      // Gun mount is at bow (z=3.0 in local space), barrel extends ~1 unit along aim
+      const aimPitch = swivelAimPitch;
+      // Gun mount is at bow (z=3.0 in local space); barrel tip is 1.2 units
+      // along the aim direction, lifted by sin(pitch) so muzzle effects come
+      // from the actual barrel mouth instead of below it on a high-arc shot.
       const bowX = shipPos.x + Math.sin(shipRot) * 3.0;
       const bowZ = shipPos.z + Math.cos(shipRot) * 3.0;
-      const muzzleX = bowX + Math.sin(aimAngle) * 1.2;
-      const muzzleZ = bowZ + Math.cos(aimAngle) * 1.2;
-      const muzzleY = 1.8;
+      const cosP = Math.cos(aimPitch);
+      const sinP = Math.sin(aimPitch);
+      const muzzleX = bowX + Math.sin(aimAngle) * cosP * 1.2;
+      const muzzleZ = bowZ + Math.cos(aimAngle) * cosP * 1.2;
+      const muzzleY = 1.8 + sinP * 1.2;
+
+      // Spark/smoke velocity follows the barrel direction (yaw + pitch).
+      const dirX = Math.sin(aimAngle) * cosP;
+      const dirY = sinP;
+      const dirZ = Math.cos(aimAngle) * cosP;
 
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
         const p = muzzleParticles.current[i];
@@ -415,9 +678,9 @@ export function Ship() {
           muzzleZ + (Math.random() - 0.5) * 0.3
         );
         p.vel.set(
-          Math.sin(aimAngle) * speed + (Math.random() - 0.5) * spread * speed,
-          (isSpark ? 2 + Math.random() * 3 : 1 + Math.random() * 2),
-          Math.cos(aimAngle) * speed + (Math.random() - 0.5) * spread * speed
+          dirX * speed + (Math.random() - 0.5) * spread * speed,
+          dirY * speed + (isSpark ? 2 + Math.random() * 3 : 1 + Math.random() * 2),
+          dirZ * speed + (Math.random() - 0.5) * spread * speed
         );
         p.life = isSpark ? 0.2 + Math.random() * 0.3 : 0.5 + Math.random() * 0.6;
       }
@@ -568,7 +831,7 @@ export function Ship() {
       const seaLegsBonus = captainHasTrait(store, 'Sea Legs') ? 1.05 : 1.0;
       const mobileScale = isMobile ? MOBILE_SPEED_SCALE : 1;
       const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus * mobileScale;
-      const windTrim = getWindTrimInfo(store.windDirection, rotation.current);
+      const windTrim = getWindTrimInfo(store.windDirection, rotation.current, stats.windward);
       // Wind trim requires going straight — Shift while turning is drift, not boost.
       const wantsWindTrim = inShift && inW && velocity.current > 0.5
         && !inA && !inD;
@@ -580,7 +843,16 @@ export function Ship() {
         windTrimLerp,
       );
       const windTrimMultiplier = getWindTrimMultiplier(store.windSpeed, windTrim.score, windTrimCharge.current);
-      const maxSpeed = baseMaxSpeed * windTrimMultiplier;
+      // Close-hauled penalty — when the bow is pointed beyond the ship's
+      // reach angle (windTrim.score === 0, i.e. "in irons"), speed floors at
+      // a windward-dependent fraction of top speed. A lateen dhow still
+      // makes real progress beating upwind (~55%); a square-rigged galleon
+      // is reduced to a crawl (~31%). Within the reach/good/full trim
+      // zones, the penalty is 1.0 and current behavior is unchanged.
+      const ironsFactor = windTrim.score > 0
+        ? 1.0
+        : 0.15 + stats.windward * 0.45;
+      const maxSpeed = baseMaxSpeed * windTrimMultiplier * ironsFactor;
       const accel = 7.5 * delta;
       const drag = 2.4 * delta;
 
@@ -922,14 +1194,19 @@ export function Ship() {
       const fwdZ = Math.cos(rot);
       const rightX = Math.cos(rot);
       const rightZ = -Math.sin(rot);
-      const bowX = sx + fwdX * 2.5;
-      const bowZ = sz + fwdZ * 2.5;
-      const sternX = sx - fwdX * 1.5;
-      const sternZ = sz - fwdZ * 1.5;
-      const portX = sx - rightX * 1.3;
-      const portZ = sz - rightZ * 1.3;
-      const stbdX = sx + rightX * 1.3;
-      const stbdZ = sz + rightZ * 1.3;
+      // Wave probe points scale with hull dimensions so bigger ships sample a
+      // wider footprint and smaller ones bob more responsively.
+      const bowProbe = profile.hull.length * 0.5;
+      const sternProbe = profile.hull.length * 0.3;
+      const beamProbe = profile.hull.width * 0.59;
+      const bowX = sx + fwdX * bowProbe;
+      const bowZ = sz + fwdZ * bowProbe;
+      const sternX = sx - fwdX * sternProbe;
+      const sternZ = sz - fwdZ * sternProbe;
+      const portX = sx - rightX * beamProbe;
+      const portZ = sz - rightZ * beamProbe;
+      const stbdX = sx + rightX * beamProbe;
+      const stbdZ = sz + rightZ * beamProbe;
       // Two-component swell: long primary + shorter cross-chop.
       const sampleWave = (x: number, z: number) =>
           Math.sin(t * 1.1 + x * 0.18 + z * 0.12) * 0.17
@@ -939,8 +1216,10 @@ export function Ship() {
       const portY = sampleWave(portX, portZ);
       const stbdY = sampleWave(stbdX, stbdZ);
       const centerY = (bowY + sternY) * 0.5;
-      const pitchFromWave = (bowY - sternY) / 4.0;      // bow-to-stern ~4 units
-      const rollFromWave = (stbdY - portY) / 2.6 * 0.6; // beam ~2.6, damped
+      // Divisors match the probe spacings so the pitch/roll output stays in
+      // the same visual range regardless of ship size.
+      const pitchFromWave = (bowY - sternY) / (bowProbe + sternProbe);
+      const rollFromWave = (stbdY - portY) / (beamProbe * 2) * 0.6;
 
       // Low side of the hull settles deeper when banking.
       const heelSink = Math.abs(heel.current) * 0.22;
@@ -998,54 +1277,131 @@ export function Ship() {
     sailTrim.current.fore = THREE.MathUtils.lerp(sailTrim.current.fore, trimTarget * 1.08, trimLerp);
 
     // Live wind-heading score — well-trimmed sails visibly puff harder.
-    const sailTrimScore = getWindTrimInfo(store.windDirection, rotation.current).score;
+    const sailTrimScore = getWindTrimInfo(store.windDirection, rotation.current, stats.windward).score;
 
     const recomputeNormals = (++normalFrame.current % 4) === 0;
+    // Apparent-wind X sign: +1 when wind crosses from port (xNorm<0 is luff),
+    // -1 when from starboard (xNorm>0 is luff). Asymmetric camber & leech
+    // flutter flip with it so the belly always leans downwind.
+    const windSide = normalizedWindX >= 0 ? 1 : -1;
+    const elapsed = state.clock.elapsedTime;
+
     const updateSailShape = (
       mesh: THREE.Mesh | null,
       geometry: THREE.PlaneGeometry,
       basePositions: Float32Array,
-      width: number,
-      height: number,
+      sail: SailConfig,
       baseY: number,
-      lowerAmount: number,
       trim: number,
-      fullnessScale: number,
-      flutterPhase: number
     ) => {
       if (!mesh) return;
 
       mesh.rotation.y = trim;
-      mesh.position.y = baseY - (1 - visualSailSet.current) * lowerAmount;
+      mesh.position.y = baseY - (1 - visualSailSet.current) * sail.lowerAmount;
       mesh.scale.y = 0.72 + visualSailSet.current * 0.28;
+
       const position = geometry.attributes.position as THREE.BufferAttribute;
       const array = position.array as Float32Array;
-      const halfWidth = width * 0.5;
-      const halfHeight = height * 0.5;
+      const halfWidth = sail.width * 0.5;
+      const halfHeight = sail.height * 0.5;
+      const setScale = 0.72 + visualSailSet.current * 0.28;
       const camberDepth =
         (0.12 + fill * 0.5 + speedRatio * 0.08 + sailTrimScore * 0.22) *
-        fullnessScale *
-        (0.72 + visualSailSet.current * 0.28);
+        sail.fullnessScale *
+        setScale;
       const flutterAmount = (0.01 + speedRatio * 0.005) * luff;
+      const flutterFreq = 1.8 + speedRatio * 1.2;
+
+      const plan = sail.plan;
+      const numPanels = sail.numPanels ?? 1;
 
       for (let i = 0; i < array.length; i += 3) {
-        const baseX = basePositions[i];
-        const baseY = basePositions[i + 1];
-        const xNorm = baseX / halfWidth;
-        const yNorm = (baseY + halfHeight) / height;
-        const belly = (1 - xNorm * xNorm) * Math.sin(Math.PI * yNorm);
-        const edge = Math.pow(Math.abs(xNorm), 1.6);
-        const top = THREE.MathUtils.smoothstep(yNorm, 0.12, 1);
-        const ripple =
-          Math.sin(state.clock.elapsedTime * (1.8 + speedRatio * 1.2) + yNorm * 3 + flutterPhase) *
-          flutterAmount *
-          edge *
-          top *
-          0.45;
-        const sag = (0.012 + luff * 0.02) * edge * yNorm;
+        const bx = basePositions[i];
+        const by = basePositions[i + 1];
+        const xNorm = bx / halfWidth;                 // -1 luff-side .. +1 leech-side (depends on windSide)
+        const yNorm = (by + halfHeight) / sail.height; // 0 foot .. 1 head
+        const xAbs = Math.abs(xNorm);
 
-        array[i] = baseX;
-        array[i + 1] = baseY - sag;
+        let belly = 0;
+        let ripple = 0;
+        let sag = 0;
+
+        if (plan === 'square') {
+          // Asymmetric camber: fuller on the luff side (upwind edge), tighter
+          // on the leech. xSigned > 0 ⇒ leech side for current windSide.
+          const xSigned = xNorm * windSide;
+          // Base bell-curve, then shift peak toward luff by biasing with
+          // smoothstep of xSigned. Belly depth * shape(y) * fullness_curve(x)
+          const bowShape = (1 - xNorm * xNorm);
+          const luffBias = 1 - THREE.MathUtils.smoothstep(xSigned, -0.2, 1);
+          // Taper head & foot so the sail sits flush at yards & gaskets
+          const yShape = Math.sin(Math.PI * yNorm);
+          belly = bowShape * yShape * (0.6 + luffBias * 0.6);
+
+          // Luff bubble: when luffing, the upwind edge caves inward. Subtract
+          // a small reverse curve concentrated near xSigned ≈ -1.
+          if (luff > 0.01) {
+            const bubble = THREE.MathUtils.smoothstep(-xSigned, 0.65, 1.0);
+            belly -= bubble * yShape * luff * 0.35;
+          }
+
+          // Leech-biased flutter (stronger on the downwind edge, near the top)
+          const leechWeight = THREE.MathUtils.smoothstep(xSigned, 0.1, 1.0);
+          const top = THREE.MathUtils.smoothstep(yNorm, 0.15, 1);
+          ripple =
+            Math.sin(elapsed * flutterFreq + yNorm * 3 + sail.flutterPhase) *
+            flutterAmount *
+            (0.25 + leechWeight * 0.9) *
+            (0.3 + top * 0.7);
+
+          sag = (0.012 + luff * 0.02) * Math.pow(xAbs, 1.6) * yNorm;
+        } else if (plan === 'lateen') {
+          // Triangular cut: mask deformation outside the triangle. Treat the
+          // mesh as a rectangle with a virtual triangle running from head
+          // (top-luff corner) to clew (bottom-leech corner). For a
+          // belly-weighted-toward-clew feel, push camber toward low-y,
+          // high-x-signed side.
+          const xSigned = xNorm * windSide;
+          const triMask = THREE.MathUtils.clamp(yNorm + (1 - xSigned) * 0.5 - 0.2, 0, 1);
+          const clewWeight = (1 - yNorm) * (0.5 + xSigned * 0.5);
+          const yShape = Math.sin(Math.PI * Math.min(1, yNorm * 1.15));
+          belly = triMask * (0.4 + clewWeight * 0.9) * yShape;
+
+          if (luff > 0.01) {
+            // Luff edge along the yard (top): when pinched, the whole leading
+            // edge trembles instead of bubbling.
+            const yardEdge = THREE.MathUtils.smoothstep(yNorm, 0.75, 1.0);
+            belly -= yardEdge * luff * 0.2;
+          }
+
+          const leechEdge = THREE.MathUtils.smoothstep(xSigned, 0.2, 1.0);
+          ripple =
+            Math.sin(elapsed * (flutterFreq + 0.6) + yNorm * 2.4 + sail.flutterPhase) *
+            flutterAmount *
+            (0.4 + leechEdge * 0.8);
+
+          sag = (0.01 + luff * 0.015) * xAbs * yNorm;
+        } else {
+          // junk_batten: panelized. Each panel deforms as a small symmetric
+          // belly; battens (panel boundaries) stay near-flat.
+          const panelY = yNorm * numPanels;
+          const panelT = panelY - Math.floor(panelY);
+          const panelShape = Math.sin(Math.PI * panelT); // 0 at battens, 1 mid-panel
+          const bowShape = (1 - xNorm * xNorm);
+          belly = bowShape * panelShape * 0.55;
+
+          // Battens dampen flutter to almost nothing; only gentle shimmer.
+          ripple =
+            Math.sin(elapsed * (flutterFreq * 0.6) + panelY * 4 + sail.flutterPhase) *
+            flutterAmount *
+            panelShape *
+            0.25;
+
+          sag = (0.006 + luff * 0.008) * xAbs * yNorm;
+        }
+
+        array[i] = bx;
+        array[i + 1] = by - sag;
         array[i + 2] = belly * camberDepth + ripple;
       }
 
@@ -1056,8 +1412,17 @@ export function Ship() {
       }
     };
 
-    updateSailShape(mainSailRef.current, mainSailGeometry, mainSailBase, 3.5, 4, 4, 1.55, sailTrim.current.main, 1, 0.3);
-    updateSailShape(foreSailRef.current, foreSailGeometry, foreSailBase, 2.5, 3, 3, 1.05, sailTrim.current.fore, 0.82, 1.1);
+    for (let i = 0; i < profile.sails.length; i++) {
+      const sail = profile.sails[i];
+      // Lateen sails render as rigid slabs, no vertex deformation.
+      if (sail.plan === 'lateen') continue;
+      const mesh = sailRefs.current[i];
+      const geom = sailGeometries[i];
+      const base = sailBases[i];
+      if (!geom || !base) continue;
+      const trim = sail.trimsWithMain ? sailTrim.current.main : sailTrim.current.fore;
+      updateSailShape(mesh ?? null, geom, base, sail, sail.position[1], trim);
+    }
 
     // ── Mast flag cloth sim ──
     if (flagMeshRef.current && flagPivotRef.current) {
@@ -1081,7 +1446,7 @@ export function Ship() {
       const t = state.clock.elapsedTime;
       const pos = flagGeometry.attributes.position as THREE.BufferAttribute;
       const arr = pos.array as Float32Array;
-      const hw = 0.7; // half width
+      const hw = 0.7 * flagScale; // half width — scales with ship flag size
 
       for (let i = 0; i < arr.length; i += 3) {
         const bx = flagBase[i];
@@ -1103,6 +1468,42 @@ export function Ship() {
       pos.needsUpdate = true;
       if (recomputeNormals) {
         flagGeometry.computeVertexNormals();
+      }
+    }
+
+    // ── Mast-top pennants ──
+    // Trail on the same apparent-wind heading as the main flag, with a small
+    // lag so the shorter streamers read as lighter / more responsive. Each
+    // pennant gets its own travelling wave (phase offset by mastIdx).
+    if (pennants.length > 0) {
+      const windStr = Math.min(
+        apparentSpeed * 0.18 + Math.abs(velocity.current) * 0.09,
+        1,
+      );
+      const t = state.clock.elapsedTime;
+      for (let pi = 0; pi < pennants.length; pi++) {
+        const pen = pennants[pi];
+        const pivot = pennantPivotRefs.current[pi];
+        if (pivot) pivot.rotation.y = flagWindAngle.current;
+        const mesh = pennantMeshRefs.current[pi];
+        if (!mesh) continue;
+        const arr = pen.geometry.attributes.position.array as Float32Array;
+        const base = pen.base;
+        const phase = pi * 1.3;
+        for (let i = 0; i < arr.length; i += 3) {
+          const bx = base[i];       // 0 at hoist, length at fly
+          const by = base[i + 1];
+          const xNorm = bx / pen.length;
+          const xCube = xNorm * xNorm * xNorm;
+          const wave = Math.sin(t * 7 - xNorm * 4.5 + phase) * 0.05 * xNorm;
+          const flutter = Math.sin(t * 13 - xNorm * 6 + phase * 0.7) * 0.025 * xCube;
+          const droop = (1 - windStr) * xCube * 0.18;
+          arr[i] = bx;
+          arr[i + 1] = by - droop;
+          arr[i + 2] = (wave + flutter) * (0.25 + windStr * 0.85);
+        }
+        pen.geometry.attributes.position.needsUpdate = true;
+        if (recomputeNormals) pen.geometry.computeVertexNormals();
       }
     }
 
@@ -1167,6 +1568,8 @@ export function Ship() {
       prevAnchored.current = isAnchored;
 
       const ac = anchorClock.current;
+      const [anchorStowX, anchorStowY, anchorStowZ] = profile.equipment.anchor;
+      const anchorSwungX = anchorStowX + 0.8; // full starboard extent
 
       if (anchorState.current === 'stowed') {
         // Anchor stowed — hidden
@@ -1183,9 +1586,9 @@ export function Ship() {
           const easePlunge = plunge * plunge;
 
           anchorGroupRef.current.position.set(
-            1.2 + easeSwing * 0.8,   // swing to starboard
-            1.0 - easePlunge * 3.5,  // drop from deck level into water
-            2.5                       // bow area
+            anchorStowX + easeSwing * 0.8,   // swing to starboard
+            anchorStowY - easePlunge * 3.5,  // drop from deck level into water
+            anchorStowZ,                      // bow area
           );
           anchorGroupRef.current.rotation.z = -easeSwing * 0.4 - easePlunge * 0.8;
           anchorGroupRef.current.rotation.x = easePlunge * 0.3;
@@ -1200,8 +1603,8 @@ export function Ship() {
         if (progress > 0.38 && progress < 0.45 && group.current) {
           const shipPos = group.current.position;
           const rot = rotation.current;
-          const splashX = shipPos.x + Math.sin(rot) * 2.5 + Math.cos(rot) * 1.8;
-          const splashZ = shipPos.z + Math.cos(rot) * 2.5 - Math.sin(rot) * 1.8;
+          const splashX = shipPos.x + Math.sin(rot) * anchorStowZ + Math.cos(rot) * anchorSwungX;
+          const splashZ = shipPos.z + Math.cos(rot) * anchorStowZ - Math.sin(rot) * anchorSwungX;
           // Trigger water ripple for anchor splash
           if (progress < 0.40) spawnSplash(splashX, splashZ, 0.6);
           for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
@@ -1228,7 +1631,7 @@ export function Ship() {
         // Anchor hanging below waterline, chain taut, gentle sway
         if (anchorGroupRef.current) {
           anchorGroupRef.current.visible = true;
-          anchorGroupRef.current.position.set(2.0, -2.5, 2.5);
+          anchorGroupRef.current.position.set(anchorSwungX, -2.5, anchorStowZ);
           anchorGroupRef.current.rotation.z = -1.2 + Math.sin(state.clock.elapsedTime * 1.2) * 0.04;
           anchorGroupRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.8) * 0.03;
         }
@@ -1244,9 +1647,9 @@ export function Ship() {
           const eased = 1 - (1 - progress) * (1 - progress); // ease-out
           // Rise from underwater back up to deck
           anchorGroupRef.current.position.set(
-            2.0 - eased * 0.8,
-            -2.5 + eased * 3.5,
-            2.5
+            anchorSwungX - eased * 0.8,
+            -2.5 + eased * (anchorStowY + 2.5),
+            anchorStowZ,
           );
           anchorGroupRef.current.rotation.z = -1.2 + eased * 1.2;
           anchorGroupRef.current.rotation.x = 0.3 - eased * 0.3;
@@ -1537,6 +1940,10 @@ export function Ship() {
       const localAim = swivelAimAngle - rotation.current;
       swivelPivotRef.current.rotation.y = localAim;
       swivelPivotRef.current.visible = true;
+      // Pitch: barrel sits along local +Z, so a negative X rotation tilts it up.
+      if (swivelPitchRef.current) {
+        swivelPitchRef.current.rotation.x = -swivelAimPitch;
+      }
     } else if (swivelPivotRef.current) {
       swivelPivotRef.current.visible = false;
     }
@@ -1610,40 +2017,819 @@ export function Ship() {
             </Billboard>
           )}
 
-          {/* Hull */}
-          <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
-            <boxGeometry args={[2.2, 1.2, 5]} />
-            <meshStandardMaterial ref={hullMaterialRef} color="#5C4033" roughness={0.9} />
+          {/* Hull — box at waterline; bow/stern shapes vary per ship type */}
+          <mesh position={[0, profile.hull.height * 0.5, 0]} castShadow receiveShadow>
+            <boxGeometry args={[profile.hull.width, profile.hull.height, profile.hull.length]} />
+            <meshStandardMaterial ref={hullMaterialRef} color={profile.hull.hullColor} roughness={0.9} />
           </mesh>
           {/* Deck */}
-          <mesh position={[0, 1.11, 0]} castShadow receiveShadow>
-            <boxGeometry args={[2.0, 0.1, 4.8]} />
-            <meshStandardMaterial color="#8B4513" roughness={0.8} />
+          <mesh position={[0, profile.hull.height + 0.01, 0]} castShadow receiveShadow>
+            <boxGeometry args={[profile.hull.width * 0.91, 0.1, profile.hull.length * 0.96]} />
+            <meshStandardMaterial color={profile.hull.deckColor} roughness={0.8} />
           </mesh>
-          {/* Bow */}
-          <mesh position={[0, 0.5, 3.2]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-            <boxGeometry args={[1.55, 1.2, 1.55]} />
-            <meshStandardMaterial color="#5C4033" roughness={0.9} />
-          </mesh>
-          {/* Bow Deck */}
-          <mesh position={[0, 1.11, 3.2]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-            <boxGeometry args={[1.4, 0.1, 1.4]} />
-            <meshStandardMaterial color="#8B4513" roughness={0.8} />
-          </mesh>
-          {/* Stern cabin */}
-          <mesh position={[0, 1.6, -1.5]} castShadow receiveShadow>
-            <boxGeometry args={[2, 1, 1.5]} />
-            <meshStandardMaterial color="#6B4423" roughness={0.9} />
-          </mesh>
-          {/* Main Mast */}
-          <mesh position={[0, 3.5, 0.5]} castShadow>
-            <cylinderGeometry args={[0.15, 0.15, 6]} />
-            <meshStandardMaterial color="#3e2723" />
-          </mesh>
-          {/* Mast Flag — pivot group at the hoist (mast attachment point) */}
+          {/* Bow — shape depends on bowStyle */}
+          {profile.hull.bowStyle === 'angled' && (
+            <>
+              <mesh position={[0, profile.hull.height * 0.5, profile.hull.length * 0.64]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width * 0.7, profile.hull.height, profile.hull.width * 0.7]} />
+                <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+              </mesh>
+              <mesh position={[0, profile.hull.height + 0.01, profile.hull.length * 0.64]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width * 0.64, 0.1, profile.hull.width * 0.64]} />
+                <meshStandardMaterial color={profile.hull.deckColor} roughness={0.8} />
+              </mesh>
+            </>
+          )}
+          {profile.hull.bowStyle === 'tapered' && (
+            <>
+              {/* Forward wedge — diamond cross-section pointing +Z, narrower
+                  than the hull so it reads as a tapered prow */}
+              <mesh
+                position={[0, profile.hull.height * 0.5, profile.hull.length * 0.56]}
+                rotation={[0, Math.PI / 4, 0]}
+                castShadow
+                receiveShadow
+              >
+                <boxGeometry args={[profile.hull.width * 0.5, profile.hull.height, profile.hull.width * 0.5]} />
+                <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+              </mesh>
+              {/* Deck triangle atop the wedge so there's no gap with the main deck */}
+              <mesh
+                position={[0, profile.hull.height + 0.01, profile.hull.length * 0.56]}
+                rotation={[0, Math.PI / 4, 0]}
+                castShadow
+                receiveShadow
+              >
+                <boxGeometry args={[profile.hull.width * 0.46, 0.1, profile.hull.width * 0.46]} />
+                <meshStandardMaterial color={profile.hull.deckColor} roughness={0.8} />
+              </mesh>
+            </>
+          )}
+          {profile.hull.bowStyle === 'bluff' && (
+            <mesh position={[0, profile.hull.height * 0.6, profile.hull.length * 0.52]} castShadow receiveShadow>
+              <boxGeometry args={[profile.hull.width * 0.82, profile.hull.height * 0.6, profile.hull.length * 0.12]} />
+              <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+            </mesh>
+          )}
+          {/* Bowsprit — angled spar projecting forward-up from the bow.
+              Rotation +0.5 around X so the thin top end (+Y local) rotates
+              forward-and-up and the thick base (-Y local) sits aft-and-low
+              against the forecastle/bow deck. Position is chosen so the base
+              rests on the bow deck tip, not floating beyond it. */}
+          {profile.hull.hasBowsprit && (() => {
+            const sprit = profile.hull.length * 0.38;
+            // For rotation +0.5: bottom end local offset rotates to
+            // (y = -cos(0.5)*L/2, z = -sin(0.5)*L/2) from the group center.
+            // Pick the center so bottom end lands at (y = hull.height + 0.05,
+            // z = hull.length * 0.48) — just inside the bow deck tip.
+            const halfL = sprit * 0.5;
+            const cy = profile.hull.height + 0.05 + Math.cos(0.5) * halfL;
+            const cz = profile.hull.length * 0.48 + Math.sin(0.5) * halfL;
+            return (
+              <mesh
+                position={[0, cy, cz]}
+                rotation={[0.5, 0, 0]}
+                castShadow
+              >
+                <cylinderGeometry args={[0.05, 0.08, sprit, 6]} />
+                <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+              </mesh>
+            );
+          })()}
+          {/* Stempost — raked upright at the forward tip of the hull. Plain
+              style ends in a sphere; ornate style adds a stacked cone plus a
+              small Latin cross, echoing the Order of Christ finials on
+              Portuguese caravels. Rake is applied to the group so the finial
+              stays aligned with the cylinder. */}
+          {profile.hull.hasStempost && profile.hull.stempostStyle !== 'raked_beak' && (
+            <group
+              position={[0, profile.hull.height + 0.02, profile.hull.length * 0.66]}
+              rotation={[0.22, 0, 0]}
+            >
+              <mesh position={[0, profile.hull.height * 0.45, 0]} castShadow>
+                <cylinderGeometry args={[0.05, 0.07, profile.hull.height * 0.9, 6]} />
+                <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+              </mesh>
+              {profile.hull.stempostStyle === 'ornate' ? (
+                <group position={[0, profile.hull.height * 0.9, 0]}>
+                  {/* Base bead */}
+                  <mesh castShadow>
+                    <sphereGeometry args={[0.09, 8, 6]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.8} />
+                  </mesh>
+                  {/* Stacked cone finial */}
+                  <mesh position={[0, 0.12, 0]} castShadow>
+                    <coneGeometry args={[0.07, 0.18, 6]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.8} />
+                  </mesh>
+                  {/* Latin cross — vertical + horizontal arms */}
+                  <mesh position={[0, 0.33, 0]} castShadow>
+                    <boxGeometry args={[0.035, 0.22, 0.035]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.8} />
+                  </mesh>
+                  <mesh position={[0, 0.36, 0]} castShadow>
+                    <boxGeometry args={[0.14, 0.035, 0.035]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.8} />
+                  </mesh>
+                </group>
+              ) : (
+                <mesh position={[0, profile.hull.height * 0.9, 0]} castShadow>
+                  <sphereGeometry args={[0.11, 8, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.8} />
+                </mesh>
+              )}
+            </group>
+          )}
+          {/* Raked beak stempost — dhow signature. A long spar tilted sharply
+              forward-up from the bow tip, with a plain tapered finial. No
+              cross or bead (distinguishes it from the ornate caravel stem). */}
+          {profile.hull.hasStempost && profile.hull.stempostStyle === 'raked_beak' && (() => {
+            const beakLen = profile.hull.height * 2.2;
+            const rake = 0.58;
+            return (
+              <group
+                position={[0, profile.hull.height + 0.05, profile.hull.length * 0.5]}
+                rotation={[rake, 0, 0]}
+              >
+                {/* Main spar — cylinder extending +Y from the base */}
+                <mesh position={[0, beakLen * 0.5, 0]} castShadow>
+                  <cylinderGeometry args={[0.05, 0.09, beakLen, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+                </mesh>
+                {/* Plain tapered tip */}
+                <mesh position={[0, beakLen + 0.08, 0]} castShadow>
+                  <coneGeometry args={[0.055, 0.18, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Secondary (inner) stempost — shorter, less raked, sits just aft
+              of the main stempost to give the bow a doubled-curve silhouette
+              typical of caravela latina prows. */}
+          {profile.hull.hasStempost && profile.hull.doubleStem && (
+            <group
+              position={[0, profile.hull.height + 0.02, profile.hull.length * 0.56]}
+              rotation={[0.1, 0, 0]}
+            >
+              <mesh position={[0, profile.hull.height * 0.32, 0]} castShadow>
+                <cylinderGeometry args={[0.045, 0.06, profile.hull.height * 0.64, 6]} />
+                <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+              </mesh>
+            </group>
+          )}
+          {/* Raised forecastle — Carrack/Galleon bow structure. Box extends
+              down into the hull (bottom at hull mid-height) so it reads as
+              integrated with the hull rather than floating on the deck. */}
+          {profile.hull.hasForecastle && (
+            <mesh
+              position={[0, profile.hull.height + 0.15, profile.hull.length * 0.4]}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[profile.hull.width * 0.78, 1.25, profile.hull.length * 0.22]} />
+              <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+            </mesh>
+          )}
+          {/* Stern structure — cabin / castle / transom. Cabin is kept short
+              in z so mizzen masts (when present) can step aft of it without
+              clipping through the cabin roof. */}
+          {profile.hull.sternStyle === 'cabin' && (
+            <mesh position={[0, profile.hull.height + 0.45, -profile.hull.length * 0.22]} castShadow receiveShadow>
+              <boxGeometry args={[profile.hull.width * 0.9, 0.9, profile.hull.length * 0.22]} />
+              <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+            </mesh>
+          )}
+          {/* Aftercastle rail — thin perimeter railing sitting on the cabin
+              roof (four corner posts + three spanning rails). Caravel detail;
+              ship.cabinRail gates it so it won't appear on dhow/pinnace. */}
+          {profile.hull.sternStyle === 'cabin' && profile.hull.cabinRail && (() => {
+            const railY = profile.hull.height + 0.92; // cabin top + small gap
+            const cabinZ = -profile.hull.length * 0.22;
+            const halfW = profile.hull.width * 0.42;
+            const halfL = profile.hull.length * 0.11;
+            const postH = 0.18;
+            const postR = 0.025;
+            const railR = 0.02;
+            const posts: [number, number][] = [
+              [-halfW, cabinZ - halfL],
+              [halfW, cabinZ - halfL],
+              [-halfW, cabinZ + halfL],
+              [halfW, cabinZ + halfL],
+            ];
+            return (
+              <group>
+                {posts.map(([x, z], i) => (
+                  <mesh key={`post-${i}`} position={[x, railY + postH * 0.5, z]} castShadow>
+                    <cylinderGeometry args={[postR, postR, postH, 5]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                  </mesh>
+                ))}
+                {/* Port rail (along -X side) */}
+                <mesh position={[-halfW, railY + postH, cabinZ]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfL * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Starboard rail */}
+                <mesh position={[halfW, railY + postH, cabinZ]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfL * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Aft rail (across -Z, stern-facing) */}
+                <mesh position={[0, railY + postH, cabinZ - halfL]} rotation={[0, 0, Math.PI / 2]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfW * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {profile.hull.sternStyle === 'castle' && (
+            <>
+              <mesh position={[0, profile.hull.height + 0.45, -profile.hull.length * 0.26]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width * 0.95, 0.95, profile.hull.length * 0.34]} />
+                <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+              </mesh>
+              <mesh position={[0, profile.hull.height + 1.2, -profile.hull.length * 0.34]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width * 0.8, 0.6, profile.hull.length * 0.22]} />
+                <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+              </mesh>
+            </>
+          )}
+          {profile.hull.sternStyle === 'transom' && (() => {
+            // Low transom (dhow) uses a shorter panel and lower cabin so the
+            // stern reads as modest rather than carrack-like. Junk keeps the
+            // full-height panel.
+            const low = profile.hull.lowTransom;
+            const panelH = low ? 0.85 : 1.4;
+            const panelY = profile.hull.height + (low ? 0.38 : 0.7);
+            const cabinH = low ? 0.55 : 0.8;
+            const cabinY = profile.hull.height + (low ? 0.35 : 0.55);
+            const panelW = profile.hull.width * (low ? 0.88 : 0.95);
+            const cabinW = profile.hull.width * (low ? 0.78 : 0.85);
+            const panelZ = -profile.hull.length * 0.48;
+            const carved = profile.hull.hasCarvedTransom;
+            const frontFaceZ = panelZ + 0.09 + 0.005; // panel front +Z face
+            const winSize = Math.min(0.24, panelH * 0.3);
+            const winY = panelY + panelH * 0.18;
+            const winOffsetX = panelW * 0.26;
+            return (
+              <>
+                <mesh position={[0, panelY, panelZ]} castShadow receiveShadow>
+                  <boxGeometry args={[panelW, panelH, 0.18]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                <mesh position={[0, cabinY, -profile.hull.length * 0.36]} castShadow receiveShadow>
+                  <boxGeometry args={[cabinW, cabinH, profile.hull.length * 0.2]} />
+                  <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+                </mesh>
+                {carved && (
+                  <>
+                    {/* Vertical trim bars — three carved panels across the
+                        transom, echoing the Indo-Portuguese baghla stern. */}
+                    {[-panelW * 0.36, 0, panelW * 0.36].map((x, i) => (
+                      <mesh key={`carve-trim-${i}`} position={[x, panelY, frontFaceZ + 0.008]}>
+                        <boxGeometry args={[0.035, panelH * 0.85, 0.02]} />
+                        <meshStandardMaterial color={profile.hull.hullColor} roughness={0.85} />
+                      </mesh>
+                    ))}
+                    {/* Stern windows — two lit squares with mullions. */}
+                    {[-winOffsetX, winOffsetX].map((x, i) => (
+                      <group key={`carve-win-${i}`} position={[x, winY, frontFaceZ + 0.016]}>
+                        <mesh>
+                          <boxGeometry args={[winSize, winSize, 0.02]} />
+                          <meshStandardMaterial
+                            color="#ffe6a8"
+                            emissive="#ffae55"
+                            emissiveIntensity={0.75}
+                            toneMapped={false}
+                          />
+                        </mesh>
+                        <mesh position={[0, 0, 0.012]}>
+                          <boxGeometry args={[0.018, winSize * 1.04, 0.008]} />
+                          <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+                        </mesh>
+                        <mesh position={[0, 0, 0.012]}>
+                          <boxGeometry args={[winSize * 1.04, 0.018, 0.008]} />
+                          <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+                        </mesh>
+                      </group>
+                    ))}
+                    {/* Top cornice — thin horizontal cap */}
+                    <mesh position={[0, panelY + panelH * 0.5 + 0.04, panelZ]}>
+                      <boxGeometry args={[panelW * 1.06, 0.07, 0.22]} />
+                      <meshStandardMaterial color={profile.hull.hullColor} roughness={0.85} />
+                    </mesh>
+                  </>
+                )}
+              </>
+            );
+          })()}
+          {/* Tuck stern — Fluyt's signature pinched pear shape. A narrow
+              diamond-section wedge aft (like the bow, mirrored) gives the
+              tapered tuck, with a low cabin sitting on top. */}
+          {profile.hull.sternStyle === 'tuck' && (
+            <>
+              <mesh
+                position={[0, profile.hull.height * 0.5, -profile.hull.length * 0.52]}
+                rotation={[0, Math.PI / 4, 0]}
+                castShadow
+                receiveShadow
+              >
+                <boxGeometry args={[profile.hull.width * 0.45, profile.hull.height, profile.hull.width * 0.45]} />
+                <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+              </mesh>
+              <mesh
+                position={[0, profile.hull.height + 0.4, -profile.hull.length * 0.34]}
+                castShadow
+                receiveShadow
+              >
+                <boxGeometry args={[profile.hull.width * 0.7, 0.7, profile.hull.length * 0.24]} />
+                <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+              </mesh>
+            </>
+          )}
+          {/* Narrow high transom — fluyt pear-drop stern. Rises directly
+              off the cabin's aft face, overlapping the cabin top so the two
+              read as one continuous vertical stern rather than stacked
+              blocks. Keyed on tuck+hasNarrowTransom so other sternStyles
+              don't accidentally inherit it. */}
+          {profile.hull.sternStyle === 'tuck' && profile.hull.hasNarrowTransom && (() => {
+            const panelW = profile.hull.width * 0.46;
+            const panelH = 1.6;
+            // Overlap the cabin (which tops out at hull.height + 0.75) by
+            // starting the panel at hull.height + 0.35 — that fills the gap
+            // and lets the transom visually continue the cabin upward.
+            const panelY = profile.hull.height + 0.35 + panelH * 0.5;
+            // Sit just aft of the cabin (cabin aft face ≈ -length*0.46) so
+            // the panel stacks fore-to-aft instead of interpenetrating.
+            const panelZ = -profile.hull.length * 0.465;
+            const panelDepth = 0.14;
+            // Windows: two larger lit squares in the upper third of the
+            // panel, with mullions dividing each into 4 panes.
+            const winSize = 0.22;
+            const winY = panelY + panelH * 0.22;
+            const winOffsetX = panelW * 0.24;
+            const frontFaceZ = panelZ - panelDepth * 0.5 - 0.005;
+            return (
+              <group>
+                {/* Transom panel */}
+                <mesh position={[0, panelY, panelZ]} castShadow receiveShadow>
+                  <boxGeometry args={[panelW, panelH, panelDepth]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Vertical trim bars — suggest carved panels */}
+                {[-panelW * 0.34, 0, panelW * 0.34].map((x, i) => (
+                  <mesh key={`trim-${i}`} position={[x, panelY, frontFaceZ - 0.02]}>
+                    <boxGeometry args={[0.035, panelH * 0.85, 0.025]} />
+                    <meshStandardMaterial color={profile.hull.hullColor} roughness={0.85} />
+                  </mesh>
+                ))}
+                {/* Stern windows — emissive squares with mullions (a thin
+                    cross across each window). Brighter than before so they
+                    read against the trim-colored panel in daylight too. */}
+                {[-winOffsetX, winOffsetX].map((x, i) => (
+                  <group key={`win-${i}`} position={[x, winY, frontFaceZ - 0.03]}>
+                    <mesh>
+                      <boxGeometry args={[winSize, winSize, 0.02]} />
+                      <meshStandardMaterial
+                        color="#ffe6a8"
+                        emissive="#ffae55"
+                        emissiveIntensity={0.85}
+                        toneMapped={false}
+                      />
+                    </mesh>
+                    {/* Vertical mullion */}
+                    <mesh position={[0, 0, 0.012]}>
+                      <boxGeometry args={[0.018, winSize * 1.04, 0.008]} />
+                      <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+                    </mesh>
+                    {/* Horizontal mullion */}
+                    <mesh position={[0, 0, 0.012]}>
+                      <boxGeometry args={[winSize * 1.04, 0.018, 0.008]} />
+                      <meshStandardMaterial color={profile.hull.hullColor} roughness={0.9} />
+                    </mesh>
+                  </group>
+                ))}
+                {/* Top cap — thin horizontal cornice */}
+                <mesh position={[0, panelY + panelH * 0.5 + 0.045, panelZ]}>
+                  <boxGeometry args={[panelW * 1.1, 0.09, panelDepth + 0.06]} />
+                  <meshStandardMaterial color={profile.hull.hullColor} roughness={0.85} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Cargo hatch — raised coaming amidships. Fluyts were bulk
+              carriers; a visible hatch between the masts reads as "merchant
+              ship" more than any other single cue. Placed between main and
+              fore masts (profile-driven z) to avoid clipping either. */}
+          {profile.hull.hasCargoHatch && profile.masts.length >= 2 && (() => {
+            // Midpoint between main (idx 0) and fore (idx 1) masts.
+            const mainZ = profile.masts[0].position[2];
+            const foreZ = profile.masts[1].position[2];
+            const hatchZ = (mainZ + foreZ) * 0.5;
+            const hatchW = profile.hull.width * 0.55;
+            const hatchL = profile.hull.length * 0.22;
+            const coamingH = 0.16;
+            const coamingY = profile.hull.height + coamingH * 0.5 + 0.02;
+            return (
+              <group>
+                {/* Raised coaming frame */}
+                <mesh position={[0, coamingY, hatchZ]} castShadow receiveShadow>
+                  <boxGeometry args={[hatchW, coamingH, hatchL]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Hatch cover — darker plank cover, slightly inset */}
+                <mesh position={[0, coamingY + coamingH * 0.5 + 0.01, hatchZ]} receiveShadow>
+                  <boxGeometry args={[hatchW * 0.92, 0.04, hatchL * 0.92]} />
+                  <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
+                </mesh>
+                {/* Plank seams — two dark lines across the cover */}
+                {[-hatchL * 0.22, hatchL * 0.22].map((dz, i) => (
+                  <mesh
+                    key={`plank-${i}`}
+                    position={[0, coamingY + coamingH * 0.5 + 0.035, hatchZ + dz]}
+                  >
+                    <boxGeometry args={[hatchW * 0.9, 0.008, 0.03]} />
+                    <meshStandardMaterial color="#2a1d12" roughness={1} />
+                  </mesh>
+                ))}
+              </group>
+            );
+          })()}
+          {/* Stern davit — short horizontal spar projecting aft from the
+              transom. Minimal but unmistakably a cargo-handling boom. */}
+          {profile.hull.hasSternDavit && (() => {
+            const spanZ = -profile.hull.length * 0.6;
+            const baseZ = -profile.hull.length * 0.48;
+            const y = profile.hull.height + 0.7;
+            const spar = spanZ - baseZ; // negative length
+            return (
+              <group>
+                {/* The spar itself — horizontal cylinder along Z, so rotate X by 90° */}
+                <mesh
+                  position={[0, y, (baseZ + spanZ) * 0.5]}
+                  rotation={[Math.PI / 2, 0, 0]}
+                  castShadow
+                >
+                  <cylinderGeometry args={[0.05, 0.05, Math.abs(spar) * 1.05, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Outboard knob at the aft tip */}
+                <mesh position={[0, y, spanZ]} castShadow>
+                  <sphereGeometry args={[0.08, 8, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+                </mesh>
+                {/* Short drop line — suggests a lanyard/block hanging from tip */}
+                <mesh position={[0, y - 0.22, spanZ]}>
+                  <cylinderGeometry args={[0.012, 0.012, 0.44, 4]} />
+                  <meshStandardMaterial color="#2a1d12" roughness={1} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Oculus — painted eye on each side of the bluff bow. Two flat
+              planes hugging the hull sides, normals pointing outward; the
+              canvas texture does all the work. Positioned low-and-forward
+              like real junks. */}
+          {profile.hull.hasOculus && oculusTexture && (() => {
+            const eyeSize = Math.min(profile.hull.width * 0.45, profile.hull.height * 0.72);
+            const eyeY = profile.hull.height * 0.55;
+            const eyeZ = profile.hull.length * 0.36;
+            const sideX = profile.hull.width * 0.5 + 0.005;
+            return (
+              <group>
+                {/* Port side — plane normal faces -X */}
+                <mesh position={[-sideX, eyeY, eyeZ]} rotation={[0, -Math.PI / 2, 0]}>
+                  <planeGeometry args={[eyeSize, eyeSize]} />
+                  <meshStandardMaterial map={oculusTexture} roughness={0.9} />
+                </mesh>
+                {/* Starboard side — plane normal faces +X */}
+                <mesh position={[sideX, eyeY, eyeZ]} rotation={[0, Math.PI / 2, 0]}>
+                  <planeGeometry args={[eyeSize, eyeSize]} />
+                  <meshStandardMaterial map={oculusTexture} roughness={0.9} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* High sternpost — tall narrow plank rising above the transom.
+              The "Chinese junk" silhouette comes from this asymmetry between
+              the bluff squared bow and the tall squared stern rising far
+              above the cabin roof. */}
+          {profile.hull.hasHighSternpost && (() => {
+            const plankW = profile.hull.width * 0.55;
+            const plankH = 1.5;
+            const plankD = 0.14;
+            // Existing transom wall tops out at hull.height + 1.4; start the
+            // sternpost 0.05 lower so it overlaps (no floating gap).
+            const plankY = profile.hull.height + 1.35 + plankH * 0.5;
+            const plankZ = -profile.hull.length * 0.46;
+            return (
+              <group>
+                {/* Main plank */}
+                <mesh position={[0, plankY, plankZ]} castShadow receiveShadow>
+                  <boxGeometry args={[plankW, plankH, plankD]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Painted horizontal bands — classic junk decoration */}
+                {[-plankH * 0.28, plankH * 0.05, plankH * 0.32].map((dy, i) => (
+                  <mesh key={`band-${i}`} position={[0, plankY + dy, plankZ - plankD * 0.5 - 0.005]}>
+                    <boxGeometry args={[plankW * 1.02, 0.07, 0.015]} />
+                    <meshStandardMaterial color={profile.hull.deckColor} roughness={0.9} />
+                  </mesh>
+                ))}
+                {/* Top finial — small squared cap mimicking the upturned
+                    sternpost caps seen on Fujianese junks */}
+                <mesh position={[0, plankY + plankH * 0.5 + 0.08, plankZ]}>
+                  <boxGeometry args={[plankW * 1.15, 0.16, plankD + 0.08]} />
+                  <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+                </mesh>
+                {/* Two small curled "horn" finials at top corners */}
+                {[-plankW * 0.52, plankW * 0.52].map((x, i) => (
+                  <mesh
+                    key={`horn-${i}`}
+                    position={[x, plankY + plankH * 0.5 + 0.24, plankZ]}
+                    rotation={[0, 0, (i === 0 ? -1 : 1) * 0.4]}
+                  >
+                    <coneGeometry args={[0.08, 0.28, 5]} />
+                    <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.85} />
+                  </mesh>
+                ))}
+              </group>
+            );
+          })()}
+          {/* Midship deckhouse — second low cabin between the masts, giving
+              junks the characteristic multi-roof deck silhouette. Positioned
+              at the midpoint between main and fore masts so it scales with
+              the rig layout. */}
+          {profile.hull.hasMidshipDeckhouse && profile.masts.length >= 2 && (() => {
+            const mainZ = profile.masts[0].position[2];
+            const foreZ = profile.masts[1].position[2];
+            const dhZ = (mainZ + foreZ) * 0.5 + 0.2;
+            const dhW = profile.hull.width * 0.7;
+            const dhH = 0.7;
+            const dhL = profile.hull.length * 0.22;
+            const dhY = profile.hull.height + dhH * 0.5 + 0.03;
+            return (
+              <group>
+                {/* Main box */}
+                <mesh position={[0, dhY, dhZ]} castShadow receiveShadow>
+                  <boxGeometry args={[dhW, dhH, dhL]} />
+                  <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+                </mesh>
+                {/* Roof — slightly oversized, different color, curved profile
+                    suggested via a flatter box on top */}
+                <mesh position={[0, dhY + dhH * 0.5 + 0.06, dhZ]} castShadow>
+                  <boxGeometry args={[dhW * 1.08, 0.12, dhL * 1.08]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Two painted side panels (trim color horizontal bands) */}
+                {[-dhW * 0.5 - 0.01, dhW * 0.5 + 0.01].map((x, i) => (
+                  <mesh key={`side-${i}`} position={[x, dhY, dhZ]}>
+                    <boxGeometry args={[0.02, dhH * 0.35, dhL * 0.9]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                  </mesh>
+                ))}
+                {/* Small round doorway on the forward face (hint of entry) */}
+                <mesh position={[0, dhY - dhH * 0.05, dhZ + dhL * 0.5 + 0.01]}>
+                  <circleGeometry args={[dhH * 0.24, 12]} />
+                  <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Large fenestrated rudder — oversized hoistable rudder hanging
+              from the transom. A defining junk silhouette element; we draw
+              it vertically with 3 "fenestra" holes as small hull-colored
+              inserts so the shape reads as the famous perforated rudder. */}
+          {profile.hull.hasLargeRudder && (() => {
+            const rudW = 0.12;
+            // Tall enough for the rudder head to rise above deck level so
+            // the tiller cap is visible, while the blade hangs well below
+            // waterline (junks were famous for massive deep rudders).
+            const rudH = 2.4;
+            const rudL = profile.hull.length * 0.14;
+            const rudY = profile.hull.height * 0.1;
+            // Sit just aft of the hull stern face, not floating way back.
+            const rudZ = -profile.hull.length * 0.5 - rudL * 0.25;
+            return (
+              <group>
+                {/* Rudder blade — tall vertical plank hanging below waterline */}
+                <mesh position={[0, rudY, rudZ]} castShadow receiveShadow>
+                  <boxGeometry args={[rudW, rudH, rudL]} />
+                  <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
+                </mesh>
+                {/* Fenestra — three darker inserts suggesting the famous
+                    Chinese perforated rudder holes (they reduced helm load) */}
+                {[-rudH * 0.28, 0, rudH * 0.28].map((dy, i) => (
+                  <mesh key={`fen-${i}`} position={[rudW * 0.52, rudY + dy, rudZ]} rotation={[0, Math.PI / 2, 0]}>
+                    <circleGeometry args={[0.08, 10]} />
+                    <meshStandardMaterial color="#1a0f08" roughness={1} side={THREE.DoubleSide} />
+                  </mesh>
+                ))}
+                {/* Rudder head — small cap where the tiller would attach */}
+                <mesh position={[0, rudY + rudH * 0.5 + 0.08, rudZ - rudL * 0.15]} castShadow>
+                  <boxGeometry args={[rudW * 1.8, 0.16, rudL * 0.35]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Masts — slight taper (narrower at top) so they don't read as
+              cardboard tubes. 60% masthead radius is a natural rigger's taper. */}
+          {profile.masts.map((mast, idx) => (
+            <mesh
+              key={`mast-${idx}`}
+              position={mast.position}
+              rotation={mast.rake ? [mast.rake, 0, 0] : undefined}
+              castShadow
+            >
+              <cylinderGeometry args={[mast.radius * 0.6, mast.radius, mast.height]} />
+              <meshStandardMaterial color="#3e2723" />
+            </mesh>
+          ))}
+          {/* Round top — circular platform at ~78% up the main mast with a
+              short perimeter rail. Iconic carrack / galleon masthead detail. */}
+          {profile.hull.hasRoundTop && profile.masts[0] && (() => {
+            const main = profile.masts[0];
+            const platformR = Math.max(0.36, main.radius * 2.6);
+            const platformY = main.position[1] + main.height * 0.28;
+            const railH = 0.16;
+            const postR = 0.025;
+            // 6 posts around the perimeter
+            const postCount = 6;
+            return (
+              <group position={[main.position[0], platformY, main.position[2]]}>
+                {/* Platform disc */}
+                <mesh castShadow receiveShadow>
+                  <cylinderGeometry args={[platformR, platformR * 0.92, 0.08, 14]} />
+                  <meshStandardMaterial color={profile.hull.deckColor} roughness={0.9} />
+                </mesh>
+                {/* Perimeter rail — thin torus above the platform */}
+                <mesh position={[0, railH, 0]} castShadow>
+                  <torusGeometry args={[platformR * 0.95, 0.022, 5, 16]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                {/* Short posts supporting the rail */}
+                {Array.from({ length: postCount }, (_, i) => {
+                  const a = (i / postCount) * Math.PI * 2;
+                  return (
+                    <mesh
+                      key={`rt-post-${i}`}
+                      position={[Math.cos(a) * platformR * 0.95, railH * 0.5 + 0.04, Math.sin(a) * platformR * 0.95]}
+                      castShadow
+                    >
+                      <cylinderGeometry args={[postR, postR, railH, 4]} />
+                      <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                    </mesh>
+                  );
+                })}
+              </group>
+            );
+          })()}
+          {/* Pavesades — row of painted shields along the gunwale in faction
+              livery. Cheap boxes hugging the outside of the hull, alternating
+              primary/device colors so the row reads as heraldry not solid paint. */}
+          {profile.hull.pavesadeRow && (() => {
+            const faction = FACTIONS[shipFlag];
+            const c1 = faction?.colors[0] ?? profile.hull.trimColor;
+            const c2 = faction?.colors[1] ?? profile.hull.sailColor;
+            const shieldCount = 10;
+            const shieldW = 0.22;
+            const shieldH = 0.26;
+            const shieldT = 0.04;
+            // Run shields from just aft of the bow to just forward of the stern
+            const zStart = -profile.hull.length * 0.32;
+            const zEnd = profile.hull.length * 0.32;
+            const zStep = (zEnd - zStart) / (shieldCount - 1);
+            const sideX = profile.hull.width * 0.5 + shieldT * 0.5;
+            const y = profile.hull.height + 0.12;
+            return (
+              <group>
+                {Array.from({ length: shieldCount }, (_, i) => {
+                  const z = zStart + zStep * i;
+                  const color = i % 2 === 0 ? c1 : c2;
+                  return (
+                    <group key={`pav-${i}`}>
+                      <mesh position={[sideX, y, z]} castShadow>
+                        <boxGeometry args={[shieldT, shieldH, shieldW]} />
+                        <meshStandardMaterial color={color} roughness={0.95} />
+                      </mesh>
+                      <mesh position={[-sideX, y, z]} castShadow>
+                        <boxGeometry args={[shieldT, shieldH, shieldW]} />
+                        <meshStandardMaterial color={color} roughness={0.95} />
+                      </mesh>
+                    </group>
+                  );
+                })}
+              </group>
+            );
+          })()}
+          {/* Sterncastle rail — thin perimeter railing around the upper tier
+              of the stern castle. Only meaningful when sternStyle is 'castle'. */}
+          {profile.hull.sternStyle === 'castle' && profile.hull.sterncastleRail && (() => {
+            // Upper tier sits at y = hull.height + 1.2, width*0.8, length*0.22
+            const tierY = profile.hull.height + 1.5;
+            const tierZ = -profile.hull.length * 0.34;
+            const halfW = profile.hull.width * 0.4;
+            const halfL = profile.hull.length * 0.11;
+            const postH = 0.18;
+            const postR = 0.022;
+            const railR = 0.018;
+            const posts: [number, number][] = [
+              [-halfW, tierZ - halfL],
+              [halfW, tierZ - halfL],
+              [-halfW, tierZ + halfL],
+              [halfW, tierZ + halfL],
+            ];
+            return (
+              <group>
+                {posts.map(([x, z], i) => (
+                  <mesh key={`sc-post-${i}`} position={[x, tierY + postH * 0.5, z]} castShadow>
+                    <cylinderGeometry args={[postR, postR, postH, 5]} />
+                    <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                  </mesh>
+                ))}
+                <mesh position={[-halfW, tierY + postH, tierZ]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfL * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                <mesh position={[halfW, tierY + postH, tierZ]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfL * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+                <mesh position={[0, tierY + postH, tierZ - halfL]} rotation={[0, 0, Math.PI / 2]} castShadow>
+                  <cylinderGeometry args={[railR, railR, halfW * 2, 5]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.9} />
+                </mesh>
+              </group>
+            );
+          })()}
+          {/* Sterncastle lanterns — small emissive cages on the aft corners
+              of the upper tier. Low-intensity warm light; complements the
+              existing stern torch without doubling its brightness. */}
+          {profile.hull.sternStyle === 'castle' && profile.hull.sterncastleLanterns && (() => {
+            const tierY = profile.hull.height + 1.5;
+            const tierZ = -profile.hull.length * 0.34;
+            const halfW = profile.hull.width * 0.42;
+            const aftZ = tierZ - profile.hull.length * 0.11 - 0.05;
+            const positions: [number, number, number][] = [
+              [-halfW, tierY + 0.2, aftZ],
+              [halfW, tierY + 0.2, aftZ],
+            ];
+            return (
+              <group>
+                {positions.map((pos, i) => (
+                  <group key={`lant-${i}`} position={pos}>
+                    {/* Cage cube */}
+                    <mesh castShadow>
+                      <boxGeometry args={[0.12, 0.16, 0.12]} />
+                      <meshStandardMaterial color="#2a1f14" roughness={0.8} />
+                    </mesh>
+                    {/* Glowing glass */}
+                    <mesh>
+                      <boxGeometry args={[0.08, 0.1, 0.08]} />
+                      <meshStandardMaterial
+                        color="#ffcc66"
+                        emissive="#ff9933"
+                        emissiveIntensity={0.55}
+                        toneMapped={false}
+                      />
+                    </mesh>
+                    {/* Bracket down to the deck */}
+                    <mesh position={[0, -0.12, 0]}>
+                      <cylinderGeometry args={[0.018, 0.018, 0.14, 4]} />
+                      <meshStandardMaterial color="#2a1f14" roughness={0.8} />
+                    </mesh>
+                  </group>
+                ))}
+              </group>
+            );
+          })()}
+          {/* Mast-top pennants — animated streamers on non-main masts. Pivot
+              rotates around Y to trail apparent wind (same heading as main
+              flag); mesh vertex positions are deformed in useFrame. */}
+          {pennants.map((pen, i) => (
+            <group
+              key={`pennant-${i}`}
+              ref={(el) => { pennantPivotRefs.current[i] = el; }}
+              position={[0, pen.topY, pen.z]}
+            >
+              <mesh
+                ref={(el) => { pennantMeshRefs.current[i] = el; }}
+                geometry={pen.geometry}
+              >
+                <meshStandardMaterial
+                  color={pennantColor}
+                  roughness={1}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
+            </group>
+          ))}
+          {/* Mast Flag — pivot at profile.equipment.flagHoist */}
           {flagTexture && (
-            <group ref={flagPivotRef} position={[0, 6.6, 0.5]}>
-              <mesh ref={flagMeshRef} geometry={flagGeometry} position={[0.7, 0, 0]}>
+            <group ref={flagPivotRef} position={profile.equipment.flagHoist}>
+              <mesh ref={flagMeshRef} geometry={flagGeometry} position={[0.7 * flagScale, 0, 0]}>
                 <meshStandardMaterial
                   map={flagTexture}
                   side={THREE.DoubleSide}
@@ -1652,36 +2838,93 @@ export function Ship() {
               </mesh>
             </group>
           )}
-          {/* Main Sail */}
-          <mesh ref={mainSailRef} geometry={mainSailGeometry} position={[0, 4, 0.6]} castShadow>
-            <meshStandardMaterial color="#f5f1dc" roughness={0.95} side={THREE.DoubleSide} />
-          </mesh>
-          {/* Foremast */}
-          <mesh position={[0, 2.5, 2.5]} castShadow>
-            <cylinderGeometry args={[0.1, 0.1, 4]} />
-            <meshStandardMaterial color="#3e2723" />
-          </mesh>
-          {/* Fore Sail */}
-          <mesh ref={foreSailRef} geometry={foreSailGeometry} position={[0, 3, 2.6]} castShadow>
-            <meshStandardMaterial color="#ece4cf" roughness={0.95} side={THREE.DoubleSide} />
-          </mesh>
+          {/* Sails — array driven by profile.sails. Lateen sails render as
+              rigid box slabs with a proper diagonal yard (matching the NPC
+              LateenSail style); square and junk sails render as deformable
+              PlaneGeometry driven by updateSailShape. */}
+          {profile.sails.map((sail, idx) => {
+            if (sail.plan === 'lateen') {
+              return (
+                <LateenSailMesh
+                  key={`sail-${idx}`}
+                  sail={sail}
+                  fallbackColor={profile.hull.sailColor}
+                  yardColor={profile.hull.trimColor}
+                />
+              );
+            }
+            const decalTex = sailTextures[idx];
+            return (
+              <group key={`sail-${idx}`}>
+                <mesh
+                  ref={(el) => { sailRefs.current[idx] = el; }}
+                  geometry={sailGeometries[idx]}
+                  position={sail.position}
+                  rotation={sail.roll ? [0, 0, sail.roll] : undefined}
+                  castShadow
+                >
+                  <meshStandardMaterial
+                    map={decalTex ?? undefined}
+                    color={decalTex ? '#ffffff' : (sail.color ?? profile.hull.sailColor)}
+                    roughness={0.95}
+                    side={THREE.DoubleSide}
+                  />
+                </mesh>
+                {/* Yard — horizontal spar across the top of the sail.
+                    cylinderGeometry's default axis is Y, so rotate 90° around Z
+                    to run it along X (port-starboard). */}
+                <mesh
+                  position={[
+                    sail.position[0],
+                    sail.position[1] + sail.height * 0.5,
+                    sail.position[2],
+                  ]}
+                  rotation={[0, 0, Math.PI / 2]}
+                  castShadow
+                >
+                  <cylinderGeometry args={[0.055, 0.055, sail.width * 1.12, 6]} />
+                  <meshStandardMaterial color={profile.hull.trimColor} roughness={0.85} />
+                </mesh>
+              </group>
+            );
+          })}
+          {/* Junk sail battens — visible horizontal ribs in front of panelized sails */}
+          {profile.sails.map((sail, idx) =>
+            sail.plan === 'junk_batten' && sail.numPanels
+              ? Array.from({ length: sail.numPanels + 1 }, (_, p) => {
+                  const yOffset = -sail.height * 0.5 + (p / sail.numPanels!) * sail.height;
+                  return (
+                    <mesh
+                      key={`batten-${idx}-${p}`}
+                      position={[sail.position[0], sail.position[1] + yOffset, sail.position[2] + 0.06]}
+                    >
+                      <boxGeometry args={[sail.width * 1.02, 0.05, 0.06]} />
+                      <meshStandardMaterial color="#5c4a2e" roughness={0.85} />
+                    </mesh>
+                  );
+                })
+              : null,
+          )}
           {/* Swivel gun — bow-mounted, rotates toward cursor in combat mode */}
-          <group ref={swivelPivotRef} position={[0, 1.5, 3.0]} visible={false}>
-            {/* Mounting post */}
+          <group ref={swivelPivotRef} position={profile.equipment.swivel} visible={false}>
+            {/* Mounting post — stays vertical regardless of pitch */}
             <mesh position={[0, -0.15, 0]}>
               <cylinderGeometry args={[0.08, 0.1, 0.3, 6]} />
               <meshStandardMaterial color="#555" roughness={0.5} metalness={0.7} />
             </mesh>
-            {/* Barrel */}
-            <mesh position={[0, 0, 0.5]} rotation={[Math.PI / 2, 0, 0]}>
-              <cylinderGeometry args={[0.06, 0.08, 1.0, 8]} />
-              <meshStandardMaterial color="#333" roughness={0.4} metalness={0.8} />
-            </mesh>
-            {/* Muzzle flare ring */}
-            <mesh position={[0, 0, 1.0]} rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[0.09, 0.025, 6, 8]} />
-              <meshStandardMaterial color="#444" roughness={0.4} metalness={0.8} />
-            </mesh>
+            {/* Pitch pivot — barrel + muzzle ring tilt together */}
+            <group ref={swivelPitchRef}>
+              {/* Barrel */}
+              <mesh position={[0, 0, 0.5]} rotation={[Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.06, 0.08, 1.0, 8]} />
+                <meshStandardMaterial color="#333" roughness={0.4} metalness={0.8} />
+              </mesh>
+              {/* Muzzle flare ring */}
+              <mesh position={[0, 0, 1.0]} rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.09, 0.025, 6, 8]} />
+                <meshStandardMaterial color="#444" roughness={0.4} metalness={0.8} />
+              </mesh>
+            </group>
           </group>
           {/* Broadside firing arcs — translucent wedges on port & starboard */}
           {/* Port (left) arc — red tint */}
@@ -1695,7 +2938,7 @@ export function Ship() {
             <meshBasicMaterial color="#4488ff" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
           </mesh>
           {/* Night torch on stern cabin */}
-          <group position={[0.6, 2.8, -1.5]}>
+          <group position={profile.equipment.torch}>
             <pointLight
               ref={torchLightRef}
               color="#ff8833"
@@ -1719,7 +2962,7 @@ export function Ship() {
             </mesh>
           </group>
           {/* Fishing Net */}
-          <group ref={netGroupRef} visible={false} position={[1.1, 1.2, 0]}>
+          <group ref={netGroupRef} visible={false} position={profile.equipment.fishingNet}>
             {/* Rope line — connects net back toward gunwale */}
             <mesh ref={netRopeRef} position={[-0.8, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
               <cylinderGeometry args={[0.03, 0.03, 1.6, 4]} />
@@ -1750,7 +2993,7 @@ export function Ship() {
             </group>
           </group>
           {/* 3D Anchor — stowed at bow, animates on drop/weigh */}
-          <group ref={anchorGroupRef} visible={false} position={[1.2, 1.0, 2.5]}>
+          <group ref={anchorGroupRef} visible={false} position={profile.equipment.anchor}>
             {/* Chain — cylinder that scales dynamically */}
             <mesh ref={anchorChainRef} position={[0, 0.25, 0]}>
               <cylinderGeometry args={[0.04, 0.04, 1, 6]} />

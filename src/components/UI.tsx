@@ -31,6 +31,7 @@ import {
 import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
+import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
@@ -163,6 +164,7 @@ function dispatchPromptKey(key: string) {
 
 function keyFromPrompt(prompt: string): string {
   if (prompt.includes('T to Hail') || prompt.includes('t to hail')) return 't';
+  if (prompt.includes('SPACE to Harvest')) return ' ';
   return 'e';
 }
 
@@ -170,10 +172,12 @@ function mobilePromptLabel(prompt: string): string {
   if (prompt.includes('T to Hail')) return 'Tap to hail';
   if (prompt.includes('E to Embark')) return 'Tap to embark';
   if (prompt.includes('E to Disembark')) return 'Tap to disembark';
+  if (prompt.includes('SPACE to Harvest')) return 'Tap to harvest';
+  if (prompt.includes('too steep')) return 'Shore too steep';
   return prompt;
 }
 
-const PROMPT_TONE: Record<'cyan' | 'amber', { border: string; shadow: string; text: string }> = {
+const PROMPT_TONE: Record<'cyan' | 'amber' | 'red', { border: string; shadow: string; text: string }> = {
   cyan: {
     border: 'border-cyan-500/50',
     shadow: 'shadow-[0_0_20px_rgba(34,211,238,0.2)]',
@@ -184,6 +188,11 @@ const PROMPT_TONE: Record<'cyan' | 'amber', { border: string; shadow: string; te
     shadow: 'shadow-[0_0_20px_rgba(245,158,11,0.3)]',
     text: 'text-amber-400',
   },
+  red: {
+    border: 'border-red-500/60',
+    shadow: 'shadow-[0_0_20px_rgba(239,68,68,0.35)]',
+    text: 'text-red-400',
+  },
 };
 
 function PromptBubble({
@@ -193,7 +202,7 @@ function PromptBubble({
   onTap,
 }: {
   children: ReactNode;
-  tone: 'cyan' | 'amber';
+  tone: 'cyan' | 'amber' | 'red';
   isMobile: boolean;
   onTap: () => void;
 }) {
@@ -460,6 +469,9 @@ export function UI() {
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
   const useWorldMapChart = useGameStore((state) => state.renderDebug.worldMapChart);
+  const cityFieldOverlayEnabled = useGameStore((state) => state.renderDebug.cityFieldOverlay);
+  const cityFieldMode = useGameStore((state) => state.renderDebug.cityFieldMode);
+  const updateRenderDebug = useGameStore((state) => state.updateRenderDebug);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const captainExpression = useGameStore((state) => state.captainExpression);
   const reputation = useGameStore((state) => state.reputation);
@@ -503,8 +515,10 @@ export function UI() {
   const [showJournal, setShowJournal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWind, setShowWind] = useState(false);
+  const [showOverlayMenu, setShowOverlayMenu] = useState(false);
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
+  const overlayMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Mobile layout branching. `isMobile` is true on coarse-pointer viewports
   // ≤900px, or when Settings → Force Mobile Layout is on. See `useIsMobile.ts`.
@@ -722,7 +736,8 @@ export function UI() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (hailNpc) { sfxClose(); closeHail(); }
+        if (showOverlayMenu) { sfxClose(); setShowOverlayMenu(false); }
+        else if (hailNpc) { sfxClose(); closeHail(); }
         else if (showDashboard) { sfxClose(); setShowDashboard(false); }
         else if (showLocalMap) { sfxClose(); setShowLocalMap(false); }
         else if (showWorldMap) { sfxClose(); setShowWorldMap(false); }
@@ -735,7 +750,25 @@ export function UI() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showLocalMap, showWorldMap, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
+  }, [showOverlayMenu, showLocalMap, showWorldMap, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
+
+  useEffect(() => {
+    if (!showOverlayMenu) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (overlayMenuRef.current?.contains(target)) return;
+      setShowOverlayMenu(false);
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [showOverlayMenu]);
+
+  useEffect(() => {
+    if (showLocalMap || showWorldMap || showSettings || showDashboard || activePort || hailNpc) {
+      setShowOverlayMenu(false);
+    }
+  }, [activePort, hailNpc, showDashboard, showLocalMap, showSettings, showWorldMap]);
 
   useEffect(() => {
     const handleHailKey = (e: KeyboardEvent) => {
@@ -1092,6 +1125,70 @@ export function UI() {
               >
                 <Wind size={15} />
               </button>
+              <div ref={overlayMenuRef} className="relative">
+                <button
+                  onClick={() => { sfxClick(); setShowOverlayMenu((prev) => !prev); }}
+                  aria-pressed={showOverlayMenu || cityFieldOverlayEnabled}
+                  className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+                    bg-[#1a1e2e] border-2
+                    shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+                    transition-all active:scale-95
+                    ${showOverlayMenu || cityFieldOverlayEnabled
+                      ? 'border-[#60a5fa]/50 text-[#60a5fa] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(96,165,250,0.2)]'
+                      : 'border-[#4a4535]/60 text-[#8a8060] hover:text-[#60a5fa] hover:border-[#60a5fa]/40'
+                    }`}
+                  title={cityFieldOverlayEnabled ? `Overlay: ${cityFieldMode === 'district' ? 'District' : CITY_FIELD_LABELS[cityFieldMode]}` : 'Overlay'}
+                >
+                  <MapIcon size={15} />
+                </button>
+                <AnimatePresence>
+                  {showOverlayMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                      transition={{ duration: 0.2 }}
+                      className="absolute right-0 top-14 z-40 min-w-[220px] rounded-xl border border-[#2a2d3a]/50 bg-[#0a0e18]/82 p-3 shadow-card backdrop-blur-xl pointer-events-auto"
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Overlay</div>
+                      <div className="mt-1 text-[11px] text-slate-400">Shows the selected field as a heatmap across all generated land.</div>
+                      <div className="mt-3 space-y-1.5">
+                        <OverlayMenuRow
+                          label="Off"
+                          description="Hide all overlay heatmaps."
+                          active={!cityFieldOverlayEnabled}
+                          onClick={() => {
+                            updateRenderDebug({ cityFieldOverlay: false });
+                            setShowOverlayMenu(false);
+                          }}
+                        />
+                        <OverlayMenuRow
+                          key="district"
+                          label="District"
+                          description="Classified districts: citadel, sacred, urban core, elite residential, artisan, waterside, fringe."
+                          active={cityFieldOverlayEnabled && cityFieldMode === 'district'}
+                          onClick={() => {
+                            updateRenderDebug({ cityFieldOverlay: true, cityFieldMode: 'district' });
+                            setShowOverlayMenu(false);
+                          }}
+                        />
+                        {CITY_FIELD_KEYS.map((field) => (
+                          <OverlayMenuRow
+                            key={field}
+                            label={CITY_FIELD_LABELS[field]}
+                            description={CITY_FIELD_DESCRIPTIONS[field]}
+                            active={cityFieldOverlayEnabled && cityFieldMode === field}
+                            onClick={() => {
+                              updateRenderDebug({ cityFieldOverlay: true, cityFieldMode: field });
+                              setShowOverlayMenu(false);
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
             <AnimatePresence>
               {showWind && (
@@ -1268,7 +1365,7 @@ export function UI() {
         {interactionPrompt && !activePort && !showLocalMap && !showWorldMap && !startupOverlayActive && !showDashboard && (
           <PromptBubble
             key="interact-prompt"
-            tone="amber"
+            tone={interactionPrompt.includes('too steep') ? 'red' : 'amber'}
             isMobile={isMobile}
             onTap={() => dispatchPromptKey(keyFromPrompt(interactionPrompt))}
           >
@@ -1809,6 +1906,46 @@ function RenderTestPanel() {
           enabled={renderDebug.wildlifeMotion}
           onToggle={() => updateRenderDebug({ wildlifeMotion: !renderDebug.wildlifeMotion })}
         />
+        <RenderToggleRow
+          label="City Fields"
+          enabled={renderDebug.cityFieldOverlay}
+          onToggle={() => updateRenderDebug({ cityFieldOverlay: !renderDebug.cityFieldOverlay })}
+        />
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">City Field Mode</div>
+        <div className="mt-1 text-[11px] text-slate-400">
+          {renderDebug.cityFieldMode === 'district'
+            ? 'Classified districts: citadel, sacred, urban core, elite residential, artisan, waterside, fringe.'
+            : CITY_FIELD_DESCRIPTIONS[renderDebug.cityFieldMode]}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <button
+            key="district"
+            onClick={() => updateRenderDebug({ cityFieldMode: 'district', cityFieldOverlay: true })}
+            className={`rounded-md border px-2 py-1 text-[10px] font-medium transition-all ${
+              renderDebug.cityFieldMode === 'district'
+                ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+            }`}
+          >
+            District
+          </button>
+          {CITY_FIELD_KEYS.map((field) => (
+            <button
+              key={field}
+              onClick={() => updateRenderDebug({ cityFieldMode: field, cityFieldOverlay: true })}
+              className={`rounded-md border px-2 py-1 text-[10px] font-medium transition-all ${
+                renderDebug.cityFieldMode === field
+                  ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                  : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+              }`}
+            >
+              {CITY_FIELD_LABELS[field]}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1847,6 +1984,43 @@ function RenderToggleRow({
         }`}
       >
         {enabled ? 'On' : 'Off'}
+      </span>
+    </button>
+  );
+}
+
+function OverlayMenuRow({
+  label,
+  description,
+  active,
+  onClick,
+}: {
+  label: string;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-start justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-all ${
+        active
+          ? 'border-sky-500/30 bg-sky-500/12'
+          : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.05]'
+      }`}
+    >
+      <div>
+        <div className={`text-[12px] font-medium ${active ? 'text-sky-200' : 'text-slate-200'}`}>{label}</div>
+        <div className="mt-1 text-[10px] leading-snug text-slate-500">{description}</div>
+      </div>
+      <span
+        className={`mt-0.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${
+          active
+            ? 'bg-sky-500/18 text-sky-200'
+            : 'bg-white/[0.04] text-slate-500'
+        }`}
+      >
+        {active ? 'On' : 'Off'}
       </span>
     </button>
   );
@@ -1948,6 +2122,8 @@ const SHIP_TYPE_INFO: Record<string, { crew: number; speed: string; desc: string
   Pinnace:  { crew: 4,  speed: 'Fast',    desc: 'Small, swift scout vessel, limited cargo' },
   Fluyt:    { crew: 6,  speed: 'Medium',  desc: 'Dutch bulk merchantman, outsize hold for a small crew' },
   Caravel:  { crew: 5,  speed: 'Fast',    desc: 'Lateen-rigged trader, agile in coastal waters' },
+  Baghla:   { crew: 8,  speed: 'Medium',  desc: 'Ocean-going dhow, heavy build, carved transom' },
+  Jong:     { crew: 12, speed: 'Slow',    desc: 'Javanese deep-sea trader, three-masted with mixed rigging' },
 };
 
 function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; ship: ShipInfo; onOpenDashboard: () => void }) {
@@ -2579,7 +2755,8 @@ function WindQuickMeter() {
   const windDirection = useGameStore((state) => state.windDirection);
   const windSpeed = useGameStore((state) => state.windSpeed);
   const playerRot = useGameStore((state) => state.playerRot);
-  const trimInfo = getWindTrimInfo(windDirection, playerRot);
+  const windward = useGameStore((state) => state.stats.windward);
+  const trimInfo = getWindTrimInfo(windDirection, playerRot, windward);
   const cueColor = getTrimCueColor(trimInfo.grade);
   const speedKnots = Math.round(windSpeed * 20);
   const hasShiftCue = trimInfo.score > 0;
@@ -2607,6 +2784,7 @@ function WindPanel() {
   const windSpeed = useGameStore((state) => state.windSpeed);
   const playerRot = useGameStore((state) => state.playerRot);
   const playerVelocity = useGameStore((state) => state.playerVelocity);
+  const windward = useGameStore((state) => state.stats.windward);
   const relAngle = ((windDirection - playerRot) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
 
   let windLabel: string;
@@ -2632,7 +2810,7 @@ function WindPanel() {
   const windDeg = windDirection * 180 / Math.PI;
   const speedKnots = Math.round(windSpeed * 20);
   const shipSpeed = Math.abs(Math.round(playerVelocity * 10) / 10);
-  const trimInfo = getWindTrimInfo(windDirection, playerRot);
+  const trimInfo = getWindTrimInfo(windDirection, playerRot, windward);
   const trimPotential = getWindTrimMultiplier(windSpeed, trimInfo.score, 1);
   const trimBonus = Math.round((trimPotential - 1) * 100);
   const trimColor = getTrimCueColor(trimInfo.grade);

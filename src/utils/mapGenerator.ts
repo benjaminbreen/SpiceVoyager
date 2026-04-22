@@ -1,5 +1,6 @@
 import { getTerrainData, setPlacedArchetypes } from './terrain';
 import { generateCity } from './cityGenerator';
+import { generateHinterland } from './hinterland';
 import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
 import { PORT_FACTION, PORT_CULTURAL_REGION } from '../store/gameStore';
 import {
@@ -8,6 +9,8 @@ import {
   resolveDirRadians,
 } from './portArchetypes';
 import { generateCanalLayout } from './canalLayout';
+import { faithsForPort } from './portReligions';
+import { postprocessRoads } from './roadTopology';
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
@@ -305,8 +308,26 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           PORT_FACTION[override.id], PORT_CULTURAL_REGION[override.id],
           override.bridgeCount ?? 0,
           canalLayout,
+          override.landmark,
+          faithsForPort(override.id),
         );
-        return { buildings: city.buildings, roads: city.roads };
+        const hinterland = generateHinterland(
+          portX, portZ,
+          override.scale,
+          config.seed + portIdx,
+          city.buildings,
+          city.roads,
+        );
+        // Densify + weld + graph the combined network so hinterland tracks
+        // connect to city roads cleanly and the ribbon renderer has short
+        // segments that hug terrain. Mutates `roads` in place.
+        const roads = [...city.roads, ...hinterland.roads];
+        const roadGraph = postprocessRoads(roads);
+        return {
+          buildings: [...city.buildings, ...hinterland.buildings],
+          roads,
+          roadGraph,
+        };
       })(),
     });
   }

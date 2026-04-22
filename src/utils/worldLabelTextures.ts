@@ -11,11 +11,13 @@ export interface WorldLabelTextureOptions {
   subtitle?: string;
   action?: string;
   accent?: string;
+  /** Color for the eyebrow text / glow (building variant only). Defaults to a soft purple. */
+  eyebrowColor?: string;
   variant?: 'far' | 'mid' | 'near' | 'building';
   compact?: boolean;
 }
 
-const SCALE = 3;
+const SCALE = 8;
 const SANS = '"DM Sans", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
 
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -106,21 +108,27 @@ function drawBuildingLabel(
   title: string,
   subtitle: string | undefined,
   accent: string,
+  eyebrow: string | undefined,
+  eyebrowColor: string | undefined,
 ) {
   const hasSubtitle = Boolean(subtitle);
+  const hasEyebrow = Boolean(eyebrow);
   const titleSize = fitText(ctx, title, width - 40, 780, hasSubtitle ? 22 : 24);
   ctx.font = `780 ${titleSize}px ${SANS}`;
   const titleWidth = measureTrackedText(ctx, title, 0);
   const subtitleWidth = subtitle ? measureTrackedText(ctx, subtitle, 0.15) : 0;
 
+  // Eyebrow sits *inside* the panel, above the title. Bump the panel height
+  // when present so the eyebrow doesn't push into the top hairline.
+  const extraForEyebrow = hasEyebrow ? 16 : 0;
   const panelWidth = Math.min(
     width - 14,
     Math.max(112, titleWidth + 34, subtitleWidth + 40),
   );
-  const panelHeight = hasSubtitle ? 64 : 46;
+  const panelHeight = (hasSubtitle ? 64 : 46) + extraForEyebrow;
   const panelX = (width - panelWidth) * 0.5;
   const panelY = (height - panelHeight) * 0.5;
-  const titleY = panelY + (hasSubtitle ? 26 : 30);
+  const titleY = panelY + extraForEyebrow + (hasSubtitle ? 26 : 30);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0, 0, 0, 0.38)';
@@ -157,11 +165,28 @@ function drawBuildingLabel(
   ctx.globalAlpha = 1;
   ctx.restore();
 
+  if (eyebrow) {
+    const ey = panelY + 14;
+    ctx.save();
+    ctx.font = `800 10px ${SANS}`;
+    const color = eyebrowColor ?? '#c4a1ff';
+    // Soft glow halo
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = color;
+    drawTrackedText(ctx, eyebrow.toUpperCase(), width * 0.5, ey, 1.6);
+    ctx.shadowBlur = 0;
+    // Crisp text on top
+    ctx.fillStyle = color;
+    drawTrackedText(ctx, eyebrow.toUpperCase(), width * 0.5, ey, 1.6);
+    ctx.restore();
+  }
+
   ctx.font = `780 ${titleSize}px ${SANS}`;
   drawReadableText(ctx, title, width * 0.5, titleY, 0);
 
   if (subtitle) {
-    const subtitleY = panelY + 48;
+    const subtitleY = titleY + 22;
     ctx.font = `650 11px ${SANS}`;
     ctx.save();
     ctx.strokeStyle = 'rgba(2, 6, 10, 0.54)';
@@ -290,29 +315,38 @@ export function worldHeightForScreenPixels(
 export function createWorldLabelTexture(options: WorldLabelTextureOptions): WorldLabelTexture {
   const variant = options.variant ?? (options.compact ? 'far' : options.action ? 'near' : 'building');
   const isBuilding = variant === 'building';
+  const hasEyebrow = Boolean(options.eyebrow);
   const width = isBuilding ? 286 : variant === 'near' ? 332 : variant === 'mid' ? 320 : 300;
-  const height = isBuilding ? 84 : variant === 'near' ? 118 : variant === 'mid' ? 112 : 96;
+  const height = isBuilding
+    ? (hasEyebrow ? 104 : 84)
+    : variant === 'near' ? 118 : variant === 'mid' ? 112 : 96;
   const canvas = document.createElement('canvas');
   canvas.width = width * SCALE;
   canvas.height = height * SCALE;
 
   const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  // textRendering isn't in lib.dom typings yet but Chrome/Safari honour it.
+  (ctx as unknown as { textRendering?: string }).textRendering = 'geometricPrecision';
   ctx.scale(SCALE, SCALE);
   ctx.clearRect(0, 0, width, height);
 
   const accent = options.accent ?? '#c9a84c';
 
   if (isBuilding) {
-    drawBuildingLabel(ctx, width, height, options.title, options.subtitle, accent);
+    drawBuildingLabel(ctx, width, height, options.title, options.subtitle, accent, options.eyebrow, options.eyebrowColor);
   } else {
     drawPortLabel(ctx, width, height, options.title, options.eyebrow, options.subtitle, options.action);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
+  // Three clamps to the hardware max, so 16 is safe on any GPU.
+  texture.anisotropy = 16;
   texture.needsUpdate = true;
 
   return { texture, aspect: width / height };

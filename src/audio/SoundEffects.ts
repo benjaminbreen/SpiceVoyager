@@ -996,6 +996,30 @@ export function sfxDisembark() {
   noise(ac, 0.06, v * 0.15, 1800, 1.5);
 }
 
+/** Soft "denied" cue — shore is too steep to disembark. Low thud + descending nasal tone. */
+export function sfxDisembarkBlocked() {
+  const ac = getCtx();
+  const v = masterVolume * 0.3;
+  const t = ac.currentTime;
+
+  // Dull hull-bump thud
+  ping(ac, 95, 0.14, v * 0.5, 'sine');
+  noise(ac, 0.08, v * 0.2, 600, 1.2);
+
+  // Descending nasal "nope" — two short falling tones
+  const osc = ac.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(420, t + 0.05);
+  osc.frequency.exponentialRampToValueAtTime(260, t + 0.28);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t + 0.05);
+  g.gain.linearRampToValueAtTime(v * 0.35, t + 0.08);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  osc.connect(g).connect(ac.destination);
+  osc.start(t + 0.05);
+  osc.stop(t + 0.32);
+}
+
 /** Rope taut + wood creak + water lap — embarking back onto ship. */
 export function sfxEmbark() {
   const ac = getCtx();
@@ -1559,6 +1583,78 @@ export function sfxCannonSplash() {
   noise(ac, 0.25, v, 600, 0.8);
 }
 
+/** War rocket launch — scaled-up swivel fire: harder initial boom,
+ *  sustained hissing/sizzling tail conveying powder burn, rising whistle
+ *  pitch so the shot feels alive as it streaks out. */
+export function sfxRocketFire() {
+  const ac = getCtx();
+  const v = masterVolume * 0.5;
+  const t = ac.currentTime;
+
+  // Ignition boom — lower and longer than the swivel.
+  const boom = ac.createOscillator();
+  boom.type = 'sine';
+  boom.frequency.setValueAtTime(70, t);
+  boom.frequency.exponentialRampToValueAtTime(22, t + 0.55);
+  const boomGain = ac.createGain();
+  boomGain.gain.setValueAtTime(v, t);
+  boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+  boom.connect(boomGain).connect(ac.destination);
+  boom.start(t);
+  boom.stop(t + 0.6);
+
+  // Whoosh — wider-bandwidth noise burst (the powder blast).
+  noise(ac, 0.3, v * 0.75, 600, 1.1);
+
+  // Sustained sizzle — a quieter, longer noise tail that sells the rocket
+  // trail rather than a single muzzle crack.
+  noise(ac, 0.9, v * 0.25, 2400, 0.9);
+
+  // Rising whistle — the iconic bottle-rocket upward pitch sweep.
+  const whistle = ac.createOscillator();
+  whistle.type = 'triangle';
+  whistle.frequency.setValueAtTime(900, t + 0.05);
+  whistle.frequency.exponentialRampToValueAtTime(2600, t + 0.85);
+  const whistleGain = ac.createGain();
+  whistleGain.gain.setValueAtTime(0, t);
+  whistleGain.gain.linearRampToValueAtTime(v * 0.22, t + 0.1);
+  whistleGain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
+  whistle.connect(whistleGain).connect(ac.destination);
+  whistle.start(t);
+  whistle.stop(t + 1.0);
+}
+
+/** War rocket impact — bigger than sfxCannonImpact: deeper thud, wider
+ *  explosion noise, crackling debris tail. */
+export function sfxRocketImpact() {
+  const ac = getCtx();
+  const v = masterVolume * 0.55;
+  const t = ac.currentTime;
+
+  // Low blast — deeper and longer than cannon impact.
+  const blast = ac.createOscillator();
+  blast.type = 'sine';
+  blast.frequency.setValueAtTime(95, t);
+  blast.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+  const blastGain = ac.createGain();
+  blastGain.gain.setValueAtTime(v, t);
+  blastGain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  blast.connect(blastGain).connect(ac.destination);
+  blast.start(t);
+  blast.stop(t + 0.55);
+
+  // Explosion body — wide bandpass noise, fatter than a cannon thud.
+  noise(ac, 0.35, v * 0.7, 900, 1.4);
+
+  // Debris crackle — a second noise layer an octave higher, lagged slightly
+  // so it reads as fragments after the main blast.
+  setTimeout(() => noise(ac, 0.25, v * 0.35, 2800, 1.1), 40);
+
+  // Short metallic zing — bamboo splinter + shrapnel flavor.
+  ping(ac, 1800, 0.1, v * 0.18, 'triangle');
+  ping(ac, 900,  0.16, v * 0.12, 'sine');
+}
+
 /** Matchlock musket fire — sharper, drier, higher than the swivel boom. */
 export function sfxMusket() {
   const ac = getCtx();
@@ -1971,6 +2067,81 @@ export function sfxReptileScrabble(x?: number, z?: number) {
 }
 
 /** Primate alarm chatter — short high-pitched yelps. */
+/** Butchering a carcass — low thunk, wet squelch, then a soft loot chime. */
+export function sfxHarvest(x?: number, z?: number) {
+  const ac = getCtx();
+  const v = masterVolume * 0.38;
+  const t = ac.currentTime;
+  const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
+
+  // Low body thunk — knife into flesh
+  const thunkLen = ac.sampleRate * 0.12;
+  const thunkBuf = ac.createBuffer(1, thunkLen, ac.sampleRate);
+  const thunkData = thunkBuf.getChannelData(0);
+  for (let i = 0; i < thunkLen; i++) thunkData[i] = Math.random() * 2 - 1;
+  const thunkSrc = ac.createBufferSource();
+  thunkSrc.buffer = thunkBuf;
+  const thunkFilt = ac.createBiquadFilter();
+  thunkFilt.type = 'lowpass';
+  thunkFilt.frequency.setValueAtTime(350, t);
+  thunkFilt.frequency.exponentialRampToValueAtTime(120, t + 0.12);
+  const thunkGain = ac.createGain();
+  thunkGain.gain.setValueAtTime(v * 0.55, t);
+  thunkGain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  thunkSrc.connect(thunkFilt).connect(thunkGain).connect(dest);
+  thunkSrc.start(t);
+  thunkSrc.stop(t + 0.12);
+
+  // Wet squelch — mid bandpass burst layered on top
+  const squelchLen = ac.sampleRate * 0.18;
+  const squelchBuf = ac.createBuffer(1, squelchLen, ac.sampleRate);
+  const squelchData = squelchBuf.getChannelData(0);
+  for (let i = 0; i < squelchLen; i++) squelchData[i] = Math.random() * 2 - 1;
+  const squelchSrc = ac.createBufferSource();
+  squelchSrc.buffer = squelchBuf;
+  const squelchFilt = ac.createBiquadFilter();
+  squelchFilt.type = 'bandpass';
+  squelchFilt.frequency.setValueAtTime(900, t + 0.02);
+  squelchFilt.frequency.exponentialRampToValueAtTime(420, t + 0.18);
+  squelchFilt.Q.value = 1.8;
+  const squelchGain = ac.createGain();
+  squelchGain.gain.setValueAtTime(0.001, t + 0.02);
+  squelchGain.gain.linearRampToValueAtTime(v * 0.3, t + 0.05);
+  squelchGain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  squelchSrc.connect(squelchFilt).connect(squelchGain).connect(dest);
+  squelchSrc.start(t + 0.02);
+  squelchSrc.stop(t + 0.2);
+
+  // Reward chime — two-note lift (D5 → A5) after the butcher sounds settle
+  const chimeStart = t + 0.22;
+  const notes = [587, 880];
+  for (let i = 0; i < notes.length; i++) {
+    const start = chimeStart + i * 0.08;
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = notes[i];
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.001, start);
+    g.gain.linearRampToValueAtTime(v * 0.38, start + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.001, start + 0.22);
+    osc.connect(g).connect(dest);
+    osc.start(start);
+    osc.stop(start + 0.24);
+
+    // Triangle shimmer octave above
+    const osc2 = ac.createOscillator();
+    osc2.type = 'triangle';
+    osc2.frequency.value = notes[i] * 2.003;
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.001, start);
+    g2.gain.linearRampToValueAtTime(v * 0.08, start + 0.015);
+    g2.gain.exponentialRampToValueAtTime(0.001, start + 0.2);
+    osc2.connect(g2).connect(dest);
+    osc2.start(start);
+    osc2.stop(start + 0.22);
+  }
+}
+
 export function sfxPrimateChatter(x?: number, z?: number) {
   const ac = getCtx();
   const v = masterVolume * 0.22;

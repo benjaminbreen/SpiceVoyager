@@ -36,6 +36,18 @@ export interface MuzzleBurstEvent {
   intensity: number;
 }
 
+/** Smoke-trail puff emitted continuously along a rocket's flight path.
+ *  Short-lived (<1s) but many are alive simultaneously, so the ring is
+ *  larger than the other effect buffers. */
+export interface RocketTrailEvent {
+  x: number;
+  y: number;
+  z: number;
+  time: number;
+  /** Small random seed so each puff drifts slightly differently. */
+  seed: number;
+}
+
 // Ring of active splashes — oldest get overwritten
 const MAX_SPLASHES = 8;
 export const splashes: SplashEvent[] = [];
@@ -48,6 +60,12 @@ export const impactBursts: ImpactBurstEvent[] = [];
 
 const MAX_MUZZLE_BURSTS = 12;
 export const muzzleBursts: MuzzleBurstEvent[] = [];
+
+// Rocket trails — a rocket spawns a puff every ~50ms while in flight, and
+// each puff lives ~0.8s, so ~16 alive at once is the steady-state ceiling.
+// Headroom for two simultaneous rockets.
+const MAX_ROCKET_TRAIL = 40;
+export const rocketTrails: RocketTrailEvent[] = [];
 
 let _nextClock = 0; // set by SplashSystem each frame
 
@@ -75,6 +93,14 @@ export function spawnImpactBurst(x: number, y: number, z: number, intensity = 1)
     impactBursts.shift();
   }
   impactBursts.push(ev);
+}
+
+export function spawnRocketTrail(x: number, y: number, z: number) {
+  const ev: RocketTrailEvent = { x, y, z, time: _nextClock, seed: Math.random() };
+  if (rocketTrails.length >= MAX_ROCKET_TRAIL) {
+    rocketTrails.shift();
+  }
+  rocketTrails.push(ev);
 }
 
 export function spawnMuzzleBurst(

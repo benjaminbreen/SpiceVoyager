@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getTerrainData } from '../utils/terrain';
-import { extractBridges, getGroundHeight } from '../utils/bridgeNavigation';
+import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from '../utils/roadSurface';
 import { getCrabData, getCollectedCrabs, collectCrabAt } from './World';
 import { sfxFootstep, sfxThud } from '../audio/SoundEffects';
 import {
@@ -15,9 +15,17 @@ import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { PLAYER_RADIUS } from '../utils/animalBump';
 import { huntAimAngle, huntAimPitch, landWeaponReload } from '../utils/combatState';
 import { touchWalkInput } from '../utils/touchInput';
-import { LAND_WEAPON_DEFS, Road } from '../store/gameStore';
+import { LAND_WEAPON_DEFS } from '../store/gameStore';
 import { derivePlayerAppearance } from '../utils/playerAppearance';
 import { Hat } from './playerParts/Hat';
+
+// Max upward step the player's visual Y will take per frame when the
+// ground-height query jumps (e.g. stepping from grass onto a road ribbon
+// lifted ~0.1u, or walking onto a bridge ramp). Without this, each road
+// edge is a visible vertical pop. 2.4 u/s ≈ invisible at 60fps for any
+// single-tier step yet still lets bridge abutment ramps feel instant.
+const MAX_STEP_UP_PER_SEC = 2.4;
+const MAX_STEP_DOWN_PER_SEC = 6.0; // drops are less jarring, allow faster
 
 const CRAB_COLLECT_RADIUS_SQ = 1.5 * 1.5; // 1.5 units
 const STORE_SYNC_INTERVAL = 1 / 12;
@@ -72,12 +80,13 @@ export function Player() {
   const paused = useGameStore((state) => state.paused);
   const viewMode = useGameStore((state) => state.viewMode);
 
-  // Bridges for the current port. Pre-filter once and stash in a ref so the
-  // useFrame loop doesn't iterate every road tier on every frame.
+  // Build a spatial index of the current port's roads once per port load.
+  // The useFrame loop hits this for every ground-height query; bucketing by
+  // XZ cell keeps it O(~segs in cell) instead of O(total segs).
   const portRoads = useGameStore((s) => s.ports[0]?.roads);
-  const bridgesRef = useRef<Road[]>([]);
+  const roadIndexRef = useRef<RoadSurfaceIndex>(buildRoadSurfaceIndex(undefined));
   useEffect(() => {
-    bridgesRef.current = extractBridges(portRoads);
+    roadIndexRef.current = buildRoadSurfaceIndex(portRoads);
   }, [portRoads]);
 
   // ── Captain identity → appearance ──
@@ -149,7 +158,7 @@ export function Player() {
     const store = useGameStore.getState();
     const walking = getLiveWalkingTransform();
     const walkingPos = walking.pos;
-    const walkingRot = walking.rot;
+    let walkingRot = walking.rot;
 
     const speed = 10 * delta;
     const GRAVITY = 30;
@@ -161,30 +170,65 @@ export function Player() {
     camForward.normalize();
     const camRight = _camRight.current.set(-camForward.z, 0, camForward.x);
 
-    // Build input vector. Touch joystick overlays keyboard — whichever is
-    // larger wins per axis so holding the stick past the keyboard doesn't
-    // cancel it out.
-    let inputX = 0;
-    let inputZ = 0;
-    if (keys.current.w) inputZ += 1;
-    if (keys.current.s) inputZ -= 1;
-    if (keys.current.d) inputX += 1;
-    if (keys.current.a) inputX -= 1;
-    if (Math.abs(touchWalkInput.x) > Math.abs(inputX)) inputX = touchWalkInput.x;
-    if (Math.abs(touchWalkInput.y) > Math.abs(inputZ)) inputZ = touchWalkInput.y;
-
-    // Transform input by camera orientation
+    // Input scheme depends on camera mode. Firstperson uses tank-style
+    // controls (A/D yaw the character, W/S drive along its facing) so the
+    // camera doesn't whip when you strafe. Other modes keep camera-relative
+    // strafe since the camera isn't locked to the character's heading.
+    const isFirstPerson = viewMode === 'firstperson';
     let moveX = 0;
     let moveZ = 0;
-    const inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
-    if (inputLen > 0) {
-      const nx = inputX / inputLen;
-      const nz = inputZ / inputLen;
-      moveX = (camRight.x * nx + camForward.x * nz) * speed;
-      moveZ = (camRight.z * nx + camForward.z * nz) * speed;
+    let firstPersonYawedRot = walkingRot;
+    let firstPersonYawInput = 0;
+
+    if (isFirstPerson) {
+      const YAW_SPEED = 2.0; // rad/s — ~115°/s, tunable feel
+      if (keys.current.a) firstPersonYawInput += 1;
+      if (keys.current.d) firstPersonYawInput -= 1;
+      firstPersonYawedRot = walkingRot + firstPersonYawInput * YAW_SPEED * delta;
+
+      let fwdInput = 0;
+      if (keys.current.w) fwdInput += 1;
+      if (keys.current.s) fwdInput -= 1;
+      if (Math.abs(touchWalkInput.y) > Math.abs(fwdInput)) fwdInput = touchWalkInput.y;
+      // Touch joystick X still strafes (mobile has no separate yaw stick here).
+      const strafeInput = touchWalkInput.x;
+
+      moveX = (Math.sin(firstPersonYawedRot) * fwdInput + Math.cos(firstPersonYawedRot) * strafeInput) * speed;
+      moveZ = (Math.cos(firstPersonYawedRot) * fwdInput - Math.sin(firstPersonYawedRot) * strafeInput) * speed;
+    } else {
+      let inputX = 0;
+      let inputZ = 0;
+      if (keys.current.w) inputZ += 1;
+      if (keys.current.s) inputZ -= 1;
+      if (keys.current.d) inputX += 1;
+      if (keys.current.a) inputX -= 1;
+      if (Math.abs(touchWalkInput.x) > Math.abs(inputX)) inputX = touchWalkInput.x;
+      if (Math.abs(touchWalkInput.y) > Math.abs(inputZ)) inputZ = touchWalkInput.y;
+
+      const inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
+      if (inputLen > 0) {
+        const nx = inputX / inputLen;
+        const nz = inputZ / inputLen;
+        moveX = (camRight.x * nx + camForward.x * nz) * speed;
+        moveZ = (camRight.z * nx + camForward.z * nz) * speed;
+      }
     }
 
     isMoving.current = moveX !== 0 || moveZ !== 0;
+
+    // Firstperson yaw without translation — persist the rotation so the
+    // character (and first-person camera that rides on activeRot) actually
+    // turns while stationary.
+    if (isFirstPerson && !isMoving.current && firstPersonYawInput !== 0) {
+      group.current.rotation.y = firstPersonYawedRot;
+      syncLiveWalkingTransform(walkingPos, firstPersonYawedRot);
+      walkingRot = firstPersonYawedRot;
+      storeSyncAccum.current += delta;
+      if (storeSyncAccum.current >= STORE_SYNC_INTERVAL) {
+        setWalkingTransform({ pos: [walkingPos[0], walkingPos[1], walkingPos[2]], rot: firstPersonYawedRot });
+        storeSyncAccum.current = 0;
+      }
+    }
 
     // Jump physics
     if (isJumping.current) {
@@ -199,7 +243,7 @@ export function Player() {
 
         // Check if we landed in water → death. Bridges count as solid
         // ground so you can jump onto a deck without drowning.
-        const terrainH = getGroundHeight(walkingPos[0], walkingPos[2], bridgesRef.current);
+        const terrainH = getGroundHeight(walkingPos[0], walkingPos[2], roadIndexRef.current);
         if (terrainH < -1) {
           spawnSplash(walkingPos[0], walkingPos[2], 0.7);
           store.triggerGameOver('Drowned after a fatal plunge into the depths.');
@@ -213,16 +257,21 @@ export function Player() {
     }
 
     if (isMoving.current) {
-      // Calculate target rotation
-      const targetRot = Math.atan2(moveX, moveZ);
-
-      // Smooth rotation — fast lerp so character faces movement direction quickly
-      let rotDiff = targetRot - walkingRot;
-      while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
-      while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
-
-      const rotLerp = 1 - Math.pow(0.001, delta); // ~exponential ease, frame-rate independent
-      const newRot = walkingRot + rotDiff * rotLerp;
+      let newRot: number;
+      if (isFirstPerson) {
+        // Tank controls: facing is whatever yaw input set this frame.
+        newRot = firstPersonYawedRot;
+      } else {
+        // Face the movement direction. Cinematic uses a gentler lerp because
+        // the chase cam rides on this rotation — a snap would whip the view.
+        const targetRot = Math.atan2(moveX, moveZ);
+        let rotDiff = targetRot - walkingRot;
+        while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+        while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+        const rotBase = viewMode === 'cinematic' ? 0.1 : 0.001;
+        const rotLerp = 1 - Math.pow(rotBase, delta);
+        newRot = walkingRot + rotDiff * rotLerp;
+      }
       group.current.rotation.y = newRot;
 
       // Update position
@@ -251,12 +300,24 @@ export function Player() {
         }
       }
 
-      const terrainY = getGroundHeight(newX, newZ, bridgesRef.current);
+      const targetY = getGroundHeight(newX, newZ, roadIndexRef.current);
+
+      // Smooth Y transitions so stepping onto a road ribbon (yLift ~0.1u)
+      // or onto a bridge ramp doesn't pop the character vertically. The
+      // previous Y lives on walkingPos[1].
+      const prevY = walkingPos[1];
+      const dy = targetY - prevY;
+      const maxUp = MAX_STEP_UP_PER_SEC * delta;
+      const maxDown = MAX_STEP_DOWN_PER_SEC * delta;
+      let groundY: number;
+      if (dy > maxUp) groundY = prevY + maxUp;
+      else if (dy < -maxDown) groundY = prevY - maxDown;
+      else groundY = targetY;
 
       // While jumping, allow movement over water
       if (isJumping.current) {
-        const displayY = terrainY + jumpHeight.current;
-        const nextPos: [number, number, number] = [newX, terrainY, newZ];
+        const displayY = targetY + jumpHeight.current;
+        const nextPos: [number, number, number] = [newX, targetY, newZ];
         syncLiveWalkingTransform(nextPos, newRot);
         storeSyncAccum.current += delta;
         if (storeSyncAccum.current >= STORE_SYNC_INTERVAL) {
@@ -264,8 +325,8 @@ export function Player() {
           storeSyncAccum.current = 0;
         }
         group.current.position.set(newX, displayY, newZ);
-      } else if (terrainY > -2) {
-        const nextPos: [number, number, number] = [newX, terrainY, newZ];
+      } else if (targetY > -2) {
+        const nextPos: [number, number, number] = [newX, groundY, newZ];
         syncLiveWalkingTransform(nextPos, newRot);
         storeSyncAccum.current += delta;
         if (storeSyncAccum.current >= STORE_SYNC_INTERVAL) {
@@ -282,7 +343,7 @@ export function Player() {
 
     // Drowning timer — track time spent in water. Bridges override so
     // standing on a deck over water doesn't drown the player.
-    const currentTerrainH = getGroundHeight(walkingPos[0], walkingPos[2], bridgesRef.current);
+    const currentTerrainH = getGroundHeight(walkingPos[0], walkingPos[2], roadIndexRef.current);
     if (currentTerrainH < -0.5 && !isJumping.current) {
       // Splash on first entry into water
       if (waterTimer.current === 0) {

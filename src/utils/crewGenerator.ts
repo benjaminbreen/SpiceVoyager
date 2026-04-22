@@ -203,6 +203,47 @@ const CREW_MIX: Record<string, NatWeight[]> = {
     ['Danish', 2],
     ['Omani', 1],
   ],
+  // Omani dhow captains drew crews largely from the Arabian peninsula and
+  // East African Swahili coast, with Persian and Gujarati sailors as
+  // standing fixtures on the Gulf-to-Malabar routes.
+  Omani: [
+    ['Omani', 40],
+    ['Swahili', 14],       // Zanzibar / Mombasa / Kilwa
+    ['Persian', 10],       // Bandar Abbas, Hormuz
+    ['Gujarati', 10],      // lascars on Gulf-India shuttle routes
+    ['Ottoman', 6],        // Red Sea / Basra
+    ['Mughal', 5],
+    ['Malay', 3],
+    ['Portuguese', 4],     // renegades and pilots in Goa/Malacca routes
+    ['Javanese', 2],
+    ['Acehnese', 1],
+    ['Chinese', 1],
+    ['English', 1],
+    ['Dutch', 1],
+    ['French', 1],
+    ['Spanish', 1],
+  ],
+  // Chinese junk crews out of Fujian / Macau drew heavily from the Fujianese
+  // coast itself, with overseas-Chinese sailors from the East Indies
+  // communities, Southeast Asian pilots, and some Japanese (red-seal era).
+  Chinese: [
+    ['Chinese', 50],
+    ['Malay', 12],         // Bantam, Malacca, Palembang crews
+    ['Javanese', 6],
+    ['Japanese', 6],       // red-seal trade crossover
+    ['Portuguese', 6],     // Macau renegados and pilots
+    ['Siamese', 3],
+    ['Acehnese', 2],
+    ['Moluccan', 2],
+    ['Gujarati', 3],       // Ming-era South-China-Sea traders
+    ['Spanish', 3],        // Manila galleon crossover
+    ['Dutch', 2],
+    ['Swahili', 1],        // rare but attested
+    ['English', 1],
+    ['French', 1],
+    ['Persian', 1],
+    ['Mughal', 1],
+  ],
 };
 
 function weightedPick(weights: NatWeight[]): Nationality {
@@ -1018,19 +1059,31 @@ export function generateCrewMember(
 }
 
 /**
+ * Roll the starting captain in isolation so the caller can inspect luck
+ * (which gates ship-tier selection) before crew size is decided.
+ */
+export function generateStartingCaptain(factionFlag: Nationality): CrewMember {
+  const captain = generateCrewMember(factionFlag, 'Captain');
+  captain.traits = ['Silver Tongue'];
+  return captain;
+}
+
+/**
  * Generate a full starting crew for a playable faction.
- * Returns a captain + a balanced set of officers and sailors.
+ * Returns a captain + a balanced set of officers and sailors. If
+ * `existingCaptain` is provided it's used instead of rolling a new one —
+ * lets the caller pre-roll luck to pick the ship tier.
  */
 export function generateStartingCrew(
   factionFlag: Nationality,
   crewSize: number = 6,
+  existingCaptain?: CrewMember,
 ): CrewMember[] {
   const mix = CREW_MIX[factionFlag] ?? CREW_MIX['English'];
   const crew: CrewMember[] = [];
 
   // Captain is always from the faction, starts with Silver Tongue trait
-  const captain = generateCrewMember(factionFlag, 'Captain');
-  captain.traits = ['Silver Tongue'];
+  const captain = existingCaptain ?? generateStartingCaptain(factionFlag);
   crew.push(captain);
 
   // Assign officer roles first, then fill with sailors

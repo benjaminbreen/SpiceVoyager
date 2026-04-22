@@ -12,6 +12,7 @@ import { CORE_PORTS, WORLD_SIZE_VALUES, WorldSize } from '../utils/portArchetype
 import { WATER_PALETTES, resolveWaterPaletteId } from '../utils/waterPalettes';
 import type { WaterPaletteId, WaterPaletteSetting } from '../utils/waterPalettes';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
+import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
 
 type SettingsTab = 'world' | 'display' | 'audio' | 'gameplay' | 'dev' | 'about';
 
@@ -146,7 +147,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     onSetWaterPalette={setWaterPaletteSetting}
                   />
                 )}
-                {tab === 'display' && <PlaceholderTab title="Display" description="Graphics quality, UI scale, and minimap settings will appear here." />}
+                {tab === 'display' && (
+                  <DisplayTab
+                    renderDebug={renderDebug}
+                    onUpdateRenderDebug={updateRenderDebug}
+                  />
+                )}
                 {tab === 'audio' && <AudioTab />}
                 {tab === 'gameplay' && <PlaceholderTab title="Gameplay" description="Time speed, auto-pause, and difficulty settings will appear here." />}
                 {tab === 'dev' && (
@@ -465,6 +471,62 @@ function DevTab({ worldSeed, worldSize, devSoloPort, renderDebug, onSetWorldSize
         </div>
       </SettingsSection>
 
+      <SettingsSection title="City Field Overlay" description="Phase 1 debug view for the additive field model. Visualizes candidate sacred/profane, safe/dangerous, access, and prestige fields across all generated land without changing generation yet.">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-300">Heatmap Overlay</div>
+              <div className="text-[11px] text-slate-500">Draws a coarse land heatmap for tuning future city districts, countryside danger, and sacred-site placement.</div>
+            </div>
+            <button
+              onClick={() => onUpdateRenderDebug({ cityFieldOverlay: !renderDebug.cityFieldOverlay })}
+              className={`rounded-lg px-3 py-2 text-xs font-medium transition-all border ${
+                renderDebug.cityFieldOverlay
+                  ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
+                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]'
+              }`}
+            >
+              {renderDebug.cityFieldOverlay ? 'Overlay On' : 'Overlay Off'}
+            </button>
+          </div>
+
+          <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+            <div className="text-xs font-semibold text-slate-300">Overlay Field</div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {renderDebug.cityFieldMode === 'district'
+                ? 'District classification: citadel, sacred, urban core, elite residential, artisan, waterside, and fringe zones.'
+                : CITY_FIELD_DESCRIPTIONS[renderDebug.cityFieldMode]}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <button
+                key="district"
+                onClick={() => onUpdateRenderDebug({ cityFieldMode: 'district', cityFieldOverlay: true })}
+                className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-all ${
+                  renderDebug.cityFieldMode === 'district'
+                    ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                    : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+                }`}
+              >
+                District
+              </button>
+              {CITY_FIELD_KEYS.map((field) => (
+                <button
+                  key={field}
+                  onClick={() => onUpdateRenderDebug({ cityFieldMode: field, cityFieldOverlay: true })}
+                  className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-all ${
+                    renderDebug.cityFieldMode === field
+                      ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                      : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+                  }`}
+                >
+                  {CITY_FIELD_LABELS[field]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </SettingsSection>
+
       {/* World Size */}
       <SettingsSection title="World Size" description="Controls the size of the generated world. Current map will regenerate.">
         <div className="flex gap-2">
@@ -606,6 +668,34 @@ function VolumeSlider({ icon, label, description, value, onChange, onAfterChange
           }}
         />
       </div>
+    </div>
+  );
+}
+
+function DisplayTab({ renderDebug, onUpdateRenderDebug }: {
+  renderDebug: RenderDebugSettings;
+  onUpdateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <SettingsSection title="Map Markers" description="Small visual cues overlaid on the 3D port maps to help spot important buildings at a glance.">
+        <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+          <div>
+            <div className="text-xs font-semibold text-slate-300">Sacred Site Markers</div>
+            <div className="text-[11px] text-slate-500">Floating purple diamonds above churches, mosques, temples, and religious landmarks.</div>
+          </div>
+          <button
+            onClick={() => { sfxClick(); onUpdateRenderDebug({ sacredMarkers: !renderDebug.sacredMarkers }); }}
+            className={`rounded-lg px-3 py-2 text-xs font-medium transition-all border ${
+              renderDebug.sacredMarkers
+                ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
+                : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]'
+            }`}
+          >
+            {renderDebug.sacredMarkers ? 'On' : 'Off'}
+          </button>
+        </div>
+      </SettingsSection>
     </div>
   );
 }

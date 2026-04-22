@@ -4,6 +4,15 @@ import { getTerrainData } from './terrain';
 import { generateBuildingLabel } from './buildingLabels';
 import type { CanalLayout } from './canalLayout';
 import { distanceToNearestCanal } from './canalLayout';
+import { classifyBuildingDistrict, pruneDistrictBoundaries } from './cityDistricts';
+import { assignBuildingForms } from './cityBuildings';
+import { buildingSemanticClass, SEMANTIC_STYLE } from './semanticClasses';
+import {
+  pickPathOrigin,
+  pickPathTarget,
+  PATH_INTERIOR_BIAS,
+  ROAD_DENSITY,
+} from './cityLayout';
 
 function mulberry32(a: number) {
   return function() {
@@ -20,21 +29,30 @@ function hashStr(s: string): number {
   return h >>> 0;
 }
 
+// `spiritual` and `landmark` sit at 0 across all scales — their counts are
+// driven by the port's faith list and its `landmarkId`, not by this table.
+// The entries exist solely to keep the Record exhaustive for TypeScript.
 const SCALE_COUNTS: Record<PortScale, Record<BuildingType, number>> = {
-  'Small':      { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, house: 8,   shack: 5,  farmhouse: 3 },
-  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, house: 20,  shack: 8,  farmhouse: 6 },
-  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, house: 40,  shack: 12, farmhouse: 10 },
-  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, house: 70,  shack: 20, farmhouse: 15 },
-  'Huge':       { dock: 6, warehouse: 5, fort: 2, estate: 7, market: 4, house: 110, shack: 25, farmhouse: 20 },
+  'Small':      { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, plaza: 0, spiritual: 0, landmark: 0, house: 8,   shack: 5,  farmhouse: 3 },
+  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, plaza: 1, spiritual: 0, landmark: 0, house: 20,  shack: 8,  farmhouse: 6 },
+  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, plaza: 1, spiritual: 0, landmark: 0, house: 40,  shack: 12, farmhouse: 10 },
+  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, plaza: 2, spiritual: 0, landmark: 0, house: 70,  shack: 20, farmhouse: 15 },
+  'Huge':       { dock: 6, warehouse: 5, fort: 2, estate: 7, market: 4, plaza: 2, spiritual: 0, landmark: 0, house: 110, shack: 25, farmhouse: 20 },
 };
 
-const ROAD_COUNTS: Record<PortScale, { avenues: number; roads: number; paths: number }> = {
-  'Small':      { avenues: 0, roads: 0, paths: 1 },
-  'Medium':     { avenues: 0, roads: 1, paths: 2 },
-  'Large':      { avenues: 0, roads: 2, paths: 3 },
-  'Very Large': { avenues: 1, roads: 3, paths: 4 },
-  'Huge':       { avenues: 2, roads: 4, paths: 6 },
+// Plaza footprint grows with port stature. Medium gets a compact 7×7; Huge
+// gets a 10×10 civic square. These override BUILDING_SIZES.plaza per scale.
+const PLAZA_FOOTPRINT: Record<PortScale, [number, number, number]> = {
+  'Small':      [7, 0.3, 7],
+  'Medium':     [7, 0.3, 7],
+  'Large':      [9, 0.3, 9],
+  'Very Large': [9, 0.3, 9],
+  'Huge':       [10, 0.3, 10],
 };
+
+// Road counts now live in cityLayout.ts (ROAD_DENSITY) so tuning can happen
+// from one place alongside the path-picking helpers.
+const ROAD_COUNTS = ROAD_DENSITY;
 
 // Generator footprint per scale. Half-width in grid cells; world size is
 // (2 * GRID_RADIUS * cellSize) units per side. Huge ports need ~4× the area
@@ -53,9 +71,18 @@ const BUILDING_SIZES: Record<BuildingType, [number, number, number]> = {
   fort: [12, 6, 12],
   estate: [6, 5, 6],
   market: [6, 4, 6],
+  // Plazas are flat open squares — their renderer only reads the footprint;
+  // the "height" field is ignored but we keep a nominal value for placement.
+  plaza: [9, 0.3, 9],
   house: [3, 3, 3],
   shack: [2.5, 2, 2.5],
   farmhouse: [4, 3, 4],
+  // Spiritual buildings reserve a big footprint so the +1 occupancy pad
+  // carves out a clearing around them — the actual geometry is smaller.
+  spiritual: [8, 4, 8],
+  // Landmarks override this per-rule (LANDMARK_RULES[id].size). This value
+  // is only a safety fallback if a landmark is ever placed without a rule.
+  landmark: [10, 4, 10],
 };
 
 interface Cell {
@@ -304,6 +331,8 @@ export function generateCity(
   region?: CulturalRegion,
   bridgeCount: number = 0,
   canalLayout?: CanalLayout,
+  landmarkId?: string,
+  faiths: readonly string[] = [],
 ): { buildings: Building[]; roads: Road[] } {
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
@@ -670,38 +699,295 @@ export function generateCity(
   // ── 2. Place civic anchors (fort, markets, warehouses, estates) ─────────────
   const anchorCells: { type: BuildingType; cell: Cell; idx: number }[] = [];
 
-  // Forts tend to be single per port. On dual-bank maps *with a successfully
-  // placed bridge*, steer the fort onto the opposite bank from dock 0 (dock 0
-  // sits on bankA by preferredBank(0)) so the primary dock→market→fort avenue
-  // must cross the bridge. This keeps the bridge wired into the road network
-  // instead of leaving it an isolated stone span. If no bridge was placed
-  // (wide/curved river, or bridgeCount=0 on a dual-bank map), fall back to
-  // central placement on any major bank — otherwise the fort would be
-  // stranded on an unreachable bank.
+  // Forts belong on commanding ground — a ridge, hilltop, or coastal
+  // headland — not jammed against the urban core. Historical references:
+  // Tower of London (riverside bluff, east of the medieval city), Castelo
+  // de São Jorge (highest hill above Lisbon), Castillo del Morro (peninsula
+  // guarding Havana's harbor), Fort Jesus (headland at Mombasa), São Paulo
+  // (escarpment above Malacca).
+  //
+  // The score below prefers:
+  //   • medium distance from center (~0.5 of the port footprint radius),
+  //     so the fort reads as "overlooking" the city rather than "in" it;
+  //   • elevated cells (real height above sea level);
+  //   • local prominence — cells that rise above their neighborhood;
+  //   • coastal adjacency — a waterside headland is better than an inland
+  //     hill for a harbor-guarding fort, unless the site has strong
+  //     prominence on its own.
+  //
+  // On dual-bank maps with a bridge, still prefer the opposite bank from
+  // dock 0 so the avenue must cross the bridge.
   const fortPreferBank = dualBank && bridgeRoads.length > 0 ? bankB : -1;
+  const radiusWorld = gridRadius * cellSize;
+
+  const hasNearWater = (c: Cell): boolean => {
+    for (const [dx, dz] of NEIGHBORS) {
+      const n = gridMap.get(`${c.x + dx * cellSize},${c.z + dz * cellSize}`);
+      if (n && (n.isWater || n.isBeach)) return true;
+    }
+    return false;
+  };
+
+  const localProminence = (c: Cell): number => {
+    let sum = 0;
+    let count = 0;
+    for (let dr = -3; dr <= 3; dr++) {
+      for (let dc = -3; dc <= 3; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const n = gridMap.get(`${c.x + dc * cellSize},${c.z + dr * cellSize}`);
+        if (n && (n.isLand || n.isBeach)) {
+          sum += n.height;
+          count += 1;
+        }
+      }
+    }
+    if (count === 0) return 0;
+    return Math.max(0, c.height - sum / count);
+  };
+
+  const fortScore = (c: Cell): number => {
+    const normDist = c.distToCenter / radiusWorld;
+    // Parabolic preference centered on 0.5 * footprint radius.
+    const distScore = -Math.abs(normDist - 0.5) * 3.0;
+    const elevScore = Math.max(0, c.height - SEA_LEVEL) * 0.35;
+    const prominence = localProminence(c) * 0.8;
+    const coastalBonus = hasNearWater(c) ? 0.9 : 0;
+    // Lower score = better in findSpot's ascending sort.
+    return -(distScore + elevScore + prominence + coastalBonus);
+  };
+
   for (let i = 0; i < counts.fort; i++) {
     let spot = fortPreferBank >= 0
       ? findSpot(
           c => c.isLand && c.bank === fortPreferBank,
           BUILDING_SIZES.fort,
-          (a, b) => a.distToCenter - b.distToCenter,
+          (a, b) => fortScore(a) - fortScore(b),
         )
       : null;
     if (!spot) {
       spot = findSpot(
         c => c.isLand && (!dualBank || majorBanks.has(c.bank)),
         BUILDING_SIZES.fort,
-        (a, b) => a.distToCenter - b.distToCenter,
+        (a, b) => fortScore(a) - fortScore(b),
       );
     }
     if (spot) {
+      // Face the fort toward the port centre so the gate/flag point inward.
+      const toCenter = Math.atan2(portX - spot.x, portZ - spot.z);
       buildings.push({
         id: `fort_${i}`, type: 'fort',
         position: [spot.x, spot.height, spot.z],
-        rotation: prng() * Math.PI, scale: BUILDING_SIZES.fort,
+        rotation: toCenter, scale: BUILDING_SIZES.fort,
       });
       anchorCells.push({ type: 'fort', cell: spot, idx: i });
     }
+  }
+
+  // ── 2b. Named landmark (Tower of London, etc.) ────────────────────────────
+  // Captured here (not inside the conditional) so the spiritual placer below
+  // can see it even when no landmark is present.
+  let landmarkCell: Cell | null = null;
+  // Some ports carry a single unique landmark with a specific geographic
+  // identity that the generic fort loop can't honour. The Tower of London
+  // sits east of the medieval city walls on the north bank of the Thames —
+  // not wherever the fort happens to score well. Each landmark here gets
+  // an explicit directional/bank rule; all others continue to render
+  // adjacent to the generic fort (legacy path).
+  if (landmarkId) {
+    interface LandmarkRule {
+      /** Offset from port center as fraction of footprint radius: +x=east, +z=south. */
+      offset: [number, number];
+      /** Preferred bank relative to the dock's bank ('same' or 'opposite'). */
+      bank?: 'same' | 'opposite';
+      /** Prefer cells adjacent to water (harbor / river edge). */
+      coastal?: boolean;
+      /** Footprint size for grid reservation. */
+      size: [number, number, number];
+      /** Strong preference for elevated / prominent ground. */
+      elevated?: boolean;
+    }
+
+    // Per-landmark placement rules — each tries to honour the real-world
+    // position of the monument relative to its city center. Directions use
+    // world coords (+x east, +z south); archetype openDirection already
+    // orients the terrain so these read correctly relative to the harbor.
+    const LANDMARK_RULES: Record<string, LandmarkRule> = {
+      // Tower of London — NE of the medieval city, north bank of the Thames.
+      // London openDirection 'E' (Thames flows E-W through the map).
+      'tower-of-london':     { offset: [ 0.55, -0.25], bank: 'same', coastal: true,  size: [10, 4, 10] },
+
+      // Torre de Belém — far west of Lisbon, directly on the Tagus.
+      // Lisbon openDirection 'W'; downstream/seaward sits west of centre.
+      'belem-tower':         { offset: [-0.55,  0.05], coastal: true,  size: [6, 4, 6] },
+
+      // Oude Kerk — De Wallen, central-north of Amsterdam near the IJ harbor.
+      // Amsterdam openDirection 'N'.
+      'oude-kerk-spire':     { offset: [ 0.05, -0.2 ], size: [6, 4, 9] },
+
+      // La Giralda — central Seville, east bank of the Guadalquivir.
+      // Seville openDirection 'S' (river flows N→S).
+      'giralda-tower':       { offset: [ 0.15,  0.05], size: [6, 4, 6] },
+
+      // Bom Jesus Basilica — central Velha Goa, inland on north bank of Mandovi.
+      // Goa openDirection 'W'; basilica is inland from the river.
+      'bom-jesus-basilica':  { offset: [ 0.1 , -0.05], size: [8, 4, 11] },
+
+      // Fort Jesus — NE headland of Mombasa Old Town, guarding harbor mouth.
+      // Mombasa openDirection 'E'.
+      'fort-jesus':          { offset: [ 0.55, -0.2 ], coastal: true,  size: [10, 4, 10] },
+
+      // Tali Temple gopuram — inland, south-east of central Calicut.
+      // Calicut openDirection 'W' (sea to west).
+      'calicut-gopuram':     { offset: [ 0.2 ,  0.15], size: [8, 4, 8] },
+
+      // Al-Shadhili mosque — central Mocha, slightly inland from the harbor.
+      // Mocha openDirection 'S'.
+      'al-shadhili-mosque':  { offset: [ 0.0 , -0.15], size: [8, 4, 8] },
+
+      // Mesjid Agung Banten — central, slightly inland from the harbor.
+      // Bantam openDirection 'N'.
+      'grand-mosque-tiered': { offset: [ 0.0 ,  0.15], size: [10, 4, 10] },
+
+      // Diu fortress — east tip of Diu island, long coastal wall.
+      // Diu openDirection 'S'.
+      'diu-fortress':        { offset: [ 0.55,  0.1 ], coastal: true,  size: [8, 4, 18] },
+
+      // São Jorge da Mina — promontory south of Elmina town, seaward.
+      // Elmina openDirection 'S'.
+      'elmina-castle':       { offset: [ 0.0 ,  0.5 ], coastal: true, elevated: true, size: [12, 4, 12] },
+
+      // Jesuit College — Salvador upper city (Pelourinho), east of the bay.
+      // Salvador openDirection 'W'.
+      'jesuit-college':      { offset: [ 0.25, -0.05], elevated: true, size: [14, 4, 8] },
+
+      // Palace of the Inquisition — central Cartagena on the Plaza de Bolívar.
+      // Cartagena openDirection 'W'.
+      'palacio-inquisicion': { offset: [ 0.05,  0.05], size: [12, 4, 8] },
+
+      // Colégio de São Paulo — uphill of the Macau peninsula, Jesuit
+      // educational complex founded 1594. Macau openDirection 'S'.
+      'colegio-sao-paulo':   { offset: [ 0.05, -0.3 ], elevated: true, size: [10, 4, 10] },
+
+      // English East India Company Factory — riverside trading compound
+      // on the Tapti. Established 1612, literally the game year.
+      // Surat openDirection 'W'.
+      'english-factory-surat': { offset: [ 0.3 ,  0.1 ], coastal: true, size: [10, 4, 10] },
+    };
+
+    const rule = LANDMARK_RULES[landmarkId];
+    if (rule) {
+      const radiusW = gridRadius * cellSize;
+      const targetX = portX + rule.offset[0] * radiusW;
+      const targetZ = portZ + rule.offset[1] * radiusW;
+      const dockBank = dockCells[0]?.bank ?? -1;
+      const preferredLandmarkBank = rule.bank === 'opposite'
+        ? (dockBank === bankA ? bankB : bankA)
+        : dockBank;
+
+      const landmarkScore = (c: Cell): number => {
+        const dx = c.x - targetX;
+        const dz = c.z - targetZ;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        const bankPenalty = (dualBank && preferredLandmarkBank >= 0 && c.bank !== preferredLandmarkBank) ? 40 : 0;
+        const coastalPenalty = (rule.coastal && !hasNearWater(c)) ? 12 : 0;
+        const elevBonus = Math.max(0, (c.height - SEA_LEVEL) * (rule.elevated ? 1.2 : 0.4));
+        return dist + bankPenalty + coastalPenalty - elevBonus;
+      };
+
+      const spot = findSpot(
+        c => c.isLand,
+        rule.size,
+        (a, b) => landmarkScore(a) - landmarkScore(b),
+      );
+      if (spot) {
+        const faceCity = Math.atan2(portX - spot.x, portZ - spot.z);
+        buildings.push({
+          id: `landmark_${landmarkId}`,
+          type: 'landmark',
+          position: [spot.x, spot.height, spot.z],
+          rotation: faceCity,
+          scale: rule.size,
+          landmarkId,
+        });
+        anchorCells.push({ type: 'landmark', cell: spot, idx: 99 });
+        landmarkCell = spot;
+      }
+    }
+  }
+
+  // ── 2c. Spiritual buildings (churches, mosques, temples, pagodas, shrines) ──
+  // One per faith listed for the port (up to 3). Each lands in a clearing
+  // created by the 8×8 reserved footprint plus findSpot's +1 occupancy pad.
+  // Preferences: inland over coastal, elevated, away from other spiritual
+  // buildings (each faith should read as its own precinct). The first faith
+  // gets the most prominent, central-ish spot; later ones push outward.
+  //
+  // Some landmarks are themselves religious buildings (Bom Jesus, Oude Kerk,
+  // Al-Shadhili, etc.). When the port's landmark already represents a faith
+  // on the port's faith list, we drop that faith from the generic spiritual
+  // loop so the port doesn't end up with two churches / two mosques / etc.
+  const LANDMARK_FAITH: Record<string, string> = {
+    'bom-jesus-basilica':  'catholic',
+    'oude-kerk-spire':     'protestant',
+    'giralda-tower':       'catholic',
+    'al-shadhili-mosque':  'sunni',
+    'grand-mosque-tiered': 'sunni',
+    'calicut-gopuram':     'hindu',
+    'jesuit-college':      'catholic',
+    'palacio-inquisicion': 'catholic',
+  };
+  const landmarkFaith = landmarkId ? LANDMARK_FAITH[landmarkId] : undefined;
+  const spiritualFaiths = landmarkFaith
+    ? faiths.filter(f => f !== landmarkFaith)
+    : faiths;
+  const maxSpiritual = scale === 'Small' ? Math.min(1, spiritualFaiths.length)
+                     : scale === 'Medium' ? Math.min(2, spiritualFaiths.length)
+                     : Math.min(3, spiritualFaiths.length);
+  const placedSpiritualCells: Cell[] = [];
+  // Seed with the landmark site when it's a religious building — keeps
+  // generic spirituals from clustering on top of the anchor church/mosque.
+  if (landmarkCell && landmarkFaith) placedSpiritualCells.push(landmarkCell);
+  for (let si = 0; si < maxSpiritual; si++) {
+    const faith = spiritualFaiths[si];
+    // First faith sits closer to the centre; subsequent ones prefer mid-to-
+    // outer rings so faiths don't pile on top of each other.
+    const idealRadiusFraction = si === 0 ? 0.25 : si === 1 ? 0.45 : 0.6;
+    const idealDist = gridRadius * cellSize * idealRadiusFraction;
+
+    const spiritualScore = (c: Cell): number => {
+      const distFromIdeal = Math.abs(c.distToCenter - idealDist);
+      let score = distFromIdeal;
+      // Prefer inland: penalise coastal-adjacent cells for this building
+      // class (spiritual sites usually sit back from the working waterfront).
+      if (hasNearWater(c)) score += 18;
+      // Elevation bonus
+      score -= Math.max(0, (c.height - SEA_LEVEL)) * 0.6;
+      // Distance from other spiritual buildings — each faith should stand apart.
+      for (const prev of placedSpiritualCells) {
+        const dsq = (c.x - prev.x) ** 2 + (c.z - prev.z) ** 2;
+        if (dsq < 18 * 18) score += (18 * 18 - dsq) * 0.02;
+      }
+      return score;
+    };
+
+    const spot = findSpot(
+      c => c.isLand,
+      BUILDING_SIZES.spiritual,
+      (a, b) => spiritualScore(a) - spiritualScore(b),
+    );
+    if (!spot) continue;
+
+    const faceCity = Math.atan2(portX - spot.x, portZ - spot.z);
+    buildings.push({
+      id: `spiritual_${si}_${faith}`,
+      type: 'spiritual',
+      position: [spot.x, spot.height, spot.z],
+      rotation: faceCity,
+      scale: BUILDING_SIZES.spiritual,
+      faith,
+    });
+    anchorCells.push({ type: 'spiritual', cell: spot, idx: si });
+    placedSpiritualCells.push(spot);
   }
 
   for (let i = 0; i < counts.market; i++) {
@@ -858,7 +1144,10 @@ export function generateCity(
   let roadsBuilt = 0;
   // Prefer connecting markets, forts, warehouses that are off-network
   const sortedAnchors = unconnected.sort((a, b) => {
-    const order = { market: 0, fort: 1, warehouse: 2, estate: 3, dock: 4, house: 5, farmhouse: 6, shack: 7 } as Record<BuildingType, number>;
+    const order: Record<BuildingType, number> = {
+      market: 0, plaza: 0, spiritual: 0, landmark: 1, fort: 1,
+      warehouse: 2, estate: 3, dock: 4, house: 5, farmhouse: 6, shack: 7,
+    };
     return (order[a.type] ?? 9) - (order[b.type] ?? 9);
   });
   for (const a of sortedAnchors) {
@@ -887,67 +1176,258 @@ export function generateCity(
     }
   }
 
-  // Paths: branch from road endpoints to distant land points (where outskirts will cluster)
+  // Paths: build a network by teeing off existing roads at midpoints AND
+  // endpoints, with a mix of outskirts and interior targets. This is what
+  // turns a radial spoke pattern into a medieval-style tangled street grid —
+  // crucial for big cities to stop reading as "random scatter".
   let pathsBuilt = 0;
-  const pathTargetCell = (): Cell | null => {
-    // Pick a random land cell in the outer ring, far from existing roads
-    const ring = grid.filter(c =>
-      c.isLand && c.distToCenter > innerRing && c.distToCenter < outerRing &&
-      !Array.from(usedAnchorKeys).some(k => {
-        const [ux, uz] = k.split(',').map(Number);
-        return Math.abs(ux - c.x) < 8 && Math.abs(uz - c.z) < 8;
-      })
-    );
-    if (ring.length === 0) return null;
-    return ring[Math.floor(prng() * ring.length)];
-  };
-
   let pathFailures = 0;
+  const maxPathFailures = Math.max(5, Math.round(roadCounts.paths * 1.2));
+  const interiorBias = PATH_INTERIOR_BIAS[scale];
+
   while (pathsBuilt < roadCounts.paths) {
-    const target = pathTargetCell();
+    const layoutTarget = pickPathTarget(grid, prng, {
+      innerRing,
+      outerRing,
+      interiorBias,
+      avoid: usedAnchorKeys,
+      avoidRadius: 8,
+    });
+    if (!layoutTarget) break;
+    // pickPathTarget returns a narrow LayoutCell view — look the full Cell
+    // back up from gridMap so A* has the height/water/bank fields it needs.
+    const target = gridMap.get(`${layoutTarget.x},${layoutTarget.z}`);
     if (!target) break;
-    const pool = [...roadEndpoints(), ...(dockAnchor ? [dockAnchor] : [])];
-    const start = pool.length > 0
-      ? (nearestOf(target, pool) ?? dockAnchor)
-      : dockAnchor;
+
+    // Origin: mostly tee off existing roads at midpoints so we build a
+    // network, not radial spokes. Falls back to dock if no road exists.
+    const origin = pickPathOrigin(roads, prng, { midpointProbability: 0.65 });
+    let start: Cell | null = null;
+    if (origin) start = snap(origin[0], origin[1]);
+    if (!start) {
+      const pool = [...roadEndpoints(), ...(dockAnchor ? [dockAnchor] : [])];
+      start = pool.length > 0 ? (nearestOf(target, pool) ?? dockAnchor) : dockAnchor;
+    }
     if (!start) break;
+
     const added = tryAddRoad('path', `path_${pathsBuilt}`, start, target, pathOpts, 1);
     if (!added) {
       pathFailures++;
-      if (pathFailures > 5) break;
+      if (pathFailures > maxPathFailures) break;
       continue;
     }
     pathsBuilt++;
-    // Record the new path's points as "used" so outskirt-target picker avoids them
+    // Record the new path's points as "used" so subsequent targets spread out.
     for (const p of added.points) {
       usedAnchorKeys.add(`${Math.round(p[0])},${Math.round(p[2])}`);
     }
   }
 
+  // ── 3b. Plazas ─────────────────────────────────────────────────────────────
+  // Open squares sited at road junctions and landmark cues. Placed AFTER the
+  // road network (so we can find junctions) but BEFORE houses (so their
+  // footprint reserves a chunk of the grid that houses won't fill in).
+  const plazaCount = counts.plaza;
+  if (plazaCount > 0 && roads.length > 0) {
+    // Build a quick lookup: how many distinct roads touch each rounded
+    // world-space cell? Cells with 2+ roads are junctions and make the best
+    // plaza seeds — that's where people actually gather.
+    const junctionScore = new Map<string, number>();
+    const junctionCell  = new Map<string, Cell>();
+    const plazaTagSeen  = new Set<string>();
+    const bump = (p: [number, number, number], roadId: string) => {
+      const c = snap(p[0], p[2]);
+      if (!c || !c.isLand) return;
+      const k = `${c.x},${c.z}`;
+      const tag = `${k}:${roadId}`;
+      if (plazaTagSeen.has(tag)) return;
+      plazaTagSeen.add(tag);
+      junctionScore.set(k, (junctionScore.get(k) ?? 0) + 1);
+      junctionCell.set(k, c);
+    };
+    for (const r of roads) {
+      if (r.tier === 'bridge') continue;
+      // Only sample every ~3rd point so we don't over-score ribbon segments.
+      for (let i = 0; i < r.points.length; i += 3) bump(r.points[i], r.id);
+      // Always sample endpoints so anchor meets are captured.
+      if (r.points.length > 0) bump(r.points[0], r.id);
+      if (r.points.length > 1) bump(r.points[r.points.length - 1], r.id);
+    }
+
+    const plazaFootprint = PLAZA_FOOTPRINT[scale];
+    const plazaRadiusCells = Math.ceil(plazaFootprint[0] / cellSize / 2);
+    const tryReservePlaza = (seed: Cell): Cell | null => {
+      // Walk outward in a small spiral from the seed until we find a cell
+      // whose full footprint is unoccupied and roughly flat. We tolerate
+      // overlap with road cells (plazas sit astride streets) but reject
+      // existing buildings.
+      for (let ring = 0; ring <= 4; ring++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          for (let dx = -ring; dx <= ring; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+            const center = gridMap.get(`${seed.x + dx * cellSize},${seed.z + dz * cellSize}`);
+            if (!center || !center.isLand) continue;
+            let ok = true;
+            let sumH = 0;
+            let nH = 0;
+            for (let rr = -plazaRadiusCells; rr <= plazaRadiusCells && ok; rr++) {
+              for (let cc = -plazaRadiusCells; cc <= plazaRadiusCells && ok; cc++) {
+                const ch = gridMap.get(`${center.x + cc * cellSize},${center.z + rr * cellSize}`);
+                if (!ch || !ch.isLand) { ok = false; break; }
+                if (ch.occupied && !roadCells.has(`${ch.x},${ch.z}`)) { ok = false; break; }
+                if (Math.abs(ch.height - center.height) > 1.0) { ok = false; break; }
+                sumH += ch.height;
+                nH++;
+              }
+            }
+            if (!ok || nH === 0) continue;
+            // Reserve the footprint (keep road cells as road cells, just
+            // mark them occupied so houses don't pack onto the plaza edge).
+            for (let rr = -plazaRadiusCells; rr <= plazaRadiusCells; rr++) {
+              for (let cc = -plazaRadiusCells; cc <= plazaRadiusCells; cc++) {
+                const ch = gridMap.get(`${center.x + cc * cellSize},${center.z + rr * cellSize}`);
+                if (ch) ch.occupied = true;
+              }
+            }
+            return { ...center, height: sumH / nH };
+          }
+        }
+      }
+      return null;
+    };
+
+    // Rank junction candidates: junction score first, then proximity to the
+    // market (plazas are civic centres, not estate courtyards).
+    const marketCell = market?.cell;
+    const candidates = [...junctionScore.entries()]
+      .map(([k, score]) => ({ k, score, cell: junctionCell.get(k)! }))
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (!marketCell) return 0;
+        const da = (a.cell.x - marketCell.x) ** 2 + (a.cell.z - marketCell.z) ** 2;
+        const db = (b.cell.x - marketCell.x) ** 2 + (b.cell.z - marketCell.z) ** 2;
+        return da - db;
+      });
+
+    // Find the strongest road tangent near a world-space point so the plaza
+    // can align its directional props (paifang arch, iberian cross axis) to
+    // the main approach. Prefer higher-tier roads; within a road, sample the
+    // segment midpoint closest to the seed.
+    const tierWeight: Record<RoadTier, number> = { bridge: 0, path: 1, road: 2, avenue: 3 };
+    const tangentAtSeed = (sx: number, sz: number): number => {
+      let best: { w: number; angle: number; d2: number } | null = null;
+      for (const r of roads) {
+        const w = tierWeight[r.tier];
+        if (w === 0) continue;
+        for (let i = 0; i < r.points.length - 1; i++) {
+          const [x0, , z0] = r.points[i];
+          const [x1, , z1] = r.points[i + 1];
+          const mx = (x0 + x1) / 2;
+          const mz = (z0 + z1) / 2;
+          const d2 = (mx - sx) ** 2 + (mz - sz) ** 2;
+          const angle = Math.atan2(x1 - x0, z1 - z0);
+          if (!best || w > best.w || (w === best.w && d2 < best.d2)) {
+            best = { w, angle, d2 };
+          }
+        }
+      }
+      return best ? best.angle : 0;
+    };
+
+    let plazasPlaced = 0;
+    const minPlazaSep = 14; // keep plazas visually distinct
+    const placedPlazas: Cell[] = [];
+    for (const cand of candidates) {
+      if (plazasPlaced >= plazaCount) break;
+      const tooClose = placedPlazas.some(p =>
+        Math.hypot(p.x - cand.cell.x, p.z - cand.cell.z) < minPlazaSep,
+      );
+      if (tooClose) continue;
+      const placed = tryReservePlaza(cand.cell);
+      if (!placed) continue;
+      placedPlazas.push(placed);
+      buildings.push({
+        id: `plaza_${plazasPlaced}`,
+        type: 'plaza',
+        position: [placed.x, placed.height, placed.z],
+        rotation: tangentAtSeed(placed.x, placed.z),
+        scale: plazaFootprint,
+      });
+      plazasPlaced++;
+    }
+  }
+
   // ── 4. Place houses, constrained to cells near roads ───────────────────────
   // Precompute road-adjacency anchors (both sides of each road, spaced ~3.5u).
-  const houseAnchors: RoadAnchor[] = [];
+  // Build anchors grouped by tier so we can place avenue frontages first
+  // (shoulder-to-shoulder street wall) before path-anchors back-fill gaps.
+  const anchorsByTier: Record<'avenue' | 'road' | 'path', RoadAnchor[]> = {
+    avenue: [], road: [], path: [],
+  };
   for (const r of roads) {
-    // Houses cluster more heavily on avenues & roads than on paths.
-    const spacing = r.tier === 'avenue' ? 3.2 : r.tier === 'road' ? 3.4 : 4.5;
-    const offset  = r.tier === 'avenue' ? 4.0 : r.tier === 'road' ? 3.2 : 3.0;
-    houseAnchors.push(...sampleRoadAnchors(r, spacing, offset));
+    if (r.tier === 'bridge') continue;
+    // Houses cluster more heavily on avenues & roads than on paths. Tighter
+    // spacing on the main street tiers produces continuous frontage walls;
+    // paths keep looser spacing so alleys read as open space. Offsets match
+    // the wider road tiers so frontages sit just off the kerb, not in it.
+    const spacing = r.tier === 'avenue' ? 3.2 : r.tier === 'road' ? 3.2 : 4.2;
+    const offset  = r.tier === 'avenue' ? 5.0 : r.tier === 'road' ? 3.7 : 3.0;
+    const bucket = anchorsByTier[r.tier as 'avenue' | 'road' | 'path'];
+    bucket.push(...sampleRoadAnchors(r, spacing, offset));
   }
-  // Shuffle anchors
-  for (let i = houseAnchors.length - 1; i > 0; i--) {
-    const j = Math.floor(prng() * (i + 1));
-    [houseAnchors[i], houseAnchors[j]] = [houseAnchors[j], houseAnchors[i]];
-  }
+  // Shuffle within each tier — preserves tier ordering but randomizes which
+  // sides/slots get filled first so repeated roads don't always fill left-first.
+  const shuffleInPlace = <T,>(arr: T[]) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(prng() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  };
+  shuffleInPlace(anchorsByTier.avenue);
+  shuffleInPlace(anchorsByTier.road);
+  shuffleInPlace(anchorsByTier.path);
+  const houseAnchors: RoadAnchor[] = [
+    ...anchorsByTier.avenue,
+    ...anchorsByTier.road,
+    ...anchorsByTier.path,
+  ];
+
+  // Big-city urban cores get chunkier house footprints near the centre. This
+  // grows both the grid reservation and the stored scale, so the denser
+  // core feels crowded and the taller Phase B storey counts have a plot
+  // worth sitting on. Outer rings stay at the baseline size so fringe/fields
+  // don't balloon with a city's size.
+  const houseBaseSizeForCell = (cellDistToCenter: number): [number, number, number] => {
+    const base = BUILDING_SIZES.house;
+    if (scale === 'Small' || scale === 'Medium' || scale === 'Large') return base;
+    const radiusWorld = gridRadius * cellSize;
+    const centrality = Math.max(0, Math.min(1, 1 - cellDistToCenter / (radiusWorld * 0.72)));
+    const maxGrowth = scale === 'Huge' ? 0.58 : 0.42;
+    const factor = 1 + centrality * maxGrowth;
+    return [base[0] * factor, base[1], base[2] * factor];
+  };
 
   const tryPlaceAtAnchor = (
     anchor: RoadAnchor,
     type: BuildingType,
     id: string,
   ): boolean => {
-    const size = BUILDING_SIZES[type];
     const cell = snap(anchor.x, anchor.z);
     if (!cell || !cell.isLand || cell.occupied) return false;
-    // Occupancy footprint check + height variance check (same as findSpot)
+    let size = type === 'house'
+      ? houseBaseSizeForCell(cell.distToCenter)
+      : BUILDING_SIZES[type];
+
+    // Avenue frontage = slender rowhouses. Narrower front, slightly taller,
+    // slightly deeper. Footprint stays within the grid cell so the standard
+    // full-footprint occupancy check below guarantees neighbours can't
+    // overlap — flush (zero padding) is the densest they can get.
+    if (type === 'house' && anchor.tier === 'avenue') {
+      size = [size[0] * 0.85, size[1] * 1.15, size[2] * 1.1];
+    }
+
+    // Full footprint check — no overlap between any two houses, regardless
+    // of tier. This is the hard guarantee against clipping roofs.
     const radiusX = Math.ceil(size[0] / cellSize / 2);
     const radiusZ = Math.ceil(size[2] / cellSize / 2);
     let avgHeight = 0;
@@ -961,18 +1441,26 @@ export function generateCity(
         count++;
       }
     }
-    // Mark occupied with padding
-    for (let r = -radiusZ - 1; r <= radiusZ + 1; r++) {
-      for (let c = -radiusX - 1; c <= radiusX + 1; c++) {
+    // Avenue rowhouses reserve only their footprint (pad=0) so neighbours
+    // can stand flush; road/path houses keep the 1-cell breathing buffer so
+    // alleys read as breathing alleys rather than continuous walls.
+    const pad = anchor.tier === 'avenue' ? 0 : 1;
+    for (let r = -radiusZ - pad; r <= radiusZ + pad; r++) {
+      for (let c = -radiusX - pad; c <= radiusX + pad; c++) {
         const check = gridMap.get(`${cell.x + c * cellSize},${cell.z + r * cellSize}`);
         if (check) check.occupied = true;
       }
     }
+    // Less jitter on higher-tier roads — avenues are the frontage wall and
+    // must read as a continuous row, paths can kink freely.
+    const jitter = anchor.tier === 'avenue' ? 0.03
+                 : anchor.tier === 'road'   ? 0.07
+                 : 0.18;
     buildings.push({
       id,
       type,
       position: [cell.x, avgHeight / count, cell.z],
-      rotation: anchor.rot + (prng() - 0.5) * 0.15, // slight jitter so rows aren't robotically parallel
+      rotation: anchor.rot + (prng() - 0.5) * jitter,
       scale: size,
     });
     return true;
@@ -991,17 +1479,22 @@ export function generateCity(
   const houseJitter = new Map<string, number>();
   for (const c of grid) houseJitter.set(`${c.x},${c.z}`, prng() * 20);
   while (houseIdx < counts.house) {
+    // Use a representative size up-front for the occupancy-check radius;
+    // we reassign the per-cell size after a spot is chosen so the stored
+    // scale matches the cell's centrality (same rule as tryPlaceAtAnchor).
+    const probeSize = houseBaseSizeForCell(0);
     const spot = findSpot(
       c => c.isLand,
-      BUILDING_SIZES.house,
+      probeSize,
       (a, b) => (a.distToCenter + (houseJitter.get(`${a.x},${a.z}`) ?? 0))
               - (b.distToCenter + (houseJitter.get(`${b.x},${b.z}`) ?? 0)),
     );
     if (!spot) break;
+    const size = houseBaseSizeForCell(spot.distToCenter);
     buildings.push({
       id: `house_${houseIdx}`, type: 'house',
       position: [spot.x, spot.height, spot.z],
-      rotation: prng() * Math.PI, scale: BUILDING_SIZES.house,
+      rotation: prng() * Math.PI, scale: size,
     });
     houseIdx++;
   }
@@ -1048,10 +1541,44 @@ export function generateCity(
     const result = generateBuildingLabel(
       b.id, b.type, culture, portName,
       b.position[1], distToCenter, moisture, labelSeed, nationality, region,
+      { faith: b.faith, landmarkId: b.landmarkId },
     );
     b.label = result.label;
     b.labelSub = result.sub;
+
+    // Semantic class → eyebrow + color. Shared source of truth with the
+    // renderer; see src/utils/semanticClasses.ts.
+    const semClass = buildingSemanticClass(b);
+    if (semClass) {
+      const style = SEMANTIC_STYLE[semClass];
+      b.labelEyebrow = style.eyebrow;
+      b.labelEyebrowColor = style.color;
+    }
   }
 
-  return { buildings, roads };
+  // ── 8. District tags ───────────────────────────────────────────────────────
+  // Each building carries a district tag derived from the field model + its
+  // type. Phase B uses this to vary building form (stories, setback, etc.).
+  for (const b of buildings) {
+    b.district = classifyBuildingDistrict(b, portX, portZ, scale, roads, buildings);
+  }
+
+  // ── 9. District boundary pruning ───────────────────────────────────────────
+  // Drop buildings that sit on the seam between districts so clusters read as
+  // distinct neighborhoods separated by road or gap, not mashed into each
+  // other. Skipped on Small ports (districts mostly don't apply) and on Very
+  // Large / Huge ports where gaps worsen the "scattered" read that Phase C
+  // will address via archetype-specific road skeletons.
+  const shouldPrune = scale === 'Medium' || scale === 'Large';
+  const prunedBuildings = shouldPrune
+    ? pruneDistrictBoundaries(buildings, prng, { minCoherence: 0.4, dropProbability: 0.55 })
+    : buildings;
+
+  // ── 10. Building form metadata ─────────────────────────────────────────────
+  // Stories, housing class, and setback per building. Renderer reads these to
+  // vary massing — urban-core tall townhouses vs elite walled estates vs
+  // long-low waterside sheds.
+  assignBuildingForms(prunedBuildings, portX, portZ, scale, roads);
+
+  return { buildings: prunedBuildings, roads };
 }

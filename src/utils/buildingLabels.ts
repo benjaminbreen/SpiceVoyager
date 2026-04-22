@@ -1005,6 +1005,115 @@ export interface BuildingLabelResult {
   sub: string;
 }
 
+// ── Named landmark labels ────────────────────────────────────────────────────
+// `type: 'landmark'` buildings always carry a `landmarkId` that names the
+// specific monument. This table supplies the real historical name and
+// subtitle so hover labels don't fall back to a generic name pool. The
+// eyebrow (RELIGIOUS / CIVIC / ROYAL) comes from the semanticClasses module
+// via LANDMARK_CLASS — see cityGenerator.ts where it's resolved and set on
+// the Building.
+const LANDMARK_LABELS: Record<string, { label: string; sub: string }> = {
+  // Religious
+  'bom-jesus-basilica':  { label: 'Basílica do Bom Jesus',     sub: 'Jesuit basilica' },
+  'oude-kerk-spire':     { label: 'Oude Kerk',                 sub: 'Calvinist church' },
+  'giralda-tower':       { label: 'La Giralda',                sub: 'cathedral belltower' },
+  'al-shadhili-mosque':  { label: 'Al-Shādhilī Mosque',        sub: 'masjid jāmiʿ' },
+  'grand-mosque-tiered': { label: 'Mesjid Agung Banten',       sub: 'grand mosque' },
+  'calicut-gopuram':     { label: 'Tali Śiva Temple',          sub: 'Malabar gopuram' },
+  'jesuit-college':      { label: 'Colégio dos Jesuítas',      sub: 'Jesuit college' },
+  // Royal / judicial
+  'tower-of-london':     { label: 'Tower of London',           sub: 'royal fortress & mint' },
+  'palacio-inquisicion': { label: 'Palacio de la Inquisición', sub: 'tribunal del Santo Oficio' },
+  // Civic / military
+  'belem-tower':           { label: 'Torre de Belém',              sub: 'river fortification' },
+  'fort-jesus':            { label: 'Fort Jesus',                  sub: 'Portuguese coastal fort' },
+  'diu-fortress':          { label: 'Fortaleza de Diu',            sub: 'bastioned coastal fort' },
+  'elmina-castle':         { label: 'São Jorge da Mina',           sub: 'Portuguese castle' },
+  // Learned
+  'colegio-sao-paulo':     { label: 'Colégio de São Paulo',        sub: 'Jesuit college & observatory' },
+  // Mercantile
+  'english-factory-surat': { label: 'English East India Factory',  sub: 'Surat factory, est. 1612' },
+};
+
+// ── Faith-specific spiritual building naming ─────────────────────────────────
+// Generic spiritual buildings placed by the city generator. These sit
+// alongside any named landmark (the landmark owns the prominent site; these
+// fill in the second/third faith for religiously plural ports like Goa or
+// Malacca).
+function spiritualLabel(
+  faith: string,
+  portName: string,
+  nationality: Nationality | undefined,
+  region: CulturalRegion | undefined,
+  rng: () => number,
+): { label: string; sub: string } {
+  switch (faith) {
+    case 'catholic': {
+      const saints = ['São Francisco', 'Nossa Senhora do Rosário', 'São Sebastião', 'Santo António', 'São Tomé', 'São Paulo', 'Bom Jesus'];
+      return { label: `Igreja de ${pick(saints, rng)}`, sub: 'parish church' };
+    }
+    case 'protestant': {
+      if (nationality === 'Dutch') {
+        const names = ['Zuider', 'Wester', 'Nieuwe', 'Noorder', 'Ooster'];
+        return { label: `${pick(names, rng)}kerk`, sub: 'Calvinist church' };
+      }
+      const patrons = ['St Mary', 'St James', 'Christ', 'Holy Trinity', 'St Olave'];
+      return { label: `${pick(patrons, rng)}'s Church`, sub: 'Anglican parish' };
+    }
+    case 'sunni':
+    case 'shia': {
+      if (region === 'Swahili' || region === 'Arab') {
+        const nouns = ['al-Jāmiʿ', 'al-Kabīr', 'al-Nūr', 'al-Fatḥ', 'al-Rawḍa'];
+        return { label: `Masjid ${pick(nouns, rng)}`, sub: faith === 'shia' ? 'Shiʿa mosque' : 'Friday mosque' };
+      }
+      if (region === 'Malay') {
+        const places = ['Agung', 'Raya', 'Jamek', 'Besar'];
+        return { label: `Mesjid ${pick(places, rng)}`, sub: 'jāmiʿ mosque' };
+      }
+      if (region === 'Gujarati') {
+        return { label: `Jāmaʿ Masjid of ${portName}`, sub: 'Friday mosque' };
+      }
+      return { label: `Masjid of ${portName}`, sub: 'congregational mosque' };
+    }
+    case 'ibadi': {
+      const names = ['al-Khūr', 'al-Muṭraḥ', 'al-Bāṭina', 'al-Ḥāra'];
+      return { label: `Masjid ${pick(names, rng)}`, sub: 'Ibāḍī mosque' };
+    }
+    case 'hindu': {
+      if (region === 'Malabari') {
+        const deities = ['Śiva', 'Durgā', 'Kṛṣṇa', 'Hanumān', 'Gaṇeśa'];
+        return { label: `${pick(deities, rng)} Kōvil`, sub: 'Malabar temple' };
+      }
+      const deities = ['Jagannātha', 'Viṣṇu', 'Kṛṣṇa', 'Rāma', 'Devī'];
+      return { label: `${pick(deities, rng)} Mandir`, sub: 'Hindu temple' };
+    }
+    case 'buddhist': {
+      if (region === 'Chinese') {
+        const names = ['Pú-jì', 'Wén-chāng', 'Tiān-wáng', 'Guān-yīn'];
+        return { label: `${pick(names, rng)} Sì`, sub: 'Buddhist temple' };
+      }
+      const names = ['Sanghārāma', 'Vihāra', 'Caitya'];
+      return { label: `${pick(names, rng)} of ${portName}`, sub: 'Buddhist monastery' };
+    }
+    case 'chinese-folk': {
+      const deities = ['Tiān-hòu', 'Guān-dì', 'Tǔ-dì-gōng', 'Mǎ-zǔ'];
+      return { label: `${pick(deities, rng)} Miào`, sub: 'popular shrine' };
+    }
+    case 'animist': {
+      const forms = ['Grove', 'Shrine', 'Altar', 'Spirit House'];
+      return { label: `${portName} ${pick(forms, rng)}`, sub: 'sacred ground' };
+    }
+    case 'jewish': {
+      if (nationality === 'Dutch') {
+        return { label: 'Bet Yaʿaqov Synagogue', sub: 'Sephardic esnoga' };
+      }
+      return { label: `Synagogue of ${portName}`, sub: 'Jewish congregation' };
+    }
+    default:
+      return { label: 'House of Prayer', sub: 'sanctuary' };
+  }
+}
+
 /**
  * Generate a deterministic label for a building based on its type,
  * culture, and placement characteristics.
@@ -1020,10 +1129,32 @@ export function generateBuildingLabel(
   seed: number,
   nationality?: Nationality,
   region?: CulturalRegion,
+  opts?: { faith?: string; landmarkId?: string },
 ): BuildingLabelResult {
   const rng = mulberry32(seed);
   // Consume a few values to decorrelate from other uses of same seed
   rng(); rng(); rng();
+
+  // Named landmarks get a fixed historical label from LANDMARK_LABELS. This
+  // runs before the type switch so `type: 'landmark'` dispatch never has to
+  // reinvent the lookup. The eyebrow (RELIGIOUS / ROYAL / CIVIC) is set by
+  // cityGenerator.ts from LANDMARK_CLASS, not here.
+  if (opts?.landmarkId) {
+    const lm = LANDMARK_LABELS[opts.landmarkId];
+    if (lm) return { label: lm.label, sub: lm.sub };
+  }
+
+  if (type === 'landmark') {
+    // Fallback for a landmark missing from LANDMARK_LABELS — shouldn't happen
+    // in practice, but keeps the label non-empty so BuildingTooltip still
+    // renders something.
+    return { label: 'Monument', sub: 'landmark' };
+  }
+
+  if (type === 'spiritual') {
+    const faith = opts?.faith ?? 'catholic';
+    return spiritualLabel(faith, portName, nationality, region, rng);
+  }
 
   const euro = asEuropean(nationality);
   const reg = asRegion(region);
@@ -1057,6 +1188,42 @@ export function generateBuildingLabel(
         label: pick(markets, rng),
         sub: 'marketplace',
       };
+
+    case 'plaza': {
+      // Pick a culture-appropriate term for the square itself.
+      let label = 'Town square';
+      let sub = 'public square';
+      // Iberian colonial override — Goa, Macau, Malacca (when Portuguese-
+      // controlled) and any Spanish colonial port outside Iberia keeps the
+      // praça/plaza vocabulary rather than the indigenous term.
+      const iberianColonial = (nationality === 'Portuguese' || nationality === 'Spanish') && !isEuro;
+      if (iberianColonial) {
+        if (nationality === 'Portuguese') { label = 'Largo da Matriz'; sub = 'praça'; }
+        else                               { label = 'Plaza de Armas'; sub = 'plaza'; }
+      }
+      else if (isEuro) {
+        if (euro === 'Portuguese')      { label = 'Largo do Pelourinho'; sub = 'praça'; }
+        else if (euro === 'Spanish')    { label = 'Plaza Mayor';         sub = 'plaza'; }
+        else if (euro === 'Dutch')      { label = 'Dam';                 sub = 'stadsplein'; }
+        else if (euro === 'English')    { label = 'Market cross';        sub = 'town square'; }
+      } else if (isAtl) {
+        if (atl === 'Portuguese')       { label = 'Largo da Matriz';     sub = 'praça'; }
+        else if (atl === 'Spanish')     { label = 'Plaza de Armas';      sub = 'plaza'; }
+        else                             { label = 'Town common';         sub = 'square'; }
+      } else if (isIO) {
+        if (reg === 'Arab')             { label = 'Maydan al-Jāmiʿ';     sub = 'maydan'; }
+        else if (reg === 'Swahili')     { label = 'Baraza';              sub = 'public ground'; }
+        else if (reg === 'Gujarati')    { label = 'Chowk';               sub = 'market square'; }
+        else if (reg === 'Malabari')    { label = 'Ampalam';             sub = 'temple square'; }
+        else if (reg === 'Malay')       { label = 'Padang';              sub = 'open field'; }
+        else if (reg === 'Chinese')     { label = 'Paifang plaza';       sub = 'square'; }
+        else                             { label = 'Maydan';              sub = 'square'; }
+      } else if (culture === 'West African') {
+        label = 'Palaver ground';
+        sub = 'meeting place';
+      }
+      return { label, sub };
+    }
 
     case 'dock':
       return {

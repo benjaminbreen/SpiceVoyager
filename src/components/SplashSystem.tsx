@@ -1,7 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { splashes, splinters, impactBursts, muzzleBursts, setSplashClock } from '../utils/splashState';
+import { splashes, splinters, impactBursts, muzzleBursts, rocketTrails, setSplashClock } from '../utils/splashState';
 import { SEA_LEVEL } from '../constants/world';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
@@ -11,6 +11,9 @@ const SPLASH_PARTICLE_COUNT = 60;
 const SPLINTER_PARTICLE_COUNT = 64;
 const IMPACT_PARTICLE_COUNT = 72;
 const MUZZLE_PARTICLE_COUNT = 48;
+// Rocket trails: each trail-spawn event produces 1–2 puffs that live ~0.8s.
+// Headroom for two simultaneous rockets drawing trails at 20 Hz.
+const ROCKET_TRAIL_PARTICLE_COUNT = 90;
 
 interface Particle {
   pos: THREE.Vector3;
@@ -30,16 +33,19 @@ export function SplashSystem() {
   const splinterMeshRef = useRef<THREE.InstancedMesh>(null);
   const impactMeshRef = useRef<THREE.InstancedMesh>(null);
   const muzzleMeshRef = useRef<THREE.InstancedMesh>(null);
+  const rocketTrailMeshRef = useRef<THREE.InstancedMesh>(null);
   const rippleRef = useRef<THREE.Mesh>(null);
   const particles = useRef<Particle[]>([]);
   const splinterParticles = useRef<Particle[]>([]);
   const impactParticles = useRef<BurstParticle[]>([]);
   const muzzleParticles = useRef<BurstParticle[]>([]);
+  const rocketTrailParticles = useRef<BurstParticle[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const lastSplashCount = useRef(0);
   const lastSplinterCount = useRef(0);
   const lastImpactCount = useRef(0);
   const lastMuzzleCount = useRef(0);
+  const lastRocketTrailCount = useRef(0);
 
   // Initialize particle pools
   useEffect(() => {
@@ -67,6 +73,14 @@ export function SplashSystem() {
     }
     for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
       muzzleParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
+    for (let i = 0; i < ROCKET_TRAIL_PARTICLE_COUNT; i++) {
+      rocketTrailParticles.current.push({
         pos: new THREE.Vector3(0, -1000, 0),
         vel: new THREE.Vector3(),
         life: 0,
@@ -198,6 +212,39 @@ export function SplashSystem() {
     }
     lastMuzzleCount.current = muzzleBursts.length;
 
+    // ── Spawn rocket trail puffs ──
+    // Each trail event produces 1–2 particles: one drifting up (smoke) and
+    // a short-lived hot-colored spark. Many events spawn per second, so we
+    // only draw one-to-two puffs per event to keep the pool healthy.
+    if (rocketTrails.length > lastRocketTrailCount.current) {
+      for (let si = lastRocketTrailCount.current; si < rocketTrails.length; si++) {
+        const tr = rocketTrails[si];
+        let spawned = 0;
+        const target = 2;
+        for (let i = 0; i < ROCKET_TRAIL_PARTICLE_COUNT && spawned < target; i++) {
+          const p = rocketTrailParticles.current[i];
+          if (p.life <= 0) {
+            const jitter = tr.seed * 6.283;
+            p.pos.set(
+              tr.x + (Math.random() - 0.5) * 0.22,
+              tr.y + (Math.random() - 0.5) * 0.18,
+              tr.z + (Math.random() - 0.5) * 0.22,
+            );
+            // Puffs drift slightly aft and upward; sparks move more randomly.
+            p.vel.set(
+              Math.cos(jitter + spawned) * 0.45,
+              0.55 + Math.random() * 0.7,
+              Math.sin(jitter + spawned) * 0.45,
+            );
+            p.maxLife = spawned === 0 ? 0.85 + Math.random() * 0.25 : 0.35 + Math.random() * 0.2;
+            p.life = p.maxLife;
+            spawned++;
+          }
+        }
+      }
+    }
+    lastRocketTrailCount.current = rocketTrails.length;
+
     // ── Expire old events ──
     while (splashes.length > 0 && elapsed - splashes[0].time > 4) {
       splashes.shift();
@@ -214,6 +261,10 @@ export function SplashSystem() {
     while (muzzleBursts.length > 0 && elapsed - muzzleBursts[0].time > 2) {
       muzzleBursts.shift();
       lastMuzzleCount.current = Math.max(0, lastMuzzleCount.current - 1);
+    }
+    while (rocketTrails.length > 0 && elapsed - rocketTrails[0].time > 1.5) {
+      rocketTrails.shift();
+      lastRocketTrailCount.current = Math.max(0, lastRocketTrailCount.current - 1);
     }
 
     // ── Update water splash particles ──
@@ -341,6 +392,42 @@ export function SplashSystem() {
         }
       }
       if (needsUpdate) muzzleMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update rocket trail particles ──
+    // Warm exhaust when fresh, cool grey smoke as they age. Color is baked
+    // into the material; we just drive scale here.
+    if (rocketTrailMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < ROCKET_TRAIL_PARTICLE_COUNT; i++) {
+        const p = rocketTrailParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          // Smoke rises gently, drag slows lateral drift.
+          p.vel.x *= 1 - 1.1 * delta;
+          p.vel.z *= 1 - 1.1 * delta;
+          p.vel.y += 0.35 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const ageFrac = 1 - lifeFrac;
+          // Puffs expand with age; alpha fades via mesh opacity combined
+          // with the scale envelope.
+          const s = (0.18 + ageFrac * 0.85) * (0.25 + lifeFrac * 0.75);
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          rocketTrailMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          rocketTrailMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) rocketTrailMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     // ── Update ripple shader uniforms ──
@@ -523,6 +610,23 @@ export function SplashSystem() {
           transparent
           opacity={0.42}
           depthWrite={false}
+        />
+      </instancedMesh>
+
+      {/* Rocket exhaust trail — warm-glowing smoke puffs left along the flight
+          path. Emissive picks up the powder-burn color; opacity stays low so
+          a dense column still reads as a continuous trail rather than a wall. */}
+      <instancedMesh ref={rocketTrailMeshRef} args={[undefined, undefined, ROCKET_TRAIL_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.35, 5, 5]} />
+        <meshStandardMaterial
+          color="#c9b58a"
+          emissive="#ff7a2b"
+          emissiveIntensity={0.75}
+          roughness={1}
+          transparent
+          opacity={0.55}
+          depthWrite={false}
+          toneMapped={false}
         />
       </instancedMesh>
 

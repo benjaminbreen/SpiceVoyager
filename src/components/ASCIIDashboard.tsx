@@ -2756,6 +2756,14 @@ const SHIP_DESCRIPTIONS: Record<string, { tagline: string; description: string }
     tagline: 'Lateen-rigged Iberian trader',
     description: 'The small explorer that opened the Atlantic a century ago, still useful for coastal runs and light blue-water work. Quick to windward on her lateen sails, cheap to man, but thin in the hold.',
   },
+  Baghla: {
+    tagline: 'Ocean-going Arabian dhow',
+    description: 'The largest of the Gulf dhows — "the mule," named for her stolid carrying power. Two big lateen yards drive her fast on the monsoon; her square, carved stern shows the Portuguese hand in Indo-Arab shipbuilding. Home in any Indian Ocean port.',
+  },
+  Jong: {
+    tagline: 'Javanese deep-sea trader',
+    description: 'A Southeast Asian giant descended from the medieval Majapahit ships — three masts, mixed rigging of battened matting and a lateen mizzen, and a hold that swallows pepper and cloves by the ton. Slow, beamy, and unmistakably of these waters.',
+  },
 };
 
 // ── Large ship schematics ────────────────────────────────────────────────
@@ -2881,9 +2889,17 @@ function LargeShipSchematic({ shipType, hullPct, armament }: {
     ),
   };
 
+  // Fallbacks for ship types without bespoke ASCII: Baghla → Dhow (lateen
+  // silhouette), Jong → Junk (battened sails, boxy hull). Still closer than
+  // falling back to a European Carrack.
+  const resolved =
+      shipType === 'Baghla' ? 'Dhow'
+    : shipType === 'Jong'   ? 'Junk'
+    : shipType;
+
   return (
     <pre className="text-[11px] leading-[1.4] whitespace-pre text-center select-none" style={{ fontFamily: MONO }}>
-      {schematics[shipType] ?? schematics.Carrack}
+      {schematics[resolved] ?? schematics.Carrack}
     </pre>
   );
 }

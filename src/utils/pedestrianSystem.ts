@@ -9,7 +9,7 @@
 import { Building, BuildingType, Culture, Road } from '../store/gameStore';
 import { getLandCharacter } from './landCharacter';
 import { getTerrainHeight } from './terrain';
-import { extractBridges, getGroundHeight } from './bridgeNavigation';
+import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from './roadSurface';
 import { SEA_LEVEL } from '../constants/world';
 
 // ── Seeded PRNG ─────────────────────────────────────────────────────────────
@@ -56,6 +56,16 @@ export interface Pedestrian {
   wanderTargetX: number;
   wanderTargetZ: number;
   wanderSeed: number;       // stable seed for picking new targets
+  // Dwell behavior — NPCs pause at corridor endpoints / wander targets
+  dwellUntil: number;       // world time until which the ped is idle
+  isDwelling: boolean;      // derived flag set each update (renderer reads)
+  // Home anchor for wander behavior. Defaults to the port center with a
+  // generous radius, but rural wanderers attached to outlying farms/hamlets
+  // use their building's position and a small radius so they don't drift into
+  // the urban core.
+  homeX: number;
+  homeZ: number;
+  wanderRadius: number;
 }
 
 export interface PedestrianSystemState {
@@ -65,18 +75,19 @@ export interface PedestrianSystemState {
   culture: Culture;
   portX: number;
   portZ: number;
-  bridges: Road[];          // bridge-tier roads, used for walkable deck queries
+  roadIndex: RoadSurfaceIndex; // bucketed road segments for ground-height queries
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Walkable if terrain is above sea level, OR if the point is on a bridge deck.
- * Bridges are passed in so corridor generation (which runs before the
+ * Walkable if terrain is above sea level, OR if the point is on a bridge deck
+ * (or other lifted road surface that bridges a low patch). The road index is
+ * passed in so corridor generation (which runs before the
  * PedestrianSystemState is finalized) can use the same rule.
  */
-function isWalkable(x: number, z: number, bridges?: Road[]): boolean {
-  return getGroundHeight(x, z, bridges) > SEA_LEVEL + 0.3;
+function isWalkable(x: number, z: number, roadIndex?: RoadSurfaceIndex): boolean {
+  return getGroundHeight(x, z, roadIndex) > SEA_LEVEL + 0.3;
 }
 
 function distSq(ax: number, az: number, bx: number, bz: number) {
@@ -86,8 +97,9 @@ function distSq(ax: number, az: number, bx: number, bz: number) {
 // How far to offset corridor endpoints from building centers
 // so pedestrians walk *outside* buildings, not through them
 const BUILDING_CLEARANCE: Record<BuildingType, number> = {
-  dock: 4, warehouse: 4, market: 5, fort: 8,
-  estate: 5, house: 2.5, shack: 2, farmhouse: 3,
+  dock: 4, warehouse: 4, market: 5, fort: 8, landmark: 8,
+  estate: 5, house: 2.5, shack: 2, farmhouse: 3, plaza: 5,
+  spiritual: 5,
 };
 
 // ── Building type → pedestrian type mapping ─────────────────────────────────
@@ -208,17 +220,17 @@ function tryRoadAwarePath(
   return bestWaypoints;
 }
 
-function validateWaypoints(waypoints: [number, number][], bridges?: Road[]): boolean {
+function validateWaypoints(waypoints: [number, number][], roadIndex?: RoadSurfaceIndex): boolean {
   for (let i = 0; i < waypoints.length - 1; i++) {
     const [ax, az] = waypoints[i];
     const [bx, bz] = waypoints[i + 1];
     const mx = (ax + bx) * 0.5;
     const mz = (az + bz) * 0.5;
-    if (!isWalkable(mx, mz, bridges)) return false;
+    if (!isWalkable(mx, mz, roadIndex)) return false;
     const len = Math.sqrt((bx - ax) ** 2 + (bz - az) ** 2);
     if (len > 20) {
-      if (!isWalkable(ax + (bx - ax) * 0.25, az + (bz - az) * 0.25, bridges)) return false;
-      if (!isWalkable(ax + (bx - ax) * 0.75, az + (bz - az) * 0.75, bridges)) return false;
+      if (!isWalkable(ax + (bx - ax) * 0.25, az + (bz - az) * 0.25, roadIndex)) return false;
+      if (!isWalkable(ax + (bx - ax) * 0.75, az + (bz - az) * 0.75, roadIndex)) return false;
     }
   }
   return true;
@@ -247,8 +259,9 @@ function buildCorridor(
 
 // How much traffic weight each building type generates
 const BUILDING_TRAFFIC: Record<BuildingType, number> = {
-  dock: 1.0, warehouse: 0.8, market: 1.0, fort: 0.3,
-  estate: 0.4, house: 0.3, shack: 0.15, farmhouse: 0.25,
+  dock: 1.0, warehouse: 0.8, market: 1.0, fort: 0.3, landmark: 0.55,
+  estate: 0.4, house: 0.3, shack: 0.15, farmhouse: 0.25, plaza: 0.9,
+  spiritual: 0.6,
 };
 
 /**
@@ -260,7 +273,7 @@ function corridorEndpoint(
   bx: number, bz: number, // building center
   tx: number, tz: number, // target building center
   clearance: number,
-  bridges?: Road[],
+  roadIndex?: RoadSurfaceIndex,
 ): [number, number] {
   const dx = tx - bx;
   const dz = tz - bz;
@@ -270,7 +283,7 @@ function corridorEndpoint(
   const ox = bx + (dx / len) * clearance;
   const oz = bz + (dz / len) * clearance;
   // If this lands in water (and not a bridge), pull it back toward center
-  if (!isWalkable(ox, oz, bridges)) return [bx, bz];
+  if (!isWalkable(ox, oz, roadIndex)) return [bx, bz];
   return [ox, oz];
 }
 
@@ -283,7 +296,7 @@ function corridorEndpoint(
  * Endpoints are offset so pedestrians walk outside buildings.
  * Corridors that cross water are rejected.
  */
-function generateCorridors(buildings: Building[], rng: () => number, roads?: Road[], bridges?: Road[]): Corridor[] {
+function generateCorridors(buildings: Building[], rng: () => number, roads?: Road[], roadIndex?: RoadSurfaceIndex): Corridor[] {
   const corridors: Corridor[] = [];
   const seen = new Set<string>();
 
@@ -295,8 +308,8 @@ function generateCorridors(buildings: Building[], rng: () => number, roads?: Roa
     // Offset endpoints to building edges
     const clearA = BUILDING_CLEARANCE[a.type] ?? 2.5;
     const clearB = BUILDING_CLEARANCE[b.type] ?? 2.5;
-    const [ax, az] = corridorEndpoint(a.position[0], a.position[2], b.position[0], b.position[2], clearA, bridges);
-    const [bx, bz] = corridorEndpoint(b.position[0], b.position[2], a.position[0], a.position[2], clearB, bridges);
+    const [ax, az] = corridorEndpoint(a.position[0], a.position[2], b.position[0], b.position[2], clearA, roadIndex);
+    const [bx, bz] = corridorEndpoint(b.position[0], b.position[2], a.position[0], a.position[2], clearB, roadIndex);
 
     // Determine dominant pedestrian type from the higher-traffic endpoint
     const aTraffic = BUILDING_TRAFFIC[a.type];
@@ -307,14 +320,14 @@ function generateCorridors(buildings: Building[], rng: () => number, roads?: Roa
     // Try a road-following path first; it gets a weight bonus because roads
     // are visually the "right" place for foot traffic.
     const roadPath = tryRoadAwarePath(ax, az, bx, bz, roads);
-    if (roadPath && validateWaypoints(roadPath, bridges)) {
+    if (roadPath && validateWaypoints(roadPath, roadIndex)) {
       const c = buildCorridor(roadPath, weight * 1.3, type);
       if (c) { corridors.push(c); return; }
     }
 
     // Fallback: straight corridor from building edge to building edge.
     const straight: [number, number][] = [[ax, az], [bx, bz]];
-    if (!validateWaypoints(straight, bridges)) return;
+    if (!validateWaypoints(straight, roadIndex)) return;
     const c = buildCorridor(straight, weight, type);
     if (c) corridors.push(c);
   };
@@ -440,8 +453,8 @@ export function initPedestrianSystem(
   roads?: Road[],
 ): PedestrianSystemState {
   const rng = mulberry32(seed * 13 + 9901);
-  const bridges = extractBridges(roads);
-  const corridors = generateCorridors(buildings, rng, roads, bridges);
+  const roadIndex = buildRoadSurfaceIndex(roads);
+  const corridors = generateCorridors(buildings, rng, roads, roadIndex);
   const maxActive = MAX_PEDESTRIANS_BY_SCALE[portScale] ?? 60;
 
   // Pre-compute total corridor weight for weighted selection
@@ -461,7 +474,7 @@ export function initPedestrianSystem(
         // Couldn't find walkable land — make a corridor walker instead
         if (corridors.length > 0) {
           const ci = Math.floor(rng() * corridors.length);
-          pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng));
+          pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng, portX, portZ));
           continue;
         }
         continue; // skip this slot entirely
@@ -492,6 +505,11 @@ export function initPedestrianSystem(
         wanderTargetX: target[0],
         wanderTargetZ: target[1],
         wanderSeed: Math.floor(rng() * 100000),
+        dwellUntil: 0,
+        isDwelling: false,
+        homeX: portX,
+        homeZ: portZ,
+        wanderRadius: 65,
       });
     } else {
       // Weighted corridor selection — busier corridors get more pedestrians
@@ -501,14 +519,67 @@ export function initPedestrianSystem(
         r -= corridors[ci].weight;
         if (r <= 0) break;
       }
-      pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng));
+      pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng, portX, portZ));
     }
   }
 
-  return { corridors, pedestrians, maxActive, culture, portX, portZ, bridges };
+  // ── Hinterland wanderers ────────────────────────────────────────────────
+  // For each building far from the port core, spawn 1-2 local wanderers
+  // anchored to the building with a small wander radius. These make hamlets
+  // and farmsteads feel inhabited without relying on corridors that would
+  // otherwise fail validation over long distances.
+  const OUTLYING_MIN_DIST = 80;
+  let hinterlandAdded = 0;
+  for (const b of buildings) {
+    const bx = b.position[0], bz = b.position[2];
+    const d2 = (bx - portX) ** 2 + (bz - portZ) ** 2;
+    if (d2 < OUTLYING_MIN_DIST * OUTLYING_MIN_DIST) continue;
+    // Only residential/work buildings get local wanderers.
+    if (b.type !== 'farmhouse' && b.type !== 'shack' && b.type !== 'house') continue;
+
+    const localCount = 1 + Math.floor(rng() * 2); // 1-2
+    for (let n = 0; n < localCount; n++) {
+      // Sample a walkable starting point near the building
+      const pt = findWalkableLandPoint(bx, bz, 2, 12, rng);
+      if (!pt) continue;
+      const [wx, wz] = pt;
+      const h = getTerrainHeight(wx, wz);
+
+      const type: PedestrianType = pedestrianTypeForBuilding(b);
+      const ft = pickFigureType(rng);
+      const target = findWalkableLandPoint(wx, wz, 3, 10, rng) ?? [wx, wz];
+
+      pedestrians.push({
+        corridorIdx: -1,
+        progress: 0,
+        speed: (ft === 'child' ? 0.22 : 0.28) + rng() * 0.2, // rural pace: a touch slower
+        direction: 1,
+        type,
+        figureType: ft,
+        phase: rng() * Math.PI * 2,
+        wobbleAmp: 0,
+        x: wx, y: Math.max(h, SEA_LEVEL + 0.3), z: wz,
+        angle: rng() * Math.PI * 2,
+        wanderTargetX: target[0],
+        wanderTargetZ: target[1],
+        wanderSeed: Math.floor(rng() * 100000),
+        dwellUntil: 0,
+        isDwelling: false,
+        homeX: bx,
+        homeZ: bz,
+        wanderRadius: 18,
+      });
+      hinterlandAdded++;
+    }
+  }
+  // Include hinterland in the active budget so they also scale with the
+  // time-of-day density curve (fields empty at 3am, populated at noon).
+  const effectiveMaxActive = maxActive + hinterlandAdded;
+
+  return { corridors, pedestrians, maxActive: effectiveMaxActive, culture, portX, portZ, roadIndex };
 }
 
-function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number): Pedestrian {
+function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number, portX: number, portZ: number): Pedestrian {
   const ft = pickFigureType(rng);
   return {
     corridorIdx: ci,
@@ -523,6 +594,11 @@ function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number): 
     angle: 0,
     wanderTargetX: 0, wanderTargetZ: 0,
     wanderSeed: Math.floor(rng() * 100000),
+    dwellUntil: 0,
+    isDwelling: false,
+    homeX: portX,
+    homeZ: portZ,
+    wanderRadius: 65,
   };
 }
 
@@ -534,7 +610,7 @@ export function updatePedestrians(
   delta: number,
   hourOfDay: number,
 ): number {
-  const { corridors, pedestrians, maxActive, bridges } = state;
+  const { corridors, pedestrians, maxActive, roadIndex } = state;
   const density = getCrowdDensity(hourOfDay);
   const activeCount = Math.max(1, Math.floor(maxActive * density));
 
@@ -549,12 +625,21 @@ export function updatePedestrians(
       const c = corridors[p.corridorIdx];
       if (!c || c.totalLength < 0.5) continue;
 
+      // Dwell pause at endpoints — NPCs stop to rest/haggle/pray for 5-25s.
+      if (time < p.dwellUntil) {
+        p.isDwelling = true;
+        continue; // skip advance and position recompute; hold pose
+      }
+      p.isDwelling = false;
+
       // Advance along the full polyline (progress is 0..1 over totalLength)
       p.progress += (p.speed * dt / c.totalLength) * p.direction;
-      if (p.progress >= 1) { p.progress = 2 - p.progress; p.direction = -1; }
-      else if (p.progress <= 0) { p.progress = -p.progress; p.direction = 1; }
-      if (p.progress < 0) p.progress = 0;
-      if (p.progress > 1) p.progress = 1;
+      let reachedEnd = false;
+      if (p.progress >= 1) { p.progress = 1; p.direction = -1; reachedEnd = true; }
+      else if (p.progress <= 0) { p.progress = 0; p.direction = 1; reachedEnd = true; }
+      if (reachedEnd) {
+        p.dwellUntil = time + 5 + Math.random() * 20;
+      }
 
       // Find which segment the current progress lands on
       const targetDist = p.progress * c.totalLength;
@@ -583,10 +668,10 @@ export function updatePedestrians(
 
       const newX = lx + perpX * wobble;
       const newZ = lz + perpZ * wobble;
-      // Bridge-aware: over a deck the polyline Y takes over, so corridor
-      // walkers assigned to road-aware paths that cross a bridge actually
-      // walk the deck instead of hanging stuck at the abutment.
-      const newY = getGroundHeight(newX, newZ, bridges);
+      // Road-aware: over a bridge deck the polyline Y takes over, and
+      // other road tiers contribute their small yLift — so pedestrians
+      // visibly stand on the road surface instead of sinking into it.
+      const newY = getGroundHeight(newX, newZ, roadIndex);
 
       if (newY > SEA_LEVEL + 0.2) {
         p.x = newX;
@@ -610,22 +695,23 @@ export function updatePedestrians(
         const targetRng = mulberry32(p.wanderSeed);
         // Try to find walkable land near current position
         const found = findWalkableLandPoint(p.x, p.z, 5, 18, targetRng);
+        const rad2 = p.wanderRadius * p.wanderRadius;
         if (found) {
-          // Also ensure target stays within port radius
-          const ddx = found[0] - state.portX;
-          const ddz = found[1] - state.portZ;
-          if (ddx * ddx + ddz * ddz < 65 * 65) {
+          // Keep target within this ped's home radius (port core or hamlet)
+          const ddx = found[0] - p.homeX;
+          const ddz = found[1] - p.homeZ;
+          if (ddx * ddx + ddz * ddz < rad2) {
             p.wanderTargetX = found[0];
             p.wanderTargetZ = found[1];
           } else {
-            // Drift back toward port center
-            const backAngle = Math.atan2(state.portZ - p.z, state.portX - p.x);
+            // Drift back toward home
+            const backAngle = Math.atan2(p.homeZ - p.z, p.homeX - p.x);
             p.wanderTargetX = p.x + Math.cos(backAngle) * 15;
             p.wanderTargetZ = p.z + Math.sin(backAngle) * 15;
           }
         } else {
-          // Can't find walkable land — drift toward port center
-          const backAngle = Math.atan2(state.portZ - p.z, state.portX - p.x);
+          // Can't find walkable land — drift toward home
+          const backAngle = Math.atan2(p.homeZ - p.z, p.homeX - p.x);
           p.wanderTargetX = p.x + Math.cos(backAngle) * 10;
           p.wanderTargetZ = p.z + Math.sin(backAngle) * 10;
         }
@@ -636,7 +722,7 @@ export function updatePedestrians(
         const moveZ = (dtz / distToTarget) * moveSpeed;
         const newX = p.x + moveX;
         const newZ = p.z + moveZ;
-        const newY = getGroundHeight(newX, newZ, bridges);
+        const newY = getGroundHeight(newX, newZ, roadIndex);
 
         // Only move if destination is walkable
         if (newY > SEA_LEVEL + 0.3) {
@@ -645,9 +731,9 @@ export function updatePedestrians(
           p.y = newY;
           p.angle = Math.atan2(dtx, dtz);
         } else {
-          // Hit water — immediately pick new target back toward land
+          // Hit water — immediately pick new target back toward home
           p.wanderSeed += 1;
-          const backAngle = Math.atan2(state.portZ - p.z, state.portX - p.x);
+          const backAngle = Math.atan2(p.homeZ - p.z, p.homeX - p.x);
           p.wanderTargetX = p.x + Math.cos(backAngle) * 12;
           p.wanderTargetZ = p.z + Math.sin(backAngle) * 12;
         }

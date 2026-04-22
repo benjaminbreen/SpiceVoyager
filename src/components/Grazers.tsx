@@ -44,7 +44,8 @@ interface GrazerOffset {
   fleeJitter: number;               // ±π/12 perturbation on flee heading, re-rolled on an interval
   fleeJitterNext: number;           // clock time to re-roll the jitter
   panic: boolean;                   // shot at — flees harder and never returns
-  deathTime: number;                // 0 = alive, otherwise clock time of death (used to fade carcass)
+  deathTime: number;                // 0 = alive, -1 = harvest finished + hidden, else clock time of death (drives flop + carcass pose)
+  harvestTime: number;              // 0 until player harvests, then clock time of harvest (drives sink-into-ground animation)
 }
 
 // HP per grazer kind — most game animals are one-shot kills with the musket;
@@ -458,6 +459,7 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
       fleeJitterNext: 0,
       panic: false,
       deathTime: 0,
+      harvestTime: 0,
     }));
 
     // Register this herd in wildlifeLivePositions so projectiles can hit them.
@@ -558,20 +560,59 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
       const id = `${prefix}_${i}`;
       const liveEntry = wildlifeLivePositions.get(id);
 
-      // Dead animals: collapse instance scale to zero so they disappear.
-      // (Phase 2 polish will leave a visible carcass — for now they vanish.)
+      // Harvested animals: sink + shrink over ~0.8s, then hide.
+      if (liveEntry?.harvested) {
+        const SINK_DUR = 0.8;
+        if (off.harvestTime === 0) off.harvestTime = time;
+        const th = time - off.harvestTime;
+        if (th >= SINK_DUR) {
+          if (off.deathTime !== -1) {
+            off.deathTime = -1; // sentinel: harvested + hidden
+            dummy2.position.set(0, -1000, 0);
+            dummy2.scale.set(0, 0, 0);
+            dummy2.updateMatrix();
+            meshRef.current!.setMatrixAt(i, dummy2.matrix);
+            anyUpdated = true;
+          }
+          return;
+        }
+        const p = Math.max(0, Math.min(1, th / SINK_DUR));
+        // Ease-in cubic so the carcass lingers briefly then drops away
+        const ease = p * p;
+        const sinkY = liveEntry.y - 0.2 - ease * 0.7;
+        const scale = g.scale * (1 - ease * 0.5);
+        dummy2.position.set(liveEntry.x, sinkY, liveEntry.z);
+        dummy2.scale.set(scale, scale, scale);
+        dummy2.rotation.set(0, off.wFacing, Math.PI / 2);
+        dummy2.updateMatrix();
+        meshRef.current!.setMatrixAt(i, dummy2.matrix);
+        anyUpdated = true;
+        return;
+      }
+
+      // Dead (not yet harvested): flop over to the side over ~0.5s.
+      // Progress the rotation and settle the body to the ground, then stop
+      // writing the matrix so the instance buffer persists unchanged.
       if (liveEntry?.dead) {
+        const FLOP_DUR = 0.5;
         if (off.deathTime === 0) {
           off.deathTime = time;
-          // Hide the stamina bar
           const bar = staminaBarMeshRef.current;
           if (bar) {
             setStaminaBarInstance(staminaBarDummyRef.current, 0, 0, 0, g.scale, 0, false);
             bar.setMatrixAt(i, staminaBarDummyRef.current.matrix);
           }
-          // Collapse instance to zero
-          dummy2.position.set(0, -1000, 0);
-          dummy2.scale.set(0, 0, 0);
+        }
+        const td = time - off.deathTime;
+        if (td < FLOP_DUR) {
+          // Ease-out quadratic: falls fast, settles gently on the ground
+          const p = Math.max(0, Math.min(1, td / FLOP_DUR));
+          const ease = 1 - (1 - p) * (1 - p);
+          const tilt = ease * (Math.PI / 2);
+          const carcassY = liveEntry.y - 0.2 * ease;
+          dummy2.position.set(liveEntry.x, carcassY, liveEntry.z);
+          dummy2.scale.set(g.scale, g.scale, g.scale);
+          dummy2.rotation.set(0, off.wFacing, tilt);
           dummy2.updateMatrix();
           meshRef.current!.setMatrixAt(i, dummy2.matrix);
           anyUpdated = true;

@@ -227,9 +227,9 @@ function SailToggleButton() {
 }
 
 // ── Zoom +/- buttons ────────────────────────────────────────────────────────
-// Pinch-zoom isn't wired up yet (deferred to Phase 4b); until then these are
-// the only way to change camera distance on touch. Stacked above the sail
-// button so they don't overlap it in ship tap mode.
+// Two-finger pinch-zoom is implemented on the canvas in GameScene.tsx; these
+// buttons are the single-finger fallback. Stacked above the sail button so
+// they don't overlap it in ship tap mode.
 
 function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offsetCombat: boolean }) {
   const setCameraZoom = useGameStore(s => s.setCameraZoom);

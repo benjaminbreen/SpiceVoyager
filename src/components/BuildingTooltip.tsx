@@ -14,8 +14,8 @@ const FADE_IN_SEC = 0.14;
 const FADE_OUT_SEC = 0.22;
 
 const BASE_WORLD_HEIGHT = 4.1;
-const MAX_WORLD_HEIGHT = 18;
-const MIN_READABLE_SCREEN_PX = 64;
+const MAX_WORLD_HEIGHT = 26;
+const MIN_READABLE_SCREEN_PX = 78;
 
 // Glow overlay: additive-blended box around the hovered building
 const GLOW_COLOR = '#ffd89a';
@@ -47,9 +47,11 @@ export function BuildingTooltip() {
   const label = useMemo(() => createWorldLabelTexture({
     title: displayed?.label ?? '',
     subtitle: displayed?.labelSub,
+    eyebrow: displayed?.labelEyebrow,
+    eyebrowColor: displayed?.labelEyebrowColor,
     accent: '#c9a84c',
     variant: 'building',
-  }), [displayed?.label, displayed?.labelSub]);
+  }), [displayed?.label, displayed?.labelSub, displayed?.labelEyebrow, displayed?.labelEyebrowColor]);
 
   useEffect(() => () => label.texture.dispose(), [label]);
 

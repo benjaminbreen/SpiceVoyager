@@ -15,6 +15,9 @@ export interface Projectile {
   vel: THREE.Vector3;
   life: number;       // seconds remaining
   weaponType: ProjectileWeaponType;
+  /** Accumulator for rocket-trail spawning — fires a smoke puff every
+   *  ~50ms while positive. Only set for fireRocket projectiles. */
+  trailClock?: number;
 }
 
 // Mouse world position on the active aim plane, updated by CameraController.
@@ -31,6 +34,12 @@ export const mouseRay = {
 
 // Swivel gun aim angle in world space (radians)
 export let swivelAimAngle = 0;
+// Pitch angle (radians, +up). Set when CameraController resolves a real 3D
+// target under the cursor (NPC ship → water surface → fallback). Mirrors the
+// hunting aim plumbing.
+export let swivelAimPitch = 0;
+export const swivelAimTarget = new THREE.Vector3();
+export let swivelAimValid = false;
 
 // Active projectiles (max ~30 in flight — broadsides spawn many at once)
 export const projectiles: Projectile[] = [];
@@ -42,11 +51,15 @@ export function spawnProjectile(
   speed: number,
   weaponType: ProjectileWeaponType = 'swivelGun',
 ) {
+  // Rockets fly slower but longer — give them more life so they reach the
+  // extreme range their damage/reload cost pays for.
+  const life = weaponType === 'fireRocket' ? 4.0 : 2.5;
   const p: Projectile = {
     pos: origin.clone(),
     vel: direction.clone().multiplyScalar(speed),
-    life: 2.5,
+    life,
     weaponType,
+    trailClock: weaponType === 'fireRocket' ? 0 : undefined,
   };
   if (projectiles.length >= MAX_PROJECTILES) {
     projectiles.shift();
@@ -56,6 +69,17 @@ export function spawnProjectile(
 
 export function setSwivelAimAngle(angle: number) {
   swivelAimAngle = angle;
+}
+
+export function setSwivelAim(angle: number, pitch: number, target: THREE.Vector3) {
+  swivelAimAngle = angle;
+  swivelAimPitch = pitch;
+  swivelAimTarget.copy(target);
+  swivelAimValid = true;
+}
+
+export function clearSwivelAim() {
+  swivelAimValid = false;
 }
 
 // Whether fire button (mouse/space) is currently held
@@ -128,6 +152,7 @@ export interface WildlifeLiveEntry {
   template: 'grazer' | 'primate' | 'reptile' | 'wadingBird';
   variant: string;      // e.g. 'goat', 'sheep' — drives loot table lookup
   dead: boolean;
+  harvested?: boolean;  // Once true, the carcass is gone and loot has been awarded
   hitAlert?: number;    // Date.now() when last hit — animal panics for a while after
   radius: number;       // hit radius in world units
 }

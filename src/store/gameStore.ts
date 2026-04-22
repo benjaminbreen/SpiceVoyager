@@ -4,7 +4,7 @@ import {
   shipRepairTemplate, portDiscoverTemplate, tavernTemplate,
   fraudRevealTemplate, windfallRevealTemplate,
 } from '../utils/journalTemplates';
-import { generateStartingCrew } from '../utils/crewGenerator';
+import { generateStartingCrew, generateStartingCaptain } from '../utils/crewGenerator';
 import { sfxCrabCollect, sfxDiscovery } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import { rollLoot, playLootSfx, CRAB_LOOT } from '../utils/lootRoll';
@@ -13,6 +13,8 @@ import type { OceanEncounterDef } from '../utils/oceanEncounters';
 import type { FishType } from '../utils/fishTypes';
 import type { WaterPaletteSetting } from '../utils/waterPalettes';
 import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId, MARKET_TRUST } from '../utils/worldPorts';
+import type { DistrictKey } from '../utils/cityDistricts';
+export type { DistrictKey };
 import {
   syncLiveShipTransform,
   syncLiveWalkingTransform,
@@ -30,6 +32,7 @@ import {
   getMasterySellBonus,
   rollPurchaseOutcome,
 } from '../utils/knowledgeSystem';
+import type { CityFieldKey } from '../utils/cityFieldTypes';
 
 export type { Commodity } from '../utils/commodities';
 export type { KnowledgeLevel } from '../utils/knowledgeSystem';
@@ -106,7 +109,9 @@ export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
 
-export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market';
+export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market' | 'plaza' | 'spiritual' | 'landmark';
+
+export type HousingClass = 'poor' | 'common' | 'merchant' | 'elite';
 
 export interface Building {
   id: string;
@@ -116,6 +121,14 @@ export interface Building {
   scale: [number, number, number];
   label?: string;
   labelSub?: string;
+  labelEyebrow?: string;        // e.g. "RELIGIOUS" — all-caps glowing prefix on hover label
+  labelEyebrowColor?: string;   // hex color for the eyebrow text + glow; paired with labelEyebrow
+  district?: DistrictKey;
+  stories?: number;          // 1..4; renderer stacks floors on tall buildings
+  housingClass?: HousingClass;
+  setback?: number;          // 0..1; render-time jitter multiplier
+  landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
+  faith?: string;            // for type === 'spiritual'; keys render geometry
 }
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
@@ -125,6 +138,39 @@ export interface Road {
   tier: RoadTier;
   /** Polyline of world-space points (x, terrainHeight, z). */
   points: [number, number, number][];
+}
+
+/**
+ * Lightweight connectivity graph of a port's road network. Built at city
+ * generation time by welding endpoints and detecting T-junctions. Nodes are
+ * welded positions (degree ≥ 1); edges are the road polylines between them.
+ * Consumers don't need this for rendering — it's here so pedestrians, NPC
+ * routing, and the ribbon renderer (taper-at-dead-ends) can share one
+ * canonical view of "which road endpoints meet where".
+ */
+export interface RoadGraphNode {
+  /** World-space position of the node (x, y, z) — y is terrain or deck. */
+  pos: [number, number, number];
+  /** Number of incident road endpoints welded to this node. 1 = dead-end,
+   *  ≥ 2 = junction. */
+  degree: number;
+  /** The set of road tiers incident at this node (path/road/avenue/bridge). */
+  tiers: RoadTier[];
+}
+
+export interface RoadGraphEdge {
+  /** Matches the Road.id the edge was derived from. */
+  roadId: string;
+  tier: RoadTier;
+  /** Index into RoadGraph.nodes for each endpoint, or -1 if the endpoint
+   *  wasn't welded to any node (isolated segment). */
+  fromNode: number;
+  toNode: number;
+}
+
+export interface RoadGraph {
+  nodes: RoadGraphNode[];
+  edges: RoadGraphEdge[];
 }
 
 export interface Port {
@@ -142,6 +188,9 @@ export interface Port {
   prices: Record<Commodity, number>;        // current effective prices
   buildings: Building[];
   roads?: Road[];
+  /** Generation-time topology: welded endpoints + incidence. Optional so
+   *  older save-state loads that predate the graph still boot. */
+  roadGraph?: RoadGraph;
 }
 
 // ── Armament system ──
@@ -155,7 +204,11 @@ export interface Port {
 //   Basilisk: rare Portuguese bronze long gun. Extreme range.
 // Future: purchasable at different ports (culverins in Surat, sakers in Goa,
 //   basilisks rare in Lisbon-connected ports, etc.)
-export type WeaponType = 'swivelGun' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
+// Lantaka (Arab/Indian Ocean) and cetbang (Malay/Javanese) are mechanically
+// identical to the European swivel gun — same 1–2 lb bronze breech-loader,
+// different cultural lineage. Kept as distinct entries so Indian Ocean ports
+// can sell a historically-named piece without changing behavior.
+export type WeaponType = 'swivelGun' | 'lantaka' | 'cetbang' | 'fireRocket' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
 
 export interface Weapon {
   type: WeaponType;
@@ -169,6 +222,11 @@ export interface Weapon {
 
 export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
   swivelGun:    { type: 'swivelGun',    name: 'Swivel Gun',    damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
+  lantaka:      { type: 'lantaka',      name: 'Lantaka',       damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
+  cetbang:      { type: 'cetbang',      name: 'Cetbang',       damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
+  // Bamboo-tube war rocket. Aimed like a swivel but far longer reach, slower
+  // to reload, noticeably inaccurate, splash damage at impact.
+  fireRocket:   { type: 'fireRocket',   name: 'War Rocket',    damage: 12, range: 24, reloadTime: 2.8, weight: 3,  aimable: true },
   minion:       { type: 'minion',       name: 'Minion',        damage: 10, range: 14, reloadTime: 5,  weight: 3,  aimable: false },
   saker:        { type: 'saker',        name: 'Saker',         damage: 12, range: 18, reloadTime: 6,  weight: 4,  aimable: false },
   demiCulverin: { type: 'demiCulverin', name: 'Demi-Culverin', damage: 18, range: 16, reloadTime: 8,  weight: 6,  aimable: false },
@@ -180,6 +238,9 @@ export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
 // Prices in gold. Not every port sells every weapon.
 export const WEAPON_PRICES: Record<WeaponType, number> = {
   swivelGun:    40,
+  lantaka:      40,
+  cetbang:      40,
+  fireRocket:   180,
   minion:       80,
   saker:        120,
   demiCulverin: 200,
@@ -191,20 +252,21 @@ export const WEAPON_PRICES: Record<WeaponType, number> = {
 // Ports not listed sell only minions and swivelGuns.
 export const PORT_ARMORY: Record<string, WeaponType[]> = {
   goa:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'basilisk'],  // Portuguese arsenal
-  malacca:  ['swivelGun', 'minion', 'saker', 'demiCulverin'],
-  hormuz:   ['swivelGun', 'minion', 'saker'],
-  surat:    ['swivelGun', 'minion', 'demiCulverin', 'demiCannon'],         // Mughal heavy guns
+  malacca:  ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker', 'demiCulverin'],   // Luso-Malay mix after 1511
+  hormuz:   ['lantaka', 'swivelGun', 'minion', 'saker'],                   // Luso-held but Arab armorers present
+  surat:    ['lantaka', 'minion', 'demiCulverin', 'demiCannon'],           // Mughal heavy guns
   cochin:   ['swivelGun', 'minion', 'saker', 'demiCulverin'],
-  macau:    ['swivelGun', 'minion', 'saker', 'demiCannon'],
-  bantam:   ['swivelGun', 'minion', 'saker'],
-  mombasa:  ['swivelGun', 'minion', 'saker'],
-  muscat:   ['swivelGun', 'minion'],
-  aceh:     ['swivelGun', 'minion', 'saker'],
-  aden:     ['swivelGun', 'minion', 'demiCulverin'],
-  zanzibar: ['swivelGun', 'minion'],
-  calicut:  ['swivelGun', 'minion'],
-  socotra:  ['swivelGun', 'minion'],                                         // remote outpost, minimal arms
-  diu:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],  // major Portuguese fortress
+  macau:    ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker', 'demiCannon'],
+  bantam:   ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker'],
+  mombasa:  ['lantaka', 'minion', 'saker'],                                // Swahili coast
+  muscat:   ['lantaka', 'minion'],                                          // Omani armorers
+  aceh:     ['cetbang', 'swivelGun', 'minion', 'saker'],
+  aden:     ['lantaka', 'minion', 'demiCulverin'],                          // Ottoman garrison
+  zanzibar: ['lantaka', 'minion'],
+  calicut:  ['lantaka', 'minion'],
+  socotra:  ['lantaka', 'minion'],                                          // remote outpost, minimal arms
+  diu:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'], // major Portuguese fortress
+  mocha:    ['lantaka', 'minion'],                                          // Red Sea Arab port
   // European ports
   lisbon:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // imperial arsenal
   amsterdam: ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // VOC arsenal
@@ -229,6 +291,9 @@ export function getPortArmory(portId: string): WeaponType[] {
 // ── Human-readable weapon descriptions ──
 export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabel: string; reloadLabel: string; weightLabel: string }> = {
   swivelGun:    { flavor: 'Light anti-personnel gun, aimed by hand',     rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
+  lantaka:      { flavor: 'Bronze breech-loader of the Arab and Indian Ocean coasts', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
+  cetbang:      { flavor: 'Javanese bronze swivel — light, swift, deadly at close quarters', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
+  fireRocket:   { flavor: 'Bamboo-tube rocket — long reach and a fireball on impact, but flies wild', rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Light' },
   minion:       { flavor: 'Small iron cannon, cheap and reliable',        rangeLabel: 'Medium',  reloadLabel: 'Moderate',  weightLabel: 'Light' },
   saker:        { flavor: 'Fast-loading bronze gun favored by the Portuguese', rangeLabel: 'Long',    reloadLabel: 'Moderate',  weightLabel: 'Light' },
   demiCulverin: { flavor: 'Versatile medium cannon with good range',     rangeLabel: 'Long',    reloadLabel: 'Slow',      weightLabel: 'Medium' },
@@ -435,6 +500,8 @@ const MAX_CANNONS: Record<string, number> = {
   Dhow: 4,
   Fluyt: 6,
   Junk: 6,
+  Baghla: 8,
+  Jong: 10,
   Carrack: 8,
   Galleon: 12,
 };
@@ -446,6 +513,14 @@ export interface ShipStats {
   maxSails: number;
   speed: number;
   turnSpeed: number;
+  /** 0–1. How well the ship sails upwind. Lateens ≈ 0.9, galleons ≈ 0.35.
+   *  Used by getWindTrimInfo to widen or narrow the usable wind arc. */
+  windward: number;
+  /** How shallow a reef or coastal shoal the ship can pass. */
+  draft: 'shallow' | 'medium' | 'deep';
+  /** Maximum berth — upper bound on hireable crew. Distinct from current
+   *  crew count; a ship can sail undermanned but not overmanned. */
+  maxCrew: number;
   cargoCapacity: number;
   cannons: number;       // broadside cannon count (0 = no broadsides)
   armament: WeaponType[]; // all mounted weapons
@@ -527,7 +602,7 @@ export interface CrewMember {
 
 export interface ShipInfo {
   name: string;
-  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Junk' | 'Pinnace' | 'Fluyt' | 'Caravel';
+  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Baghla' | 'Junk' | 'Jong' | 'Pinnace' | 'Fluyt' | 'Caravel';
   flag: Nationality;
   armed: boolean;
 }
@@ -614,6 +689,9 @@ export interface RenderDebugSettings {
   coralReefs: boolean;
   wildlifeMotion: boolean;
   worldMapChart: boolean;
+  cityFieldOverlay: boolean;
+  cityFieldMode: CityFieldKey | 'district';
+  sacredMarkers: boolean;
 }
 
 interface GameState {
@@ -783,6 +861,9 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   coralReefs: false,
   wildlifeMotion: true,
   worldMapChart: true,
+  cityFieldOverlay: false,
+  cityFieldMode: 'prestige',
+  sacredMarkers: true,
 };
 
 // ── Crew helper functions ──────────────────────────────────────────────
@@ -846,14 +927,12 @@ export function grantCrewXp(
   return { crew: updated, levelledUp, newLevel };
 }
 
-// Phase 1 playable factions: European merchants whose hull proportions match
-// the existing Ship.tsx mesh (the `european` visual family). Non-European
-// playables (dhow/junk) are phase 2 — see AGENTS.md.
-//
-// Each faction has a humble starter (the common case) and a grand one the
-// captain's luck unlocks. Picking tier from the captain roll avoids an extra
-// dice and ties ship quality to a stat the player can see.
-const EUROPEAN_FACTION_STARTS: Array<{
+// Playable factions. Each has a humble starter (the common case) and a grand
+// one the captain's luck unlocks. Picking tier from the captain roll avoids
+// an extra dice and ties ship quality to a stat the player can see. Omani
+// and Chinese were added in phase 2 once the dhow/junk/baghla/jong meshes
+// landed in shipProfiles.ts.
+const PLAYABLE_FACTION_STARTS: Array<{
   faction: Nationality;
   humble: ShipInfo['type'];
   grand: ShipInfo['type'];
@@ -863,11 +942,161 @@ const EUROPEAN_FACTION_STARTS: Array<{
   { faction: 'Portuguese', humble: 'Caravel', grand: 'Carrack', homePortId: 'lisbon'    },
   { faction: 'Dutch',      humble: 'Fluyt',   grand: 'Carrack', homePortId: 'amsterdam' },
   { faction: 'Spanish',    humble: 'Caravel', grand: 'Galleon', homePortId: 'seville'   },
+  { faction: 'Omani',      humble: 'Dhow',    grand: 'Baghla',  homePortId: 'muscat'    },
+  { faction: 'Chinese',    humble: 'Junk',    grand: 'Jong',    homePortId: 'macau'     },
 ];
+
+// Weighted spawn distributions for c. 1612. A captain usually begins in the
+// metropole, but overseas factories, Estado da Índia strongholds, and colonial
+// entrepôts are all plausible points of origin — a Portuguese merchant might
+// already be seasoned in Goa, a Dutch factor in Bantam, etc. Weights are
+// historically shaped (Portuguese Estado at full stretch; VOC founded 1602;
+// EIC's Surat factory opens 1612; Spanish network anchored in the Caribbean).
+const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string; weight: number }>>> = {
+  Portuguese: [
+    { portId: 'lisbon',   weight: 55 },
+    { portId: 'goa',      weight: 20 },
+    { portId: 'macau',    weight: 10 },
+    { portId: 'salvador', weight: 5  },
+    { portId: 'luanda',   weight: 4  },
+    { portId: 'mombasa',  weight: 3  },
+    { portId: 'cape',     weight: 3  },
+  ],
+  Dutch: [
+    { portId: 'amsterdam', weight: 70 },
+    { portId: 'bantam',    weight: 15 },
+    { portId: 'surat',     weight: 8  },
+    { portId: 'cape',      weight: 4  },
+    { portId: 'mocha',     weight: 3  },
+  ],
+  English: [
+    { portId: 'london',    weight: 70 },
+    { portId: 'surat',     weight: 15 },
+    { portId: 'bantam',    weight: 8  },
+    { portId: 'jamestown', weight: 4  },
+    { portId: 'cape',      weight: 3  },
+  ],
+  Spanish: [
+    { portId: 'seville',   weight: 65 },
+    { portId: 'havana',    weight: 18 },
+    { portId: 'cartagena', weight: 17 },
+  ],
+  // Omani captains in 1612 sailed out of Muscat, Sur, and the Gulf/Red Sea
+  // entrepôts. Hormuz is still Portuguese-held (falls 1622) but lascar
+  // captains operated from it; Zanzibar/Mombasa reflect the Swahili-coast
+  // dhow network. A few captains start in Surat via Gujarati-Omani links.
+  Omani: [
+    { portId: 'muscat',   weight: 40 },
+    { portId: 'mocha',    weight: 15 },
+    { portId: 'aden',     weight: 12 },
+    { portId: 'hormuz',   weight: 10 },
+    { portId: 'zanzibar', weight: 9  },
+    { portId: 'mombasa',  weight: 6  },
+    { portId: 'socotra',  weight: 4  },
+    { portId: 'surat',    weight: 4  },
+  ],
+  // Chinese junk captains c. 1612 operated largely out of Fujian via Macau
+  // (Luso-Chinese hub) and the East Indies hubs with large Chinese
+  // communities. Bantam and Malacca reflect overseas-Chinese trade routes.
+  Chinese: [
+    { portId: 'macau',   weight: 55 },
+    { portId: 'bantam',  weight: 20 },
+    { portId: 'malacca', weight: 15 },
+    { portId: 'goa',     weight: 5  },
+    { portId: 'calicut', weight: 5  },
+  ],
+};
+
+function pickSpawnPort(faction: Nationality, fallback: string): string {
+  const table = FACTION_SPAWN_WEIGHTS[faction];
+  if (!table || table.length === 0) return fallback;
+  const total = table.reduce((sum, row) => sum + row.weight, 0);
+  let roll = Math.random() * total;
+  for (const row of table) {
+    roll -= row.weight;
+    if (roll <= 0) return row.portId;
+  }
+  return table[table.length - 1].portId;
+}
+
+// Per-hull handling baseline. Speed is 0–25 (kn at top trim), turnSpeed is
+// the existing 0–3 scale Ship.tsx already reads, windward is 0–1 (1.0 =
+// can sail straight into the wind — none of these hulls hit that). Draft
+// gates shallow-water crossings. maxHull is per-type so a Pinnace is less
+// durable than a Galleon. maxCrew is the upper limit on hires; startMin/
+// startMax give the random starting crew range for a fresh run.
+const SHIP_BASE_STATS: Record<ShipInfo['type'], {
+  speed: number;
+  turnSpeed: number;
+  windward: number;
+  draft: 'shallow' | 'medium' | 'deep';
+  maxHull: number;
+  maxCrew: number;
+  startMin: number;
+  startMax: number;
+}> = {
+  Pinnace: { speed: 24, turnSpeed: 2.6, windward: 0.55, draft: 'shallow', maxHull:  60, maxCrew:  4, startMin: 3, startMax: 4  },
+  Dhow:    { speed: 22, turnSpeed: 2.8, windward: 0.90, draft: 'shallow', maxHull:  70, maxCrew:  4, startMin: 3, startMax: 4  },
+  Caravel: { speed: 21, turnSpeed: 2.5, windward: 0.78, draft: 'shallow', maxHull:  80, maxCrew:  5, startMin: 3, startMax: 5  },
+  Baghla:  { speed: 20, turnSpeed: 2.2, windward: 0.82, draft: 'medium',  maxHull: 100, maxCrew:  8, startMin: 4, startMax: 7  },
+  Fluyt:   { speed: 18, turnSpeed: 1.8, windward: 0.48, draft: 'medium',  maxHull: 110, maxCrew:  6, startMin: 4, startMax: 6  },
+  Junk:    { speed: 17, turnSpeed: 2.0, windward: 0.65, draft: 'medium',  maxHull:  95, maxCrew:  6, startMin: 4, startMax: 6  },
+  Galleon: { speed: 18, turnSpeed: 1.3, windward: 0.35, draft: 'deep',    maxHull: 160, maxCrew: 12, startMin: 6, startMax: 10 },
+  Carrack: { speed: 17, turnSpeed: 1.5, windward: 0.38, draft: 'deep',    maxHull: 130, maxCrew:  8, startMin: 5, startMax: 8  },
+  Jong:    { speed: 15, turnSpeed: 1.2, windward: 0.60, draft: 'deep',    maxHull: 140, maxCrew: 12, startMin: 6, startMax: 10 },
+};
+
+// Starting armament by ship type. Swivels are the universal anti-personnel
+// piece and are renamed to lantaka/cetbang in Arab and Malay/Javanese
+// contexts respectively — we pick the name by the starting faction in
+// buildStartingArmament(). `mounted` holds broadside cannons plus any
+// fixed aimable pieces (rocket racks); stats.cannons then counts only
+// the non-aimable entries via WEAPON_DEFS[w].aimable. Pinnace/Dhow/
+// Caravel/Fluyt carry light armaments; Carrack and Baghla walk out as
+// real armed merchants; Galleon and Jong are state-scale.
+const SHIP_STARTING_ARMAMENT: Record<ShipInfo['type'], {
+  swivelMin: number;
+  swivelMax: number;
+  mounted: WeaponType[];
+}> = {
+  Pinnace: { swivelMin: 1, swivelMax: 1, mounted: [] },
+  Dhow:    { swivelMin: 0, swivelMax: 1, mounted: [] },
+  Caravel: { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'minion'] },
+  Fluyt:   { swivelMin: 1, swivelMax: 1, mounted: ['minion', 'minion'] },
+  // Junk/Jong come off the dock with a rocket rack — a small one on the
+  // junk, a proper launcher on the Jong. Signature ranged weapon.
+  Junk:    { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'fireRocket'] },
+  Baghla:  { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion'] },
+  Carrack: { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion', 'saker'] },
+  Jong:    { swivelMin: 2, swivelMax: 3, mounted: ['minion', 'minion', 'fireRocket'] },
+  Galleon: { swivelMin: 3, swivelMax: 3, mounted: ['minion', 'minion', 'saker', 'saker', 'demiCulverin'] },
+};
+
+/** Pick the swivel-family weapon appropriate to the ship's faction — Omani
+ *  captains carry lantakas, Chinese captains carry cetbangs, everyone else
+ *  gets the generic European swivel gun. Purely cosmetic: stats are the
+ *  same for all three. */
+function factionSwivelType(faction: Nationality): WeaponType {
+  if (faction === 'Omani') return 'lantaka';
+  if (faction === 'Chinese') return 'cetbang';
+  return 'swivelGun';
+}
+
+function buildStartingArmament(type: ShipInfo['type'], faction: Nationality): WeaponType[] {
+  const cfg = SHIP_STARTING_ARMAMENT[type];
+  const range = cfg.swivelMax - cfg.swivelMin + 1;
+  const swivelCount = cfg.swivelMin + Math.floor(Math.random() * range);
+  const swivelType = factionSwivelType(faction);
+  return [
+    ...Array(swivelCount).fill(swivelType),
+    ...cfg.mounted,
+  ];
+}
 
 // Per-ship starting hold (tons) and purse (reals). Humble ships reflect a
 // minor merchant's capital; grand ships imply investor/state backing and a
-// fuller hold. Dhow/Junk are kept for type completeness — phase 2 starters.
+// fuller hold. Dhow/Baghla (Omani) and Junk/Jong (Chinese) are the
+// non-European playable tiers.
 const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold: number }> = {
   Pinnace: { cargoCapacity: 50,  gold: 600  },
   Caravel: { cargoCapacity: 65,  gold: 700  },
@@ -875,18 +1104,29 @@ const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold
   Carrack: { cargoCapacity: 140, gold: 1400 },
   Galleon: { cargoCapacity: 130, gold: 1500 },
   Dhow:    { cargoCapacity: 60,  gold: 600  },
-  Junk:    { cargoCapacity: 100, gold: 900  },
+  Baghla:  { cargoCapacity: 110, gold: 1200 },
+  Junk:    { cargoCapacity: 95,  gold: 800  },
+  Jong:    { cargoCapacity: 150, gold: 1400 },
 };
 
-const _factionStart = EUROPEAN_FACTION_STARTS[Math.floor(Math.random() * EUROPEAN_FACTION_STARTS.length)];
+const _factionStart = PLAYABLE_FACTION_STARTS[Math.floor(Math.random() * PLAYABLE_FACTION_STARTS.length)];
 const _startingFaction: Nationality = _factionStart.faction;
-const _startingCrewSize = 4 + Math.floor(Math.random() * 3); // 4-6
-const _startingCrew = generateStartingCrew(_startingFaction, _startingCrewSize);
-const _captainLuck = _startingCrew.find(c => c.role === 'Captain')?.stats.luck ?? 10;
+const _startingPortId = pickSpawnPort(_startingFaction, _factionStart.homePortId);
+
+// Roll the captain first so we can check luck before picking the ship tier,
+// then use the same captain in the full crew (keeps luck consistent across
+// ship-tier selection and the cargo roll).
+const _startingCaptain = generateStartingCaptain(_startingFaction);
+const _captainLuck = _startingCaptain.stats.luck ?? 10;
 
 // Captain luck is 1–20. Threshold 17 ≈ top ~20% of rolls upgrades the starter.
 const _luckyStart = _captainLuck >= 17;
 const _startingShipType: ShipInfo['type'] = _luckyStart ? _factionStart.grand : _factionStart.humble;
+
+const _baseStats = SHIP_BASE_STATS[_startingShipType];
+const _crewRangeSize = _baseStats.startMax - _baseStats.startMin + 1;
+const _startingCrewSize = _baseStats.startMin + Math.floor(Math.random() * _crewRangeSize);
+const _startingCrew = generateStartingCrew(_startingFaction, _startingCrewSize, _startingCaptain);
 
 const _shipNamePool = SHIP_NAMES[_startingShipType];
 const _startingShipName = _shipNamePool[Math.floor(Math.random() * _shipNamePool.length)];
@@ -896,6 +1136,8 @@ const _startingCargoCapacity = _shipProfile.cargoCapacity;
 const _startingGold = _shipProfile.gold;
 
 const _startingCargo = generateStartingCargo(_startingFaction, _startingCargoCapacity, _captainLuck);
+const _startingArmament = buildStartingArmament(_startingShipType, _startingFaction);
+const _startingBroadsides = _startingArmament.filter(w => !WEAPON_DEFS[w].aimable).length;
 
 /** Build provenance stacks matching starting cargo. Treated as genuine goods
  *  taken on before the voyage began — no acquisition port, no fraud roll. */
@@ -927,15 +1169,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   cargo: _startingCargo,
   cargoProvenance: buildStartingProvenance(_startingCargo),
   stats: {
-    hull: 100,
-    maxHull: 100,
+    hull: _baseStats.maxHull,
+    maxHull: _baseStats.maxHull,
     sails: 100,
     maxSails: 100,
-    speed: 22,
-    turnSpeed: 2.0,
+    speed: _baseStats.speed,
+    turnSpeed: _baseStats.turnSpeed,
+    windward: _baseStats.windward,
+    draft: _baseStats.draft,
+    maxCrew: _baseStats.maxCrew,
     cargoCapacity: _startingCargoCapacity,
-    cannons: 0,
-    armament: ['swivelGun'],
+    cannons: _startingBroadsides,
+    armament: _startingArmament,
   },
   crew: _startingCrew,
   ship: {
@@ -978,7 +1223,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 150,
   devSoloPort: null,
-  currentWorldPortId: _factionStart.homePortId,
+  currentWorldPortId: _startingPortId,
   waterPaletteSetting: 'auto',
   forceMobileLayout: false,
   shipSteeringMode: 'tap',

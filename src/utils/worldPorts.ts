@@ -172,12 +172,12 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   mombasa: ['aden', 'muscat', 'socotra', 'zanzibar', 'cape'],
   zanzibar: ['calicut', 'goa', 'mombasa', 'cape'],
   // Cape — the bottleneck connecting two halves
-  cape: ['zanzibar', 'mombasa', 'luanda'],
+  cape: ['zanzibar', 'mombasa', 'luanda', 'elmina', 'lisbon'],
   // West Africa
   luanda: ['cape', 'elmina', 'salvador'],
-  elmina: ['luanda', 'amsterdam', 'lisbon', 'salvador'],
+  elmina: ['luanda', 'amsterdam', 'lisbon', 'salvador', 'cape'],
   // Europe
-  lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador'],
+  lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador', 'cape'],
   amsterdam: ['elmina', 'lisbon', 'london'],
   seville: ['lisbon', 'london', 'havana', 'cartagena'],
   london: ['amsterdam', 'lisbon', 'seville', 'jamestown'],
@@ -242,108 +242,285 @@ export function estimateSeaTravel(fromPortId: string, toPortId: string) {
   return { days, risk, distanceKm };
 }
 
-/**
- * Waypoints for sea lanes that need to route around land.
- * Keys are sorted "portA:portB" (alphabetical). Values are [lon, lat]
- * waypoints read in SORTED-KEY ORDER — first point near portA, last near
- * portB. `getSeaLaneWaypoints` reverses the array automatically when the
- * caller queries B→A. Routes without waypoints use a simple direct curve.
- *
- * The comment above each route describes the natural geographic direction
- * (often matching the sorted key, sometimes inverted); the array order
- * always follows the key.
- */
-const SEA_LANE_WAYPOINTS: Record<string, [number, number][]> = {
-  // ── Cape route: Africa circumnavigation ──────────────────────────
-  // Cape → Mombasa: up the East African coast, staying offshore
-  'cape:mombasa':   [[35, -28], [40, -18], [41, -8]],
-  // Cape → Zanzibar: similar but cutting in earlier
-  'cape:zanzibar':  [[33, -30], [38, -20], [39, -12]],
-  // Cape → Luanda: up the West African coast
-  'cape:luanda':    [[14, -30], [12, -22], [13, -14]],
-  // Elmina → Luanda (south along the Gulf of Guinea, hugging the coast offshore)
-  'elmina:luanda':  [[3, 3], [6, 0], [8, -4]],
+// ════════════════════════════════════════════════════════════════════════════
+// Sea-route gateway graph
+//
+// Ships funnel through the same historically attested choke points: the
+// English Channel, the Bay of Biscay, Gibraltar, the Canaries, the Cape,
+// Bab el-Mandeb, Hormuz, Malacca, Sunda. Instead of hand-placing waypoints
+// per route, we define ~35 named gateways in deep ocean and a small edge
+// graph between them. Any port-to-port route is a Dijkstra shortest path
+// through this graph. Edges are hand-picked so the straight line between
+// any two connected gateways stays in open water.
+//
+// Adding a new port = give it 1–2 gateways. Every route to/from it works.
+// ════════════════════════════════════════════════════════════════════════════
 
-  // ── European coastal routes ──────────────────────────────────────
-  // Lisbon → London: around Iberian NW coast, across Bay of Biscay, through Channel
-  'lisbon:london':  [[-9, 43], [-5, 48], [-2, 50]],
-  // Amsterdam → Lisbon: through Channel, across Bay of Biscay, south to Iberia
-  'amsterdam:lisbon': [[0, 51], [-5, 48], [-9, 43]],
-  // London → Amsterdam: short North Sea hop — no waypoints needed
-  // London → Seville: down through Channel, across Biscay, around Iberia, to Gibraltar
-  'london:seville': [[-2, 50], [-5, 48], [-9, 43], [-8, 38]],
-  // Amsterdam → Elmina: down past England, Iberia, West African coast, to Gulf of Guinea
-  'amsterdam:elmina': [[0, 51], [-5, 48], [-9, 43], [-10, 35], [-12, 20], [-5, 10]],
-  // Elmina → Lisbon: up the West African coast, past Canaries/Madeira
-  'elmina:lisbon': [[-8, 10], [-14, 18], [-14, 28], [-10, 35]],
+export interface Gateway {
+  coords: [number, number];
+  /** Optional display label — rendered as italic text on the chart. */
+  label?: string;
+  /** Optional offset in pixels for the label, when the coords point isn't the best anchor. */
+  labelOffset?: [number, number];
+}
 
-  // ── Atlantic crossings ───────────────────────────────────────────
-  // Lisbon → Salvador: follows the volta do mar — south to Canaries, then west with trade winds
-  'lisbon:salvador': [[-18, 30], [-25, 20], [-30, 8], [-35, -5]],
-  // Elmina → Salvador: across the Atlantic narrows (shortest ocean crossing)
-  'elmina:salvador': [[-10, 2], [-20, -2], [-30, -6]],
-  // Havana → Seville: out of Caribbean, ride Gulf Stream east past Azores, down to Iberia
-  'havana:seville': [[-65, 24], [-45, 25], [-25, 28], [-15, 32]],
-  // Cartagena → Seville: out through the Caribbean, east across mid-Atlantic, past Canaries
-  'cartagena:seville': [[-58, 15], [-42, 22], [-25, 28], [-15, 32]],
-  // Havana → Salvador: south through Caribbean, past Trinidad, down Brazilian coast
-  'havana:salvador': [[-78, 20], [-68, 15], [-55, 8], [-42, 0], [-38, -8]],
-  // Luanda → Salvador: straight across the South Atlantic (actually fairly direct)
-  'luanda:salvador': [[5, -10], [-10, -12], [-25, -13]],
-  // Jamestown → London: 1612 English crossings used the southern route (down
-  // past the Canaries, west with the trade winds, then north up the Atlantic
-  // coast of North America). Return uses the Gulf Stream — this is the game's
-  // one-route simplification.
-  'jamestown:london': [[-75, 35], [-65, 28], [-50, 24], [-25, 28], [-12, 36], [-5, 48]],
+export const GATEWAYS: Record<string, Gateway> = {
+  // ── Europe & approach ────────────────────────────────────────────
+  'channel-w':     { coords: [-5, 49.5],   label: 'English Channel' },
+  'channel-e':     { coords: [2.5, 51.5] },
+  'biscay':        { coords: [-7, 46],     label: 'Bay of Biscay' },
+  'iberia-nw':     { coords: [-11, 43] },
+  'iberia-sw':     { coords: [-10, 37] },
+  'gibraltar':     { coords: [-7.5, 36],   label: 'Str. of Gibraltar', labelOffset: [0, 18] },
 
-  // ── Indian Ocean long-haul routes ────────────────────────────────
-  // Calicut → Zanzibar: across the western Indian Ocean
-  'calicut:zanzibar': [[68, 8], [58, 2], [48, -3]],
-  // Goa → Zanzibar: similar
-  'goa:zanzibar': [[65, 10], [55, 2], [45, -3]],
-  // Goa → Malacca: south of Sri Lanka, across Bay of Bengal, through strait
-  'goa:malacca': [[76, 10], [80, 6], [85, 4], [92, 3], [98, 2]],
-  // Calicut → Malacca: around Sri Lanka, across Bay of Bengal
-  'calicut:malacca': [[78, 8], [82, 5], [88, 3], [95, 2], [99, 2]],
-  // Bantam → Calicut: out through Sunda Strait, across Indian Ocean, south of Sri Lanka
-  'bantam:calicut': [[103, -4], [98, -1], [92, 1], [86, 3], [80, 6]],
-  // Mombasa → Muscat: up the East African coast, across to Arabia
-  'mombasa:muscat': [[42, -2], [46, 5], [52, 14], [57, 20]],
+  // ── Atlantic ─────────────────────────────────────────────────────
+  'canaries':      { coords: [-17, 28],    label: 'Canary Is.' },
+  'cape-verde':    { coords: [-22, 13],    label: 'Cape Verde Is.' },
+  'azores':        { coords: [-30, 38],    label: 'Azores' },
+  'atl-narrows':   { coords: [-25, 0] },
+  'brazil-ne':     { coords: [-34, -6] },
+  'w-africa-bulge':{ coords: [-18, 8] },
 
-  // ── Southeast Asia routes ────────────────────────────────────────
-  // Macau → Malacca: south through the South China Sea, east of Indochina
-  'macau:malacca': [[112, 18], [110, 14], [107, 8], [104, 4]],
-  // Bantam → Macau: north through Java Sea, east of Borneo, up to South China Sea
-  'bantam:macau': [[108, -3], [110, 2], [112, 8], [113, 14]],
+  // ── Caribbean & N. America ──────────────────────────────────────
+  'windward':      { coords: [-62, 15] },
+  'bahamas-e':     { coords: [-72, 23] },
+  'florida-str':   { coords: [-80, 25] },
+  'bermuda':       { coords: [-65, 32],    label: 'Bermuda' },
+  'virginia-capes':{ coords: [-75, 37] },
 
-  // ── Arabian Peninsula routes (must go around, not through) ──────
-  // Mocha → Muscat: out of Red Sea, around Arabian Peninsula south coast
-  'mocha:muscat': [[45, 12], [48, 11.5], [52, 13], [56, 17], [58, 21]],
-  // Mocha → Surat: out of Red Sea, across Arabian Sea
-  'mocha:surat': [[46, 13], [50, 14], [58, 18], [65, 20]],
-  // Diu → Hormuz: offshore, around the Makran coast
-  'diu:hormuz': [[66, 22], [62, 24], [58, 26]],
-  // Diu → Muscat: south along the coast, around to Oman
-  'diu:muscat': [[66, 22], [62, 23]],
-  // Goa → Hormuz: across the Arabian Sea, staying offshore
-  'goa:hormuz': [[70, 18], [64, 22], [58, 25]],
-  // Hormuz → Surat: out of the Gulf, along the Makran/Balochistan coast
-  'hormuz:surat': [[58, 25], [62, 24], [66, 22], [70, 21]],
+  // ── West & South Africa ─────────────────────────────────────────
+  'guinea':        { coords: [2, 2],       label: 'Gulf of Guinea' },
+  'luanda-approach':{ coords: [11, -9] },
+  'south-atl-e':   { coords: [11, -22] },
+  'cape-gh':       { coords: [18, -36],    label: 'Cape of Good Hope', labelOffset: [0, 14] },
 
-  // ── East African coast routes ────────────────────────────────────
-  // Aden → Mombasa: down the Somali coast, staying offshore
-  'aden:mombasa': [[46, 11], [48, 6], [44, 0], [41, -3]],
+  // ── East Africa ─────────────────────────────────────────────────
+  'natal':         { coords: [33, -28] },
+  'mozambique':    { coords: [41, -15],    label: 'Mozambique Chan.' },
+  'zanzibar-app':  { coords: [41, -5] },
+
+  // ── Horn of Africa / Red Sea ────────────────────────────────────
+  'socotra-n':     { coords: [54, 14],     label: 'Socotra' },
+  'horn-africa':   { coords: [51, 11],     label: 'Gulf of Aden' },
+  'bab-mandeb':    { coords: [44, 12.5] },
+
+  // ── Arabian Sea & Persian Gulf ──────────────────────────────────
+  'arabian-sea':   { coords: [62, 15],     label: 'Arabian Sea' },
+  'oman':          { coords: [58, 21] },
+  'hormuz-mouth':  { coords: [56.5, 26],   label: 'Str. of Hormuz' },
+
+  // ── India ───────────────────────────────────────────────────────
+  'gujarat':       { coords: [68, 22] },
+  'malabar':       { coords: [73.5, 10] },
+
+  // ── Eastern Indian Ocean ────────────────────────────────────────
+  'ceylon-s':      { coords: [82, 5] },
+  'bengal-bay':    { coords: [88, 8],      label: 'Bay of Bengal' },
+
+  // ── SE Asia & South China Sea ───────────────────────────────────
+  'malacca-n':     { coords: [100, 4],     label: 'Str. of Malacca' },
+  'java-sea':      { coords: [109, -4],    label: 'Java Sea' },
+  'sunda':         { coords: [105, -6.5],  label: 'Sunda Str.' },
+  'scs-s':         { coords: [111, 8],     label: 'South China Sea' },
+  'scs-n':         { coords: [115, 18] },
 };
 
-/** Look up waypoints for a sea lane edge. Returns empty array if none defined. */
+/**
+ * Which gateways each edge connects. Each edge must describe a straight-line
+ * ocean passage — if the line between two gateways would cross land, add an
+ * intermediate gateway instead.
+ */
+const GATEWAY_EDGES: [string, string][] = [
+  // Europe
+  ['channel-w', 'channel-e'],
+  ['channel-w', 'biscay'],
+  ['biscay', 'iberia-nw'],
+  ['iberia-nw', 'iberia-sw'],
+  ['iberia-sw', 'gibraltar'],
+  ['iberia-nw', 'canaries'],
+  ['iberia-sw', 'canaries'],
+  ['gibraltar', 'canaries'],
+  // Atlantic
+  ['canaries', 'azores'],
+  ['canaries', 'cape-verde'],
+  ['cape-verde', 'atl-narrows'],
+  ['cape-verde', 'brazil-ne'],
+  ['cape-verde', 'w-africa-bulge'],
+  ['w-africa-bulge', 'guinea'],
+  ['atl-narrows', 'brazil-ne'],
+  ['azores', 'bermuda'],
+  // Caribbean / N America
+  ['brazil-ne', 'windward'],
+  ['windward', 'bahamas-e'],
+  ['bahamas-e', 'florida-str'],
+  ['bahamas-e', 'bermuda'],
+  ['bermuda', 'virginia-capes'],
+  // West / South Africa
+  ['guinea', 'luanda-approach'],
+  ['luanda-approach', 'south-atl-e'],
+  ['south-atl-e', 'cape-gh'],
+  // Transoceanic shortcut: Cape Verde straight to the Cape — the open-sea
+  // leg Lisbon- and Elmina-bound voyages use to reach southern Africa without
+  // coast-hugging all of West Africa.
+  ['cape-verde', 'cape-gh'],
+  ['cape-gh', 'natal'],
+  ['natal', 'mozambique'],
+  ['mozambique', 'zanzibar-app'],
+  // Western Indian Ocean
+  ['zanzibar-app', 'socotra-n'],
+  ['socotra-n', 'horn-africa'],
+  ['socotra-n', 'arabian-sea'],
+  ['horn-africa', 'bab-mandeb'],
+  ['horn-africa', 'arabian-sea'],
+  // Arabian Sea / Persian Gulf
+  ['arabian-sea', 'oman'],
+  ['oman', 'hormuz-mouth'],
+  ['hormuz-mouth', 'gujarat'],
+  ['arabian-sea', 'gujarat'],
+  ['arabian-sea', 'malabar'],
+  // India
+  ['gujarat', 'malabar'],
+  ['malabar', 'ceylon-s'],
+  ['ceylon-s', 'bengal-bay'],
+  ['ceylon-s', 'malacca-n'],
+  ['bengal-bay', 'malacca-n'],
+  // SE Asia & SCS
+  ['malacca-n', 'java-sea'],
+  ['java-sea', 'sunda'],
+  ['java-sea', 'scs-s'],
+  ['malacca-n', 'scs-s'],
+  ['scs-s', 'scs-n'],
+];
+
+/** Each port's entry gateway(s). Ports can list multiple — shortest total wins. */
+const PORT_GATEWAYS: Record<string, string[]> = {
+  // Europe
+  london:     ['channel-w'],
+  amsterdam:  ['channel-e'],
+  lisbon:     ['iberia-sw'],
+  seville:    ['gibraltar'],
+  // Atlantic Americas
+  jamestown:  ['virginia-capes'],
+  havana:     ['florida-str'],
+  cartagena:  ['windward'],
+  salvador:   ['brazil-ne'],
+  // West / South Africa
+  elmina:     ['guinea'],
+  luanda:     ['luanda-approach'],
+  cape:       ['cape-gh'],
+  // East Africa
+  mombasa:    ['zanzibar-app'],
+  zanzibar:   ['zanzibar-app'],
+  // Red Sea / Arabian Peninsula
+  aden:       ['horn-africa'],
+  mocha:      ['bab-mandeb'],
+  muscat:     ['hormuz-mouth'],
+  socotra:    ['socotra-n'],
+  hormuz:     ['hormuz-mouth'],
+  // India
+  diu:        ['gujarat'],
+  surat:      ['gujarat'],
+  goa:        ['malabar'],
+  calicut:    ['malabar'],
+  // SE Asia
+  bantam:     ['sunda'],
+  malacca:    ['malacca-n'],
+  macau:      ['scs-n'],
+};
+
+/** Build adjacency list with great-circle-distance weights. Computed once. */
+const GATEWAY_ADJ: Map<string, { to: string; dist: number }[]> = (() => {
+  const adj = new Map<string, { to: string; dist: number }[]>();
+  for (const id of Object.keys(GATEWAYS)) adj.set(id, []);
+  for (const [a, b] of GATEWAY_EDGES) {
+    const d = greatCircleKm(GATEWAYS[a].coords, GATEWAYS[b].coords);
+    adj.get(a)!.push({ to: b, dist: d });
+    adj.get(b)!.push({ to: a, dist: d });
+  }
+  return adj;
+})();
+
+/** Dijkstra from one start gateway; returns distance map and predecessor map. */
+function dijkstraFrom(start: string): { dist: Map<string, number>; prev: Map<string, string> } {
+  const dist = new Map<string, number>();
+  const prev = new Map<string, string>();
+  const visited = new Set<string>();
+  dist.set(start, 0);
+  while (true) {
+    let curr: string | null = null;
+    let currDist = Infinity;
+    for (const [id, d] of dist) {
+      if (!visited.has(id) && d < currDist) {
+        curr = id;
+        currDist = d;
+      }
+    }
+    if (!curr) break;
+    visited.add(curr);
+    for (const { to, dist: edgeDist } of GATEWAY_ADJ.get(curr)!) {
+      const alt = currDist + edgeDist;
+      if (alt < (dist.get(to) ?? Infinity)) {
+        dist.set(to, alt);
+        prev.set(to, curr);
+      }
+    }
+  }
+  return { dist, prev };
+}
+
+/**
+ * Build a sea route from one port to another, returning gateway coords in
+ * travel order (excluding the port coordinates themselves — callers prepend
+ * the source port and append the destination port). Returns `[]` if either
+ * port has no assigned gateway.
+ */
+export function buildSeaRoute(fromPortId: string, toPortId: string): [number, number][] {
+  const fromGateways = PORT_GATEWAYS[fromPortId];
+  const toGateways = PORT_GATEWAYS[toPortId];
+  if (!fromGateways || !toGateways) return [];
+  const fromCoords = WORLD_PORT_COORDS[fromPortId];
+  const toCoords = WORLD_PORT_COORDS[toPortId];
+  if (!fromCoords || !toCoords) return [];
+
+  // Same gateway — both ports enter/exit through the same choke point.
+  // Emit that single gateway so the curve bends through it cleanly.
+  const shared = fromGateways.find(g => toGateways.includes(g));
+  if (shared) return [GATEWAYS[shared].coords];
+
+  // Try every (fromGateway, toGateway) pair; pick the lowest total cost
+  // including port → gateway and gateway → port legs.
+  let bestPath: string[] | null = null;
+  let bestCost = Infinity;
+  for (const startGw of fromGateways) {
+    const { dist, prev } = dijkstraFrom(startGw);
+    const portToStart = greatCircleKm(fromCoords, GATEWAYS[startGw].coords);
+    for (const endGw of toGateways) {
+      const gatewayDist = dist.get(endGw) ?? Infinity;
+      if (gatewayDist === Infinity) continue;
+      const endToPort = greatCircleKm(GATEWAYS[endGw].coords, toCoords);
+      const total = portToStart + gatewayDist + endToPort;
+      if (total < bestCost) {
+        bestCost = total;
+        const path: string[] = [];
+        let cur: string | undefined = endGw;
+        while (cur) {
+          path.unshift(cur);
+          cur = prev.get(cur);
+        }
+        bestPath = path;
+      }
+    }
+  }
+  if (!bestPath) return [];
+  return bestPath.map(id => GATEWAYS[id].coords);
+}
+
+/**
+ * Compatibility wrapper — preserves the old function signature. Both world
+ * map modals call this; internally it now goes through the gateway graph.
+ */
 export function getSeaLaneWaypoints(fromId: string, toId: string): [number, number][] {
-  const key = [fromId, toId].sort().join(':');
-  const waypoints = SEA_LANE_WAYPOINTS[key];
-  if (!waypoints) return [];
-  // If the sorted key has fromId first, waypoints are in the right order.
-  // If reversed, we need to reverse the waypoints.
-  const sorted = [fromId, toId].sort();
-  return sorted[0] === fromId ? waypoints : [...waypoints].reverse();
+  return buildSeaRoute(fromId, toId);
 }
 
 /** Get all sea lane edges as [fromId, toId] pairs (deduplicated) */

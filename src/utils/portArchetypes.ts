@@ -413,6 +413,7 @@ export const CORE_PORTS: PortDefinition[] = [
         ruggedness: 0.9,
       },
     ],
+    landmark: 'colegio-sao-paulo',
   },
   {
     id: 'mombasa',
@@ -466,6 +467,7 @@ export const CORE_PORTS: PortDefinition[] = [
     headlands: [
       { side: 'left', size: 0.35, width: 0.2 },   // Dumas point (north bank)
     ],
+    landmark: 'english-factory-surat',
   },
   {
     id: 'muscat',
