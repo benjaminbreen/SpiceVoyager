@@ -128,7 +128,7 @@ const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   () => ({
     gold: randInt(50, 200),
     provisions: 0,
-    cargo: { Munitions: randInt(2, 5) },
+    cargo: { 'Small Shot': randInt(2, 5) },
     title: 'Sunken Cargo',
     subtitle: 'Jettisoned stores',
     description: 'Barrels and crates bob in the swell — cargo thrown overboard in a storm. Some are still sealed.',

@@ -62,6 +62,19 @@ const BUILDING_FIELD_INFLUENCE: Partial<Record<BuildingType, BuildingFieldInflue
   plaza:     { radius: 28, access: 0.70, nuisance: 0.10, sanctity: 0.18, prestige: 0.22, safety: 0.22, danger: -0.08 },
   shack:     { radius: 18, access: 0.10, nuisance: 0.22, sanctity: -0.10, prestige: -0.18, safety: -0.02, danger: 0.14 },
   farmhouse: { radius: 20, access: 0.06, nuisance: -0.04, sanctity: 0.10, prestige: 0.04, safety: 0.00, danger: -0.04 },
+  // Spiritual buildings radiate sanctity into their precinct and pull housing
+  // around them toward the `sacred` district. Also mildly prestigious and
+  // quiet — a cathedral close / mosque courtyard is a desirable address.
+  spiritual: { radius: 30, access: 0.14, nuisance: -0.10, sanctity: 0.70, prestige: 0.22, safety: 0.18, danger: -0.08 },
+  // Palace: the royal precinct. Strong prestige + safety pull, mild sanctity
+  // (the palace chapel / zenana / court ceremony is adjacent to sacred use).
+  // Housing in the palace's field should tag elite-residential.
+  palace:    { radius: 34, access: 0.16, nuisance: -0.08, sanctity: 0.12, prestige: 0.60, safety: 0.46, danger: -0.18 },
+  // Landmarks inherit their class-appropriate influence via a uniform
+  // profile — slightly prestigious, mildly sacred, safe. Class-specific
+  // nuance (a civic fort-landmark vs a religious basilica) is handled by
+  // the type-hint layer in cityDistricts, not here.
+  landmark:  { radius: 32, access: 0.16, nuisance: -0.04, sanctity: 0.28, prestige: 0.38, safety: 0.32, danger: -0.14 },
 };
 
 function clamp01(value: number): number {

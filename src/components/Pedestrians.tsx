@@ -21,6 +21,7 @@ import {
   PedestrianSystemState, FigureType,
   initPedestrianSystem, updatePedestrians,
 } from '../utils/pedestrianSystem';
+import { syncLivePedestrians, clearLivePedestrians } from '../utils/livePedestrians';
 import {
   BodyArchetype, HeadwearType, ArmType, PropType, VisualProfile,
   BODY_ARCHETYPES, HEADWEAR_TYPES, ARM_TYPES, PROP_TYPES, HEAD_TOP_Y,
@@ -136,6 +137,8 @@ export function Pedestrians() {
   const profilesRef = useRef<VisualProfile[]>([]);
   const colorsNeedInit = useRef(true);
   const animAccumRef = useRef(0);
+  const livePedXs = useRef<Float32Array>(new Float32Array(256));
+  const livePedZs = useRef<Float32Array>(new Float32Array(256));
 
   const bodyGeos = useMemo(() => {
     const m = {} as Record<BodyArchetype, THREE.BufferGeometry>;
@@ -182,6 +185,7 @@ export function Pedestrians() {
       port.roads,
     );
     systemRef.current = system;
+    clearLivePedestrians();
 
     const rng = mulberry32(worldSeed * 31 + 7717);
     profilesRef.current = system.pedestrians.map(p =>
@@ -304,6 +308,18 @@ export function Pedestrians() {
     const time = state.clock.elapsedTime;
     const hour = timeOfDay;
     const activeCount = updatePedestrians(system, time, dt, hour);
+
+    // Publish live positions for Player collision. Only the active slice moves;
+    // inactive peds stay parked off-screen so they won't be reached by the scan.
+    const pxs = livePedXs.current;
+    const pzs = livePedZs.current;
+    const pubCount = Math.min(activeCount, pxs.length);
+    for (let i = 0; i < pubCount; i++) {
+      pxs[i] = system.pedestrians[i].x;
+      pzs[i] = system.pedestrians[i].z;
+    }
+    syncLivePedestrians(pubCount, pxs, pzs);
+
     const d = dummy.current;
 
     const sunAngle = ((hour - 6) / 24) * Math.PI * 2;

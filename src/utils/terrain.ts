@@ -208,9 +208,12 @@ function getHeightOnly(x: number, z: number): number {
     let shape = getArchetypeShape(dx, dz, pa.def);
     const isIsolated = pa.def.geography === 'island';
     const edgeDist = Math.max(Math.abs(dx), Math.abs(dz));
-    if (isIsolated && edgeDist > _meshHalf * 0.88) {
-      const fade = 1 - smoothstep(_meshHalf * 0.88, _meshHalf, edgeDist);
-      shape = shape * fade - (1 - fade) * 0.5;
+    // Islands sink fully into ocean at the mesh edge; continentals taper more
+    // gently so their coastline meets the background horizon without a cliff.
+    if (edgeDist > _meshHalf * 0.82) {
+      const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf, edgeDist);
+      const sinkTarget = isIsolated ? -0.5 : -0.15;
+      shape = shape * fade + sinkTarget * (1 - fade);
     }
     h = archetypeHeightFromShape(x, z, dx, dz, shape, pa.def);
     appliedArchetype = true;
@@ -251,6 +254,9 @@ function archetypeMountainStrength(archetype: PortDefinition): number {
     case 'estuary':
     case 'strait':
       strength = 0.34;
+      break;
+    case 'lagoon':
+      strength = 0.18;       // pancake-flat alluvial lagoon — no relief
       break;
     case 'archipelago':
       strength = 0.45;
@@ -357,6 +363,65 @@ function applyWindwardMoisture(
   );
 }
 
+/** Background-horizon sampler: distant land beyond the playable mesh.
+ *  Uses pure noise-based continent/island terrain without applying archetype
+ *  shape overrides (which would otherwise force everything past the playable
+ *  area to ocean). Returns a height band–based color suitable for terrain
+ *  that will be viewed through atmospheric haze — no need for reef/river/beach
+ *  detail at horizon distances. */
+export function getBackgroundHeightColor(x: number, z: number): { height: number; color: TerrainColor } {
+  if (!_cachedWaterPalette) _cachedWaterPalette = getResolvedWaterPalette();
+  const deepWaterColor = _cachedWaterPalette.terrain.deep;
+  const shallowWaterColor = _cachedWaterPalette.terrain.shallow;
+
+  let elevation = 0;
+  elevation += _mainNoise(x * 0.005, z * 0.005) * 30;
+  elevation += _mainNoise(x * 0.01, z * 0.01) * 15;
+  elevation += _mainNoise(x * 0.02, z * 0.02) * 5.0;
+  elevation += _mainNoise(x * 0.04, z * 0.04) * 2.0;
+
+  const continentNoise = _mainNoise(x * 0.0003, z * 0.0003);
+  const islandNoise = _mainNoise(x * 0.0012 + 500, z * 0.0012 + 500);
+  const maskNoise = continentNoise * 0.75 + islandNoise * 0.25;
+  const mask = smoothstep(0.05, 0.55, maskNoise);
+
+  // Match getTerrainData's final offset so sea level alignment is identical.
+  const height = elevation * mask - 7;
+
+  // Smooth multi-stop height ramp. Avoid hard band transitions — at coarse
+  // vertex spacing they form straight color edges that read as roads/blocks.
+  const beachColor: TerrainColor = [0.74, 0.66, 0.48];
+  const lowlandColor: TerrainColor = [0.40, 0.50, 0.28];
+  const forestColor: TerrainColor = [0.28, 0.40, 0.22];
+  const highlandColor: TerrainColor = [0.44, 0.42, 0.36];
+  const peakColor: TerrainColor = [0.82, 0.82, 0.86];
+
+  let color: TerrainColor;
+  if (height < SEA_LEVEL) {
+    const t = smoothstep(SEA_LEVEL - 6, SEA_LEVEL, height);
+    color = mixColor(deepWaterColor, shallowWaterColor, t);
+  } else {
+    const landH = height - SEA_LEVEL;
+    // Micro color variation from noise so large flat areas don't read uniform.
+    const tint = _patchNoise(x * 0.02, z * 0.02) * 0.05;
+    const beachT = smoothstep(0, 2.5, landH);
+    const lowT   = smoothstep(2, 9, landH);
+    const forT   = smoothstep(8, 20, landH);
+    const highT  = smoothstep(19, 32, landH);
+    color = mixColor(beachColor, lowlandColor, beachT);
+    color = mixColor(color, forestColor, lowT);
+    color = mixColor(color, highlandColor, forT);
+    color = mixColor(color, peakColor, highT);
+    color = [
+      clamp01(color[0] + tint),
+      clamp01(color[1] + tint * 0.6),
+      clamp01(color[2] + tint * 0.4),
+    ];
+  }
+
+  return { height, color };
+}
+
 export function getTerrainData(x: number, z: number): TerrainData {
   if (!_cachedWaterPalette) _cachedWaterPalette = getResolvedWaterPalette();
   const deepWaterColor = _cachedWaterPalette.terrain.deep;
@@ -403,13 +468,14 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
     let shape = getArchetypeShape(dx, dz, pa.def); // -1 to 1
 
-    // For isolated island types, fade to ocean at mesh edges so the island
-    // is surrounded by water. Continental types keep land running off-edge.
+    // Islands sink fully into ocean at the mesh edge; continentals taper more
+    // gently so their coastline meets the background horizon without a cliff.
     const isIsolated = pa.def.geography === 'island';
     const edgeDist = Math.max(Math.abs(dx), Math.abs(dz));
-    if (isIsolated && edgeDist > _meshHalf * 0.88) {
-      const fade = 1 - smoothstep(_meshHalf * 0.88, _meshHalf, edgeDist);
-      shape = shape * fade - (1 - fade) * 0.5;
+    if (edgeDist > _meshHalf * 0.82) {
+      const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf, edgeDist);
+      const sinkTarget = isIsolated ? -0.5 : -0.15;
+      shape = shape * fade + sinkTarget * (1 - fade);
     }
 
     // Convert shape to height, with occasional inland ridges/massifs while keeping coastlines low.

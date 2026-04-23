@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { useGameStore, Port, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
+import { useGameStore, Port, Building, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
 import { getWorldPortById } from '../utils/worldPorts';
 import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
+import type { PlaceTab } from './PortModal';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
@@ -24,6 +25,7 @@ import { ASCIIToast } from './ASCIIToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { floatingPanelMotion } from '../utils/uiMotion';
+import { activeBowWeapon, getCurrentElevationCharge } from '../utils/combatState';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
@@ -32,6 +34,7 @@ import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
+import { DISTRICT_LABELS } from '../utils/cityDistricts';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
@@ -105,29 +108,52 @@ function isInsideBuildingFootprint(
 }
 
 function findNearbyPort(
-  mode: 'ship' | 'walking',
   playerPos: [number, number, number],
-  walkingPos: [number, number, number],
   ports: Port[]
 ): Port | null {
-  if (mode === 'ship') {
-    let nearest: Port | null = null;
-    let minDistSq = PORT_RADIUS_SQ;
+  let nearest: Port | null = null;
+  let minDistSq = PORT_RADIUS_SQ;
 
-    for (const port of ports) {
-      const dx = playerPos[0] - port.position[0];
-      const dz = playerPos[2] - port.position[2];
-      const distSq = dx * dx + dz * dz;
+  for (const port of ports) {
+    const dx = playerPos[0] - port.position[0];
+    const dz = playerPos[2] - port.position[2];
+    const distSq = dx * dx + dz * dz;
 
-      if (distSq < minDistSq) {
-        minDistSq = distSq;
-        nearest = port;
-      }
+    if (distSq < minDistSq) {
+      minDistSq = distSq;
+      nearest = port;
     }
-
-    return nearest;
   }
 
+  return nearest;
+}
+
+function findBuildingAtPoint(
+  pointX: number,
+  pointZ: number,
+  port: Port
+): Building | null {
+  for (const building of port.buildings) {
+    if (building.type === 'dock') continue;
+    const dx = pointX - building.position[0];
+    const dz = pointZ - building.position[2];
+    const cos = Math.cos(-building.rotation);
+    const sin = Math.sin(-building.rotation);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    const halfWidth = building.scale[0] * 0.5 + BUILDING_INTERACTION_PADDING;
+    const halfDepth = building.scale[2] * 0.5 + BUILDING_INTERACTION_PADDING;
+    if (Math.abs(localX) <= halfWidth && Math.abs(localZ) <= halfDepth) {
+      return building;
+    }
+  }
+  return null;
+}
+
+function findNearbyPortWalking(
+  walkingPos: [number, number, number],
+  ports: Port[]
+): { port: Port; building: Building } | null {
   let candidate: Port | null = null;
   let candidateDistSq = WALKING_PORT_SEARCH_RADIUS_SQ;
 
@@ -135,7 +161,6 @@ function findNearbyPort(
     const dx = walkingPos[0] - port.position[0];
     const dz = walkingPos[2] - port.position[2];
     const distSq = dx * dx + dz * dz;
-
     if (distSq < candidateDistSq) {
       candidateDistSq = distSq;
       candidate = port;
@@ -143,8 +168,8 @@ function findNearbyPort(
   }
 
   if (!candidate) return null;
-
-  return isInsideBuildingFootprint(walkingPos[0], walkingPos[2], candidate) ? candidate : null;
+  const building = findBuildingAtPoint(walkingPos[0], walkingPos[2], candidate);
+  return building ? { port: candidate, building } : null;
 }
 
 // ── Prompt bubble (SPACE / E / T) ───────────────────────────────────────────
@@ -175,6 +200,87 @@ function mobilePromptLabel(prompt: string): string {
   if (prompt.includes('SPACE to Harvest')) return 'Tap to harvest';
   if (prompt.includes('too steep')) return 'Shore too steep';
   return prompt;
+}
+
+const FAITH_ICON: Record<string, string> = {
+  catholic: '✝', protestant: '✝',
+  sunni: '☪', shia: '☪', ibadi: '☪',
+  hindu: 'ॐ', buddhist: '☸', 'chinese-folk': '☸',
+  jewish: '✡', animist: '◈',
+};
+
+function BuildingToast({
+  building,
+  isMobile,
+  onEnter,
+}: {
+  building: Building;
+  isMobile: boolean;
+  onEnter: () => void;
+}) {
+  const hasSemanticEyebrow = !!building.labelEyebrow;
+  // Fall back to district label for buildings without a semantic class (most dwellings)
+  const displayEyebrow = building.labelEyebrow
+    ?? (building.district ? DISTRICT_LABELS[building.district] : null);
+  const tagColor = hasSemanticEyebrow ? (building.labelEyebrowColor ?? '#64748b') : '#3d4a5c';
+  const glowColor = hasSemanticEyebrow ? `${building.labelEyebrowColor ?? '#64748b'}55` : 'transparent';
+  const faithIcon = building.type === 'spiritual' && building.faith
+    ? (FAITH_ICON[building.faith] ?? null)
+    : null;
+
+  return (
+    <motion.div
+      key={building.id}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
+      transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+      className={`absolute left-1/2 -translate-x-1/2 ${isMobile ? 'bottom-32' : 'bottom-40'} z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5`}
+    >
+      {/* Floating tag — sits above card edge like a door label */}
+      {displayEyebrow && (
+        <div className="absolute top-0 left-2 flex items-center gap-1.5 pointer-events-none select-none">
+          {faithIcon && (
+            <span
+              className="text-[12px] leading-none"
+              style={{ color: tagColor, textShadow: `0 0 8px ${glowColor}` }}
+            >
+              {faithIcon}
+            </span>
+          )}
+          <span
+            className="text-[9px] font-bold tracking-[0.2em] uppercase"
+            style={{ color: tagColor, textShadow: `0 0 6px ${glowColor}` }}
+          >
+            {displayEyebrow}
+          </span>
+        </div>
+      )}
+
+      {/* Card */}
+      <div className="bg-[#070c14]/90 backdrop-blur-md border border-white/[0.07] rounded-xl
+        shadow-[0_8px_32px_rgba(0,0,0,0.7)] flex items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-white/90 truncate leading-snug">
+            {building.label ?? building.type}
+          </div>
+          {building.labelSub && (
+            <div className="text-[11px] text-slate-400/70 truncate mt-0.5 leading-snug">
+              {building.labelSub}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onEnter}
+          className="shrink-0 px-3 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] active:scale-95
+            border border-white/10 text-[11px] font-semibold text-white/60 hover:text-white/85
+            transition-all duration-150 cursor-pointer"
+        >
+          Enter
+        </button>
+      </div>
+    </motion.div>
+  );
 }
 
 const PROMPT_TONE: Record<'cyan' | 'amber' | 'red', { border: string; shadow: string; text: string }> = {
@@ -246,8 +352,12 @@ function PromptBubble({
 // Animated ASCII alert that appears top-center when fight mode is active
 function CombatModeBanner() {
   const [frame, setFrame] = useState(0);
+  const [elevCharge, setElevCharge] = useState(0);
   const cannons = useGameStore((state) => state.stats.cannons);
-  const cannonballs = useGameStore((state) => state.cargo.Munitions);
+  const smallShot = useGameStore((state) => state.cargo['Small Shot'] ?? 0);
+  const cannonShot = useGameStore((state) => state.cargo['Cannon Shot'] ?? 0);
+  const rockets = useGameStore((state) => state.cargo['War Rockets'] ?? 0);
+  const armament = useGameStore((state) => state.stats.armament);
   const { isMobile } = useIsMobile();
 
   useEffect(() => {
@@ -255,11 +365,31 @@ function CombatModeBanner() {
     return () => clearInterval(id);
   }, []);
 
+  // Poll elevation charge every frame so the meter is responsive
+  useEffect(() => {
+    let raf: number;
+    const tick = () => { setElevCharge(getCurrentElevationCharge()); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   // Rotating alert icon frames
   const icons = ['⚔', '☠', '⚔', '✴'];
   const icon = icons[frame % icons.length];
   // Pulsing border characters
   const border = frame % 2 === 0 ? '╬' : '╫';
+  const bowWeapons = armament.filter((w) => WEAPON_DEFS[w].aimable);
+  const mountedWeapon = bowWeapons.includes(activeBowWeapon) ? activeBowWeapon : (bowWeapons[0] ?? 'swivelGun');
+  const mountedWeaponName = WEAPON_DEFS[mountedWeapon].name;
+  const mountedAmmo = mountedWeapon === 'fireRocket'
+    ? `War Rockets: ${rockets}`
+    : mountedWeapon === 'falconet'
+      ? `Cannon Shot: ${cannonShot}`
+      : `Small Shot: ${smallShot}`;
+  const cycleHint = bowWeapons.length > 1 ? ' · [TAB] cycle bow weapon' : '';
+
+  const elevDeg = Math.round(elevCharge * 30);
+  const elevLabel = elevCharge < 0.15 ? '' : elevCharge < 0.6 ? 'elevated' : 'shore bombardment';
 
   return (
     <motion.div
@@ -286,11 +416,33 @@ function CombatModeBanner() {
             <span className="text-red-400/60">{border}{'═'.repeat(3)}{border}</span>
           </pre>
           <div className="text-center text-red-500/50 text-[9px] font-mono tracking-wider mt-0.5">
-            [SPACE] fire · [F] stand down
+            [LMB] fire{cycleHint} · [Q]/[R] broadside · [HOLD SPACE]+[Q/R] elevate · [F] stand down
           </div>
           <div className="text-center text-red-500/40 text-[9px] font-mono tracking-wider mt-0.5">
-            ● Swivel Gun{cannons > 0 ? ` · Munitions: ${cannonballs}` : ''}
+            ● {mountedWeaponName} · {mountedAmmo}{cannons > 0 ? ` · Cannon Shot: ${cannonShot}` : ''}
           </div>
+          {/* Elevation charge meter — only visible while SPACE is held */}
+          {elevCharge > 0.01 && (
+            <div className="mt-1.5 flex items-center gap-2 font-mono text-[9px]">
+              <span className="text-orange-500/70 tracking-wider">ELEVATION</span>
+              <div className="flex-1 h-1.5 bg-black/50 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${elevCharge * 100}%`,
+                    background: elevCharge < 0.4
+                      ? 'rgb(251,146,60)'
+                      : elevCharge < 0.75
+                        ? 'rgb(239,68,68)'
+                        : 'rgb(255,210,50)',
+                    transition: 'width 0.05s linear',
+                  }}
+                />
+              </div>
+              <span className="text-orange-300 tabular-nums w-7 text-right">{elevDeg}°</span>
+              {elevLabel && <span className="text-orange-500/60">{elevLabel}</span>}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
@@ -304,7 +456,7 @@ function HuntingModeBanner() {
   const [tick, setTick] = useState(0);
   const activeWeapon = useGameStore((s) => s.activeLandWeapon);
   const ownedWeapons = useGameStore((s) => s.landWeapons);
-  const munitions = useGameStore((s) => s.cargo.Munitions ?? 0);
+  const smallShot = useGameStore((s) => s.cargo['Small Shot'] ?? 0);
 
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 500);
@@ -314,7 +466,7 @@ function HuntingModeBanner() {
   // Import dynamically through the module to avoid circular deps in render
   const weaponLabel = activeWeapon === 'musket' ? 'Matchlock Musket' : 'Hunting Bow';
   const ammoLine = activeWeapon === 'musket'
-    ? `Powder & shot: ${munitions}`
+    ? `Small shot: ${smallShot}`
     : 'No ammunition required';
   const swapHint = ownedWeapons.length > 1 ? ' · [TAB] swap weapon' : '';
   const icon = tick % 2 === 0 ? '⌖' : '◎';
@@ -526,6 +678,7 @@ export function UI() {
   const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
   const [splashComplete, setSplashComplete] = useState(false);
+  const [splashMinElapsed, setSplashMinElapsed] = useState(false);
   const worldReady = portCount > 0;
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
@@ -535,6 +688,15 @@ export function UI() {
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission;
+
+  // Building entry toast (walking mode, non-market buildings)
+  const [portEntryTab, setPortEntryTab] = useState<PlaceTab | undefined>(undefined);
+  const [activeBuildingToast, setActiveBuildingToastState] = useState<{ building: Building; port: Port } | null>(null);
+  const activeBuildingToastRef = useRef<{ building: Building; port: Port } | null>(null);
+  const setActiveBuildingToast = useCallback((val: { building: Building; port: Port } | null) => {
+    activeBuildingToastRef.current = val;
+    setActiveBuildingToastState(val);
+  }, []);
 
   // Collision warning banner state
   const [collisionShipDesc, setCollisionShipDesc] = useState<string | null>(null);
@@ -598,7 +760,7 @@ export function UI() {
     mapPreRenderTimerRef.current = setTimeout(() => {
       startTerrainPreRender(waterPaletteId);
       mapPreRenderTimerRef.current = null;
-    }, 10_000);
+    }, 600);
   }, [waterPaletteId]);
 
   useEffect(() => {
@@ -607,37 +769,50 @@ export function UI() {
     };
   }, []);
 
-  // Splash loader — purely cosmetic, fully decoupled from world-gen. The
-  // world renders behind the commission modal (which comes next), so the
-  // splash only needs to feel like a brief curtain. We use setTimeout (not
-  // rAF) to flip splashComplete, because rAF callbacks are starved during
-  // heavy GameScene initialization — setTimeout fires reliably from the
-  // timer queue as soon as the main thread yields.
+  // Splash loader — wait for the world to be ready, but enforce a minimum
+  // curtain so the opening screen never flashes away instantly.
   useEffect(() => {
-    if (!showInstructions || splashComplete) return;
+    if (!showInstructions) return;
 
-    const SPLASH_DURATION_MS = 2400;
-    const MESSAGE_INTERVAL_MS = 380;
-
+    const SPLASH_MIN_DURATION_MS = 1600;
+    setSplashComplete(false);
+    setSplashMinElapsed(false);
     setLoadingMessage(LOADING_MESSAGES[0]);
-    setLoadingProgress(100); // Opening.tsx drives its own bar via CSS; this is kept for the legacy splash path.
+    setLoadingProgress(10);
+    const minTimer = setTimeout(() => setSplashMinElapsed(true), SPLASH_MIN_DURATION_MS);
 
+    return () => {
+      clearTimeout(minTimer);
+    };
+  }, [showInstructions]);
+
+  useEffect(() => {
+    if (!showInstructions || splashComplete || worldReady) return;
+
+    const MESSAGE_INTERVAL_MS = 380;
     let i = 0;
     const msgTimer = setInterval(() => {
       i = (i + 1) % LOADING_MESSAGES.length;
       setLoadingMessage(LOADING_MESSAGES[i]);
     }, MESSAGE_INTERVAL_MS);
 
-    const doneTimer = setTimeout(() => {
-      setLoadingMessage('Harbors charted. Holds secured. The monsoon favors departure.');
-      setSplashComplete(true);
-    }, SPLASH_DURATION_MS);
+    return () => clearInterval(msgTimer);
+  }, [showInstructions, splashComplete, worldReady]);
 
-    return () => {
-      clearInterval(msgTimer);
-      clearTimeout(doneTimer);
-    };
-  }, [showInstructions, splashComplete]);
+  useEffect(() => {
+    if (!showInstructions || splashComplete || !worldReady) return;
+
+    setLoadingProgress(100);
+    setLoadingMessage(
+      splashMinElapsed
+        ? 'Harbors charted. Holds secured. The monsoon favors departure.'
+        : 'Harbors charted. Final departure checks underway.'
+    );
+
+    if (splashMinElapsed) {
+      setSplashComplete(true);
+    }
+  }, [showInstructions, splashComplete, worldReady, splashMinElapsed]);
 
   useEffect(() => {
     if (!showInstructions || !splashComplete) return;
@@ -670,34 +845,33 @@ export function UI() {
       } = useGameStore.getState();
       const playerPos = getLiveShipTransform().pos;
       const walkingPos = getLiveWalkingTransform().pos;
-      const nearest = findNearbyPort(playerMode, playerPos, walkingPos, ports);
 
-      if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
-        openedFromToastPortRef.current = null;
-        sfxPortArrival();
-        setActivePort(nearest);
-      } else if (!nearest && currentActivePort) {
-        const openedFromToastPort = openedFromToastPortRef.current
-          ? ports.find(port => port.id === openedFromToastPortRef.current)
-          : null;
-        const keepToastPortOpen = openedFromToastPort && currentActivePort.id === openedFromToastPort.id && (() => {
-          const dx = playerPos[0] - openedFromToastPort.position[0];
-          const dz = playerPos[2] - openedFromToastPort.position[2];
-          return dx * dx + dz * dz < PORT_APPROACH_RADIUS_SQ;
-        })();
-
-        if (!keepToastPortOpen) {
-          openedFromToastPortRef.current = null;
-          setActivePort(null);
-        }
-      }
-      // Clear dismissed port when player leaves the area
-      if (!nearest) {
-        dismissedPortRef.current = null;
-      }
-
-      // Port approach grand toast (ship mode only, wider radius)
       if (playerMode === 'ship') {
+        // Ship mode: port proximity opens the market modal (original behavior)
+        const nearest = findNearbyPort(playerPos, ports);
+
+        if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
+          openedFromToastPortRef.current = null;
+          sfxPortArrival();
+          setActiveBuildingToast(null);
+          setActivePort(nearest);
+        } else if (!nearest && currentActivePort) {
+          const openedFromToastPort = openedFromToastPortRef.current
+            ? ports.find(port => port.id === openedFromToastPortRef.current)
+            : null;
+          const keepToastPortOpen = openedFromToastPort && currentActivePort.id === openedFromToastPort.id && (() => {
+            const dx = playerPos[0] - openedFromToastPort.position[0];
+            const dz = playerPos[2] - openedFromToastPort.position[2];
+            return dx * dx + dz * dz < PORT_APPROACH_RADIUS_SQ;
+          })();
+          if (!keepToastPortOpen) {
+            openedFromToastPortRef.current = null;
+            setActivePort(null);
+          }
+        }
+        if (!findNearbyPort(playerPos, ports)) dismissedPortRef.current = null;
+
+        // Port approach grand toast (ship mode only, wider radius)
         for (const port of ports) {
           const dx = playerPos[0] - port.position[0];
           const dz = playerPos[2] - port.position[2];
@@ -714,16 +888,68 @@ export function UI() {
               },
             );
           }
-          // Clear approach flag when far enough away
           if (distSq > PORT_APPROACH_RADIUS_SQ * 2.5) {
             approachedPortsRef.current.delete(port.id);
           }
         }
+      } else {
+        // Walking mode: per-building detection
+        // Market buildings open the full port modal; everything else gets a lightweight toast.
+        const result = findNearbyPortWalking(walkingPos, ports);
+
+        if (result) {
+          const { port, building } = result;
+          const tabForBuilding: PlaceTab | undefined =
+            building.type === 'market' ? 'market' :
+            building.type === 'fort' ? 'governor' :
+            undefined;
+
+          if (tabForBuilding !== undefined) {
+            // Buildings that open the full port modal
+            if (port.id !== currentActivePort?.id && port.id !== dismissedPortRef.current) {
+              openedFromToastPortRef.current = null;
+              sfxPortArrival();
+              setPortEntryTab(tabForBuilding);
+              setActiveBuildingToast(null);
+              setActivePort(port);
+            }
+            if (activeBuildingToastRef.current) setActiveBuildingToast(null);
+          } else {
+            // All other buildings: lightweight toast
+            if (currentActivePort) {
+              openedFromToastPortRef.current = null;
+              setActivePort(null);
+            }
+            const current = activeBuildingToastRef.current;
+            if (!current || current.building.id !== building.id) {
+              setActiveBuildingToast({ building, port });
+            }
+          }
+        } else {
+          if (currentActivePort) {
+            openedFromToastPortRef.current = null;
+            setActivePort(null);
+          }
+          if (activeBuildingToastRef.current) setActiveBuildingToast(null);
+          // Only clear the dismissed-port memory once the player has left the port's search radius
+          if (dismissedPortRef.current) {
+            const dismissedPort = ports.find(p => p.id === dismissedPortRef.current);
+            if (!dismissedPort) {
+              dismissedPortRef.current = null;
+            } else {
+              const dx = walkingPos[0] - dismissedPort.position[0];
+              const dz = walkingPos[2] - dismissedPort.position[2];
+              if (dx * dx + dz * dz > WALKING_PORT_SEARCH_RADIUS_SQ) {
+                dismissedPortRef.current = null;
+              }
+            }
+          }
+        }
       }
-    }, 250);
+    }, 100);
 
     return () => clearInterval(checkPorts);
-  }, [setActivePort, startupOverlayActive]);
+  }, [setActivePort, setActiveBuildingToast, startupOverlayActive]);
 
   const closeHail = useCallback(() => {
     setHailNpc(null);
@@ -1060,7 +1286,7 @@ export function UI() {
 
           {/* Bottom row: stat bars */}
           <div className={`flex items-center ${isMobile ? 'gap-2 px-2.5 py-1.5' : 'gap-5 px-4 py-2.5'}`}>
-            <StatBar icon={<Shield size={isMobile ? 12 : 15} />} label="Hull" value={stats.hull} max={stats.maxHull} color={statColors.hull}
+            <StatBar icon={<Shield size={isMobile ? 12 : 15} />} label="Ship" value={stats.hull} max={stats.maxHull} color={statColors.hull}
               active={expandedStat === 'hull'} onClick={() => setExpandedStat(expandedStat === 'hull' ? null : 'hull')} />
             <StatBar icon={<Users size={isMobile ? 12 : 15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
               active={expandedStat === 'morale'} onClick={() => setExpandedStat(expandedStat === 'morale' ? null : 'morale')} />
@@ -1123,7 +1349,7 @@ export function UI() {
                   }`}
                 title="Wind & Navigation"
               >
-                <Wind size={15} />
+                <RotatingWindIcon />
               </button>
               <div ref={overlayMenuRef} className="relative">
                 <button
@@ -1374,14 +1600,30 @@ export function UI() {
         )}
       </AnimatePresence>
 
+      {/* Building Entry Toast — walking mode, non-market buildings */}
+      <AnimatePresence>
+        {activeBuildingToast && playerMode === 'walking' && !activePort && (
+          <BuildingToast
+            key={activeBuildingToast.building.id}
+            building={activeBuildingToast.building}
+            isMobile={isMobile}
+            onEnter={() => { /* wired up later */ }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Port Trading Modal */}
       {!startupOverlayActive && activePort && (
         <Suspense fallback={null}>
-          <PortModal onDismiss={() => {
-            openedFromToastPortRef.current = null;
-            if (activePort) dismissedPortRef.current = activePort.id;
-            setActivePort(null);
-          }} />
+          <PortModal
+            initialTab={portEntryTab}
+            onDismiss={() => {
+              openedFromToastPortRef.current = null;
+              if (activePort) dismissedPortRef.current = activePort.id;
+              setPortEntryTab(undefined);
+              setActivePort(null);
+            }}
+          />
         </Suspense>
       )}
 
@@ -1587,6 +1829,13 @@ export function UI() {
         <Suspense fallback={null}>
           <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
         </Suspense>
+      )}
+
+      {startupOverlayActive && (
+        <div
+          className="fixed inset-0 z-40 pointer-events-none"
+          style={{ background: '#0a0908' }}
+        />
       )}
 
       {/* Instructions Overlay */}
@@ -1887,6 +2136,24 @@ function RenderTestPanel() {
           onToggle={() => updateRenderDebug({ vignette: !renderDebug.vignette })}
         />
         <RenderToggleRow
+          label="AO (N8AO)"
+          enabled={renderDebug.ao}
+          disabled={!renderDebug.postprocessing}
+          onToggle={() => updateRenderDebug({ ao: !renderDebug.ao })}
+        />
+        <RenderToggleRow
+          label="Brightness/Contrast"
+          enabled={renderDebug.brightnessContrast}
+          disabled={!renderDebug.postprocessing}
+          onToggle={() => updateRenderDebug({ brightnessContrast: !renderDebug.brightnessContrast })}
+        />
+        <RenderToggleRow
+          label="Hue/Saturation"
+          enabled={renderDebug.hueSaturation}
+          disabled={!renderDebug.postprocessing}
+          onToggle={() => updateRenderDebug({ hueSaturation: !renderDebug.hueSaturation })}
+        />
+        <RenderToggleRow
           label="Advanced Water"
           enabled={renderDebug.advancedWater}
           onToggle={() => updateRenderDebug({ advancedWater: !renderDebug.advancedWater })}
@@ -2129,6 +2396,7 @@ const SHIP_TYPE_INFO: Record<string, { crew: number; speed: string; desc: string
 function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; ship: ShipInfo; onOpenDashboard: () => void }) {
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
   const sailPct = Math.round((stats.sails / stats.maxSails) * 100);
+  const cargo = useGameStore((s) => s.cargo);
   const typeInfo = SHIP_TYPE_INFO[ship.type] ?? { crew: 6, speed: 'Medium', desc: '' };
 
   const conditionLabel = (pct: number) =>
@@ -2141,6 +2409,12 @@ function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; s
     acc[name] = (acc[name] || 0) + 1;
     return acc;
   }, {});
+  const armamentLines = Object.entries(armamentSummary);
+  const munitionLines = [
+    ['Small Shot', cargo['Small Shot'] ?? 0],
+    ['Cannon Shot', cargo['Cannon Shot'] ?? 0],
+    ['War Rockets', cargo['War Rockets'] ?? 0],
+  ] as const;
 
   return (
     <div
@@ -2158,8 +2432,39 @@ function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; s
       </div>
 
       <div className="flex gap-4">
-        {/* Left: ship specs */}
+        {/* Left: armament and ammunition */}
+        <div className="flex-1 space-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1.5">Armament</div>
+            <div className="space-y-1">
+              {armamentLines.map(([name, count]) => (
+                <div key={name} className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-slate-300 leading-none">{name}</span>
+                  <span className="text-[11px] font-mono text-cyan-300 tabular-nums shrink-0">{count}x</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1.5">Munitions</div>
+            <div className="space-y-1">
+              {munitionLines.map(([name, count]) => (
+                <div key={name} className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-slate-300 leading-none">{name}</span>
+                  <span className="text-[11px] font-mono text-amber-300 tabular-nums shrink-0">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: ship stats and condition */}
         <div className="flex-1 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">Speed</span>
+            <span className="text-[11px] font-mono text-slate-300">{typeInfo.speed}</span>
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-slate-500">Cargo capacity</span>
             <span className="text-[11px] font-mono text-slate-300">{stats.cargoCapacity}</span>
@@ -2168,18 +2473,6 @@ function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; s
             <span className="text-[11px] text-slate-500">Crew berths</span>
             <span className="text-[11px] font-mono text-slate-300">{typeInfo.crew}</span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-slate-500">Speed</span>
-            <span className="text-[11px] font-mono text-slate-300">{typeInfo.speed}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-slate-500">Armament</span>
-            <span className="text-[11px] font-mono text-slate-300">{Object.entries(armamentSummary).map(([n, c]) => `${c}× ${n}`).join(', ')}</span>
-          </div>
-        </div>
-
-        {/* Right: condition */}
-        <div className="flex-1 space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-slate-500">Hull</span>
             <span className="text-[11px] font-mono" style={{ color: conditionColor(hullPct) }}>{conditionLabel(hullPct)}</span>
@@ -2500,6 +2793,7 @@ const UNTRANSLATED_HAIL: Record<Language, string> = {
   English: "I cannot understand you. I'll be on my way.",
   Spanish: 'No os entiendo. Seguiré mi rumbo.',
   French: 'Je ne vous comprends pas. Je poursuis ma route.',
+  Italian: 'Non vi capisco. Vado per la mia strada.',
   Turkish: 'Sizi anlamıyorum. Yoluma devam edeceğim.',
   Malay: 'Aku tidak faham. Aku akan meneruskan pelayaran.',
   Swahili: 'Sikuelewi. Nitaendelea na safari yangu.',
@@ -2749,6 +3043,24 @@ function getTrimCueColor(grade: ReturnType<typeof getWindTrimInfo>['grade']): st
   if (grade === 'good') return '#86efac';
   if (grade === 'reach') return '#bbf7d0';
   return '#64748b';
+}
+
+function RotatingWindIcon() {
+  // windDirection is in radians with 0 = north (see gameStore). The lucide
+  // Wind glyph reads as flowing east at 0°, so offset by -90° to align the
+  // flow direction with the compass angle.
+  const windDirection = useGameStore((state) => state.windDirection);
+  const rotation = windDirection * 180 / Math.PI - 90;
+  return (
+    <Wind
+      size={15}
+      style={{
+        transform: `rotate(${rotation}deg)`,
+        transformOrigin: 'center',
+        transition: 'transform 1.5s ease',
+      }}
+    />
+  );
 }
 
 function WindQuickMeter() {

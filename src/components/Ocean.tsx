@@ -674,6 +674,7 @@ export function Ocean() {
       .replace(
         'vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );',
         `vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );
+				reflectionSample = min(reflectionSample, vec3(1.0));
 				float reflDistFade = mix(${distanceFadeFloor}, 1.0, 1.0 - smoothstep(120.0, 350.0, distance));
 				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);
 				`
@@ -715,7 +716,7 @@ export function Ocean() {
 
     // Adjust water body color with time
     if (sunH < 0.2) {
-      const t = (sunH + 0.1) / 0.3;
+      const t = Math.max(0, Math.min(1, (sunH + 0.1) / 0.3));
       mat.uniforms.waterColor.value.setRGB(
         waterPalette.surface.night[0] + (waterPalette.surface.dusk[0] - waterPalette.surface.night[0]) * t,
         waterPalette.surface.night[1] + (waterPalette.surface.dusk[1] - waterPalette.surface.night[1]) * t,

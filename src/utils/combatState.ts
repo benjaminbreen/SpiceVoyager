@@ -40,10 +40,32 @@ export let swivelAimAngle = 0;
 export let swivelAimPitch = 0;
 export const swivelAimTarget = new THREE.Vector3();
 export let swivelAimValid = false;
+export let activeBowWeapon: WeaponType = 'swivelGun';
 
 // Active projectiles (max ~30 in flight — broadsides spawn many at once)
 export const projectiles: Projectile[] = [];
 const MAX_PROJECTILES = 30;
+
+// ── Gunfire alerts ──────────────────────────────────────────────────────────
+// Every projectile spawn broadcasts a short-lived alert at its origin.
+// Pedestrians and wildlife within `radius` flee for `durationMs`.
+export interface GunfireAlert {
+  x: number;
+  z: number;
+  expireAt: number;
+  radius: number;
+}
+export const gunfireAlerts: GunfireAlert[] = [];
+const MAX_ALERTS = 8;
+
+export function broadcastGunfire(x: number, z: number, radius = 90, durationMs = 7000): void {
+  const now = Date.now();
+  for (let i = gunfireAlerts.length - 1; i >= 0; i--) {
+    if (gunfireAlerts[i].expireAt < now) gunfireAlerts.splice(i, 1);
+  }
+  gunfireAlerts.push({ x, z, expireAt: now + durationMs, radius });
+  if (gunfireAlerts.length > MAX_ALERTS) gunfireAlerts.shift();
+}
 
 export function spawnProjectile(
   origin: THREE.Vector3,
@@ -65,6 +87,21 @@ export function spawnProjectile(
     projectiles.shift();
   }
   projectiles.push(p);
+
+  // Heavy guns carry further than a swivel/musket; rockets loudest; a bow is
+  // near-silent so it doesn't scatter a whole port when hunting in the hills.
+  // Radii are deliberately generous: ships typically fire from 100-200u
+  // offshore, so an 80u hearing range would never reach the town.
+  const bigCannon = weaponType === 'minion' || weaponType === 'saker'
+    || weaponType === 'demiCulverin' || weaponType === 'demiCannon' || weaponType === 'basilisk';
+  const radius = weaponType === 'bow' ? 30
+    : weaponType === 'fireRocket' ? 320
+    : bigCannon ? 300
+    : 220;
+  broadcastGunfire(origin.x, origin.z, radius);
+  if (typeof window !== 'undefined' && (window as unknown as { DEBUG_GUNFIRE?: boolean }).DEBUG_GUNFIRE) {
+    console.log('[gunfire]', weaponType, 'at', origin.x.toFixed(1), origin.z.toFixed(1), 'r=', radius);
+  }
 }
 
 export function setSwivelAimAngle(angle: number) {
@@ -82,9 +119,23 @@ export function clearSwivelAim() {
   swivelAimValid = false;
 }
 
+export function setActiveBowWeapon(weapon: WeaponType) {
+  activeBowWeapon = weapon;
+}
+
 // Whether fire button (mouse/space) is currently held
 export let fireHeld = false;
 export function setFireHeld(held: boolean) { fireHeld = held; }
+
+// Broadside elevation charge — space held in combat ship mode fills this.
+// 0 = flat fire (ship-to-ship); 1 = maximum loft (shore bombardment).
+// Charge builds over 2.5 seconds, resets on key release.
+export let elevationHoldStart: number | null = null;
+export function setElevationHoldStart(t: number | null): void { elevationHoldStart = t; }
+export function getCurrentElevationCharge(): number {
+  if (elevationHoldStart === null) return 0;
+  return Math.min(1, (Date.now() - elevationHoldStart) / 2500);
+}
 
 // ── Broadside state ──────────────────────────────────────────────────────────
 // Rolling broadside queue: each entry spawns one cannon shot after a short delay

@@ -5,6 +5,7 @@ import { useGameStore, Building, Port } from '../store/gameStore';
 import { mouseWorldPos, mouseRay } from '../utils/combatState';
 import { createWorldLabelTexture, worldHeightForScreenPixels } from '../utils/worldLabelTextures';
 import { useWaterOverlayLayer } from '../utils/waterOverlayLayer';
+import { getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impactShakeState';
 
 const HOVER_MIN_RADIUS = 4;
 const HOVER_BUFFER = 1.6;
@@ -30,10 +31,12 @@ export function BuildingTooltip() {
   const ports = useGameStore(s => s.ports);
   const { camera, size } = useThree();
   const [displayed, setDisplayed] = useState<Building | null>(null);
+  const [damageVersion, setDamageVersion] = useState(0);
   const detectedRef = useRef<Building | null>(null);
   const checkTimerRef = useRef(0);
   const opacityRef = useRef(0);
   const pulseRef = useRef(0);
+  const damageVersionRef = useRef(getBuildingDamageVersion());
   const materialRef = useRef<THREE.SpriteMaterial>(null);
   const spriteRef = useRef<THREE.Sprite>(null);
   const glowMeshRef = useRef<THREE.Mesh>(null);
@@ -44,18 +47,40 @@ export function BuildingTooltip() {
   useWaterOverlayLayer(spriteRef);
   useWaterOverlayLayer(glowMeshRef);
 
+  const damageStage = displayed ? getBuildingDamageStage(displayed.id) : 'intact';
+  const eyebrow = damageStage === 'destroyed'
+    ? 'DESTROYED'
+    : damageStage === 'heavilyDamaged'
+      ? 'HEAVILY DAMAGED'
+      : damageStage === 'damaged'
+        ? 'DAMAGED'
+        : displayed?.labelEyebrow;
+  const eyebrowColor = damageStage === 'destroyed'
+    ? '#7b7b7b'
+    : damageStage === 'heavilyDamaged'
+      ? '#9b6d46'
+      : damageStage === 'damaged'
+        ? '#d18b4a'
+        : displayed?.labelEyebrowColor;
+
   const label = useMemo(() => createWorldLabelTexture({
     title: displayed?.label ?? '',
     subtitle: displayed?.labelSub,
-    eyebrow: displayed?.labelEyebrow,
-    eyebrowColor: displayed?.labelEyebrowColor,
+    eyebrow,
+    eyebrowColor,
     accent: '#c9a84c',
     variant: 'building',
-  }), [displayed?.label, displayed?.labelSub, displayed?.labelEyebrow, displayed?.labelEyebrowColor]);
+  }), [displayed?.label, displayed?.labelSub, eyebrow, eyebrowColor, damageVersion]);
 
   useEffect(() => () => label.texture.dispose(), [label]);
 
   useFrame((_, delta) => {
+    const latestDamageVersion = getBuildingDamageVersion();
+    if (latestDamageVersion !== damageVersionRef.current) {
+      damageVersionRef.current = latestDamageVersion;
+      setDamageVersion(latestDamageVersion);
+    }
+
     checkTimerRef.current += delta;
     if (checkTimerRef.current >= CHECK_INTERVAL) {
       checkTimerRef.current = 0;

@@ -51,6 +51,13 @@ export const PORT_FACTION: Record<string, Nationality> = {
   muscat: 'Portuguese',  // Portuguese fort
   aceh: 'Acehnese',
   bantam: 'Javanese',
+  // Nagasaki — Tokugawa shogunate port. Portuguese traders operate here under
+  // license in 1612 but the port itself is Japanese-ruled.
+  nagasaki: 'Japanese',
+  // Masulipatnam — Shia Qutb Shahi sultanate of Golconda. Tagged 'Mughal' as
+  // the closest available Nationality; the Deccani sultanates aren't a
+  // separate gameplay faction in v1.
+  masulipatnam: 'Mughal',
   cochin: 'Portuguese',
   mogadishu: 'Swahili',
   kilwa: 'Swahili',
@@ -94,6 +101,9 @@ export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
   // Gujarati
   surat: 'Gujarati',
   diu: 'Gujarati',
+  // Masulipatnam — Deccani/Telugu rather than Gujarati, but 'Gujarati' is the
+  // closest available CulturalRegion bucket for Indo-Islamic Deccan architecture.
+  masulipatnam: 'Gujarati',
   // Malabari (Kerala / Konkani coast)
   calicut: 'Malabari',
   cochin: 'Malabari',
@@ -109,7 +119,7 @@ export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
 
-export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market' | 'plaza' | 'spiritual' | 'landmark';
+export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market' | 'plaza' | 'spiritual' | 'landmark' | 'palace';
 
 export type HousingClass = 'poor' | 'common' | 'merchant' | 'elite';
 
@@ -129,6 +139,7 @@ export interface Building {
   setback?: number;          // 0..1; render-time jitter multiplier
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
+  palaceStyle?: string;      // for type === 'palace'; keys render geometry (iberian-colonial, mughal, malay-istana…)
 }
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
@@ -208,7 +219,7 @@ export interface Port {
 // identical to the European swivel gun — same 1–2 lb bronze breech-loader,
 // different cultural lineage. Kept as distinct entries so Indian Ocean ports
 // can sell a historically-named piece without changing behavior.
-export type WeaponType = 'swivelGun' | 'lantaka' | 'cetbang' | 'fireRocket' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
+export type WeaponType = 'swivelGun' | 'lantaka' | 'cetbang' | 'falconet' | 'fireRocket' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
 
 export interface Weapon {
   type: WeaponType;
@@ -221,17 +232,18 @@ export interface Weapon {
 }
 
 export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
-  swivelGun:    { type: 'swivelGun',    name: 'Swivel Gun',    damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
-  lantaka:      { type: 'lantaka',      name: 'Lantaka',       damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
-  cetbang:      { type: 'cetbang',      name: 'Cetbang',       damage: 5,  range: 8,  reloadTime: 0.5,  weight: 1,  aimable: true },
+  swivelGun:    { type: 'swivelGun',    name: 'Swivel Gun',    damage: 5,  range: 90,  reloadTime: 0.5,  weight: 1,  aimable: true },
+  lantaka:      { type: 'lantaka',      name: 'Lantaka',       damage: 7,  range: 90,  reloadTime: 0.7,  weight: 1,  aimable: true },
+  cetbang:      { type: 'cetbang',      name: 'Cetbang',       damage: 8,  range: 90,  reloadTime: 0.8,  weight: 2,  aimable: true },
+  falconet:     { type: 'falconet',     name: 'Falconet',      damage: 11, range: 100, reloadTime: 1.4,  weight: 3,  aimable: true },
   // Bamboo-tube war rocket. Aimed like a swivel but far longer reach, slower
   // to reload, noticeably inaccurate, splash damage at impact.
-  fireRocket:   { type: 'fireRocket',   name: 'War Rocket',    damage: 12, range: 24, reloadTime: 2.8, weight: 3,  aimable: true },
-  minion:       { type: 'minion',       name: 'Minion',        damage: 10, range: 14, reloadTime: 5,  weight: 3,  aimable: false },
-  saker:        { type: 'saker',        name: 'Saker',         damage: 12, range: 18, reloadTime: 6,  weight: 4,  aimable: false },
-  demiCulverin: { type: 'demiCulverin', name: 'Demi-Culverin', damage: 18, range: 16, reloadTime: 8,  weight: 6,  aimable: false },
-  demiCannon:   { type: 'demiCannon',   name: 'Demi-Cannon',   damage: 30, range: 12, reloadTime: 12, weight: 10, aimable: false },
-  basilisk:     { type: 'basilisk',     name: 'Basilisk',      damage: 22, range: 24, reloadTime: 10, weight: 8,  aimable: false },
+  fireRocket:   { type: 'fireRocket',   name: 'War Rocket',    damage: 12, range: 90,  reloadTime: 2.8, weight: 3,  aimable: true },
+  minion:       { type: 'minion',       name: 'Minion',        damage: 10, range: 55,  reloadTime: 5,  weight: 3,  aimable: false },
+  saker:        { type: 'saker',        name: 'Saker',         damage: 12, range: 80,  reloadTime: 6,  weight: 4,  aimable: false },
+  demiCulverin: { type: 'demiCulverin', name: 'Demi-Culverin', damage: 18, range: 95,  reloadTime: 8,  weight: 6,  aimable: false },
+  demiCannon:   { type: 'demiCannon',   name: 'Demi-Cannon',   damage: 30, range: 50,  reloadTime: 12, weight: 10, aimable: false },
+  basilisk:     { type: 'basilisk',     name: 'Basilisk',      damage: 22, range: 110, reloadTime: 10, weight: 8,  aimable: false },
 };
 
 // ── Weapon prices & availability ──
@@ -240,6 +252,7 @@ export const WEAPON_PRICES: Record<WeaponType, number> = {
   swivelGun:    40,
   lantaka:      40,
   cetbang:      40,
+  falconet:     560,
   fireRocket:   180,
   minion:       80,
   saker:        120,
@@ -269,9 +282,9 @@ export const PORT_ARMORY: Record<string, WeaponType[]> = {
   mocha:    ['lantaka', 'minion'],                                          // Red Sea Arab port
   // European ports
   lisbon:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // imperial arsenal
-  amsterdam: ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // VOC arsenal
+  amsterdam: ['swivelGun', 'falconet', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // VOC arsenal
   seville:   ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
-  london:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
+  london:    ['swivelGun', 'falconet', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
   // West African ports
   elmina:    ['swivelGun', 'minion'],                                                      // fortress garrison, limited stock
   luanda:    [],                                                                           // no weapons trade
@@ -293,6 +306,7 @@ export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabe
   swivelGun:    { flavor: 'Light anti-personnel gun, aimed by hand',     rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
   lantaka:      { flavor: 'Bronze breech-loader of the Arab and Indian Ocean coasts', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
   cetbang:      { flavor: 'Javanese bronze swivel — light, swift, deadly at close quarters', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
+  falconet:     { flavor: 'Light European cannon adapted as a bow chaser — costly, but strong enough to batter buildings', rangeLabel: 'Long', reloadLabel: 'Moderate', weightLabel: 'Light' },
   fireRocket:   { flavor: 'Bamboo-tube rocket — long reach and a fireball on impact, but flies wild', rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Light' },
   minion:       { flavor: 'Small iron cannon, cheap and reliable',        rangeLabel: 'Medium',  reloadLabel: 'Moderate',  weightLabel: 'Light' },
   saker:        { flavor: 'Fast-loading bronze gun favored by the Portuguese', rangeLabel: 'Long',    reloadLabel: 'Moderate',  weightLabel: 'Light' },
@@ -330,7 +344,7 @@ export const LAND_WEAPON_DEFS: Record<LandWeaponType, LandWeapon> = {
     projectileSpeed: 60,
     spread: 0.035,
     noise: 1.0,
-    ammoCommodity: 'Munitions',
+    ammoCommodity: 'Small Shot',
     ammoPerShot: 1,
     description: 'A matchlock firearm. Loud, slow to reload, but one ball can drop a buffalo.',
   },
@@ -530,13 +544,14 @@ export type CrewRole = 'Captain' | 'Navigator' | 'Gunner' | 'Sailor' | 'Factor' 
 export type HealthFlag = 'healthy' | 'sick' | 'injured' | 'scurvy' | 'fevered';
 export type Nationality =
   | 'English' | 'Portuguese' | 'Dutch' | 'Spanish' | 'French' | 'Danish'
+  | 'Venetian'
   | 'Mughal' | 'Gujarati' | 'Persian' | 'Ottoman' | 'Omani'
   | 'Swahili'
   | 'Malay' | 'Acehnese' | 'Javanese' | 'Moluccan'
   | 'Siamese' | 'Japanese' | 'Chinese';
 export type Language =
   | 'Arabic' | 'Persian' | 'Gujarati' | 'Hindustani'
-  | 'Portuguese' | 'Dutch' | 'English' | 'Spanish' | 'French'
+  | 'Portuguese' | 'Dutch' | 'English' | 'Spanish' | 'French' | 'Italian'
   | 'Turkish' | 'Malay' | 'Swahili' | 'Chinese' | 'Japanese';
 export type CaptainTrait =
   | 'Silver Tongue'   // better prices at port
@@ -683,6 +698,9 @@ export interface RenderDebugSettings {
   postprocessing: boolean;
   bloom: boolean;
   vignette: boolean;
+  ao: boolean;
+  brightnessContrast: boolean;
+  hueSaturation: boolean;
   advancedWater: boolean;
   shipWake: boolean;
   algae: boolean;
@@ -855,6 +873,9 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   postprocessing: true,
   bloom: true,
   vignette: true,
+  ao: true,
+  brightnessContrast: true,
+  hueSaturation: true,
   advancedWater: true,
   shipWake: true,
   algae: true,
@@ -942,6 +963,7 @@ const PLAYABLE_FACTION_STARTS: Array<{
   { faction: 'Portuguese', humble: 'Caravel', grand: 'Carrack', homePortId: 'lisbon'    },
   { faction: 'Dutch',      humble: 'Fluyt',   grand: 'Carrack', homePortId: 'amsterdam' },
   { faction: 'Spanish',    humble: 'Caravel', grand: 'Galleon', homePortId: 'seville'   },
+  { faction: 'Venetian',   humble: 'Carrack', grand: 'Galleon', homePortId: 'venice'    },
   { faction: 'Omani',      humble: 'Dhow',    grand: 'Baghla',  homePortId: 'muscat'    },
   { faction: 'Chinese',    humble: 'Junk',    grand: 'Jong',    homePortId: 'macau'     },
 ];
@@ -954,13 +976,16 @@ const PLAYABLE_FACTION_STARTS: Array<{
 // EIC's Surat factory opens 1612; Spanish network anchored in the Caribbean).
 const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string; weight: number }>>> = {
   Portuguese: [
-    { portId: 'lisbon',   weight: 55 },
+    { portId: 'lisbon',   weight: 53 },
     { portId: 'goa',      weight: 20 },
     { portId: 'macau',    weight: 10 },
     { portId: 'salvador', weight: 5  },
     { portId: 'luanda',   weight: 4  },
     { portId: 'mombasa',  weight: 3  },
     { portId: 'cape',     weight: 3  },
+    // A handful of Portuguese New Christian / Sephardic merchant houses had
+    // factors resident in Venice — pepper buyers working the Levantine route.
+    { portId: 'venice',   weight: 2  },
   ],
   Dutch: [
     { portId: 'amsterdam', weight: 70 },
@@ -970,16 +995,33 @@ const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string;
     { portId: 'mocha',     weight: 3  },
   ],
   English: [
-    { portId: 'london',    weight: 70 },
+    { portId: 'london',    weight: 68 },
     { portId: 'surat',     weight: 15 },
     { portId: 'bantam',    weight: 8  },
     { portId: 'jamestown', weight: 4  },
     { portId: 'cape',      weight: 3  },
+    // The Levant Company (chartered 1592) maintained an English consul and
+    // merchant presence in Venice through the early 17c.
+    { portId: 'venice',    weight: 2  },
   ],
   Spanish: [
-    { portId: 'seville',   weight: 65 },
-    { portId: 'havana',    weight: 18 },
-    { portId: 'cartagena', weight: 17 },
+    { portId: 'seville',   weight: 53 },
+    { portId: 'havana',    weight: 16 },
+    { portId: 'cartagena', weight: 15 },
+    // Manila — Spanish capital of the Philippines and Asian end of the
+    // Acapulco galleon. A meaningful share of Spanish merchant captains
+    // in 1612 were Pacific-side rather than Atlantic-side.
+    { portId: 'manila',    weight: 14 },
+    { portId: 'venice',    weight: 2  },
+  ],
+  Venetian: [
+    { portId: 'venice',    weight: 70 },
+    { portId: 'hormuz',    weight: 8  },   // Venetian merchants in Hormuz via the Levant
+    { portId: 'aden',      weight: 6  },   // Red Sea pepper / coffee runs
+    { portId: 'mocha',     weight: 5  },
+    { portId: 'goa',       weight: 5  },   // few Venetian factors in Estado ports
+    { portId: 'lisbon',    weight: 3  },
+    { portId: 'surat',     weight: 3  },
   ],
   // Omani captains in 1612 sailed out of Muscat, Sur, and the Gulf/Red Sea
   // entrepôts. Hormuz is still Portuguese-held (falls 1622) but lascar
@@ -999,11 +1041,12 @@ const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string;
   // (Luso-Chinese hub) and the East Indies hubs with large Chinese
   // communities. Bantam and Malacca reflect overseas-Chinese trade routes.
   Chinese: [
-    { portId: 'macau',   weight: 55 },
-    { portId: 'bantam',  weight: 20 },
-    { portId: 'malacca', weight: 15 },
-    { portId: 'goa',     weight: 5  },
-    { portId: 'calicut', weight: 5  },
+    { portId: 'macau',   weight: 45 },
+    { portId: 'manila',  weight: 20 },  // Sangley Parián was huge — c. 20–30k Chinese in 1612
+    { portId: 'bantam',  weight: 18 },
+    { portId: 'malacca', weight: 12 },
+    { portId: 'goa',     weight: 3  },
+    { portId: 'calicut', weight: 2  },
   ],
 };
 
@@ -1138,6 +1181,13 @@ const _startingGold = _shipProfile.gold;
 const _startingCargo = generateStartingCargo(_startingFaction, _startingCargoCapacity, _captainLuck);
 const _startingArmament = buildStartingArmament(_startingShipType, _startingFaction);
 const _startingBroadsides = _startingArmament.filter(w => !WEAPON_DEFS[w].aimable).length;
+
+// Seed the hold with 10 war rockets if the starting ship mounts a rocket rack
+// (Junk / Jong). Without this the Chinese-start player would have an inert
+// weapon until reaching Macau.
+if (_startingArmament.includes('fireRocket')) {
+  _startingCargo['War Rockets'] = 10;
+}
 
 /** Build provenance stacks matching starting cargo. Treated as genuine goods
  *  taken on before the voyage began — no acquisition port, no fraud roll. */
@@ -1532,6 +1582,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       return;
     }
 
+    // War Rockets are bulky and volatile — the hold can only take 20 before
+    // the magazine is considered full.
+    if (commodity === 'War Rockets' && (state.cargo['War Rockets'] ?? 0) + amount > 20) {
+      get().addNotification('Magazine full — hold caps at 20 war rockets.', 'warning');
+      return;
+    }
+
     if (state.gold >= totalCost && port.inventory[commodity] >= amount) {
       const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] - amount };
       // Recalculate prices based on new inventory levels
@@ -1884,7 +1941,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
   
-  setCameraZoom: (zoom) => set({ cameraZoom: Math.max(10, Math.min(150, zoom)) }),
+  setCameraZoom: (zoom) => set({ cameraZoom: Math.max(10, Math.min(300, zoom)) }),
   setCameraRotation: (rotation) => set({ cameraRotation: rotation }),
   setViewMode: (mode) => set({ viewMode: mode }),
   

@@ -149,7 +149,6 @@ function WaveField({ variant, withShip, active }: { variant: WaveVariant; withSh
   const preRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
-    if (!active) return;
     const el = preRef.current;
     if (!el) return;
 
@@ -170,10 +169,7 @@ function WaveField({ variant, withShip, active }: { variant: WaveVariant; withSh
     let lastTime = 0;
     let animId = 0;
 
-    function tick(time: number) {
-      animId = requestAnimationFrame(tick);
-      if (time - lastTime < 180) return;
-      lastTime = time;
+    function renderFrame(time: number) {
       if (cols < 8 || rows < 12) { el.innerHTML = ''; return; }
 
       if (!initialized) { shipYf = rows + 6; initialized = true; }
@@ -244,8 +240,23 @@ function WaveField({ variant, withShip, active }: { variant: WaveVariant; withSh
       }
       el.innerHTML = html;
     }
-    animId = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(animId); ro.disconnect(); };
+
+    renderFrame(0);
+
+    if (active) {
+      const tick = (time: number) => {
+        animId = requestAnimationFrame(tick);
+        if (time - lastTime < 180) return;
+        lastTime = time;
+        renderFrame(time);
+      };
+      animId = requestAnimationFrame(tick);
+    }
+
+    return () => {
+      cancelAnimationFrame(animId);
+      ro.disconnect();
+    };
   }, [variant, withShip, active]);
 
   const baseStyle: React.CSSProperties = {
@@ -408,17 +419,18 @@ export function Opening({
   }, []);
   useEffect(() => {
     if (ready) { setDisplayPct(100); return; }
-    const start = performance.now();
-    let raf = 0;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / BAR_FILL_MS);
+    const STEP_MS = 120;
+    const steps = Math.ceil(BAR_FILL_MS / STEP_MS);
+    let step = 0;
+    const timer = window.setInterval(() => {
+      step = Math.min(steps, step + 1);
+      const t = step / steps;
       // Match the bar's cubic-bezier(0.25, 1, 0.5, 1) roughly
       const eased = 1 - Math.pow(1 - t, 3);
-      setDisplayPct(Math.round(eased * 100));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+      setDisplayPct(Math.round(eased * 95));
+      if (step >= steps) window.clearInterval(timer);
+    }, STEP_MS);
+    return () => window.clearInterval(timer);
   }, [ready]);
 
   return (
@@ -445,11 +457,11 @@ export function Opening({
       >
         {useSidePanels ? (
           <>
-            <WaveField variant="side-left" withShip active />
-            <WaveField variant="side-right" withShip={false} active />
+            <WaveField variant="side-left" withShip active={ready} />
+            <WaveField variant="side-right" withShip={false} active={ready} />
           </>
         ) : (
-          <WaveField variant="background" withShip={false} active />
+          <WaveField variant="background" withShip={false} active={ready} />
         )}
       </motion.div>
 
@@ -661,7 +673,7 @@ export function Opening({
               <div
                 className="absolute inset-y-0 left-0 w-full origin-left"
                 style={{
-                  transform: `scaleX(${ready ? 1 : barFilled ? 1 : 0})`,
+                  transform: `scaleX(${ready ? 1 : barFilled ? 0.95 : 0})`,
                   background: ready
                     ? 'linear-gradient(to right, #3f6b3a, #6fae4a 45%, #9ed85a 85%, #caf188)'
                     : `linear-gradient(to right, ${PALETTE.dimGold}, ${PALETTE.warm} 45%, ${PALETTE.gold} 85%, ${PALETTE.bright})`,
@@ -712,7 +724,7 @@ export function Opening({
                 transition: 'color 0.5s ease, text-shadow 0.5s ease',
               }}
             >
-              {Math.round(Math.max(0, Math.min(100, displayPct)))}%
+              {ready ? '100%' : '...'}
             </div>
           </div>
         </div>

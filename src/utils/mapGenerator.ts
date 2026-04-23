@@ -10,6 +10,7 @@ import {
 } from './portArchetypes';
 import { generateCanalLayout } from './canalLayout';
 import { faithsForPort } from './portReligions';
+import { palaceStyleForPort } from './palaceStyles';
 import { postprocessRoads } from './roadTopology';
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
@@ -310,6 +311,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           canalLayout,
           override.landmark,
           faithsForPort(override.id),
+          palaceStyleForPort(override.id),
         );
         const hinterland = generateHinterland(
           portX, portZ,

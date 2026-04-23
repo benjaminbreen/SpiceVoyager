@@ -276,7 +276,7 @@ function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offset
 
 // ── Combat touch panel ──────────────────────────────────────────────────────
 // Shown only while combatMode is true. Layout depends on playerMode:
-//   - ship    : Port broadside · Swivel fire · Starboard broadside · Stand Down
+//   - ship    : Port broadside · Bow weapon fire · Starboard broadside · Cycle · Stand Down
 //   - walking : Hunt fire · Swap weapon · Holster
 // All one-shot actions dispatch the same synthetic keydown the desktop
 // handlers already listen for (GameScene.tsx), so combat flow stays in one
@@ -297,7 +297,7 @@ function CombatTouchPanel({ playerMode }: { playerMode: 'ship' | 'walking' }) {
   if (playerMode === 'ship') {
     return (
       <>
-        {/* Primary fire — swivel. Held for auto-fire like desktop LMB. */}
+        {/* Primary fire — current bow weapon. Held for auto-fire like desktop LMB. */}
         <CombatButton
           bottom={112}
           right={24}
@@ -333,6 +333,17 @@ function CombatTouchPanel({ playerMode }: { playerMode: 'ship' | 'walking' }) {
           onPointerDown={() => dispatchKey('r')}
         >
           <span className="font-bold text-xs">▶▶</span>
+        </CombatButton>
+
+        <CombatButton
+          bottom={198}
+          right={80}
+          size={44}
+          label="CYCLE"
+          accent="amber"
+          onPointerDown={() => dispatchKey('Tab')}
+        >
+          <RotateCw size={18} />
         </CombatButton>
 
         {/* Stand down — top-right of cluster */}

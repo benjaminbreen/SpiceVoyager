@@ -1,10 +1,10 @@
-import { useMemo, useRef, useEffect } from 'react';
+import { useMemo, useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, PORT_FACTION, PORT_CULTURAL_REGION } from '../store/gameStore';
 import type { CulturalRegion, Nationality } from '../store/gameStore';
 import type { BuildingStyle } from '../utils/portArchetypes';
-import { buildingShakes } from '../utils/impactShakeState';
+import { buildingShakes, getBuildingDamageFraction, getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impactShakeState';
 import { sampleCityFields, sampleWorldFields } from '../utils/cityFields';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { DISTRICT_COLORS, classifyDistrict } from '../utils/cityDistricts';
@@ -16,6 +16,7 @@ import {
   FARM_TRACK_WIDTH,
   FARM_TRACK_Y_LIFT,
   FARM_TRACK_OPACITY,
+  BRIDGE_DECK_Y,
 } from '../utils/roadStyle';
 
 interface Part {
@@ -36,6 +37,16 @@ interface TorchSpot {
 interface SmokeSpot {
   pos: [number, number, number];
   seed: number; // per-chimney offset for staggered animation
+}
+
+interface DamageSmokeSpot extends SmokeSpot {
+  intensity: number;
+}
+
+interface RuinMarker {
+  pos: [number, number, number];
+  scale: [number, number, number];
+  rotY: number;
 }
 
 interface CityFieldOverlaySample {
@@ -82,6 +93,52 @@ function lerpColor(a: [number, number, number], b: [number, number, number], t: 
     a[1] + (b[1] - a[1]) * clamped,
     a[2] + (b[2] - a[2]) * clamped,
   ];
+}
+
+function ruinedColor(base: [number, number, number]): [number, number, number] {
+  return lerpColor(base, [0.24, 0.22, 0.20], 0.72);
+}
+
+function damagedColor(base: [number, number, number], fraction: number): [number, number, number] {
+  return lerpColor(base, [0.32, 0.29, 0.25], 0.18 + Math.min(0.45, fraction * 0.4));
+}
+
+function applyGroundWeathering(base: [number, number, number], part: Part): [number, number, number] {
+  if (!part.buildingId || !part.shakeCenter) return base;
+  if (part.mat === 'dark') return base;
+
+  const buildingMidY = part.shakeCenter[1];
+  const normalizedHeight = THREE.MathUtils.clamp((part.pos[1] - (buildingMidY - 2.6)) / 3.2, 0, 1);
+  const groundFactor = 1 - normalizedHeight;
+  if (groundFactor <= 0.01) return base;
+
+  const soilTone: [number, number, number] = part.mat === 'wood'
+    ? [0.24, 0.20, 0.16]
+    : part.mat === 'stone'
+      ? [0.34, 0.32, 0.29]
+      : [0.40, 0.33, 0.24];
+
+  const strength = part.mat === 'straw' ? 0.08 : 0.14;
+  return lerpColor(base, soilTone, groundFactor * strength);
+}
+
+function isRoofLikePart(part: Part, centerY: number) {
+  return (
+    part.geo === 'cone' ||
+    part.geo === 'dome' ||
+    part.mat === 'terracotta' ||
+    (part.mat === 'straw' && part.pos[1] > centerY - 0.2)
+  );
+}
+
+function isDelicateDetailPart(part: Part, centerY: number) {
+  const volume = part.scale[0] * part.scale[1] * part.scale[2];
+  return part.pos[1] > centerY + 0.8 && volume < 0.65;
+}
+
+function isWindowLikePart(part: Part, centerY: number) {
+  const volume = part.scale[0] * part.scale[1] * part.scale[2];
+  return part.mat === 'dark' && volume < 0.08 && part.scale[1] <= 0.8 && part.pos[1] > centerY - 1.2;
 }
 
 function cityFieldColor(field: CityFieldKey, value: number): [number, number, number] {
@@ -484,6 +541,35 @@ const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
   },
+  'venetian-gothic': {
+    // Istrian-stone whites, warm ochre and salmon stuccoes, weathered brick.
+    // Roofs are flat-pitched terracotta tile; no thatch.
+    wallPalette: [
+      [0.92, 0.86, 0.74],   // pale Istrian limestone
+      [0.92, 0.86, 0.74],
+      [0.88, 0.74, 0.52],   // warm Venetian ochre stucco
+      [0.86, 0.62, 0.48],   // salmon / coral stucco
+      [0.78, 0.50, 0.40],   // weathered brick red
+      [0.70, 0.42, 0.32],   // darker exposed brick
+      [0.84, 0.78, 0.66],   // pale grey-cream stucco
+    ],
+    roofPalette: [
+      { color: [0.66, 0.36, 0.28], geo: 'cone', h: 0.9 },  // terracotta tile (dominant)
+      { color: [0.66, 0.36, 0.28], geo: 'cone', h: 0.9 },
+      { color: [0.58, 0.30, 0.24], geo: 'cone', h: 0.9 },  // older weathered tile
+      { color: [0.74, 0.44, 0.32], geo: 'cone', h: 0.9 },  // newer brighter tile
+    ],
+    houseVariants: [
+      // Venetian buildings run tall and narrow — every footprint is precious
+      // when the site is in a lagoon.
+      { weight: 0.45, scaleMul: [0.85, 1.40, 0.90] },
+      { weight: 0.30 },
+      { weight: 0.15, scaleMul: [1.10, 1.20, 1.10] },     // larger merchant palazzo
+      { weight: 0.10, scaleMul: [0.70, 1.65, 0.80] },     // tall jettied campo-edge house
+    ],
+    shutterPalette: EU_SHUTTER_COLORS,
+    wallMatHint: 'white',
+  },
   'spanish-caribbean': {
     wallPalette: [
       [0.92, 0.90, 0.84], [0.92, 0.90, 0.84],
@@ -501,6 +587,33 @@ const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
       { weight: 0.35, scaleMul: [0.85, 0.8, 0.85], roofGeoOverride: 'cone', roofHMul: 1.3 },
     ],
     shutterPalette: EU_SHUTTER_COLORS,
+    wallMatHint: 'white',
+  },
+  'japanese-tile': {
+    // Nagasaki / Kyushu in 1612: white shikkui plaster and pale sand-toned
+    // earthen walls framed by dark exposed timber posts and beams. Roofs are
+    // deep-pitched hipped forms tiled in dark grey kawara; eaves run long.
+    wallPalette: [
+      [0.92, 0.90, 0.86],   // white shikkui plaster (dominant)
+      [0.92, 0.90, 0.86],
+      [0.88, 0.84, 0.76],   // pale earthen plaster
+      [0.80, 0.72, 0.60],   // sand-toned daub
+      [0.36, 0.26, 0.18],   // exposed dark cedar framing
+      [0.48, 0.36, 0.24],   // weathered timber wall
+    ],
+    roofPalette: [
+      { color: [0.26, 0.26, 0.28], geo: 'cone', h: 1.1 }, // dark grey kawara tile (dominant)
+      { color: [0.26, 0.26, 0.28], geo: 'cone', h: 1.1 },
+      { color: [0.30, 0.30, 0.32], geo: 'cone', h: 1.1 }, // slightly weathered tile
+      { color: [0.22, 0.22, 0.24], geo: 'cone', h: 1.2 }, // soot-darkened older tile
+      { color: [0.38, 0.32, 0.24], geo: 'cone', h: 1.3 }, // occasional cedar-shingle hip (poorer houses)
+    ],
+    houseVariants: [
+      // Japanese vernacular runs low and long under deep eaves.
+      { weight: 0.55, scaleMul: [1.15, 0.85, 1.15], features: { deepEaves: true } },
+      { weight: 0.30,                               features: { deepEaves: true } },
+      { weight: 0.15, scaleMul: [1.30, 0.75, 1.30], features: { deepEaves: true } }, // wider low farmhouse
+    ],
     wallMatHint: 'white',
   },
   'khoikhoi-minimal': {
@@ -548,6 +661,8 @@ function pickVariant(variants: HouseVariant[], rng: () => number): HouseVariant 
 
 export function ProceduralCity() {
   const ports = useGameStore(s => s.ports);
+  const [damageVersion, setDamageVersion] = useState(getBuildingDamageVersion());
+  const damageVersionRef = useRef(damageVersion);
 
   // Dark material created separately for per-frame emissive updates (window glow).
   // polygonOffset biases these decal-like parts forward so they don't z-fight with
@@ -569,6 +684,12 @@ export function ProceduralCity() {
     const nightFactor = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
     darkMat.emissive.setRGB(0.95, 0.6, 0.2);
     darkMat.emissiveIntensity = nightFactor * 0.7;
+
+    const latestDamageVersion = getBuildingDamageVersion();
+    if (latestDamageVersion !== damageVersionRef.current) {
+      damageVersionRef.current = latestDamageVersion;
+      setDamageVersion(latestDamageVersion);
+    }
   });
 
   // Build all geometry parts + collect torch positions
@@ -898,6 +1019,237 @@ export function ProceduralCity() {
             addPart('cone', 'terracotta', 3.5, 7.6, -0.5, 0.7, 0.8, 0.7, tile);
           }
 
+          else if (lm === 'colegio-sao-paulo') {
+            // Macau — Jesuit Colégio de São Paulo. Dominant feature is the
+            // ornate stone facade (what survived as the Ruins of St. Paul's);
+            // behind it, a long monastic college block with tile roofs. A
+            // small observatory dome nods to the Jesuit astronomers here.
+            const stone = varyColor([0.90, 0.86, 0.74], rng, 0.04);
+            const tile: [number, number, number] = [0.58, 0.28, 0.22];
+            const dark = varyColor([0.22, 0.16, 0.12], rng, 0.04);
+            const lead: [number, number, number] = [0.52, 0.54, 0.56];
+            // Main college block behind the facade
+            addPart('box', 'white', 0, 2.2, -1.5, 7, 4.4, 5, stone);
+            addPart('cone', 'terracotta', 0, 5.2, -1.5, 3.8, 1.3, 3.0, tile);
+            // Second wing, lower
+            addPart('box', 'white', 3.6, 1.6, -1.5, 3, 3.2, 4, stone);
+            addPart('cone', 'terracotta', 3.6, 3.8, -1.5, 1.8, 0.9, 2.4, tile);
+            // Ornate carved facade — the iconic survivor
+            addPart('box', 'white', 0, 3.4, 1.9, 6.4, 6.8, 0.5, stone);
+            // Facade tiers (stepped top)
+            addPart('box', 'white', 0, 6.9, 1.9, 5.0, 0.4, 0.6, stone);
+            addPart('box', 'white', 0, 7.8, 1.9, 3.6, 1.2, 0.55, stone);
+            addPart('box', 'white', 0, 9.0, 1.9, 2.2, 0.8, 0.55, stone);
+            // Cross crowning the facade
+            addPart('box', 'stone', 0, 10.1, 1.9, 0.12, 0.9, 0.12, dark);
+            addPart('box', 'stone', 0, 10.3, 1.9, 0.55, 0.12, 0.12, dark);
+            // Arched entry portal + windows (dark rectangles on facade)
+            addPart('box', 'dark', 0, 1.6, 2.18, 1.3, 3.0, 0.12);
+            addPart('box', 'dark', -2.1, 4.5, 2.18, 0.8, 1.4, 0.10);
+            addPart('box', 'dark',  2.1, 4.5, 2.18, 0.8, 1.4, 0.10);
+            addPart('box', 'dark', -2.1, 6.4, 2.18, 0.6, 0.9, 0.10);
+            addPart('box', 'dark',  2.1, 6.4, 2.18, 0.6, 0.9, 0.10);
+            // Observatory dome — small lead-covered cap on the rear wing roof
+            addPart('dome', 'white', -3.0, 5.0, -1.5, 0.9, 0.9, 0.9, lead);
+            addPart('cylinder', 'wood', -3.0, 5.9, -1.5, 0.08, 0.45, 0.08, dark);
+          }
+
+          else if (lm === 'english-factory-surat') {
+            // Surat — walled English East India Company compound on the
+            // riverside. Rectangular fortified enclosure; two-story main
+            // factor's house at the rear; warehouses along the flanks;
+            // central yard with flagpole + English cross.
+            const brick = varyColor([0.72, 0.52, 0.38], rng, 0.05);
+            const whitewash = varyColor([0.92, 0.88, 0.78], rng, 0.04);
+            const tile: [number, number, number] = [0.60, 0.32, 0.24];
+            const wood = varyColor([0.36, 0.24, 0.16], rng, 0.04);
+            // Perimeter walls — four sides around a 8×8 yard
+            addPart('box', 'mud', 0, 1.5, 4.0, 9, 3, 0.5, brick);
+            addPart('box', 'mud', 0, 1.5, -4.0, 9, 3, 0.5, brick);
+            addPart('box', 'mud', 4.5, 1.5, 0, 0.5, 3, 8, brick);
+            addPart('box', 'mud', -4.5, 1.5, 0, 0.5, 3, 8, brick);
+            // Main factor's house, rear of compound — two stories
+            addPart('box', 'white', 0, 2.2, -2.6, 6, 4.4, 2.5, whitewash);
+            addPart('cone', 'terracotta', 0, 5.2, -2.6, 3.4, 1.3, 1.8, tile);
+            addPart('box', 'dark', 0, 1.6, -1.35, 1.0, 2.2, 0.12);
+            // Side warehouses — long and low along the inner walls
+            addPart('box', 'mud', -3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
+            addPart('cone', 'wood', -3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
+            addPart('box', 'mud', 3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
+            addPart('cone', 'wood', 3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
+            // Main gate — wider opening in front wall (sim'd with a darker
+            // panel + wooden posts flanking)
+            addPart('box', 'dark', 0, 1.3, 4.0, 2.0, 2.2, 0.12);
+            addPart('cylinder', 'wood', -1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
+            addPart('cylinder', 'wood',  1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
+            // Central flagpole in the yard + red-cross of St George
+            addPart('cylinder', 'wood', 0, 3.5, 0, 0.10, 7, 0.10, wood);
+            addPart('box', 'white', 0.85, 5.6, 0, 1.4, 0.9, 0.06, [0.96, 0.96, 0.96]);
+            addPart('box', 'stone', 0.85, 5.6, 0, 1.4, 0.18, 0.07, [0.78, 0.15, 0.15]);
+            addPart('box', 'stone', 0.85, 5.6, 0, 0.20, 0.9, 0.07, [0.78, 0.15, 0.15]);
+            // A few crates in the yard (trading goods)
+            addPart('box', 'wood', -1.8, 0.35, 1.6, 0.7, 0.7, 0.7, wood);
+            addPart('box', 'wood', -1.0, 0.30, 1.6, 0.6, 0.6, 0.6, wood);
+            addPart('box', 'wood',  1.7, 0.35, 1.8, 0.7, 0.7, 0.7, wood);
+          }
+
+          else if (lm === 'san-agustin-manila') {
+            // Manila — Iglesia de San Agustín, built 1607 in volcanic adobe
+            // and Mexican-baroque limestone. Twin-tower facade flanking a
+            // single-nave church with a low tile roof. (One bell tower
+            // collapsed in the 1863 earthquake, but in 1612 both stood.)
+            const adobe = varyColor([0.86, 0.78, 0.62], rng, 0.05);
+            const stone = varyColor([0.92, 0.88, 0.78], rng, 0.04);
+            const tile: [number, number, number] = [0.62, 0.34, 0.26];
+            const wood = varyColor([0.36, 0.24, 0.16], rng, 0.04);
+            // Single long nave
+            const naveW = 4.0, naveH = 5.5, naveD = 9.0;
+            addPart('box', 'white', 0, naveH / 2, 0, naveW, naveH, naveD, adobe);
+            // Low tile roof over the nave
+            addPart('cone', 'terracotta', 0, naveH + 0.9, 0, naveW * 0.55, 1.5, naveD * 0.55, tile);
+            // Facade slab fronting the nave (slightly taller than the side walls)
+            addPart('box', 'white', 0, naveH * 0.55, naveD / 2 + 0.3, naveW + 1.5, naveH + 1.5, 0.5, stone);
+            // Twin bell towers flanking the facade
+            const towerW = 1.5, towerH = naveH + 4;
+            for (const sx of [-1, 1] as const) {
+              const tx = sx * (naveW / 2 + 0.6);
+              addPart('box', 'white', tx, towerH / 2, naveD / 2 + 0.4, towerW, towerH, towerW, stone);
+              addPart('cone', 'terracotta', tx, towerH + 0.7, naveD / 2 + 0.4, towerW * 0.6, 1.4, towerW * 0.6, tile);
+              // Tiny cross atop each tower
+              addPart('cylinder', 'wood', tx, towerH + 1.6, naveD / 2 + 0.4, 0.07, 0.6, 0.07, wood);
+              addPart('box', 'stone', tx, towerH + 1.85, naveD / 2 + 0.4, 0.4, 0.08, 0.08, [0.55, 0.50, 0.45]);
+              addPart('box', 'stone', tx, towerH + 1.85, naveD / 2 + 0.4, 0.08, 0.4, 0.08, [0.55, 0.50, 0.45]);
+            }
+            // Central pediment + cross between the towers
+            addPart('cone', 'stone', 0, naveH + 1.8, naveD / 2 + 0.45, 1.2, 0.9, 0.18, stone);
+            addPart('cylinder', 'wood', 0, naveH + 2.7, naveD / 2 + 0.45, 0.08, 0.9, 0.08, wood);
+            // Heavy wooden church doors at the facade base
+            addPart('box', 'dark', 0, 1.4, naveD / 2 + 0.55, 1.4, 2.8, 0.10);
+          }
+
+          else if (lm === 'campanile-san-marco') {
+            // Venice — slim square brick campanile, terracotta cap with a
+            // gilded angel finial. The 1612 tower (the medieval one, not
+            // the 1912 reconstruction) was leaner and more weathered.
+            const brick = varyColor([0.62, 0.36, 0.28], rng, 0.05);
+            const istrian = varyColor([0.92, 0.86, 0.74], rng, 0.04);
+            const tile: [number, number, number] = [0.55, 0.30, 0.24];
+            const gold: [number, number, number] = [0.92, 0.74, 0.20];
+            const shaftW = 1.6, shaftH = 18;
+            // Stepped base in pale Istrian stone
+            addPart('box', 'white', 0, 0.5, 0, shaftW + 0.9, 1.0, shaftW + 0.9, istrian);
+            addPart('box', 'white', 0, 1.3, 0, shaftW + 0.5, 0.6, shaftW + 0.5, istrian);
+            // Tall slender brick shaft
+            addPart('box', 'mud', 0, shaftH / 2 + 1.6, 0, shaftW, shaftH, shaftW, brick);
+            // Belfry — open arched chamber in pale stone at the top of the shaft
+            addPart('box', 'white', 0, shaftH + 2.4, 0, shaftW + 0.3, 1.6, shaftW + 0.3, istrian);
+            // Cornice band
+            addPart('box', 'stone', 0, shaftH + 3.4, 0, shaftW + 0.6, 0.25, shaftW + 0.6, [0.55, 0.50, 0.42]);
+            // Pyramidal terracotta cap
+            addPart('cone', 'terracotta', 0, shaftH + 4.6, 0, (shaftW + 0.4) * 0.5, 2.4, (shaftW + 0.4) * 0.5, tile);
+            // Slim spire and gilded angel weathervane
+            addPart('cylinder', 'wood', 0, shaftH + 6.4, 0, 0.08, 1.4, 0.08, [0.45, 0.32, 0.20]);
+            addPart('box', 'stone', 0, shaftH + 7.3, 0, 0.45, 0.55, 0.10, gold);
+          }
+
+          else if (lm === 'church-of-the-assumption') {
+            // Nagasaki — Iglesia de la Assunção, dedicated 1601 by the
+            // Society of Jesus. The largest Christian church in East Asia
+            // until the 1614 expulsion. Hybrid: European basilica massing
+            // executed in Japanese carpentry, with a dark kawara-tile hipped
+            // roof and deep eaves over whitewashed plaster walls. A single
+            // square bell tower rises at the rear.
+            const wash = varyColor([0.92, 0.90, 0.86], rng, 0.04);
+            const frame = varyColor([0.32, 0.22, 0.14], rng, 0.04);
+            const kawara: [number, number, number] = [0.26, 0.26, 0.28];
+            const wood = varyColor([0.40, 0.28, 0.18], rng, 0.04);
+            // Long single nave — low and broad under deep eaves
+            const naveW = 5.0, naveH = 4.8, naveD = 9.5;
+            addPart('box', 'white', 0, naveH / 2, 0, naveW, naveH, naveD, wash);
+            // Dark timber sill band along the base (exposed cedar framing)
+            addPart('box', 'dark', 0, 0.35, naveD / 2 + 0.01, naveW, 0.7, 0.08, frame);
+            addPart('box', 'dark', 0, 0.35, -naveD / 2 - 0.01, naveW, 0.7, 0.08, frame);
+            // Deep-eaved hipped tile roof, projecting well beyond the walls
+            addPart('cone', 'terracotta', 0, naveH + 1.1, 0, naveW * 0.72, 1.7, naveD * 0.62, kawara);
+            // Front gable / facade — slightly taller, whitewashed, with a
+            // small pediment and cross
+            addPart('box', 'white', 0, naveH * 0.55 + 0.3, naveD / 2 + 0.25, naveW + 0.6, naveH + 1.2, 0.4, wash);
+            addPart('cone', 'terracotta', 0, naveH + 1.6, naveD / 2 + 0.25, (naveW + 0.6) * 0.55, 1.0, 0.22, kawara);
+            // Facade cross
+            addPart('cylinder', 'wood', 0, naveH + 2.7, naveD / 2 + 0.25, 0.08, 0.9, 0.08, wood);
+            addPart('box', 'stone', 0, naveH + 3.0, naveD / 2 + 0.28, 0.45, 0.09, 0.09, [0.55, 0.48, 0.40]);
+            // Square bell tower at the rear — post-and-beam Japanese style
+            const towerW = 1.6, towerH = naveH + 3.8;
+            addPart('box', 'white', 0, towerH / 2, -naveD / 2 - 0.3, towerW, towerH, towerW, wash);
+            // Exposed corner posts on the tower
+            for (const sx of [-1, 1] as const) {
+              for (const sz of [-1, 1] as const) {
+                addPart('box', 'dark',
+                  sx * towerW / 2,
+                  towerH / 2,
+                  -naveD / 2 - 0.3 + sz * towerW / 2,
+                  0.16, towerH, 0.16, frame);
+              }
+            }
+            // Deep-eaved pyramidal tile cap on the tower
+            addPart('cone', 'terracotta', 0, towerH + 0.9, -naveD / 2 - 0.3, towerW * 0.95, 1.5, towerW * 0.95, kawara);
+            // Tower cross
+            addPart('cylinder', 'wood', 0, towerH + 2.1, -naveD / 2 - 0.3, 0.08, 1.1, 0.08, wood);
+            addPart('box', 'stone', 0, towerH + 2.5, -naveD / 2 - 0.3, 0.5, 0.10, 0.10, [0.55, 0.48, 0.40]);
+            // Heavy timber doors at the facade
+            addPart('box', 'dark', 0, 1.5, naveD / 2 + 0.5, 1.4, 3.0, 0.10);
+          }
+
+          else if (lm === 'dutch-factory-masulipatnam') {
+            // Masulipatnam — VOC factory, established 1606. Rectangular
+            // walled compound on the estuary waterfront. Whitewashed brick
+            // perimeter; a two-story factor's residence at the rear with
+            // the distinctive Dutch stepped gable and dark tile roof; long
+            // warehouse blocks along both flanks. Prinsenvlag flies from a
+            // central yard mast.
+            const brick = varyColor([0.74, 0.54, 0.40], rng, 0.05);
+            const whitewash = varyColor([0.92, 0.88, 0.80], rng, 0.04);
+            const tile: [number, number, number] = [0.40, 0.28, 0.22];
+            const wood = varyColor([0.32, 0.20, 0.14], rng, 0.04);
+            // Perimeter walls — 9×8 compound
+            addPart('box', 'mud', 0, 1.5, 4.0, 9, 3, 0.5, brick);
+            addPart('box', 'mud', 0, 1.5, -4.0, 9, 3, 0.5, brick);
+            addPart('box', 'mud', 4.5, 1.5, 0, 0.5, 3, 8, brick);
+            addPart('box', 'mud', -4.5, 1.5, 0, 0.5, 3, 8, brick);
+            // Factor's residence (rear) — two stories with stepped gable
+            addPart('box', 'white', 0, 2.3, -2.6, 5.2, 4.6, 2.4, whitewash);
+            // Stepped gable front — three stacked cubes of decreasing width
+            addPart('box', 'white', 0, 4.9, -1.45, 5.2, 0.9, 0.25, whitewash);
+            addPart('box', 'white', 0, 5.5, -1.45, 3.8, 0.8, 0.25, whitewash);
+            addPart('box', 'white', 0, 6.1, -1.45, 2.4, 0.8, 0.25, whitewash);
+            addPart('box', 'white', 0, 6.65, -1.45, 1.0, 0.5, 0.25, whitewash);
+            // Dark tile roof behind the gable
+            addPart('cone', 'terracotta', 0, 5.2, -2.9, 2.8, 1.2, 1.4, tile);
+            // Residence door
+            addPart('box', 'dark', 0, 1.6, -1.35, 1.0, 2.2, 0.12);
+            // Two small upper-story windows
+            addPart('box', 'dark', -1.3, 3.6, -1.40, 0.7, 0.9, 0.08);
+            addPart('box', 'dark',  1.3, 3.6, -1.40, 0.7, 0.9, 0.08);
+            // Long warehouses along the flanks
+            addPart('box', 'mud', -3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
+            addPart('cone', 'wood', -3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
+            addPart('box', 'mud', 3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
+            addPart('cone', 'wood', 3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
+            // Main gate on the front wall
+            addPart('box', 'dark', 0, 1.3, 4.0, 2.0, 2.2, 0.12);
+            addPart('cylinder', 'wood', -1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
+            addPart('cylinder', 'wood',  1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
+            // Central flagpole with Prinsenvlag (orange / white / blue)
+            addPart('cylinder', 'wood', 0, 3.5, 0, 0.10, 7, 0.10, wood);
+            addPart('box', 'straw', 0.85, 5.9, 0, 1.4, 0.3, 0.06, [0.90, 0.48, 0.16]); // orange
+            addPart('box', 'straw', 0.85, 5.6, 0, 1.4, 0.3, 0.06, [0.95, 0.94, 0.90]); // white
+            addPart('box', 'straw', 0.85, 5.3, 0, 1.4, 0.3, 0.06, [0.10, 0.22, 0.58]); // blue
+            // A few bales/crates in the yard
+            addPart('box', 'wood', -1.8, 0.35, 1.6, 0.8, 0.7, 0.7, wood);
+            addPart('box', 'wood', -1.0, 0.30, 1.6, 0.6, 0.6, 0.6, wood);
+            addPart('box', 'wood',  1.7, 0.40, 1.8, 0.8, 0.8, 0.8, wood);
+          }
+
           scaleLandmark(_lmStart, 0, 0, LM_SCALE);
           return; // skip generic building render for this building
         }
@@ -1064,6 +1416,100 @@ export function ProceduralCity() {
             addPart('box', 'stone', 0, 6.5, 0, 0.6, 0.08, 0.08, [0.82, 0.68, 0.28]);
             addPart('box', 'stone', 0, 6.5, 0, 0.08, 0.08, 0.6, [0.82, 0.68, 0.28]);
             addPart('box', 'dark', 0, 1.6, 2.55, 0.9, 2.0, 0.15);
+          }
+
+          return; // skip generic per-type render
+        }
+
+        // ── Palaces (royal residence / governor's house, generic per style) ─
+        if (b.type === 'palace') {
+          const style = b.palaceStyle ?? 'iberian-colonial';
+
+          if (style === 'iberian-colonial') {
+            // Whitewashed walls, terracotta tile roof, arched loggia on the
+            // front, short clocktower on one corner. Reads as a Portuguese
+            // or Spanish governor's palace. Footprint is 10×10 inside the
+            // 12×12 reservation (1-cell clearance on each side).
+            const wash = varyColor([0.94, 0.90, 0.80], rng, 0.04);
+            const tile: [number, number, number] = [0.60, 0.30, 0.22];
+            const wood = varyColor([0.30, 0.20, 0.14], rng, 0.04);
+            // Main block
+            addPart('box', 'white', 0, 2.6, 0, 10, 5.2, 8, wash);
+            addPart('cone', 'terracotta', 0, 5.8, 0, 5.4, 1.4, 4.4, tile);
+            // Front arched loggia — five arches as small dark openings
+            addPart('box', 'white', 0, 1.5, 4.05, 10, 3.0, 0.3, wash);
+            for (const ax of [-3.8, -1.9, 0, 1.9, 3.8]) {
+              addPart('box', 'dark', ax, 1.3, 4.20, 1.1, 2.1, 0.12);
+            }
+            // Upper-floor balcony rail
+            addPart('box', 'wood', 0, 3.3, 4.20, 9.6, 0.15, 0.15, wood);
+            // Small clocktower on one corner
+            addPart('box', 'white', 4.2, 3.6, -3.0, 1.8, 7.2, 1.8, wash);
+            addPart('cone', 'terracotta', 4.2, 7.6, -3.0, 1.25, 1.3, 1.25, tile);
+            addPart('cylinder', 'wood', 4.2, 8.5, -3.0, 0.08, 0.6, 0.08, wood);
+            // Central portal
+            addPart('box', 'dark', 0, 1.5, 4.30, 1.6, 2.7, 0.12);
+            // Flagpole on ridge
+            addPart('cylinder', 'wood', -3.0, 7.2, 0, 0.08, 1.8, 0.08, wood);
+          }
+
+          else if (style === 'mughal') {
+            // Red sandstone cube with a dominant central pishtaq (recessed
+            // arch entrance), four small chhatri pavilions on the corners
+            // of the roof, small dome over the central pishtaq.
+            const sand = varyColor([0.74, 0.42, 0.32], rng, 0.04);
+            const cream = varyColor([0.90, 0.82, 0.70], rng, 0.03);
+            const marble: [number, number, number] = [0.92, 0.90, 0.84];
+            // Main cube
+            addPart('box', 'mud', 0, 2.6, 0, 10, 5.2, 10, sand);
+            // Recessed pishtaq — taller than the main block, lighter sandstone
+            addPart('box', 'mud', 0, 3.4, 4.6, 4.2, 6.8, 0.6, cream);
+            addPart('box', 'dark', 0, 2.4, 5.0, 2.2, 4.0, 0.15);
+            // Small dome over pishtaq
+            addPart('dome', 'white', 0, 7.0, 4.6, 1.2, 1.2, 0.8, marble);
+            // Corner chhatri pavilions (small domed kiosks on roof)
+            for (const [cx, cz] of [[4, 4], [-4, 4], [4, -4], [-4, -4]] as [number, number][]) {
+              addPart('cylinder', 'wood', cx, 5.5, cz, 0.10, 0.9, 0.10, cream);
+              addPart('cylinder', 'wood', cx + 0.6, 5.5, cz, 0.10, 0.9, 0.10, cream);
+              addPart('cylinder', 'wood', cx, 5.5, cz + 0.6, 0.10, 0.9, 0.10, cream);
+              addPart('cylinder', 'wood', cx + 0.6, 5.5, cz + 0.6, 0.10, 0.9, 0.10, cream);
+              addPart('dome', 'white', cx + 0.3, 6.6, cz + 0.3, 0.55, 0.55, 0.55, cream);
+            }
+            // Perimeter crenellation (low parapet with merlons suggested by small boxes)
+            for (const [mx, mz] of [[0, 5.0], [0, -5.0], [5.0, 0], [-5.0, 0]] as [number, number][]) {
+              addPart('box', 'mud', mx, 5.4, mz, mz === 0 ? 0.4 : 8, 0.5, mx === 0 ? 0.4 : 8, sand);
+            }
+          }
+
+          else if (style === 'malay-istana') {
+            // Raised timber pavilion on stilts, steep tiered tile roof,
+            // carved gable. Common grammar for Southeast Asian sultans'
+            // palaces — Bantam, Aceh, Johor.
+            const teak = varyColor([0.42, 0.26, 0.18], rng, 0.05);
+            const tileTrop: [number, number, number] = [0.50, 0.36, 0.24];
+            const palm: [number, number, number] = [0.82, 0.68, 0.40];
+            // Stilts under the platform (16 posts in 4x4 grid)
+            for (const sx of [-4, -1.3, 1.3, 4]) {
+              for (const sz of [-4, -1.3, 1.3, 4]) {
+                addPart('cylinder', 'wood', sx, 0.9, sz, 0.18, 1.8, 0.18, teak);
+              }
+            }
+            // Raised platform
+            addPart('box', 'wood', 0, 1.95, 0, 10, 0.4, 10, teak);
+            // Main pavilion body
+            addPart('box', 'wood', 0, 3.4, 0, 9, 2.6, 9, teak);
+            // Steep lower roof
+            addPart('cone', 'wood', 0, 5.2, 0, 6.0, 1.8, 6.0, tileTrop);
+            // Upper tier (gives the two-tiered look)
+            addPart('box', 'wood', 0, 6.4, 0, 5, 1.0, 5, teak);
+            addPart('cone', 'wood', 0, 7.6, 0, 3.8, 1.8, 3.8, tileTrop);
+            // Ridge ornament (traditional carved gable finial)
+            addPart('cylinder', 'wood', 0, 8.8, 0, 0.12, 0.9, 0.12, teak);
+            addPart('box', 'wood', 0, 9.4, 0, 0.8, 0.2, 0.2, teak);
+            // Front stair — angled boxes suggest a stair
+            addPart('box', 'wood', 0, 1.0, 5.4, 2.4, 0.25, 1.8, teak);
+            // Thatch detail on gable front
+            addPart('box', 'straw', 0, 4.8, 4.05, 2.4, 1.6, 0.15, palm);
           }
 
           return; // skip generic per-type render
@@ -1648,6 +2094,47 @@ export function ProceduralCity() {
     return { parts: allParts, torchSpots: torches, smokeSpots };
   }, [ports]);
 
+  const damageSmokeSpots = useMemo(() => {
+    const spots: DamageSmokeSpot[] = [];
+    ports.forEach((port) => {
+      port.buildings.forEach((b, bi) => {
+        const stage = getBuildingDamageStage(b.id);
+        if (stage === 'intact') return;
+        const intensity = stage === 'destroyed' ? 1 : stage === 'heavilyDamaged' ? 0.72 : 0.42;
+        const count = stage === 'destroyed' ? 3 : stage === 'heavilyDamaged' ? 2 : 1;
+        for (let i = 0; i < count; i++) {
+          const spread = count === 1 ? 0 : (i - (count - 1) * 0.5) * Math.min(1.1, b.scale[0] * 0.14);
+          spots.push({
+            pos: [b.position[0] + spread, b.position[1] + b.scale[1] + 0.5, b.position[2] + spread * 0.4],
+            seed: bi * 173 + i * 37 + ((b.position[0] + b.position[2]) * 10 | 0),
+            intensity,
+          });
+        }
+      });
+    });
+    return spots;
+  }, [ports, damageVersion]);
+
+  const ruinedBuildingDebris = useMemo(() => {
+    const ruins: RuinMarker[] = [];
+    ports.forEach((port) => {
+      port.buildings.forEach((b) => {
+        if (getBuildingDamageStage(b.id) !== 'destroyed') return;
+        ruins.push({
+          pos: [b.position[0], b.position[1] + Math.max(0.35, b.scale[1] * 0.16), b.position[2]],
+          scale: [Math.max(1.1, b.scale[0] * 0.72), Math.max(0.4, b.scale[1] * 0.18), Math.max(1.1, b.scale[2] * 0.6)],
+          rotY: b.rotation + 0.35,
+        });
+        ruins.push({
+          pos: [b.position[0] + Math.sin(b.rotation) * 0.7, b.position[1] + Math.max(0.6, b.scale[1] * 0.28), b.position[2] + Math.cos(b.rotation) * 0.7],
+          scale: [Math.max(0.5, b.scale[0] * 0.16), Math.max(0.9, b.scale[1] * 0.45), Math.max(0.4, b.scale[2] * 0.12)],
+          rotY: b.rotation - 0.4,
+        });
+      });
+    });
+    return ruins;
+  }, [ports, damageVersion]);
+
   // Group parts by geo+mat
   const groups = useMemo(() => {
     const map = new Map<string, Part[]>();
@@ -1697,6 +2184,8 @@ export function ProceduralCity() {
       <SacredBuildingMarkers ports={ports} />
       <CityTorches spots={torchSpots} />
       <ChimneySmoke spots={smokeSpots} />
+      <BuildingDamageSmoke spots={damageSmokeSpots} />
+      <RuinedBuildingDebris ruins={ruinedBuildingDebris} />
     </group>
   );
 }
@@ -1961,6 +2450,82 @@ function offsetPolylineXZ(
   return out;
 }
 
+// Swept box wall along a polyline. Each polyline vertex emits 4 corners
+// (outer-bottom, inner-bottom, inner-top, outer-top). Adjacent segments
+// share corners via smooth miter on interior vertices, and the two short
+// ends get capped so the wall isn't see-through. Used for bridge parapets
+// so railings read as solid walls rather than flat ribbons hovering above
+// the deck.
+function buildWallRibbon(
+  centerline: [number, number, number][],
+  thickness: number,
+  height: number,
+): THREE.BufferGeometry | null {
+  const n = centerline.length;
+  if (n < 2) return null;
+  const halfT = thickness / 2;
+
+  // Per-segment tangents for mitering interior vertices.
+  const segTanX: number[] = new Array(n - 1);
+  const segTanZ: number[] = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    const dx = centerline[i + 1][0] - centerline[i][0];
+    const dz = centerline[i + 1][2] - centerline[i][2];
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-5) { segTanX[i] = 1; segTanZ[i] = 0; }
+    else { segTanX[i] = dx / len; segTanZ[i] = dz / len; }
+  }
+
+  const verts: number[] = [];
+  for (let i = 0; i < n; i++) {
+    let tx: number, tz: number;
+    if (i === 0) { tx = segTanX[0]; tz = segTanZ[0]; }
+    else if (i === n - 1) { tx = segTanX[n - 2]; tz = segTanZ[n - 2]; }
+    else {
+      const ax = segTanX[i - 1] + segTanX[i];
+      const az = segTanZ[i - 1] + segTanZ[i];
+      const al = Math.hypot(ax, az);
+      if (al < 1e-5) { tx = segTanX[i]; tz = segTanZ[i]; }
+      else { tx = ax / al; tz = az / al; }
+    }
+    const nx = -tz, nz = tx;
+    const [px, py, pz] = centerline[i];
+    // 4 corners per sample, in order: outerBottom, innerBottom, innerTop, outerTop.
+    verts.push(px + nx * halfT, py,          pz + nz * halfT);
+    verts.push(px - nx * halfT, py,          pz - nz * halfT);
+    verts.push(px - nx * halfT, py + height, pz - nz * halfT);
+    verts.push(px + nx * halfT, py + height, pz + nz * halfT);
+  }
+
+  const indices: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 4;
+    const b = (i + 1) * 4;
+    // Outer face (+nx side), CCW viewed from outside.
+    indices.push(a + 0, b + 0, b + 3);
+    indices.push(a + 0, b + 3, a + 3);
+    // Inner face (-nx side), CCW viewed from inside.
+    indices.push(a + 1, a + 2, b + 2);
+    indices.push(a + 1, b + 2, b + 1);
+    // Top face, CCW viewed from above.
+    indices.push(a + 3, b + 3, b + 2);
+    indices.push(a + 3, b + 2, a + 2);
+  }
+  // End caps. Start cap faces away from segment direction; end cap with it.
+  indices.push(0, 3, 2);
+  indices.push(0, 2, 1);
+  const e = (n - 1) * 4;
+  indices.push(e + 0, e + 1, e + 2);
+  indices.push(e + 0, e + 2, e + 3);
+
+  const positions = new Float32Array(verts);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function mergeGeometries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
   if (geos.length === 0) return null;
   let totalVerts = 0, totalIdx = 0;
@@ -2047,23 +2612,25 @@ function CityRoads({ ports }: { ports: PortsProp }) {
           const [ts, te] = taperFor(r.id);
           const deckGeo = buildRoadRibbon(r.points, ROAD_TIER_STYLE.bridge.width, 0, ts, te);
           if (deckGeo) bridgeBuckets[bridgeStyle].deck.push(deckGeo);
-          // Parapets: two narrow ribbons hugging each deck edge, lifted by
-          // parapet.height. Reuses buildRoadRibbon on offset centerlines.
+          // Parapets: a solid extruded box wall along each deck edge so the
+          // railing reads as a proper parapet rather than a flat strip. The
+          // wall base sits on the deck plane and rises by parapet.height.
           if (bs.parapet) {
             const railOffset = deckHalfWidth - bs.parapet.thickness / 2;
-            const yLift = bs.parapet.height / 2;
-            const leftCenter  = offsetPolylineXZ(r.points,  railOffset, yLift);
-            const rightCenter = offsetPolylineXZ(r.points, -railOffset, yLift);
-            const lg = buildRoadRibbon(leftCenter,  bs.parapet.thickness, 0, ts, te);
-            const rg = buildRoadRibbon(rightCenter, bs.parapet.thickness, 0, ts, te);
+            const leftCenter  = offsetPolylineXZ(r.points,  railOffset, 0);
+            const rightCenter = offsetPolylineXZ(r.points, -railOffset, 0);
+            const lg = buildWallRibbon(leftCenter,  bs.parapet.thickness, bs.parapet.height);
+            const rg = buildWallRibbon(rightCenter, bs.parapet.thickness, bs.parapet.height);
             if (lg) bridgeBuckets[bridgeStyle].parapet.push(lg);
             if (rg) bridgeBuckets[bridgeStyle].parapet.push(rg);
-            // Note: ribbons are flat, so the parapet is a low cap rather than
-            // a full wall. Reads as a railing at game camera distance and
-            // costs us nothing extra.
           }
-          // Piers on interior deck nodes at the style's spacing.
+          // Piers on interior deck nodes at the style's spacing. Restrict
+          // to points sitting on the water-span deck plane — abutment ramp
+          // points ride below the deck (terrain Y) and clifftop abutments
+          // get clamped up above it, so anything meaningfully off the deck
+          // plane is land and would produce a pier stuck in the ground.
           for (let i = 1; i < r.points.length - 1; i += bs.pierStep) {
+            if (Math.abs(r.points[i][1] - BRIDGE_DECK_Y) > 0.05) continue;
             bridgeBuckets[bridgeStyle].piers.push(r.points[i]);
           }
         } else if (isFarmTrackRoad(r.id)) {
@@ -2264,8 +2831,13 @@ function BridgePiers({
     });
     ref.current.instanceMatrix.needsUpdate = true;
   }, [positions, height]);
+  // Piers don't cast shadows: dense rows of thin vertical cylinders (timber
+  // bridges use pierStep=1) project a noisy picket-fence of shadow blades
+  // onto the transparent water, and since the water surface already sits
+  // below them the cast shadows read as visual litter rather than depth cue.
+  // The deck + parapet still cast the bridge's main shadow.
   return (
-    <instancedMesh ref={ref} args={[geom, material, positions.length]} castShadow receiveShadow />
+    <instancedMesh ref={ref} args={[geom, material, positions.length]} receiveShadow />
   );
 }
 
@@ -2721,6 +3293,7 @@ const PUFF_CYCLE = 4.0; // seconds for one puff to rise and fade
 function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummyRef = useRef(new THREE.Object3D());
+  const lastUpdateRef = useRef(0);
 
   const puffGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
   const puffMat = useMemo(() => new THREE.MeshStandardMaterial({
@@ -2736,6 +3309,8 @@ function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
   useFrame(({ clock }) => {
     if (!meshRef.current || totalPuffs === 0) return;
     const t = clock.elapsedTime;
+    if (t - lastUpdateRef.current < 0.05) return; // ~20fps
+    lastUpdateRef.current = t;
     const dummy = dummyRef.current;
 
     for (let si = 0; si < spots.length; si++) {
@@ -2781,6 +3356,90 @@ function ChimneySmoke({ spots }: { spots: SmokeSpot[] }) {
   );
 }
 
+const DAMAGE_PUFFS_PER_SOURCE = 4;
+const DAMAGE_PUFF_CYCLE = 3.2;
+
+function BuildingDamageSmoke({ spots }: { spots: DamageSmokeSpot[] }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
+  const lastUpdateRef = useRef(0);
+
+  const puffGeo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
+  const puffMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#605c58',
+    transparent: true,
+    opacity: 0.32,
+    depthWrite: false,
+    roughness: 1,
+  }), []);
+
+  const totalPuffs = spots.length * DAMAGE_PUFFS_PER_SOURCE;
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current || totalPuffs === 0) return;
+    const t = clock.elapsedTime;
+    if (t - lastUpdateRef.current < 0.05) return; // ~20fps
+    lastUpdateRef.current = t;
+    const dummy = dummyRef.current;
+
+    for (let si = 0; si < spots.length; si++) {
+      const spot = spots[si];
+      const baseSeed = spot.seed * 0.013;
+      for (let p = 0; p < DAMAGE_PUFFS_PER_SOURCE; p++) {
+        const idx = si * DAMAGE_PUFFS_PER_SOURCE + p;
+        const phase = (t + baseSeed + p * (DAMAGE_PUFF_CYCLE / DAMAGE_PUFFS_PER_SOURCE)) % DAMAGE_PUFF_CYCLE;
+        const progress = phase / DAMAGE_PUFF_CYCLE;
+        const rise = progress * (4.5 + spot.intensity * 2.8);
+        const drift = Math.sin(baseSeed + t * 0.35) * progress * (0.6 + spot.intensity * 0.9);
+        const driftZ = Math.cos(baseSeed * 1.9 + t * 0.25) * progress * (0.35 + spot.intensity * 0.5);
+        const scale = (0.18 + progress * 0.42) * (0.8 + spot.intensity * 0.9);
+        const alpha = progress < 0.12
+          ? progress / 0.12
+          : 1.0 - (progress - 0.12) / 0.88;
+
+        dummy.position.set(
+          spot.pos[0] + drift,
+          spot.pos[1] + rise,
+          spot.pos[2] + driftZ,
+        );
+        dummy.scale.setScalar(scale * Math.max(0.01, alpha));
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(idx, dummy.matrix);
+      }
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (totalPuffs === 0) return null;
+  return <instancedMesh ref={meshRef} args={[puffGeo, puffMat, totalPuffs]} frustumCulled={false} />;
+}
+
+function RuinedBuildingDebris({ ruins }: { ruins: RuinMarker[] }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
+  const geo = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#3f3b37',
+    roughness: 1,
+  }), []);
+
+  useEffect(() => {
+    if (!meshRef.current) return;
+    const dummy = dummyRef.current;
+    ruins.forEach((r, i) => {
+      dummy.position.set(...r.pos);
+      dummy.scale.set(...r.scale);
+      dummy.rotation.set(-0.18, r.rotY, 0.14);
+      dummy.updateMatrix();
+      meshRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [ruins]);
+
+  if (ruins.length === 0) return null;
+  return <instancedMesh ref={meshRef} args={[geo, mat, ruins.length]} frustumCulled={false} />;
+}
+
 // ── Instanced Parts Renderer ──────────────────────────────────────────────────
 
 function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry: THREE.BufferGeometry; material: THREE.Material }) {
@@ -2788,34 +3447,93 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry
   const dummyRef = useRef(new THREE.Object3D());
   const colorRef = useRef(new THREE.Color());
   const hadShakeRef = useRef(false);
+  const damageVersionRef = useRef(-1);
+
+  function applyPartMatrix(dummy: THREE.Object3D, part: Part) {
+    const centerY = part.shakeCenter?.[1] ?? part.pos[1];
+    const damageStage = part.buildingId ? getBuildingDamageStage(part.buildingId) : 'intact';
+    const damageFraction = part.buildingId ? getBuildingDamageFraction(part.buildingId) : 0;
+
+    dummy.position.set(...part.pos);
+    dummy.scale.set(...part.scale);
+    dummy.rotation.set(...part.rot);
+
+    if (damageStage === 'destroyed') {
+      if (isRoofLikePart(part, centerY)) {
+        dummy.scale.setScalar(0.0001);
+      } else if (isWindowLikePart(part, centerY)) {
+        dummy.scale.setScalar(0.0001);
+      } else if (isDelicateDetailPart(part, centerY)) {
+        dummy.scale.setScalar(0.0001);
+      } else if (part.pos[1] > centerY + 0.6) {
+        dummy.rotation.z += 0.04;
+        dummy.position.y -= Math.min(0.8, damageFraction * 0.6);
+      }
+    } else if (damageStage === 'heavilyDamaged') {
+      if (isDelicateDetailPart(part, centerY)) {
+        dummy.scale.multiplyScalar(0.72);
+        dummy.position.y -= 0.08;
+      } else if (isRoofLikePart(part, centerY)) {
+        dummy.rotation.z += 0.08;
+        dummy.position.y -= 0.14;
+      }
+    }
+
+    if (geometry instanceof THREE.CylinderGeometry && geometry.parameters.radialSegments === 4) {
+      dummy.rotation.y += Math.PI / 4;
+    }
+    dummy.updateMatrix();
+  }
+
+  function applyInstanceColors() {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const color = colorRef.current;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (!p.color) continue;
+      let finalColor = applyGroundWeathering(p.color, p);
+      if (p.buildingId) {
+        const damageStage = getBuildingDamageStage(p.buildingId);
+        if (damageStage === 'destroyed') {
+          finalColor = ruinedColor(finalColor);
+        } else if (damageStage !== 'intact') {
+          finalColor = damagedColor(finalColor, getBuildingDamageFraction(p.buildingId));
+        }
+      }
+      color.setRGB(finalColor[0], finalColor[1], finalColor[2]);
+      mesh.setColorAt(i, color);
+    }
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+    damageVersionRef.current = getBuildingDamageVersion();
+  }
 
   useEffect(() => {
     if (!meshRef.current) return;
     const dummy = dummyRef.current;
-    const color = colorRef.current;
     parts.forEach((p, i) => {
-      dummy.position.set(...p.pos);
-      dummy.scale.set(...p.scale);
-      dummy.rotation.set(...p.rot);
-      if (geometry instanceof THREE.CylinderGeometry && geometry.parameters.radialSegments === 4) {
-        dummy.rotation.y += Math.PI / 4;
-      }
-      dummy.updateMatrix();
+      applyPartMatrix(dummy, p);
       meshRef.current!.setMatrixAt(i, dummy.matrix);
-      if (p.color) {
-        color.setRGB(p.color[0], p.color[1], p.color[2]);
-        meshRef.current!.setColorAt(i, color);
-      }
     });
     meshRef.current.instanceMatrix.needsUpdate = true;
-    if (meshRef.current.instanceColor) {
-      meshRef.current.instanceColor.needsUpdate = true;
-    }
+    applyInstanceColors();
   }, [parts, geometry]);
 
   useFrame(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
+
+    if (damageVersionRef.current !== getBuildingDamageVersion()) {
+      const dummy = dummyRef.current;
+      for (let i = 0; i < parts.length; i++) {
+        applyPartMatrix(dummy, parts[i]);
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      applyInstanceColors();
+    }
 
     const now = Date.now() * 0.001;
     let hasRecentShake = false;

@@ -11,6 +11,7 @@ import { getLandCharacter } from './landCharacter';
 import { getTerrainHeight } from './terrain';
 import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from './roadSurface';
 import { SEA_LEVEL } from '../constants/world';
+import { gunfireAlerts } from './combatState';
 
 // ── Seeded PRNG ─────────────────────────────────────────────────────────────
 function mulberry32(a: number) {
@@ -66,6 +67,13 @@ export interface Pedestrian {
   homeX: number;
   homeZ: number;
   wanderRadius: number;
+  // Panic — set when a gunshot is heard nearby. While panicking, the ped
+  // abandons its corridor/wander behavior and flees along (panicFleeX, Z).
+  panicUntil: number;
+  panicFleeX: number;
+  panicFleeZ: number;
+  // Set true when the pedestrian is killed by a projectile.
+  dead: boolean;
 }
 
 export interface PedestrianSystemState {
@@ -97,7 +105,7 @@ function distSq(ax: number, az: number, bx: number, bz: number) {
 // How far to offset corridor endpoints from building centers
 // so pedestrians walk *outside* buildings, not through them
 const BUILDING_CLEARANCE: Record<BuildingType, number> = {
-  dock: 4, warehouse: 4, market: 5, fort: 8, landmark: 8,
+  dock: 4, warehouse: 4, market: 5, fort: 8, landmark: 8, palace: 7,
   estate: 5, house: 2.5, shack: 2, farmhouse: 3, plaza: 5,
   spiritual: 5,
 };
@@ -259,7 +267,7 @@ function buildCorridor(
 
 // How much traffic weight each building type generates
 const BUILDING_TRAFFIC: Record<BuildingType, number> = {
-  dock: 1.0, warehouse: 0.8, market: 1.0, fort: 0.3, landmark: 0.55,
+  dock: 1.0, warehouse: 0.8, market: 1.0, fort: 0.3, landmark: 0.55, palace: 0.45,
   estate: 0.4, house: 0.3, shack: 0.15, farmhouse: 0.25, plaza: 0.9,
   spiritual: 0.6,
 };
@@ -510,6 +518,9 @@ export function initPedestrianSystem(
         homeX: portX,
         homeZ: portZ,
         wanderRadius: 65,
+        panicUntil: 0,
+        panicFleeX: 0,
+        panicFleeZ: 0,
       });
     } else {
       // Weighted corridor selection — busier corridors get more pedestrians
@@ -568,6 +579,9 @@ export function initPedestrianSystem(
         homeX: bx,
         homeZ: bz,
         wanderRadius: 18,
+        panicUntil: 0,
+        panicFleeX: 0,
+        panicFleeZ: 0,
       });
       hinterlandAdded++;
     }
@@ -599,6 +613,9 @@ function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number, p
     homeX: portX,
     homeZ: portZ,
     wanderRadius: 65,
+    panicUntil: 0,
+    panicFleeX: 0,
+    panicFleeZ: 0,
   };
 }
 
@@ -617,8 +634,85 @@ export function updatePedestrians(
   // Clamp delta to avoid huge jumps when tab is backgrounded
   const dt = Math.min(delta, 0.1);
 
+  const nowMs = Date.now();
+
   for (let i = 0; i < activeCount; i++) {
     const p = pedestrians[i];
+
+    // ── Gunfire scatter ────────────────────────────────────────────────
+    // Any active alert within its hearing radius triggers (or extends) a
+    // panic. While panicking, the ped abandons its corridor or wander target
+    // and runs away from the loudest nearby alert.
+    if (gunfireAlerts.length > 0) {
+      const wasPanicking = time < p.panicUntil;
+      for (let a = 0; a < gunfireAlerts.length; a++) {
+        const alert = gunfireAlerts[a];
+        if (alert.expireAt < nowMs) continue;
+        const adx = p.x - alert.x;
+        const adz = p.z - alert.z;
+        const ad2 = adx * adx + adz * adz;
+        const r = alert.radius;
+        if (ad2 < r * r) {
+          // Fresh reaction — set a flee target directly away from the source.
+          if (!wasPanicking) {
+            const d = Math.sqrt(Math.max(ad2, 0.01));
+            p.panicFleeX = p.x + (adx / d) * 30;
+            p.panicFleeZ = p.z + (adz / d) * 30;
+            // Abandon the corridor so panic-advance doesn't snap back when
+            // panicUntil expires. Wanderer mode anchors them at their current
+            // spot with a modest radius.
+            if (p.corridorIdx >= 0) {
+              p.corridorIdx = -1;
+              p.homeX = p.x;
+              p.homeZ = p.z;
+              p.wanderRadius = 40;
+              p.wanderTargetX = p.panicFleeX;
+              p.wanderTargetZ = p.panicFleeZ;
+            }
+            if (typeof window !== 'undefined' && (window as unknown as { DEBUG_GUNFIRE?: boolean }).DEBUG_GUNFIRE) {
+              console.log('[panic]', p.type, 'ped at', p.x.toFixed(1), p.z.toFixed(1), 'flees from', alert.x.toFixed(1), alert.z.toFixed(1));
+            }
+          }
+          p.panicUntil = Math.max(p.panicUntil, time + 5 + Math.random() * 3);
+          p.isDwelling = false;
+          p.dwellUntil = 0;
+        }
+      }
+    }
+
+    if (time < p.panicUntil) {
+      let dtx = p.panicFleeX - p.x;
+      let dtz = p.panicFleeZ - p.z;
+      let dist = Math.sqrt(dtx * dtx + dtz * dtz);
+      if (dist < 2.5) {
+        // Extend the flee in roughly the same direction, with a little jitter.
+        const dir = Math.atan2(dtz, dtx);
+        const jitter = (Math.random() - 0.5) * 0.6;
+        p.panicFleeX = p.x + Math.cos(dir + jitter) * 18;
+        p.panicFleeZ = p.z + Math.sin(dir + jitter) * 18;
+        dtx = p.panicFleeX - p.x;
+        dtz = p.panicFleeZ - p.z;
+        dist = Math.sqrt(dtx * dtx + dtz * dtz) || 0.01;
+      }
+      // Fixed running pace — 5 units/sec reads as a visible sprint versus
+      // the ~0.4 u/s normal walk.
+      const moveSpeed = 5 * dt;
+      const nx = p.x + (dtx / dist) * moveSpeed;
+      const nz = p.z + (dtz / dist) * moveSpeed;
+      const ny = getGroundHeight(nx, nz, roadIndex);
+      if (ny > SEA_LEVEL + 0.3) {
+        p.x = nx;
+        p.z = nz;
+        p.y = ny;
+        p.angle = Math.atan2(dtx, dtz);
+      } else {
+        // Blocked by water — pick a new flee target perpendicular to the shore.
+        const dir = Math.atan2(dtz, dtx) + Math.PI / 2;
+        p.panicFleeX = p.x + Math.cos(dir) * 14;
+        p.panicFleeZ = p.z + Math.sin(dir) * 14;
+      }
+      continue;
+    }
 
     if (p.corridorIdx >= 0) {
       // ── Corridor walker ────────────────────────────────────────────

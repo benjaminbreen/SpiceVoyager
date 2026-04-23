@@ -22,7 +22,7 @@ export type KnowledgeLevel = 0 | 1 | 2;
 // expertise to identify a sack of grain.
 
 const UNIVERSALLY_KNOWN: Commodity[] = [
-  'Rice', 'Timber', 'Iron', 'Munitions',
+  'Rice', 'Timber', 'Iron', 'Small Shot', 'Cannon Shot',
 ];
 
 const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
@@ -33,7 +33,7 @@ const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
   Portuguese: [
     'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
     'Cloves', 'Nutmeg', 'Opium', 'Red Coral', 'Quicksilver',
-    'Tobacco', 'Cassia Fistula', 'Lapis de Goa',
+    'Tobacco', 'Cassia Fistula', 'Lapis de Goa', 'Japanese Silver',
   ],
   Dutch: [
     'Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg',
@@ -87,10 +87,10 @@ const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
   ],
   Chinese: [
     'Chinese Porcelain', 'Tea', 'Musk', 'Rhubarb', 'China Root',
-    'Sugar', 'Camphor',
+    'Sugar', 'Camphor', 'Japanese Silver',
   ],
   Japanese: [
-    'Tea', 'Camphor', 'Chinese Porcelain',
+    'Tea', 'Camphor', 'Chinese Porcelain', 'Japanese Silver',
   ],
   Siamese: [
     'Benzoin', 'Camphor', 'Aloes', 'Black Pepper', 'Sugar',
@@ -144,8 +144,13 @@ export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgePr
   Portuguese: {
     identifies: ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg',
                  'Opium', 'Red Coral', 'Quicksilver', 'Lapis de Goa',
-                 'Cassia Fistula', 'Tobacco'],
-    masters: ['Lapis de Goa'],
+                 'Cassia Fistula', 'Tobacco', 'Japanese Silver'],
+    masters: ['Lapis de Goa', 'Japanese Silver'],
+  },
+  Japanese: {
+    identifies: ['Japanese Silver', 'Tea', 'Camphor', 'Chinese Porcelain',
+                 'Musk', 'Rhubarb'],
+    masters: ['Japanese Silver'],
   },
   Ottoman: {
     identifies: ['Coffee', 'Frankincense', 'Myrrh', 'Rose Water',
@@ -306,6 +311,10 @@ const WINDFALL_POOLS: Record<string, Commodity[]> = {
   // South Asia — court-adjacent rarities
   diu:       ['Bezoar Stones'],
   calicut:   ['Bezoar Stones'],
+  // Coromandel — Golconda diamond dust / off-grade opium can surface as rarities
+  masulipatnam: ['Bhang', 'Bezoar Stones'],
+  // Kyushu — overstocked silver sometimes moves blind at favorable rates
+  nagasaki: ['Japanese Silver'],
   // Atlantic / colonial frontier
   jamestown: ['Virginia Tobacco'],
   luanda:    ['Ivory'],

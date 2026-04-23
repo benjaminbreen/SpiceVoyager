@@ -82,6 +82,9 @@ const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   French:     [[0, 20], [1, 35], [2, 25], [14, 10], [3, 7], [11, 3]],
   Spanish:    [[1, 25], [2, 35], [3, 20], [14, 8], [4, 7], [0, 5]],
   Portuguese: [[1, 22], [2, 32], [3, 22], [14, 10], [4, 8], [0, 6]],
+  // Venetian: classic Mediterranean range — olive dominant, fair common,
+  // tanned-weathered for sailors, occasional darker (Aegean/Levantine admixture)
+  Venetian:   [[1, 25], [2, 32], [3, 18], [14, 12], [4, 8], [0, 5]],
   // Middle Eastern: wide range from fair-skinned urbanites to dark-skinned traders
   Ottoman:    [[1, 8], [2, 30], [3, 35], [4, 15], [12, 8], [5, 4]],
   Persian:    [[1, 12], [2, 30], [3, 30], [4, 15], [12, 8], [5, 5]],
@@ -123,6 +126,7 @@ const EYE_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   French:     [[1, 15], [2, 22], [3, 15], [4, 8], [5, 18], [6, 12], [8, 5], [7, 5]],
   Spanish:    [[0, 18], [1, 30], [2, 22], [3, 12], [8, 10], [4, 5], [5, 3]],
   Portuguese: [[0, 18], [1, 28], [2, 22], [3, 14], [8, 10], [4, 5], [5, 3]],
+  Venetian:   [[1, 22], [2, 28], [3, 18], [0, 12], [8, 10], [4, 6], [5, 4]],
   Ottoman:    [[0, 25], [1, 28], [2, 20], [3, 12], [8, 8], [4, 4], [5, 3]],
   Persian:    [[0, 15], [1, 25], [2, 20], [3, 18], [4, 8], [8, 10], [5, 4]],
   Omani:      [[0, 30], [1, 35], [2, 15], [8, 12], [3, 5], [4, 3]],
@@ -169,6 +173,7 @@ const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Spanish:    [[0, 25], [1, 30], [2, 22], [3, 12], [5, 5], [4, 4], [7, 2]],
   // Portuguese: similar to Spanish
   Portuguese: [[0, 22], [1, 30], [2, 25], [3, 12], [5, 5], [4, 4], [7, 2]],
+  Venetian:   [[1, 22], [2, 28], [3, 22], [0, 12], [4, 8], [5, 5], [7, 3]],
   // Ottoman: mostly dark, but auburn/brown exists in Anatolia
   Ottoman:    [[0, 40], [1, 30], [2, 15], [3, 8], [5, 4], [6, 3]],
   // Persian: dark with occasional lighter brown, rare auburn
@@ -262,6 +267,7 @@ const CULTURAL_GROUP_MAP: Record<Nationality, CulturalGroup> = {
   French: 'SouthEuropean',
   Spanish: 'SouthEuropean',
   Portuguese: 'SouthEuropean',
+  Venetian: 'SouthEuropean',
   Ottoman: 'ArabPersian',
   Persian: 'ArabPersian',
   Omani: 'ArabPersian',

@@ -17,11 +17,15 @@ export const WORLD_PORT_COORDS: Record<string, [number, number]> = {
   bantam: [106.15, -6.02],
   socotra: [53.87, 12.47],
   diu: [70.92, 20.71],
+  manila: [120.98, 14.60],
+  nagasaki: [129.87, 32.75],
+  masulipatnam: [81.14, 16.19],
   // Europe
   lisbon: [-9.14, 38.71],
   amsterdam: [4.90, 52.37],
   seville: [-5.99, 37.39],
   london: [-0.08, 51.51],
+  venice: [12.34, 45.44],
   // West Africa
   elmina: [-1.35, 5.08],
   luanda: [13.23, -8.84],
@@ -51,6 +55,7 @@ export const PORT_REGIONS: Record<string, WorldRegion> = {
   amsterdam: 'europe',
   seville: 'europe',
   london: 'europe',
+  venice: 'europe',
   elmina: 'westAfrica',
   luanda: 'westAfrica',
   cape: 'westAfrica',
@@ -68,6 +73,9 @@ export const PORT_REGIONS: Record<string, WorldRegion> = {
   malacca: 'eastIndies',
   bantam: 'eastIndies',
   macau: 'eastIndies',
+  manila: 'eastIndies',
+  nagasaki: 'eastIndies',
+  masulipatnam: 'indianOcean',
   salvador: 'atlantic',
   havana: 'atlantic',
   cartagena: 'atlantic',
@@ -89,9 +97,13 @@ export const MARKET_TRUST: Record<string, number> = {
   lisbon:    0.80,
   amsterdam: 0.85,
   london:    0.80,
+  venice:    0.85,  // strict Republic regulation, sophisticated buyers
   goa:       0.75,
   malacca:   0.75,
   macau:     0.75,
+  manila:    0.70,  // Spanish customs strict; Sangley Parián less so
+  nagasaki:  0.75,  // Shogunate magistrates run a tight dock; Portuguese factors keep honest books
+  masulipatnam: 0.60, // Busy but newer European factories — mid-tier market policing
   hormuz:    0.70,
   seville:   0.75,
 
@@ -123,7 +135,7 @@ export const MARKET_TRUST: Record<string, number> = {
 /** Preset zoom views for the region quick-nav buttons */
 export const REGION_VIEWS: Record<WorldRegion | 'world', { center: [number, number]; scale: number }> = {
   world:       { center: [30, 10],   scale: 0.35 },
-  europe:      { center: [-2, 45],   scale: 1.8  },
+  europe:      { center: [3, 45],    scale: 1.4  },  // widened east to include Venice
   westAfrica:  { center: [10, -5],   scale: 0.9  },
   eastAfrica:  { center: [44, 5],    scale: 1.2  },
   indianOcean: { center: [72, 15],   scale: 0.9  },
@@ -157,13 +169,25 @@ export const WORLD_PORTS: WorldPortSummary[] = CORE_PORTS
 const SEA_LANE_GRAPH: Record<string, string[]> = {
   // Indian Ocean (existing)
   aden: ['mocha', 'mombasa', 'socotra'],
-  bantam: ['calicut', 'macau', 'malacca'],
-  calicut: ['bantam', 'diu', 'goa', 'malacca', 'mocha', 'surat', 'zanzibar'],
+  bantam: ['calicut', 'macau', 'malacca', 'manila'],
+  calicut: ['bantam', 'diu', 'goa', 'malacca', 'masulipatnam', 'mocha', 'surat', 'zanzibar'],
   diu: ['calicut', 'hormuz', 'muscat', 'surat'],
-  goa: ['calicut', 'diu', 'hormuz', 'malacca', 'surat', 'zanzibar'],
+  goa: ['calicut', 'diu', 'hormuz', 'malacca', 'masulipatnam', 'surat', 'zanzibar'],
   hormuz: ['diu', 'goa', 'muscat', 'surat'],
-  macau: ['bantam', 'malacca'],
-  malacca: ['bantam', 'calicut', 'goa', 'macau'],
+  macau: ['bantam', 'malacca', 'manila', 'nagasaki'],
+  malacca: ['bantam', 'calicut', 'goa', 'macau', 'manila', 'masulipatnam'],
+  // Manila — Spanish capital of the Philippines. Reachable from Macau (the
+  // Sangley junk trade), Bantam (Dutch competition), Malacca, and Nagasaki
+  // (Red Seal junk trade up to Kyushu). The Acapulco-galleon link to Spanish
+  // America is not yet modelled.
+  manila: ['macau', 'bantam', 'malacca', 'nagasaki'],
+  // Nagasaki — Kyushu inlet. Reached via the Nao do Trato from Macau and via
+  // Red Seal / junk traffic from Manila. No coastal link down the Ryukyu chain
+  // modelled separately.
+  nagasaki: ['macau', 'manila'],
+  // Masulipatnam — Coromandel. Bay of Bengal traffic to Malacca; around Ceylon
+  // to the Malabar ports (Calicut, Goa).
+  masulipatnam: ['malacca', 'calicut', 'goa'],
   mocha: ['aden', 'calicut', 'muscat', 'surat'],
   muscat: ['diu', 'hormuz', 'mombasa', 'mocha', 'socotra', 'surat'],
   socotra: ['aden', 'mombasa', 'muscat'],
@@ -177,10 +201,14 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   luanda: ['cape', 'elmina', 'salvador'],
   elmina: ['luanda', 'amsterdam', 'lisbon', 'salvador', 'cape'],
   // Europe
-  lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador', 'cape'],
+  lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador', 'cape', 'venice'],
   amsterdam: ['elmina', 'lisbon', 'london'],
-  seville: ['lisbon', 'london', 'havana', 'cartagena'],
+  seville: ['lisbon', 'london', 'havana', 'cartagena', 'venice'],
   london: ['amsterdam', 'lisbon', 'seville', 'jamestown'],
+  // Venice — Adriatic terminus. Reachable from any Iberian port via the long
+  // Mediterranean passage (Gibraltar → Sicily → Otranto → Adriatic). Levantine
+  // ports (Alexandria, Aleppo, Constantinople) are not yet modelled.
+  venice: ['lisbon', 'seville'],
   // Atlantic Americas
   salvador: ['luanda', 'elmina', 'lisbon', 'havana'],
   havana: ['salvador', 'seville', 'cartagena'],
@@ -273,6 +301,15 @@ export const GATEWAYS: Record<string, Gateway> = {
   'iberia-sw':     { coords: [-10, 37] },
   'gibraltar':     { coords: [-7.5, 36],   label: 'Str. of Gibraltar', labelOffset: [0, 18] },
 
+  // ── Mediterranean ────────────────────────────────────────────────
+  'alboran':       { coords: [-2, 36] },
+  'sardinia-s':    { coords: [9, 38] },
+  'sicily-strait': { coords: [11.5, 37],   label: 'Str. of Sicily', labelOffset: [0, 14] },
+  'ionian':        { coords: [18, 37],     label: 'Ionian Sea' },
+  'otranto':       { coords: [19, 40],     label: 'Str. of Otranto' },
+  'adriatic-s':    { coords: [17.5, 42] },
+  'adriatic-n':    { coords: [13.5, 44.5], label: 'Adriatic Sea' },
+
   // ── Atlantic ─────────────────────────────────────────────────────
   'canaries':      { coords: [-17, 28],    label: 'Canary Is.' },
   'cape-verde':    { coords: [-22, 13],    label: 'Cape Verde Is.' },
@@ -323,6 +360,17 @@ export const GATEWAYS: Record<string, Gateway> = {
   'sunda':         { coords: [105, -6.5],  label: 'Sunda Str.' },
   'scs-s':         { coords: [111, 8],     label: 'South China Sea' },
   'scs-n':         { coords: [115, 18] },
+  'manila-app':    { coords: [119, 14] },   // Manila Bay approach off Luzon
+
+  // ── Coromandel (east coast of India) ────────────────────────────
+  'coromandel':    { coords: [82, 13],     label: 'Coromandel Coast', labelOffset: [0, 16] },
+
+  // ── Kyushu corridor — Macau/Manila → Nagasaki ───────────────────
+  // Nao do Trato route: along Taiwan's eastern flank, up through the Ryukyu
+  // chain, into the approaches of Nagasaki's fjord on the west coast of Kyushu.
+  'luzon-n':       { coords: [122, 20.5] },
+  'ryukyu':        { coords: [128, 26],    label: 'Ryukyu Is.' },
+  'kyushu-sw':     { coords: [130, 32],    label: 'Kyushu' },
 };
 
 /**
@@ -337,6 +385,14 @@ const GATEWAY_EDGES: [string, string][] = [
   ['biscay', 'iberia-nw'],
   ['iberia-nw', 'iberia-sw'],
   ['iberia-sw', 'gibraltar'],
+  // Mediterranean — Gibraltar east through to the Adriatic
+  ['gibraltar', 'alboran'],
+  ['alboran', 'sardinia-s'],
+  ['sardinia-s', 'sicily-strait'],
+  ['sicily-strait', 'ionian'],
+  ['ionian', 'otranto'],
+  ['otranto', 'adriatic-s'],
+  ['adriatic-s', 'adriatic-n'],
   ['iberia-nw', 'canaries'],
   ['iberia-sw', 'canaries'],
   ['gibraltar', 'canaries'],
@@ -390,6 +446,20 @@ const GATEWAY_EDGES: [string, string][] = [
   ['java-sea', 'scs-s'],
   ['malacca-n', 'scs-s'],
   ['scs-s', 'scs-n'],
+  // Manila approach — west across the South China Sea to existing nodes
+  ['manila-app', 'scs-n'],
+  ['manila-app', 'scs-s'],
+  // Coromandel — connects to Ceylon passage and Bay of Bengal for
+  // Malacca/Malabar runs to Masulipatnam.
+  ['coromandel', 'ceylon-s'],
+  ['coromandel', 'bengal-bay'],
+  // Kyushu corridor — passes east of Taiwan, up the Ryukyu chain.
+  ['manila-app', 'luzon-n'],
+  ['luzon-n', 'ryukyu'],
+  ['ryukyu', 'kyushu-sw'],
+  // Macau funnels up the same corridor (the Nao do Trato line), entering
+  // at luzon-n rather than cutting through Taiwan Strait.
+  ['scs-n', 'luzon-n'],
 ];
 
 /** Each port's entry gateway(s). Ports can list multiple — shortest total wins. */
@@ -399,6 +469,7 @@ const PORT_GATEWAYS: Record<string, string[]> = {
   amsterdam:  ['channel-e'],
   lisbon:     ['iberia-sw'],
   seville:    ['gibraltar'],
+  venice:     ['adriatic-n'],
   // Atlantic Americas
   jamestown:  ['virginia-capes'],
   havana:     ['florida-str'],
@@ -426,6 +497,9 @@ const PORT_GATEWAYS: Record<string, string[]> = {
   bantam:     ['sunda'],
   malacca:    ['malacca-n'],
   macau:      ['scs-n'],
+  manila:     ['manila-app'],
+  nagasaki:   ['kyushu-sw'],
+  masulipatnam: ['coromandel'],
 };
 
 /** Build adjacency list with great-circle-distance weights. Computed once. */

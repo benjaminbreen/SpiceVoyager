@@ -28,7 +28,8 @@ export type GeographicArchetype =
   | 'peninsula'          // land jutting into water (Macau)
   | 'estuary'            // river mouth fanning out (Surat)
   | 'crater_harbor'      // volcanic caldera harbor (Aden)
-  | 'continental_coast'; // straight coastline (Calicut)
+  | 'continental_coast'  // straight coastline (Calicut)
+  | 'lagoon';            // shallow basin shielded by barrier islands, city on islets (Venice)
 
 export type ClimateProfile = 'tropical' | 'arid' | 'temperate' | 'monsoon' | 'mediterranean';
 
@@ -47,6 +48,8 @@ export type BuildingStyle =
   | 'west-african-round'   // Elmina, Luanda
   | 'luso-brazilian'       // Salvador da Bahia
   | 'spanish-caribbean'    // Havana, Cartagena
+  | 'venetian-gothic'      // Venice (Istrian stone + brick + ogee windows)
+  | 'japanese-tile'        // Nagasaki (post-and-beam timber, white plaster, deep grey-tile hipped roofs)
   | 'khoikhoi-minimal';    // Cape of Good Hope (no permanent settlement)
 
 /**
@@ -205,9 +208,15 @@ export interface PortDefinition {
     | 'jesuit-college'         // Salvador — Jesuit college dominating the upper-town bluff
     | 'palacio-inquisicion'    // Cartagena — colonial palace of the Holy Office
     | 'bom-jesus-basilica'     // Goa — Portuguese baroque church, facade + single bell tower
+    | 'colegio-sao-paulo'      // Macau — Jesuit college + observatory
     | 'diu-fortress'           // Diu — long Portuguese sea-wall with four bastions + keep
+    | 'english-factory-surat'  // Surat — English East India Company factory
     | 'giralda-tower'          // Seville — square Almohad brick minaret + Christian belfry
     | 'calicut-gopuram'        // Calicut — tiered-roof Kerala Hindu shrine
+    | 'campanile-san-marco'    // Venice — slim brick campanile + pyramidal cap, gold-tipped
+    | 'san-agustin-manila'     // Manila — squat Spanish stone church, twin-tower facade (built 1607)
+    | 'church-of-the-assumption' // Nagasaki — Jesuit cathedral, largest church in East Asia until the 1614 expulsion (renderer pending)
+    | 'dutch-factory-masulipatnam' // Masulipatnam — VOC factory, founded 1606 (renderer pending)
     | 'elmina-castle';         // Elmina — squat white Portuguese coastal castle (São Jorge da Mina)
 }
 
@@ -553,6 +562,69 @@ export const CORE_PORTS: PortDefinition[] = [
     landmark: 'al-shadhili-mosque',
   },
   {
+    id: 'manila',
+    name: 'Manila',
+    geography: 'bay',
+    climate: 'tropical',
+    culture: 'European',
+    // Reusing spanish-caribbean for v1 — both are whitewashed stone-and-tile
+    // colonial Spanish, reads correctly from gameplay distance. A bespoke
+    // 'spanish-philippine' style (Intramuros + Chinese-tile Parián) is a
+    // future improvement.
+    buildingStyle: 'spanish-caribbean',
+    scale: 'Large',
+    description: 'The Spanish capital of the Philippines, founded barely forty years ago and already the eastern hinge of the Habsburg trade. Within the stone walls of Intramuros, friars, soldiers, and royal officials run a city that is a third European, two-thirds Sangley Chinese — the Parián outside the walls is a teeming quarter of merchants, silk-weavers, and apothecaries. Once a year the Acapulco galleon arrives heavy with Mexican silver and departs heavier with Chinese silk, porcelain, and Asian medicines bound for New Spain. The bay is one of the great natural harbours of the world, sheltered behind the Bataan peninsula and guarded at its mouth by the island of Corregidor. The smell of frangipani and woodsmoke hangs over the Pasig river at evening.',
+    openDirection: 'W',
+    coastCurvature: 0.85,        // strongly concave — Manila Bay is famously near-enclosed
+    enclosure: 0.55,             // largely sheltered behind Bataan + Cavite
+    harborWidth: 0.48,           // wide bay mouth
+    harborDepth: 0.30,           // deep penetration inland
+    harborShape: 'parabolic',
+    coastRuggedness: 0.85,       // low alluvial coast around the bay, hills behind
+    // The Pasig river bisects the city — a short estuary feeding into the bay
+    riverMouthWidth: 0.10,
+    riverInlandWidth: 0.06,
+    riverLength: 0.45,
+    riverSinuosity: 0.10,
+    bridgeCount: 1,              // Puente Grande / Puente de España linked Intramuros to Binondo
+    headlands: [
+      // Bataan peninsula — the dominant western arm sheltering the bay
+      {
+        side: 'right',
+        size: 0.62,
+        width: 0.22,
+        offset: -0.04,
+        curl: 0.50,              // strong hook south across the bay mouth
+        axisAngle: -10,
+        ruggedness: 1.0,
+      },
+      // Cavite peninsula — smaller southern arm, the Spanish naval anchorage
+      {
+        side: 'left',
+        size: 0.34,
+        width: 0.14,
+        offset: 0.05,
+        curl: 0.30,
+        axisAngle: 8,
+        ruggedness: 0.85,
+      },
+    ],
+    satellites: [
+      // Corregidor — small fortified island guarding the bay entrance
+      {
+        dx: -0.55,
+        dz: 0.05,
+        size: 0.06,
+        aspectRatio: 1.8,
+        orientation: 100,
+        shape: 'rugged',
+        ruggedness: 1.2,
+      },
+    ],
+    flagColor: [0.78, 0.10, 0.12],  // Spanish Habsburg crimson (Cross of Burgundy field)
+    landmark: 'san-agustin-manila',
+  },
+  {
     id: 'bantam',
     name: 'Bantam',
     geography: 'bay',
@@ -703,6 +775,63 @@ export const CORE_PORTS: PortDefinition[] = [
     bridgeCount: 1,            // London Bridge — the only Thames crossing in 1612
     flagColor: [0.95, 0.95, 0.95],  // St George's cross — white field (red bar drawn separately)
     landmark: 'tower-of-london',
+  },
+  {
+    id: 'venice',
+    name: 'Venice',
+    geography: 'lagoon',
+    climate: 'mediterranean',
+    culture: 'European',
+    buildingStyle: 'venetian-gothic',
+    scale: 'Very Large',
+    description: 'The Republic\'s shallow-water capital sits on a hundred islands in a brackish lagoon, the Lido shielding it from the Adriatic. Galleys from Alexandria and Aleppo unload sacks of pepper, cardamom, and indigo at the Rialto, where Greek, German, and Jewish merchants haggle in half a dozen tongues. Murano glass, mirrors, and theriac — the city\'s monopoly polypharmacy compound — flow outward in return. The Cape route has been gnawing at the spice trade for a century, but Levantine pepper still arrives in volume, and the Arsenale lays new galleys at a pace no other yard can match. The air smells of canal silt, wet brick, and woodsmoke from the glass furnaces.',
+    openDirection: 'E',
+    coastRuggedness: 0.55,           // low alluvial coast, gentle noise
+    // Lido — long thin barrier strip on the seaward (open) side
+    satellites: [
+      // Murano — small islet cluster NE of the city, the glassworks island
+      {
+        dx: -0.04,
+        dz: -0.18,
+        size: 0.045,
+        aspectRatio: 1.6,
+        orientation: 60,
+        shape: 'ovoid',
+        ruggedness: 0.7,
+      },
+      // Burano / Torcello — smaller distant islets further into the northern lagoon
+      {
+        dx: -0.20,
+        dz: -0.32,
+        size: 0.035,
+        aspectRatio: 1.4,
+        orientation: 30,
+        shape: 'ovoid',
+        ruggedness: 0.7,
+      },
+      // Giudecca — long thin island just south of the main Venice cluster
+      {
+        dx: 0.18,
+        dz: 0.28,
+        size: 0.07,
+        aspectRatio: 4.2,
+        orientation: 95,             // runs roughly E-W, parallel to the city
+        shape: 'elongated',
+        ruggedness: 0.6,
+      },
+      // San Giorgio Maggiore — small islet just E of central Venice
+      {
+        dx: 0.10,
+        dz: 0.18,
+        size: 0.025,
+        aspectRatio: 1.2,
+        orientation: 0,
+        shape: 'ovoid',
+        ruggedness: 0.5,
+      },
+    ],
+    flagColor: [0.78, 0.10, 0.12],  // Venetian crimson (St Mark's lion field)
+    landmark: 'campanile-san-marco',
   },
 
   // ── West African Ports ───────────────────────────────────────────────────────
@@ -924,6 +1053,67 @@ export const CORE_PORTS: PortDefinition[] = [
     riverSinuosity: 0.15,        // gently meandering
     coastRuggedness: 0.55,       // low tidewater, marshy
     flagColor: [0.95, 0.95, 0.95],  // St George's cross — white field
+  },
+
+  // ── Nagasaki ─────────────────────────────────────────────────────────────────
+  // Deep narrow fjord cutting inland on the west coast of Kyushu. In 1612 this
+  // is the Portuguese Estado's eastern terminus — the Nao do Trato runs between
+  // Macau and Nagasaki, exchanging Chinese silk for Japanese silver. The
+  // Jesuit mission is at its peak (the Church of the Assumption, dedicated 1601,
+  // is the largest Christian church in East Asia) but two years from the 1614
+  // expulsion. Dejima does not yet exist; foreigners live among the city.
+  {
+    id: 'nagasaki',
+    name: 'Nagasaki',
+    geography: 'inlet',
+    climate: 'temperate',
+    culture: 'Indian Ocean',
+    buildingStyle: 'japanese-tile',
+    scale: 'Medium',
+    description: 'A deep fjord cuts northeast into steep wooded mountains on the west coast of Kyushu. The Portuguese black ship — the Nao do Trato — anchors here once a year, trading Chinese silk for Japanese silver under license from the Tokugawa shogunate. Jesuit seminaries, the Church of the Assumption, and the mansions of Christian daimyo crowd the harbor slopes; post-and-beam timber houses with deep grey-tile eaves climb the ravines above. The mood in 1612 is watchful: shogunate magistrates walk the docks, and rumors of an impending expulsion of foreign priests harden month by month.',
+    openDirection: 'W',
+    channelWidth: 0.55,              // narrow fjord, much tighter than Goa
+    enclosure: 0.65,                 // steep mountain flanks enclose the harbor
+    coastRuggedness: 1.25,           // jagged Kyushu coastline
+    headlands: [
+      // Nomozaki peninsula (south flank) — the dominant headland curving north
+      { side: 'right', size: 0.62, width: 0.24, curl: 0.35, axisAngle: 12, ruggedness: 1.2 },
+      // Nishisonogi peninsula (north flank) — smaller, gentler hook
+      { side: 'left',  size: 0.48, width: 0.22, curl: 0.2,  axisAngle: -6, ruggedness: 1.15 },
+    ],
+    landmark: 'church-of-the-assumption',
+  },
+
+  // ── Masulipatnam ─────────────────────────────────────────────────────────────
+  // Estuary port at the Krishna delta on the Coromandel coast. Capital of the
+  // Qutb Shahi sultanate of Golconda's maritime trade in 1612 — Shia-ruled,
+  // mixed Hindu-Muslim population. The Dutch VOC factory was established in
+  // 1606 and the English EIC factory in 1611, making this the Europeans' second
+  // beachhead on the subcontinent after Surat. Famous for cannabis (bhang),
+  // premium opium, and hand-painted kalamkari cottons.
+  {
+    id: 'masulipatnam',
+    name: 'Masulipatnam',
+    geography: 'estuary',
+    climate: 'monsoon',
+    culture: 'Indian Ocean',
+    // Reusing mughal-gujarati for v1; deccani-sultanate style is a future pass.
+    buildingStyle: 'mughal-gujarati',
+    scale: 'Large',
+    description: 'The Krishna river fans out across a shifting delta of sandbars and braided channels into the Bay of Bengal. Under the Shia Qutb Shahi sultanate of Golconda, this is the Deccan\'s great eastward port — Persian textiles, diamonds from the mines inland, bhang and opium from the Coromandel hinterland all flow through. The Dutch VOC planted a factory in 1606 and the English EIC followed in 1611; both sit among the warehouses of Persian, Armenian, and Telugu Hindu merchants. The monsoon closes the port for months twice a year; the rest of the time the roadstead is packed with dhows, junks, and European yachts riding the tide through the sandbar channels.',
+    openDirection: 'E',
+    enclosure: 0.2,                  // low delta coast, little natural shelter
+    riverMouthWidth: 0.35,           // much broader than Surat's Tapti
+    riverInlandWidth: 0.05,          // braids thin upstream
+    riverLength: 0.65,
+    riverSinuosity: 0.22,            // strong meander across the delta
+    coastRuggedness: 0.5,            // soft, low deltaic coast
+    satellites: [
+      // Two low sandbar islets in the river mouth — the "shifting sandbars"
+      { dx:  0.14, dz: 0.02, size: 0.055, aspectRatio: 2.4, orientation: 80, shape: 'elongated', ruggedness: 0.6 },
+      { dx: -0.08, dz: 0.09, size: 0.045, aspectRatio: 2.1, orientation: 95, shape: 'elongated', ruggedness: 0.6 },
+    ],
+    landmark: 'dutch-factory-masulipatnam',
   },
 
   // ── Cape Route Waypoint ──────────────────────────────────────────────────────
@@ -1587,6 +1777,51 @@ export function getArchetypeShape(
         || def.harborOffset !== undefined;
       const carve = hasHarbor ? carveHarbor(rx, wrz, localX, localZ, def, R, MESH_HALF) : 0;
       shape = baseLand - carve - 0.08;
+      break;
+    }
+
+    case 'lagoon': {
+      // Shallow basin shielded by a barrier-island chain (Lido), with the city
+      // sitting on a tight cluster of islets in the middle and mainland coast
+      // on the back side (terra firma). All coords here use rotated wrx/wrz
+      // (rotated to openDirection), so the open sea sits at wrz < ~0 and the
+      // mainland at wrz > ~0.55.
+      //
+      // Layered three contributions, then took the max:
+      //  1. Lido — long thin barrier strip near wrz ≈ 0, with two porti gaps.
+      //  2. City — noisy cluster of small islets in the lagoon middle.
+      //  3. Mainland — solid land beyond wrz ≈ 0.55.
+
+      // ── Lido (barrier islands) ────────────────────────────────────────────
+      const lidoCenter = -0.05;
+      const lidoHalfW = 0.055;
+      const lidoNoise = cn * 0.30;
+      const lidoDist = Math.abs(wrz - lidoCenter);
+      // Two porti (tidal inlets through the Lido) at fixed positions
+      const porto1 = 1 - smoothstep(0.0, 0.05, Math.abs(wrx - 0.22));
+      const porto2 = 1 - smoothstep(0.0, 0.05, Math.abs(wrx + 0.30));
+      const lidoEnvelope = (1 - smoothstep(lidoHalfW * 0.4, lidoHalfW + Math.abs(lidoNoise), lidoDist));
+      const lidoStrength = lidoEnvelope * (1 - 0.95 * Math.max(porto1, porto2)) * 0.85;
+
+      // ── Mainland (terra firma) ────────────────────────────────────────────
+      const mainlandStart = 0.55 + cn * 0.35;
+      const mainland = smoothstep(mainlandStart, mainlandStart + 0.18, wrz) * 0.95;
+
+      // ── City islets ──────────────────────────────────────────────────────
+      const cityCx = -0.04;
+      const cityCz = 0.24;
+      const dCx = wrx - cityCx;
+      const dCz = wrz - cityCz;
+      // Slightly elliptical envelope, longer along the lagoon axis (wrx)
+      const cityRadius = Math.sqrt(dCx * dCx * 0.85 + dCz * dCz * 1.4);
+      const cityEnvelope = smoothstep(0.32, 0.08, cityRadius);
+      // Patchy fragmentation noise — high-freq feature noise carves rii (canals)
+      const cityPatch = (_featureNoise(localX * 0.030 + 240, localZ * 0.030 - 180) + 1) * 0.5;
+      const cityIslets = smoothstep(0.40, 0.62, cityPatch) * cityEnvelope * 0.85;
+      // Subtract narrow channels through the cluster
+      const canals = smoothstep(0.66, 0.82, cityPatch) * cityEnvelope * 0.45;
+
+      shape = Math.max(lidoStrength, mainland, cityIslets) - canals - 0.05;
       break;
     }
   }

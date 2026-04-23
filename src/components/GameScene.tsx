@@ -5,7 +5,7 @@ import { Ocean } from './Ocean';
 import { World, getTreeImpactTargets } from './World';
 import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
-import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, type Building } from '../store/gameStore';
+import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
@@ -22,14 +22,16 @@ import {
 import { SplashSystem } from './SplashSystem';
 import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
 import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail } from '../utils/splashState';
-import { spawnBuildingShake, spawnTreeShake, damagePalm } from '../utils/impactShakeState';
+import { spawnBuildingShake, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
   mouseWorldPos,
   mouseRay,
   projectiles,
   spawnProjectile,
+  activeBowWeapon,
   setSwivelAim,
   clearSwivelAim,
+  setActiveBowWeapon,
   setHuntAim,
   huntAimTarget,
   huntAimValid,
@@ -45,6 +47,9 @@ import {
   setFireHeld,
   broadsideQueue,
   broadsideReload,
+  elevationHoldStart,
+  setElevationHoldStart,
+  getCurrentElevationCharge,
 } from '../utils/combatState';
 import { WEAPON_DEFS, LAND_WEAPON_DEFS, type WeaponType, type LandWeaponType } from '../store/gameStore';
 import { lootForKill } from '../utils/huntLoot';
@@ -58,6 +63,83 @@ function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function treeDamageForWeapon(weaponType: WeaponType | LandWeaponType) {
+  switch (weaponType) {
+    case 'musket': return 2.3;
+    case 'bow': return 1.2;
+    case 'swivelGun':
+      return 3.5;
+    case 'lantaka':
+      return 10.5;
+    case 'cetbang':
+      return 11.5;
+    case 'falconet':
+      return 13;
+    case 'fireRocket':
+      return 12;
+    case 'minion':
+      return 11;
+    case 'saker':
+      return 12;
+    case 'demiCulverin':
+      return 13;
+    case 'demiCannon':
+      return 15;
+    case 'basilisk':
+      return 17;
+  }
+}
+
+function buildingDamageForWeapon(weaponType: WeaponType | LandWeaponType) {
+  switch (weaponType) {
+    case 'musket': return 0.2;
+    case 'bow': return 0.05;
+    case 'swivelGun':
+      return 1.5;
+    case 'lantaka':
+      return 3.4;
+    case 'cetbang':
+      return 4;
+    case 'falconet':
+      return 10.5;
+    case 'fireRocket':
+      return 6;
+    case 'minion':
+      return 7;
+    case 'saker':
+      return 10;
+    case 'demiCulverin':
+      return 12;
+    case 'demiCannon':
+      return 16;
+    case 'basilisk':
+      return 18;
+  }
+}
+
+function buildingMaxHp(building: Building) {
+  switch (building.type) {
+    case 'shack': return 5;
+    case 'house':
+    case 'farmhouse':
+      return 8;
+    case 'warehouse':
+    case 'market':
+      return 11;
+    case 'estate':
+    case 'spiritual':
+    case 'landmark':
+    case 'palace':
+      return 15;
+    case 'fort':
+      return 24;
+    case 'dock':
+    case 'plaza':
+    default:
+      return 10;
+  }
 }
 
 const HUNT_AIM_WILDLIFE_BUFFER = 0.45;
@@ -116,6 +198,37 @@ const _segmentDelta = new THREE.Vector3();
 const _segmentOffset = new THREE.Vector3();
 const _segmentHit = new THREE.Vector3();
 const _markerBaseNormal = new THREE.Vector3(0, 0, 1);
+
+function bowWeaponGravity(weaponType: WeaponType) {
+  switch (weaponType) {
+    case 'swivelGun':
+      return 0.4;
+    case 'falconet':
+      return 5.5;
+    case 'lantaka':
+    case 'cetbang':
+      return 8;
+    case 'fireRocket':
+      return 4;
+    default:
+      return SHIP_PROJECTILE_GRAVITY;
+  }
+}
+
+function bowWeaponLaunchSpeed(weaponType: WeaponType) {
+  switch (weaponType) {
+    case 'fireRocket':
+      return WEAPON_DEFS.fireRocket.range * 2.5;
+    case 'falconet':
+      return WEAPON_DEFS.falconet.range * 3.5;
+    default:
+      return WEAPON_DEFS[weaponType].range * 4;
+  }
+}
+
+function bowWeaponUsesBallisticArc(weaponType: WeaponType) {
+  return weaponType !== 'swivelGun';
+}
 function aimSurfaceHeight(x: number, z: number) {
   return Math.max(getTerrainHeight(x, z), SEA_LEVEL);
 }
@@ -215,6 +328,7 @@ function intersectBuildingSegment(start: THREE.Vector3, end: THREE.Vector3, outP
 function intersectTreeSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
   let bestT = Infinity;
   for (const tree of getTreeImpactTargets()) {
+    if (isTreeFelled(tree.kind, tree.index)) continue;
     _sphereCenter.set(tree.x, tree.y, tree.z);
     const t = intersectSegmentSphere(start, end, _sphereCenter, tree.radius, _segmentHit, _aimObjectNormal);
     if (t < bestT) {
@@ -341,6 +455,7 @@ function intersectTreeAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.
   const maxDistanceSq = maxDistance * maxDistance;
   let bestDistSq = Infinity;
   for (const tree of getTreeImpactTargets()) {
+    if (isTreeFelled(tree.kind, tree.index)) continue;
     _huntAimSphere.center.set(tree.x, tree.y, tree.z);
     _huntAimSphere.radius = tree.radius;
     const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
@@ -540,6 +655,7 @@ function pointHitsBuilding(point: THREE.Vector3) {
 
 function pointHitsTree(point: THREE.Vector3) {
   for (const tree of getTreeImpactTargets()) {
+    if (isTreeFelled(tree.kind, tree.index)) continue;
     const dx = point.x - tree.x;
     const dy = point.y - tree.y;
     const dz = point.z - tree.z;
@@ -573,15 +689,33 @@ function getSwivelMountWorld(out: THREE.Vector3) {
   );
 }
 
-// Ship-mode aim resolver: only NPC ships and the water/coastal surface count
-// as valid swivel targets. Skips wildlife/buildings/trees that resolveHuntAim
-// would scan — saves work and keeps the marker focused on naval combat.
+// Ship-mode aim resolver: naval targets remain valid, but swivel shots can
+// also resolve shoreline wildlife, buildings, and trees so near-coast fire
+// behaves like the visible world suggests.
 function resolveSwivelAimTarget(ray: THREE.Ray, fallbackDistance: number, out: THREE.Vector3): boolean {
   let bestDistSq = Infinity;
+
+  const wildlifeDistSq = intersectWildlifeAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (wildlifeDistSq < bestDistSq) {
+    bestDistSq = wildlifeDistSq;
+    out.copy(_aimObjectHit);
+  }
 
   const shipDistSq = intersectNpcShipAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
   if (shipDistSq < bestDistSq) {
     bestDistSq = shipDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const buildingDistSq = intersectBuildingAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (buildingDistSq < bestDistSq) {
+    bestDistSq = buildingDistSq;
+    out.copy(_aimObjectHit);
+  }
+
+  const treeDistSq = intersectTreeAimTarget(ray, HUNT_AIM_MAX_DISTANCE, _aimObjectHit);
+  if (treeDistSq < bestDistSq) {
+    bestDistSq = treeDistSq;
     out.copy(_aimObjectHit);
   }
 
@@ -613,7 +747,12 @@ function solveBallisticPitch(flatDist: number, dy: number, speed: number, gravit
 function resolveCurrentSwivelFire(origin: THREE.Vector3, direction: THREE.Vector3) {
   if (!swivelAimValid) return false;
   getSwivelMountWorld(origin);
-  direction.copy(swivelAimTarget).sub(origin);
+  const cosPitch = Math.cos(swivelAimPitch);
+  direction.set(
+    Math.sin(swivelAimAngle) * cosPitch,
+    Math.sin(swivelAimPitch),
+    Math.cos(swivelAimAngle) * cosPitch,
+  );
   if (direction.lengthSq() < 1e-6) return false;
   direction.normalize();
   // Step forward along barrel so we don't spawn inside the ship hull.
@@ -625,6 +764,7 @@ function predictSwivelImpactPoint(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   speed: number,
+  gravity: number,
   out: THREE.Vector3,
   outNormal: THREE.Vector3,
 ): LandImpactKind {
@@ -634,16 +774,40 @@ function predictSwivelImpactPoint(
   for (let t = 0; t < SHIP_PROJECTILE_LIFE; t += LAND_MARKER_STEP) {
     const dt = Math.min(LAND_MARKER_STEP, SHIP_PROJECTILE_LIFE - t);
     _predictSegmentStart.copy(_landPredictPos);
-    _landPredictVel.y -= SHIP_PROJECTILE_GRAVITY * dt;
+    _landPredictVel.y -= gravity * dt;
     _landPredictPos.addScaledVector(_landPredictVel, dt);
 
     let bestT = Infinity;
     let bestKind: LandImpactKind = 'none';
 
+    const wildlifeT = intersectWildlifeSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (wildlifeT < bestT) {
+      bestT = wildlifeT;
+      bestKind = 'wildlife';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
     const shipT = intersectNpcShipSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
     if (shipT < bestT) {
       bestT = shipT;
       bestKind = 'wildlife'; // re-uses gold marker color for "valid hit"
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const treeT = intersectTreeSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (treeT < bestT) {
+      bestT = treeT;
+      bestKind = 'tree';
+      out.copy(_segmentHit);
+      outNormal.copy(_aimObjectNormal);
+    }
+
+    const buildingT = intersectBuildingSegment(_predictSegmentStart, _landPredictPos, _segmentHit, _aimObjectNormal);
+    if (buildingT < bestT) {
+      bestT = buildingT;
+      bestKind = 'surface';
       out.copy(_segmentHit);
       outNormal.copy(_aimObjectNormal);
     }
@@ -757,11 +921,13 @@ function CameraController() {
     const el = gl.domElement;
 
     const handleWheel = (e: WheelEvent) => {
-      // Step scales with current zoom so it feels consistent at all distances
-      const step = Math.max(1.5, zoomTarget.current * 0.06);
-      zoomTarget.current = Math.max(10, Math.min(150,
-        zoomTarget.current + (e.deltaY > 0 ? step : -step)
-      ));
+      // Scale step by both the raw wheel delta (trackpads send small deltas;
+      // mouse wheels send ~100/detent) and current zoom, so fine trackpad
+      // flicks nudge gently while mouse-wheel ticks still feel responsive.
+      // DOM_DELTA_LINE (1) reports in lines, not pixels — normalize to ~16px.
+      const deltaPx = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const step = deltaPx * zoomTarget.current * 0.0018;
+      zoomTarget.current = Math.max(10, Math.min(300, zoomTarget.current + step));
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -816,7 +982,7 @@ function CameraController() {
         // apart → zoom in (dist grows → ratio > 1 → zoom shrinks).
         if (pinchPrevDist > 0) {
           const ratio = pinchPrevDist / dist;
-          zoomTarget.current = Math.max(10, Math.min(150, zoomTarget.current * ratio));
+          zoomTarget.current = Math.max(10, Math.min(300, zoomTarget.current * ratio));
         }
 
         // Pan: midpoint delta in world units (same scale as desktop right-drag).
@@ -868,11 +1034,6 @@ function CameraController() {
       if (isTouchEvent(e)) return;
       if (e.button === 0 && useGameStore.getState().combatMode) {
         setFireHeld(true);
-      }
-      // Right-click fires a rocket (one shot per click, own reload timer).
-      // Only does anything if the current ship has a fireRocket mounted.
-      if (e.button === 2 && useGameStore.getState().combatMode) {
-        tryFireRocket();
       }
     };
 
@@ -940,7 +1101,7 @@ function CameraController() {
     // Smooth zoom lerp — gentle ease-out
     const currentZoom = useGameStore.getState().cameraZoom;
     if (Math.abs(zoomTarget.current - currentZoom) > 0.05) {
-      const lerpSpeed = 1 - Math.exp(-delta * 6); // smooth ~6/s convergence
+      const lerpSpeed = 1 - Math.exp(-delta * 4); // gentler convergence so trackpad flicks don't snap
       setCameraZoom(currentZoom + (zoomTarget.current - currentZoom) * lerpSpeed);
     }
 
@@ -1096,10 +1257,12 @@ function CameraController() {
         const dz = _swivelAimTarget.z - _swivelMuzzleOrigin.z;
         const flatDist = Math.sqrt(dx * dx + dz * dz);
         const yaw = Math.atan2(dx, dz);
-        const speed = WEAPON_DEFS.swivelGun.range * 4;
-        const ballistic = solveBallisticPitch(Math.max(0.001, flatDist), dy, speed, SHIP_PROJECTILE_GRAVITY);
-        // Fall back to a straight line if the target is out of reach so the
-        // marker still tracks the cursor (just lands short).
+        const selected = resolveActiveBowWeapon(useGameStore.getState().stats.armament);
+        const speed = bowWeaponLaunchSpeed(selected);
+        const gravity = bowWeaponGravity(selected);
+        const ballistic = bowWeaponUsesBallisticArc(selected)
+          ? solveBallisticPitch(Math.max(0.001, flatDist), dy, speed, gravity)
+          : null;
         const rawPitch = ballistic ?? Math.atan2(dy, Math.max(0.001, flatDist));
         const pitch = THREE.MathUtils.clamp(rawPitch, SWIVEL_VISUAL_PITCH_MIN, SWIVEL_VISUAL_PITCH_MAX);
         setSwivelAim(yaw, pitch, _swivelAimTarget);
@@ -1127,7 +1290,7 @@ function tryFireLandWeapon() {
 
   if (!resolveCurrentHuntFire(_huntAimFireOrigin, _huntAimFireDir)) return;
 
-  // Ammo check (musket needs Munitions, bow is free)
+  // Ammo check (musket needs Small Shot, bow is free)
   if (def.ammoCommodity) {
     const have = state.cargo[def.ammoCommodity] ?? 0;
     if (have < def.ammoPerShot) {
@@ -1184,77 +1347,108 @@ function tryFireLandWeapon() {
 }
 
 // Interaction controller
-// Shared fire logic — called by both spacebar and mouse hold
+// Shared fire logic — called by held mouse/touch fire
 const lastFireTimeGlobal = { current: 0 };
-// Rocket fires on a separate cooldown so it doesn't compete with the swivel's
-// rapid button-held cadence. Right-click is the ignition input.
-const lastRocketFireTimeGlobal = { current: 0 };
 
-/** Which swivel-family weapon is mounted (swivelGun / lantaka / cetbang).
- *  We pick the first aimable non-rocket we find. Returns null if the ship
- *  has no swivel-class weapon at all. */
-function activeSwivelType(armament: WeaponType[]): WeaponType | null {
-  for (const w of armament) {
-    if (WEAPON_DEFS[w].aimable && w !== 'fireRocket') return w;
-  }
-  return null;
+function mountedBowWeapons(armament: WeaponType[]) {
+  return armament.filter((w) => WEAPON_DEFS[w].aimable);
 }
 
-function tryFireSwivel() {
+function resolveActiveBowWeapon(armament: WeaponType[]): WeaponType {
+  const bowWeapons = mountedBowWeapons(armament);
+  if (bowWeapons.length === 0) return 'swivelGun';
+  if (bowWeapons.includes(activeBowWeapon)) return activeBowWeapon;
+  const next = bowWeapons[0];
+  setActiveBowWeapon(next);
+  return next;
+}
+
+function cycleActiveBowWeapon(armament: WeaponType[]) {
+  const bowWeapons = mountedBowWeapons(armament);
+  if (bowWeapons.length <= 1) return null;
+  const current = resolveActiveBowWeapon(armament);
+  const idx = bowWeapons.indexOf(current);
+  const next = bowWeapons[(idx + 1) % bowWeapons.length];
+  setActiveBowWeapon(next);
+  return next;
+}
+
+function tryFireBowWeapon() {
   const now = Date.now();
   const state = useGameStore.getState();
   if (!state.combatMode || state.playerMode !== 'ship') return;
-  const swivelType = activeSwivelType(state.stats.armament);
-  if (!swivelType) return;
-  const reloadMs = WEAPON_DEFS[swivelType].reloadTime * 1000;
+  const bowWeapon = resolveActiveBowWeapon(state.stats.armament);
+  const reloadMs = WEAPON_DEFS[bowWeapon].reloadTime * 1000;
   if (now - lastFireTimeGlobal.current < reloadMs) return;
+  const ammoCommodity = bowWeapon === 'fireRocket'
+    ? 'War Rockets'
+    : bowWeapon === 'falconet'
+      ? 'Cannon Shot'
+      : 'Small Shot';
+  if (bowWeapon === 'fireRocket') {
+    const rocketsOnHand = state.cargo['War Rockets'] ?? 0;
+    if (rocketsOnHand < 1) {
+      state.addNotification('No war rockets loaded! Resupply at Macau.', 'warning');
+      return;
+    }
+  } else if (bowWeapon === 'falconet') {
+    const cannonShot = state.cargo['Cannon Shot'] ?? 0;
+    if (cannonShot < 1) {
+      state.addNotification('Out of Cannon Shot!', 'warning');
+      return;
+    }
+  } else {
+    const smallShot = state.cargo['Small Shot'] ?? 0;
+    if (smallShot < 1) {
+      state.addNotification('Out of Small Shot!', 'warning');
+      return;
+    }
+  }
   // Fire along the resolved 3D aim — pitch is set by the ballistic solver in
   // CameraController so the round lands where the marker shows.
   if (!resolveCurrentSwivelFire(_swivelMuzzleOrigin, _swivelFireDir)) return;
 
+  const targetDistance = _swivelMuzzleOrigin.distanceTo(swivelAimTarget);
+  const effectiveRange = WEAPON_DEFS[bowWeapon].range;
+  if (targetDistance > effectiveRange) {
+    const overshoot = Math.min(1, (targetDistance - effectiveRange) / Math.max(1, effectiveRange));
+    const yawDrift = (Math.random() - 0.5) * overshoot * (bowWeapon === 'swivelGun' ? 0.08 : 0.2);
+    const pitchDrift = (Math.random() - 0.5) * overshoot * (bowWeapon === 'swivelGun' ? 0.04 : 0.12);
+    const driftedYaw = swivelAimAngle + yawDrift;
+    const driftedPitch = THREE.MathUtils.clamp(swivelAimPitch + pitchDrift, SWIVEL_VISUAL_PITCH_MIN, SWIVEL_VISUAL_PITCH_MAX);
+    const cosPitch = Math.cos(driftedPitch);
+    _swivelFireDir.set(
+      Math.sin(driftedYaw) * cosPitch,
+      Math.sin(driftedPitch),
+      Math.cos(driftedYaw) * cosPitch,
+    ).normalize();
+  }
+
   lastFireTimeGlobal.current = now;
-  spawnProjectile(_swivelMuzzleOrigin, _swivelFireDir, WEAPON_DEFS[swivelType].range * 4, swivelType);
-  sfxCannonFire();
+  if (bowWeapon === 'fireRocket') {
+    const yawDrift = (Math.random() - 0.5) * (Math.PI / 30);
+    const pitchDrift = (Math.random() - 0.5) * (Math.PI / 45);
+    const cosY = Math.cos(yawDrift);
+    const sinY = Math.sin(yawDrift);
+    const dx = _swivelFireDir.x;
+    const dz = _swivelFireDir.z;
+    _swivelFireDir.x = dx * cosY - dz * sinY;
+    _swivelFireDir.z = dx * sinY + dz * cosY;
+    _swivelFireDir.y += pitchDrift;
+    _swivelFireDir.normalize();
+    useGameStore.setState({
+      cargo: { ...state.cargo, 'War Rockets': (state.cargo['War Rockets'] ?? 0) - 1 },
+    });
+    spawnProjectile(_swivelMuzzleOrigin, _swivelFireDir, bowWeaponLaunchSpeed(bowWeapon), bowWeapon);
+    sfxRocketFire();
+  } else {
+    useGameStore.setState({
+      cargo: { ...state.cargo, [ammoCommodity]: (state.cargo[ammoCommodity] ?? 0) - 1 },
+    });
+    spawnProjectile(_swivelMuzzleOrigin, _swivelFireDir, bowWeaponLaunchSpeed(bowWeapon), bowWeapon);
+    sfxCannonFire();
+  }
   // Notify Ship.tsx to spawn muzzle flash particles
-  window.dispatchEvent(new CustomEvent('swivel-fired'));
-}
-
-/** Fire the rocket rack — right-click input. The rocket ignores the swivel's
- *  reload and has its own (much longer) cooldown. Direction is perturbed by
- *  a random drift so rockets miss a bit even when the reticle is on target
- *  — historically accurate and makes the weapon feel wild. */
-function tryFireRocket() {
-  const now = Date.now();
-  const state = useGameStore.getState();
-  if (!state.combatMode || state.playerMode !== 'ship') return;
-  if (!state.stats.armament.includes('fireRocket')) return;
-  const reloadMs = WEAPON_DEFS.fireRocket.reloadTime * 1000;
-  if (now - lastRocketFireTimeGlobal.current < reloadMs) return;
-  if (!resolveCurrentSwivelFire(_swivelMuzzleOrigin, _swivelFireDir)) return;
-
-  // Accuracy drift — perturb yaw ±3° and pitch ±2° before launch.
-  const yawDrift = (Math.random() - 0.5) * (Math.PI / 30); // ≈ ±3°
-  const pitchDrift = (Math.random() - 0.5) * (Math.PI / 45); // ≈ ±2°
-  const cosY = Math.cos(yawDrift);
-  const sinY = Math.sin(yawDrift);
-  const dx = _swivelFireDir.x;
-  const dz = _swivelFireDir.z;
-  _swivelFireDir.x = dx * cosY - dz * sinY;
-  _swivelFireDir.z = dx * sinY + dz * cosY;
-  _swivelFireDir.y += pitchDrift;
-  _swivelFireDir.normalize();
-
-  lastRocketFireTimeGlobal.current = now;
-  // Lower launch speed than a swivel round (range × 2.5 vs. × 4) so the
-  // rocket reads as a visible arcing projectile rather than an instant
-  // hitscan line.
-  spawnProjectile(
-    _swivelMuzzleOrigin,
-    _swivelFireDir,
-    WEAPON_DEFS.fireRocket.range * 2.5,
-    'fireRocket',
-  );
-  sfxRocketFire();
   window.dispatchEvent(new CustomEvent('swivel-fired'));
 }
 
@@ -1275,13 +1469,13 @@ function tryFireBroadside(side: 'port' | 'starboard') {
   }
 
   // Check ammo
-  if (state.cargo.Munitions < broadsideWeapons.length) {
-    state.addNotification('Not enough shot! Need munitions.', 'warning');
+  if ((state.cargo['Cannon Shot'] ?? 0) < broadsideWeapons.length) {
+    state.addNotification('Not enough Cannon Shot loaded.', 'warning');
     return;
   }
 
-  // Consume munitions
-  const newCargo = { ...state.cargo, Munitions: state.cargo.Munitions - broadsideWeapons.length };
+  // Consume round shot
+  const newCargo = { ...state.cargo, 'Cannon Shot': (state.cargo['Cannon Shot'] ?? 0) - broadsideWeapons.length };
   // Use direct set via store — can't call buyCommodity here
   useGameStore.setState({ cargo: newCargo });
 
@@ -1308,6 +1502,12 @@ function tryFireBroadside(side: 'port' | 'starboard') {
   const gunnerBonus = gunner ? 1 - (gunner.skill / 500) : 1; // skill 100 → 20% faster
   broadsideReload[side] = now + maxReload * 1000 * gunnerBonus;
 
+  // Elevation charge: hold SPACE in combat mode to loft cannonballs at shore targets.
+  // At charge=0 (default): flat fire good for ships. At charge=1: slow lofted arc
+  // that peaks at ~6 units and lands at ~20-45 units — enough to clear the
+  // waterline and drop onto port buildings.
+  const elevCharge = getCurrentElevationCharge();
+
   // Queue rolling broadside — stagger each cannon by ~150ms
   const STAGGER_MS = 150;
   broadsideWeapons.forEach((weaponType, idx) => {
@@ -1319,16 +1519,20 @@ function tryFireBroadside(side: 'port' | 'starboard') {
     const originZ = shipPos[2] + Math.cos(shipRot) * alongShip + sideDir.z * HULL_HALF_WIDTH;
     const origin = new THREE.Vector3(originX, 1.2, originZ);
 
-    // Direction: perpendicular + slight random spread (±5°)
-    const spread = (Math.random() - 0.5) * 0.17; // ~±5 degrees
+    // Direction: perpendicular + slight random spread (±5°, tightens at elevation)
+    const spread = (Math.random() - 0.5) * (0.17 - elevCharge * 0.08);
     const dirAngle = sideAngle + spread;
+    // Elevation: 0.15 base (ship targets) → 0.45 max (shore bombardment arc)
+    const baseUpward = 0.15 + elevCharge * 0.3;
     const dir = new THREE.Vector3(
       Math.sin(dirAngle),
-      0.15 + Math.random() * 0.1, // slight upward arc
+      baseUpward + Math.random() * (0.1 - elevCharge * 0.08),
       Math.cos(dirAngle),
     ).normalize();
 
-    const speed = WEAPON_DEFS[weaponType].range * 3.5;
+    // Elevated shots are slower so the arc peaks and lands at shore distance
+    // rather than flying over buildings. At charge=1: range×0.35 ≈ mortar range.
+    const speed = WEAPON_DEFS[weaponType].range * (3.5 - elevCharge * 3.15);
 
     broadsideQueue.push({
       fireAt: now + idx * STAGGER_MS,
@@ -1342,8 +1546,9 @@ function tryFireBroadside(side: 'port' | 'starboard') {
 
   // Notify Ship.tsx for smoke effects
   window.dispatchEvent(new CustomEvent('broadside-fired', { detail: { side } }));
+  const elevMsg = elevCharge > 0.15 ? ` — elevated ${Math.round(elevCharge * 30)}°` : '';
   state.addNotification(
-    `${side === 'port' ? 'Port' : 'Starboard'} broadside! (${broadsideWeapons.length} guns)`,
+    `${side === 'port' ? 'Port' : 'Starboard'} broadside! (${broadsideWeapons.length} guns)${elevMsg}`,
     'info',
   );
 }
@@ -1543,6 +1748,24 @@ function InteractionController() {
             state.addNotification(`Harvested the ${name}.`, 'success');
             spawnFloatingLoot(w.x, w.y + 0.6, w.z, [`+ ${name}`]);
           }
+        } else if (state.playerMode === 'ship') {
+          e.preventDefault();
+          if (state.combatMode) {
+            // Hold SPACE to charge broadside elevation for shore bombardment.
+            // Q/R fired while held uses the built-up elevation angle.
+            if (elevationHoldStart === null) setElevationHoldStart(Date.now());
+          } else {
+            // Spacebar in normal mode = toggle anchor
+            const nextAnchored = !state.anchored;
+            state.setAnchored(nextAnchored);
+            if (nextAnchored) {
+              sfxAnchorDrop();
+              state.addNotification('Anchor dropped.', 'info');
+            } else {
+              sfxAnchorWeigh();
+              state.addNotification('Weighing anchor.', 'info');
+            }
+          }
         }
       } else if (key === 't') {
         // Hailing is handled by the HUD HailPanel so it can present choices.
@@ -1550,6 +1773,12 @@ function InteractionController() {
         tryFireBroadside('port');
       } else if (key === 'r' && state.playerMode === 'ship' && state.combatMode) {
         tryFireBroadside('starboard');
+      } else if (key === 'tab' && state.playerMode === 'ship' && state.combatMode) {
+        e.preventDefault();
+        const next = cycleActiveBowWeapon(state.stats.armament);
+        if (next) {
+          state.addNotification(`Mounted weapon: ${WEAPON_DEFS[next].name}.`, 'info');
+        }
       } else if (key === 'f' && state.playerMode === 'ship') {
         // Toggle combat mode
         const next = !state.combatMode;
@@ -1580,27 +1809,13 @@ function InteractionController() {
         state.cycleLandWeapon();
         const next = useGameStore.getState().activeLandWeapon;
         state.addNotification(`Switched to ${LAND_WEAPON_DEFS[next].name}.`, 'info');
-      } else if (key === ' ' && state.playerMode === 'ship') {
-        e.preventDefault();
-        if (state.combatMode) {
-          setFireHeld(true);
-          tryFireSwivel();
-        } else {
-          // Spacebar in normal mode = toggle anchor
-          const nextAnchored = !state.anchored;
-          state.setAnchored(nextAnchored);
-          if (nextAnchored) {
-            sfxAnchorDrop();
-            state.addNotification('Anchor dropped.', 'info');
-          } else {
-            sfxAnchorWeigh();
-            state.addNotification('Weighing anchor.', 'info');
-          }
-        }
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') setFireHeld(false);
+      if (e.key === ' ') {
+        setFireHeld(false);
+        setElevationHoldStart(null);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
@@ -1628,7 +1843,7 @@ function ProjectileSystem() {
     // based on player mode. Each weapon's own reload timer prevents spam.
     if (fireHeld) {
       const pm = useGameStore.getState().playerMode;
-      if (pm === 'ship') tryFireSwivel();
+      if (pm === 'ship') tryFireBowWeapon();
       else if (pm === 'walking') tryFireLandWeapon();
     }
 
@@ -1660,10 +1875,13 @@ function ProjectileSystem() {
       const isLandWeapon = p.weaponType === 'musket' || p.weaponType === 'bow';
       const isRocket = p.weaponType === 'fireRocket';
 
-      // Land weapons fly mostly flat — only a tiny droop at distance.
-      // Rockets fly with lower gravity for a flatter, longer arc.
-      // Other ship weapons keep their existing gravity curve.
-      const g = isLandWeapon ? LAND_PROJECTILE_GRAVITY : (isRocket ? 4 : 15);
+      // Land weapons fly mostly flat. Mounted bow weapons use per-weapon
+      // gravity so the swivel stays direct-fire while rockets/lantakas/cetbangs
+      // keep a visible arc. Broadsides retain their heavier drop.
+      const shipGravity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable
+        ? bowWeaponGravity(p.weaponType as WeaponType)
+        : SHIP_PROJECTILE_GRAVITY;
+      const g = isLandWeapon ? LAND_PROJECTILE_GRAVITY : shipGravity;
       p.vel.y -= g * delta;
       p.pos.addScaledVector(p.vel, delta);
 
@@ -1748,7 +1966,10 @@ function ProjectileSystem() {
           const impactIntensity = p.weaponType === 'musket' ? 0.9 : 0.55;
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.65);
+          applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType), buildingMaxHp(building));
           spawnBuildingShake(building.id, impactIntensity);
+          const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
+          if (portFaction) adjustReputation(portFaction, -20);
           projectiles.splice(i, 1);
           continue;
         }
@@ -1759,6 +1980,7 @@ function ProjectileSystem() {
             : (p.weaponType === 'musket' ? 0.95 : 0.6);
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.6 : 0.45));
+          applyTreeDamage(tree.kind, tree.index, treeDamageForWeapon(p.weaponType), p.vel.x, p.vel.z);
           spawnTreeShake(tree.kind, tree.index, impactIntensity);
           if (tree.kind === 'palm') {
             damagePalm(tree.index, impactIntensity);
@@ -1843,6 +2065,76 @@ function ProjectileSystem() {
         continue;
       }
 
+      for (const [id, w] of wildlifeLivePositions) {
+        if (w.dead) continue;
+        const dx = p.pos.x - w.x;
+        const dz = p.pos.z - w.z;
+        const dy = p.pos.y - (w.y + 0.5);
+        const r = Math.max(w.radius, 0.8);
+        if (dx * dx + dz * dz < r * r && Math.abs(dy) < 2.1) {
+          const projectileDef = WEAPON_DEFS[p.weaponType as WeaponType];
+          const impactScale = projectileDef?.aimable ? 0.65 : 1.0;
+          const damage = Math.max(1, Math.floor((projectileDef?.damage ?? 1) * 0.5));
+          w.hp = Math.max(0, w.hp - damage);
+          w.hitAlert = Date.now() + 8000;
+          spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactScale);
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactScale * 0.7);
+          if (w.hp <= 0) {
+            w.dead = true;
+            w.y = getTerrainHeight(w.x, w.z);
+            wildlifeKillQueue.add(id);
+            const loot = lootForKill(w.template, w.variant);
+            const name = loot?.commonName ?? w.variant;
+            addNotification(`Killed a ${name}.`, 'success', {
+              subtitle: 'Walk over to harvest.',
+            });
+          } else {
+            const hpPct = Math.round((w.hp / w.maxHp) * 100);
+            addNotification(`Hit the ${w.variant}. (${hpPct}% HP)`, 'warning');
+          }
+          projectiles.splice(i, 1);
+          hit = true;
+          break;
+        }
+      }
+      if (hit) continue;
+
+      const building = pointHitsBuilding(p.pos);
+      if (building) {
+        const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.8 : 1.2;
+        spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
+        spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.7);
+        applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType), buildingMaxHp(building));
+        spawnBuildingShake(building.id, impactIntensity);
+        const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
+        const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
+        if (portFaction) adjustReputation(portFaction, isAimable ? -10 : -25);
+        projectiles.splice(i, 1);
+        continue;
+      }
+
+      const tree = pointHitsTree(p.pos);
+      if (tree) {
+        const baseImpact = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.95 : 1.3;
+        const impactIntensity = tree.kind === 'palm' ? baseImpact * 1.15 : baseImpact;
+        spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.85);
+        spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.62 : 0.48));
+        applyTreeDamage(tree.kind, tree.index, treeDamageForWeapon(p.weaponType as WeaponType), p.vel.x, p.vel.z);
+        spawnTreeShake(tree.kind, tree.index, impactIntensity);
+        if (tree.kind === 'palm') {
+          damagePalm(tree.index, impactIntensity);
+        }
+        projectiles.splice(i, 1);
+        continue;
+      }
+
+      const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
+      if (p.pos.y <= surfaceY) {
+        spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : 0.7);
+        projectiles.splice(i, 1);
+        continue;
+      }
+
       for (const [, npc] of npcLivePositions) {
         if (npc.sunk) continue;
         const dx = p.pos.x - npc.x;
@@ -1874,16 +2166,18 @@ function ProjectileSystem() {
       if (hit) continue;
     }
 
-    // Update instanced mesh — broadside cannonballs larger, musket/bow smaller
+    // Update instanced mesh — musket/swivel shots stay readable but smaller
+    // than broadside cannonballs.
     for (let i = 0; i < PROJECTILE_COUNT; i++) {
       if (i < projectiles.length) {
         dummy.position.copy(projectiles[i].pos);
         const wt = projectiles[i].weaponType;
-        const s = wt === 'musket' ? 0.35
-                : wt === 'bow' ? 0.4
-                : wt === 'fireRocket' ? 1.4
-                : (wt === 'swivelGun' || wt === 'lantaka' || wt === 'cetbang') ? 1
-                : 1.6;
+        const s = wt === 'musket' ? 0.28
+                : wt === 'bow' ? 0.22
+                : wt === 'fireRocket' ? 0.95
+                : wt === 'falconet' ? 0.72
+                : (wt === 'swivelGun' || wt === 'lantaka' || wt === 'cetbang') ? 0.55
+                : 0.9;
         dummy.scale.setScalar(s);
       } else {
         dummy.position.set(0, -1000, 0);
@@ -2027,11 +2321,14 @@ function SwivelAimMarker() {
       return;
     }
 
-    const speed = WEAPON_DEFS.swivelGun.range * 4;
+    const selected = resolveActiveBowWeapon(gs.stats.armament);
+    const speed = bowWeaponLaunchSpeed(selected);
+    const gravity = bowWeaponGravity(selected);
     const hitKind = predictSwivelImpactPoint(
       _swivelMarkerOrigin,
       _swivelMarkerDir,
       speed,
+      gravity,
       _swivelMarkerImpact,
       _swivelMarkerNormal,
     );
@@ -2309,6 +2606,9 @@ export function GameScene() {
   const postprocessingEnabled = useGameStore((state) => state.renderDebug.postprocessing);
   const bloomEnabled = useGameStore((state) => state.renderDebug.bloom);
   const vignetteEnabled = useGameStore((state) => state.renderDebug.vignette);
+  const aoEnabled = useGameStore((state) => state.renderDebug.ao);
+  const brightnessContrastEnabled = useGameStore((state) => state.renderDebug.brightnessContrast);
+  const hueSaturationEnabled = useGameStore((state) => state.renderDebug.hueSaturation);
   const [canvasReadyToMount, setCanvasReadyToMount] = useState(false);
 
   useEffect(() => {
@@ -2349,7 +2649,13 @@ export function GameScene() {
             <ShiftSelectOverlay />
 
             {postprocessingEnabled && (
-              <PostProcessing bloomEnabled={bloomEnabled} vignetteEnabled={vignetteEnabled} />
+              <PostProcessing
+                bloomEnabled={bloomEnabled}
+                vignetteEnabled={vignetteEnabled}
+                aoEnabled={aoEnabled}
+                brightnessContrastEnabled={brightnessContrastEnabled}
+                hueSaturationEnabled={hueSaturationEnabled}
+              />
             )}
           </Suspense>
         </Canvas>
@@ -2360,7 +2666,19 @@ export function GameScene() {
 }
 
 
-function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boolean; vignetteEnabled: boolean }) {
+function PostProcessing({
+  bloomEnabled,
+  vignetteEnabled,
+  aoEnabled,
+  brightnessContrastEnabled,
+  hueSaturationEnabled,
+}: {
+  bloomEnabled: boolean;
+  vignetteEnabled: boolean;
+  aoEnabled: boolean;
+  brightnessContrastEnabled: boolean;
+  hueSaturationEnabled: boolean;
+}) {
   const { brightness, contrast, hue, saturation } = useAtmosphere();
   const timeOfDay = useGameStore((state) => state.timeOfDay);
   const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
@@ -2370,19 +2688,22 @@ function PostProcessing({ bloomEnabled, vignetteEnabled }: { bloomEnabled: boole
 
   return (
     <EffectComposer>
-      <N8AO
-        aoRadius={1.2}
-        intensity={1.5}
-        aoSamples={4}
-        denoiseSamples={2}
-        denoiseRadius={8}
-        distanceFalloff={1.0}
-        halfRes
-      />
-      {bloomEnabled && <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} height={300} intensity={1.0} />}
-      <BrightnessContrast brightness={brightness} contrast={contrast} />
-      <HueSaturation hue={hue} saturation={saturation} />
-      {vignetteEnabled && <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} />}
+      {aoEnabled ? (
+        <N8AO
+          aoRadius={1.2}
+          intensity={1.5}
+          aoSamples={4}
+          denoiseSamples={2}
+          denoiseRadius={8}
+          distanceFalloff={1.0}
+          halfRes
+        />
+      ) : <></>}
+
+      {bloomEnabled ? <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} height={300} intensity={1.0} /> : <></>}
+      {brightnessContrastEnabled ? <BrightnessContrast brightness={brightness} contrast={contrast} /> : <></>}
+      {hueSaturationEnabled ? <HueSaturation hue={hue} saturation={saturation} /> : <></>}
+      {vignetteEnabled ? <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} /> : <></>}
     </EffectComposer>
   );
 }

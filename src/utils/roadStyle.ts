@@ -12,6 +12,15 @@
  */
 
 import type { RoadTier } from '../store/gameStore';
+import { SEA_LEVEL } from '../constants/world';
+
+// ── Bridge deck height ──────────────────────────────────────────────────────
+// Authored Y of a bridge polyline over water. Raised enough above the water
+// surface that the deck reads as an arched span rather than a ribbon skimming
+// the waves, and that piers have a meaningful above-water portion. Shared
+// between cityGenerator (who writes polyline Y) and the renderer (who filters
+// piers to the deck plane).
+export const BRIDGE_DECK_Y = SEA_LEVEL + 2.8;
 
 export interface RoadTierStyle {
   /** Full ribbon width in world units (visual). halfWidth = width / 2. */
@@ -29,8 +38,9 @@ export interface RoadTierStyle {
   polygonOffsetFactor: number;
   /** Optional override: lateral half-width a character counts as "on" this
    *  road for ground-height purposes. Defaults to width/2 if omitted.
-   *  Bridges use a narrower walk band (1.6) than their visual deck (4.5/2)
-   *  to keep characters clear of the parapet overhang. */
+   *  Bridges use a slightly narrower walk band (2.0) than their visual deck
+   *  half-width (2.25) so characters stay clear of the parapet's inner face
+   *  without the walkable strip feeling cramped. */
   walkHalfWidth?: number;
 }
 
@@ -39,8 +49,8 @@ export const ROAD_TIER_STYLE: Record<RoadTier, RoadTierStyle> = {
   road:   { width: 3.0, yLift: 0.10, renderOrder: 2, polygonOffsetFactor: -2 },
   avenue: { width: 5.6, yLift: 0.16, renderOrder: 3, polygonOffsetFactor: -4 },
   // Bridge yLift is 0 because the polyline Y is already authored at
-  // deck height (SEA_LEVEL + 0.8 over water, terrain at the abutments).
-  bridge: { width: 4.5, yLift: 0.0,  renderOrder: 4, polygonOffsetFactor: -6, walkHalfWidth: 1.6 },
+  // deck height (BRIDGE_DECK_Y over water, terrain at the abutments).
+  bridge: { width: 4.5, yLift: 0.0,  renderOrder: 4, polygonOffsetFactor: -6, walkHalfWidth: 2.0 },
 };
 
 /** Shared polygonOffsetUnits for all road materials. Factor does the tier

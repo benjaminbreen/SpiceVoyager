@@ -3,17 +3,16 @@ import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { NPCShip } from './NPCShip';
-import { getTerrainData, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from '../utils/terrain';
+import { getTerrainData, getBackgroundHeightColor, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from '../utils/terrain';
 import { useFrame } from '@react-three/fiber';
 import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '../utils/mapGenerator';
 import { setLandCharacterBuildings } from '../utils/landCharacter';
-import { registerTerrainMapCanvas, terrainChartColor } from '../utils/worldMapTerrainCache';
 import { SEA_LEVEL } from '../constants/world';
-import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
+import { resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN } from '../utils/animalTerrain';
-import { treeShakes, type TreeImpactKind, getPalmDamage, resetVegetationDamage } from '../utils/impactShakeState';
+import { treeShakes, type TreeImpactKind, getPalmDamage, getFelledTreeState, resetVegetationDamage } from '../utils/impactShakeState';
 
 /** Shift a hex color's HSL to match the current climate palette.
  *  Tropical is the baseline — other climates desaturate and hue-shift. */
@@ -462,6 +461,64 @@ function buildTerrainSurfaceGeometry(
   return merged;
 }
 
+// Background terrain ring that extends visible land well beyond the playable
+// area. Matches the main mesh sampler so minimap and main view agree, but uses
+// coarse segments and skips all gameplay systems (flora, fauna, obstacles).
+// A square hole in the middle keeps it from overlapping the high-density
+// playable mesh, so the two surfaces never fight for the same pixels.
+function buildBackgroundRingGeometry(
+  outerHalf: number,
+  innerHalf: number,
+  step: number,
+): THREE.BufferGeometry {
+  const segs = Math.ceil((outerHalf * 2) / step);
+  const vertsPerSide = segs + 1;
+  const vertIndex = new Int32Array(vertsPerSide * vertsPerSide).fill(-1);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  const getOrAddVert = (ix: number, iy: number) => {
+    const key = iy * vertsPerSide + ix;
+    const existing = vertIndex[key];
+    if (existing !== -1) return existing;
+    const x = -outerHalf + ix * step;
+    const y = -outerHalf + iy * step; // plane's local Y; world Z is -y after rotation
+    const worldZ = -y;
+    const t = getBackgroundHeightColor(x, worldZ);
+    const idx = positions.length / 3;
+    positions.push(x, y, t.height);
+    colors.push(t.color[0], t.color[1], t.color[2]);
+    vertIndex[key] = idx;
+    return idx;
+  };
+
+  for (let iy = 0; iy < segs; iy++) {
+    for (let ix = 0; ix < segs; ix++) {
+      const x0 = -outerHalf + ix * step;
+      const y0 = -outerHalf + iy * step;
+      const x1 = x0 + step;
+      const y1 = y0 + step;
+      // Skip quads fully inside the inner hole — the high-density mesh covers these.
+      if (
+        Math.max(Math.abs(x0), Math.abs(x1)) < innerHalf &&
+        Math.max(Math.abs(y0), Math.abs(y1)) < innerHalf
+      ) continue;
+      const i00 = getOrAddVert(ix, iy);
+      const i10 = getOrAddVert(ix + 1, iy);
+      const i01 = getOrAddVert(ix, iy + 1);
+      const i11 = getOrAddVert(ix + 1, iy + 1);
+      indices.push(i00, i11, i10, i00, i01, i11);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+  return geo;
+}
+
 export function World() {
   const initWorld = useGameStore((state) => state.initWorld);
   const timeOfDay = useGameStore((state) => state.timeOfDay);
@@ -488,8 +545,8 @@ export function World() {
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   // Generate world data once
-  const { 
-    landTerrainGeometry, generatedPorts, generatedNpcs, terrainMapCanvas, terrainMapWorldHalf,
+  const {
+    landTerrainGeometry, backgroundRingTerrainGeometry, generatedPorts, generatedNpcs,
     treeData, deadTreeData, broadleafData, baobabData, acaciaData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, grazerKind, primateSpecies, reptileSpecies, wadingSpecies, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
@@ -710,14 +767,12 @@ export function World() {
     const size = devSoloPort ? 1000 : 900;
     // Register mesh extent so terrain queries beyond the boundary fade to ocean
     setMeshHalf(size / 2);
-    // Scale segments with world size — keeps ~constant vertex density, caps at 512
-    const segments = Math.min(512, Math.round(size * 0.43));
+    // Startup is CPU-bound on terrain/world generation. A slightly coarser
+    // mesh keeps the local-port terrain readable while cutting mount-time
+    // vertex work materially.
+    const segments = Math.min(360, Math.round(size * 0.36));
     const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
     const colors = new Float32Array(geometry.attributes.position.count * 3);
-    const mapResolution = segments + 1;
-    const mapPalette = getWaterPalette(waterPaletteId);
-    const mapImageData = new ImageData(mapResolution, mapResolution);
-    
     const posAttribute = geometry.attributes.position;
     
     const isLand = new Uint8Array(posAttribute.count);
@@ -730,13 +785,6 @@ export function World() {
       const { height, biome, color, moisture, reefFactor, paddyFlooded, coastSteepness, shallowFactor, surfFactor, wetSandFactor, beachFactor, slope } = terrain;
       posAttribute.setZ(i, height);
       if (height > SEA_LEVEL - 2) isLand[i] = 1;
-
-      const [mapR, mapG, mapB] = terrainChartColor(terrain, mapPalette);
-      const mapIdx = i * 4;
-      mapImageData.data[mapIdx] = mapR * 255;
-      mapImageData.data[mapIdx + 1] = mapG * 255;
-      mapImageData.data[mapIdx + 2] = mapB * 255;
-      mapImageData.data[mapIdx + 3] = 255;
 
       colors[i * 3] = color[0];
       colors[i * 3 + 1] = color[1];
@@ -1188,10 +1236,18 @@ export function World() {
     geometry.setAttribute('color', new THREE.BufferAttribute(smoothed, 3));
     const landGeometry = buildTerrainSurfaceGeometry(geometry, true, COASTLINE_CLIP_LEVEL);
     geometry.dispose();
-    const terrainCanvas = document.createElement('canvas');
-    terrainCanvas.width = mapResolution;
-    terrainCanvas.height = mapResolution;
-    terrainCanvas.getContext('2d')!.putImageData(mapImageData, 0, 0);
+
+    // Background ring: distant terrain beyond the playable mesh. Sized so its
+    // outer edge sits at or past the day-fog far plane (~1000 units), so the
+    // mesh's square silhouette is naturally hidden by atmospheric haze rather
+    // than reading as a straight cut. Playable confinement is unchanged —
+    // this is purely decorative.
+    const ringOuterHalf = 1100;
+    const ringInnerHalf = size / 2;
+    const ringStep = 5;
+    const ringRawGeometry = buildBackgroundRingGeometry(ringOuterHalf, ringInnerHalf, ringStep);
+    const backgroundRingGeometry = buildTerrainSurfaceGeometry(ringRawGeometry, true, COASTLINE_CLIP_LEVEL);
+    ringRawGeometry.dispose();
     resetVegetationDamage();
     const palmCenter = new THREE.Vector3();
 
@@ -1248,9 +1304,8 @@ export function World() {
 
     return {
       landTerrainGeometry: landGeometry,
-      terrainMapCanvas: terrainCanvas,
-      terrainMapWorldHalf: size / 2,
-      generatedPorts: portsData, 
+      backgroundRingTerrainGeometry: backgroundRingGeometry,
+      generatedPorts: portsData,
       generatedNpcs: npcs,
       treeData: trees,
       deadTreeData: deadTrees,
@@ -1332,9 +1387,7 @@ export function World() {
     // Spawn player in safe water near the first port
     const spawn = findSafeSpawn(generatedPorts);
     setPlayerPos(spawn);
-    // Reuse the terrain pass for the navigation chart instead of sampling terrain again later.
-    registerTerrainMapCanvas(terrainMapCanvas, waterPaletteId, terrainMapWorldHalf);
-  }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos, terrainMapCanvas, terrainMapWorldHalf, waterPaletteId]);
+  }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos]);
 
   // Calculate sun position and all time-of-day lighting parameters
   const {
@@ -1450,8 +1503,8 @@ export function World() {
     // (handled as hemisphere-style via the ambient + moon)
 
     // Moonlight — opposite the sun, cool silver-blue
-    const moonPos = new THREE.Vector3(-Math.cos(angle) * 80, Math.max(10, -Math.sin(angle) * 80), 30);
-    const moonInt = sunH < 0.1 ? Math.max(0, Math.min(0.4, (0.1 - sunH) * 1.5)) : 0;
+    const moonPos = new THREE.Vector3(-Math.cos(angle) * 100, Math.max(10, -Math.sin(angle) * 80), 30);
+    const moonInt = sunH < 0.1 ? Math.max(0, Math.min(0.3, (0.1 - sunH) * 1.5)) : 0;
 
     return {
       sunPosition: sunPos,
@@ -2042,14 +2095,52 @@ export function World() {
   const palmTopLocalRef = useRef(new THREE.Vector3());
   const palmEulerRef = useRef(new THREE.Euler());
   const palmWindVectorRef = useRef(new THREE.Vector2());
+  const fallDirRef = useRef(new THREE.Vector3());
+  const fallAxisRef = useRef(new THREE.Vector3());
+  const fallQuatRef = useRef(new THREE.Quaternion());
   const palmAnimatedIndicesRef = useRef(new Set<number>());
   const activeTreeShakeRef = useRef(new Set<string>());
   const nextTreeShakeRef = useRef(new Set<string>());
   const palmSwayAccum = useRef(0);
   const respawnCheckAccum = useRef(0);
 
+  function setFelledVerticalMesh(
+    mesh: THREE.InstancedMesh,
+    index: number,
+    baseX: number,
+    baseY: number,
+    baseZ: number,
+    scale: number,
+    fallAngle: number,
+    forward: number,
+    lift: number,
+  ) {
+    const dummy = dummyRef.current;
+    const fallDir = fallDirRef.current;
+    const fallAxis = fallAxisRef.current;
+    const fallQuat = fallQuatRef.current;
+    fallDir.set(Math.sin(fallAngle), 0, Math.cos(fallAngle));
+    fallAxis.set(fallDir.z, 0, -fallDir.x).normalize();
+    fallQuat.setFromAxisAngle(fallAxis, Math.PI * 0.48);
+    dummy.position.set(
+      baseX + fallDir.x * forward * scale,
+      baseY + lift * scale,
+      baseZ + fallDir.z * forward * scale,
+    );
+    dummy.scale.set(scale, scale, scale);
+    dummy.quaternion.copy(fallQuat);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  }
+
   function setTreeMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!trunkMeshRef.current || !leavesMeshRef.current) return;
+    const felled = getFelledTreeState('tree', index);
+    if (felled) {
+      setFelledVerticalMesh(trunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 0.95, 0.22);
+      setFelledVerticalMesh(leavesMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 2.1, 0.55);
+      return;
+    }
     const dummy = dummyRef.current;
     dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1 * tree.scale, tree.position[2] + zOffset);
     dummy.scale.set(tree.scale, tree.scale, tree.scale);
@@ -2064,6 +2155,12 @@ export function World() {
 
   function setBroadleafMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!broadleafTrunkMeshRef.current || !broadleafCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('broadleaf', index);
+    if (felled) {
+      setFelledVerticalMesh(broadleafTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.05, 0.28);
+      setFelledVerticalMesh(broadleafCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 2.0, 0.75);
+      return;
+    }
     const dummy = dummyRef.current;
     dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.25 * tree.scale, tree.position[2] + zOffset);
     dummy.scale.set(tree.scale, tree.scale, tree.scale);
@@ -2078,6 +2175,12 @@ export function World() {
 
   function setBaobabMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!baobabTrunkMeshRef.current || !baobabCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('baobab', index);
+    if (felled) {
+      setFelledVerticalMesh(baobabTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.0, 0.42);
+      setFelledVerticalMesh(baobabCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.8, 0.7);
+      return;
+    }
     const dummy = dummyRef.current;
     dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.75 * tree.scale, tree.position[2] + zOffset);
     dummy.scale.set(tree.scale, tree.scale, tree.scale);
@@ -2092,6 +2195,12 @@ export function World() {
 
   function setAcaciaMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!acaciaTrunkMeshRef.current || !acaciaCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('acacia', index);
+    if (felled) {
+      setFelledVerticalMesh(acaciaTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 0.95, 0.28);
+      setFelledVerticalMesh(acaciaCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.75, 0.55);
+      return;
+    }
     const dummy = dummyRef.current;
     dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.5 * tree.scale, tree.position[2] + zOffset);
     dummy.scale.set(tree.scale, tree.scale, tree.scale);
@@ -2106,6 +2215,12 @@ export function World() {
 
   function setMangroveMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!mangroveRootMeshRef.current || !mangroveCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('mangrove', index);
+    if (felled) {
+      setFelledVerticalMesh(mangroveRootMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 0.8, 0.18);
+      setFelledVerticalMesh(mangroveCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.35, 0.42);
+      return;
+    }
     const dummy = dummyRef.current;
     dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
     dummy.scale.set(tree.scale, tree.scale, tree.scale);
@@ -2124,6 +2239,12 @@ export function World() {
     frondRollOffset = 0
   ) {
     if (!palmTrunkMeshRef.current || !palmFrondMeshRef.current) return;
+    const felled = getFelledTreeState('palm', index);
+    if (felled) {
+      setFelledVerticalMesh(palmTrunkMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 2.0, 0.2);
+      setFelledVerticalMesh(palmFrondMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 4.0, 0.48);
+      return;
+    }
     const dummy = dummyRef.current;
     const topLocal = palmTopLocalRef.current;
     const palmEuler = palmEulerRef.current;
@@ -2169,15 +2290,7 @@ export function World() {
     
     if (trunkMeshRef.current && leavesMeshRef.current) {
       treeData.forEach((tree, i) => {
-        dummy.position.set(tree.position[0], tree.position[1] + 1 * tree.scale, tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, 0, 0);
-        dummy.updateMatrix();
-        trunkMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        
-        dummy.position.set(tree.position[0], tree.position[1] + 3 * tree.scale, tree.position[2]);
-        dummy.updateMatrix();
-        leavesMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        setTreeMatricesAt(tree, i);
       });
       trunkMeshRef.current.instanceMatrix.needsUpdate = true;
       leavesMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -2197,14 +2310,7 @@ export function World() {
     // Broadleaf trees — rounded canopy tropical hardwoods
     if (broadleafTrunkMeshRef.current && broadleafCanopyMeshRef.current) {
       broadleafData.forEach((tree, i) => {
-        dummy.position.set(tree.position[0], tree.position[1] + 1.25 * tree.scale, tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, 0, 0);
-        dummy.updateMatrix();
-        broadleafTrunkMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        dummy.position.set(tree.position[0], tree.position[1] + 3.0 * tree.scale, tree.position[2]);
-        dummy.updateMatrix();
-        broadleafCanopyMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        setBroadleafMatricesAt(tree, i);
       });
       broadleafTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       broadleafCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -2213,16 +2319,7 @@ export function World() {
     // Baobab trees — fat trunk, sparse crown
     if (baobabTrunkMeshRef.current && baobabCanopyMeshRef.current) {
       baobabData.forEach((tree, i) => {
-        dummy.position.set(tree.position[0], tree.position[1] + 1.75 * tree.scale, tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, tree.rotation, 0);
-        dummy.updateMatrix();
-        baobabTrunkMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        dummy.position.set(tree.position[0], tree.position[1], tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, tree.rotation, 0);
-        dummy.updateMatrix();
-        baobabCanopyMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        setBaobabMatricesAt(tree, i);
       });
       baobabTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       baobabCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -2231,16 +2328,7 @@ export function World() {
     // Umbrella acacia — thin trunk, flat disc canopy
     if (acaciaTrunkMeshRef.current && acaciaCanopyMeshRef.current) {
       acaciaData.forEach((tree, i) => {
-        dummy.position.set(tree.position[0], tree.position[1] + 1.5 * tree.scale, tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, tree.rotation, 0);
-        dummy.updateMatrix();
-        acaciaTrunkMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        dummy.position.set(tree.position[0], tree.position[1], tree.position[2]);
-        dummy.scale.set(tree.scale, tree.scale, tree.scale);
-        dummy.rotation.set(0, tree.rotation, 0);
-        dummy.updateMatrix();
-        acaciaCanopyMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        setAcaciaMatricesAt(tree, i);
       });
       acaciaTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       acaciaCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -2257,12 +2345,7 @@ export function World() {
 
     if (mangroveRootMeshRef.current && mangroveCanopyMeshRef.current) {
       mangroveData.forEach((mangrove, i) => {
-        dummy.position.set(mangrove.position[0], mangrove.position[1], mangrove.position[2]);
-        dummy.scale.set(mangrove.scale, mangrove.scale, mangrove.scale);
-        dummy.rotation.set(0, mangrove.rotation, 0);
-        dummy.updateMatrix();
-        mangroveRootMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        mangroveCanopyMeshRef.current!.setMatrixAt(i, dummy.matrix);
+        setMangroveMatricesAt(mangrove, i);
       });
       mangroveRootMeshRef.current.instanceMatrix.needsUpdate = true;
       mangroveCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -2901,6 +2984,16 @@ export function World() {
         castShadow={shadowsActive}
         raycast={() => null}
         material={terrainMaterial}
+      />
+
+      {/* Background terrain ring — distant land visible through atmospheric
+          haze, outside the playable mesh. No flora, no shadows, no collision. */}
+      <mesh
+        geometry={backgroundRingTerrainGeometry}
+        rotation={[-Math.PI / 2, 0, 0]}
+        raycast={() => null}
+        material={terrainMaterial}
+        frustumCulled={false}
       />
 
 

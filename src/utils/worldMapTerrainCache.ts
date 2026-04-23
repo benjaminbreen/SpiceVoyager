@@ -3,21 +3,22 @@ import { getTerrainData, type TerrainData } from './terrain';
 import { getWaterPalette, type WaterPalette, type WaterPaletteId } from './waterPalettes';
 
 const WORLD_HALF = 550;
-const TERRAIN_RESOLUTION = 512;
-const PRE_RENDER_MIN_ROWS_PER_SLICE = 1;
-const PRE_RENDER_MAX_ROWS_PER_SLICE = 8;
-const PRE_RENDER_IDLE_BUDGET_MS = 1.5;
+const TERRAIN_RESOLUTION = 384;
+const PRE_RENDER_MIN_ROWS_PER_SLICE = 2;
+const PRE_RENDER_MAX_ROWS_PER_SLICE = 10;
+const PRE_RENDER_IDLE_BUDGET_MS = 2.5;
 
 type IdleDeadlineLike = {
+  didTimeout?: boolean;
   timeRemaining: () => number;
 };
 
 function scheduleBackgroundRender(cb: (deadline?: IdleDeadlineLike) => void) {
   if ('requestIdleCallback' in window) {
-    window.requestIdleCallback(cb);
+    window.requestIdleCallback(cb, { timeout: 120 });
     return;
   }
-  (setTimeout as typeof globalThis.setTimeout)(() => cb(), 16);
+  globalThis.setTimeout(() => cb(), 16);
 }
 
 let _terrainCanvas: HTMLCanvasElement | null = null;
@@ -60,7 +61,9 @@ function preRenderTerrain(waterPalette: WaterPalette) {
 
     const hasBudget = () => {
       if (deadline) {
-        return rowsProcessed < PRE_RENDER_MAX_ROWS_PER_SLICE && deadline.timeRemaining() > 1;
+        if (rowsProcessed < PRE_RENDER_MIN_ROWS_PER_SLICE) return true;
+        if (rowsProcessed >= PRE_RENDER_MAX_ROWS_PER_SLICE) return false;
+        return deadline.didTimeout === true || deadline.timeRemaining() > 1;
       }
       if (rowsProcessed < PRE_RENDER_MIN_ROWS_PER_SLICE) return true;
       if (rowsProcessed >= PRE_RENDER_MAX_ROWS_PER_SLICE) return false;

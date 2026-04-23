@@ -157,7 +157,7 @@ export function assignBuildingForms(
 
     // Don't over-stack anchors — they already have bespoke geometry. Setback
     // and class are still assigned so the renderer can key off them.
-    const isAnchor = b.type === 'fort' || b.type === 'dock' || b.type === 'market' || b.type === 'plaza' || b.type === 'spiritual' || b.type === 'landmark';
+    const isAnchor = b.type === 'fort' || b.type === 'dock' || b.type === 'market' || b.type === 'plaza' || b.type === 'spiritual' || b.type === 'landmark' || b.type === 'palace';
     b.stories = isAnchor ? 1 : pickStories(b.district, centrality, prestige, rng, scale);
     b.housingClass = pickHousingClass(b.district, centrality, prestige);
     b.setback = pickSetback(b.district, centrality);

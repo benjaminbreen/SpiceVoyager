@@ -1035,6 +1035,34 @@ const LANDMARK_LABELS: Record<string, { label: string; sub: string }> = {
   'english-factory-surat': { label: 'English East India Factory',  sub: 'Surat factory, est. 1612' },
 };
 
+// ── Palace (generic royal/governor's residence) naming ──────────────────────
+// Mirrors the spiritual system — palaceStyle drives culturally-appropriate
+// naming. Each port gets at most one palace; the ROYAL eyebrow comes from
+// the semantic class resolver, not from here.
+function palaceLabel(
+  style: string,
+  portName: string,
+  nationality: Nationality | undefined,
+): { label: string; sub: string } {
+  switch (style) {
+    case 'iberian-colonial': {
+      // Portuguese or Spanish colonial governor's palace / viceroyalty.
+      if (nationality === 'Spanish') {
+        return { label: `Casa de Gobierno de ${portName}`, sub: 'gobernación' };
+      }
+      return { label: `Palácio do Governador`, sub: 'Portuguese governor\'s palace' };
+    }
+    case 'mughal': {
+      return { label: `Diwan-i-Khas of ${portName}`, sub: 'Mughal governor\'s palace' };
+    }
+    case 'malay-istana': {
+      return { label: `Istana of ${portName}`, sub: 'Sultan\'s palace' };
+    }
+    default:
+      return { label: `Palace of ${portName}`, sub: 'royal residence' };
+  }
+}
+
 // ── Faith-specific spiritual building naming ─────────────────────────────────
 // Generic spiritual buildings placed by the city generator. These sit
 // alongside any named landmark (the landmark owns the prominent site; these
@@ -1129,7 +1157,7 @@ export function generateBuildingLabel(
   seed: number,
   nationality?: Nationality,
   region?: CulturalRegion,
-  opts?: { faith?: string; landmarkId?: string },
+  opts?: { faith?: string; landmarkId?: string; palaceStyle?: string },
 ): BuildingLabelResult {
   const rng = mulberry32(seed);
   // Consume a few values to decorrelate from other uses of same seed
@@ -1154,6 +1182,11 @@ export function generateBuildingLabel(
   if (type === 'spiritual') {
     const faith = opts?.faith ?? 'catholic';
     return spiritualLabel(faith, portName, nationality, region, rng);
+  }
+
+  if (type === 'palace') {
+    const style = opts?.palaceStyle ?? 'iberian-colonial';
+    return palaceLabel(style, portName, nationality);
   }
 
   const euro = asEuropean(nationality);

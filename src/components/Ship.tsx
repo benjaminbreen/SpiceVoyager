@@ -9,12 +9,13 @@ import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorW
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
-import { swivelAimAngle, swivelAimPitch, broadsideReload } from '../utils/combatState';
+import { swivelAimAngle, swivelAimPitch, broadsideReload, getCurrentElevationCharge } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { useIsMobile } from '../utils/useIsMobile';
 import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
+import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 
 // Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
 // course corrections actually have time to register. Tuned by playtest.
@@ -119,6 +120,18 @@ export function Ship() {
   const paused = useGameStore((state) => state.paused);
   const shipType = useGameStore((state) => state.ship.type);
   const profile = useMemo(() => getShipProfile(shipType), [shipType]);
+  // Cargo-based draft: heavier loads make the ship sit deeper in the water.
+  // Empty = full lift (+0.22), fully loaded = no lift (hull rides at SHIP_ROOT_Y,
+  // which is tuned so water laps the deck on the dhow).
+  const cargo = useGameStore((state) => state.cargo);
+  const cargoDraftLift = useMemo(() => {
+    const weight = Object.entries(cargo).reduce(
+      (sum, [c, qty]) => sum + (qty as number) * COMMODITY_DEFS[c as Commodity].weight,
+      0,
+    );
+    const frac = Math.min(1, weight / Math.max(1, stats.cargoCapacity));
+    return (1 - frac) * 0.22;
+  }, [cargo, stats.cargoCapacity]);
   const { isMobile } = useIsMobile();
   
   // Physics state
@@ -183,6 +196,8 @@ export function Ship() {
   const MUZZLE_PARTICLE_COUNT = 20;
 
   // Broadside arc indicators
+  const portArcPivotRef = useRef<THREE.Group>(null);
+  const starboardArcPivotRef = useRef<THREE.Group>(null);
   const portArcRef = useRef<THREE.Mesh>(null);
   const starboardArcRef = useRef<THREE.Mesh>(null);
 
@@ -1238,7 +1253,7 @@ export function Ship() {
         1 - Math.exp(-delta * 5),
       );
 
-      visualGroup.current.position.y = centerY - heelSink;
+      visualGroup.current.position.y = centerY - heelSink + cargoDraftLift;
       visualGroup.current.rotation.y = yawSlide.current;
       visualGroup.current.rotation.z = heel.current + rollFromWave
         + Math.sin(t * 1.5) * (0.008 + speedRatio * 0.006);
@@ -1951,18 +1966,32 @@ export function Ship() {
     // ── Broadside arc indicators ──
     const hasBroadside = store.stats.armament.some(w => w !== 'swivelGun');
     const nowMs = Date.now();
+    const elevCharge = getCurrentElevationCharge();
+    const wingLift = elevCharge * 0.7;
+    if (portArcPivotRef.current) {
+      portArcPivotRef.current.visible = store.combatMode && hasBroadside;
+      portArcPivotRef.current.position.set(0, 0.1 + elevCharge * 0.2, 0);
+      portArcPivotRef.current.rotation.set(0, 0, wingLift);
+    }
+    if (starboardArcPivotRef.current) {
+      starboardArcPivotRef.current.visible = store.combatMode && hasBroadside;
+      starboardArcPivotRef.current.position.set(0, 0.1 + elevCharge * 0.2, 0);
+      starboardArcPivotRef.current.rotation.set(0, 0, -wingLift);
+    }
     if (portArcRef.current) {
-      portArcRef.current.visible = store.combatMode && hasBroadside;
-      if (portArcRef.current.visible) {
+      if (portArcPivotRef.current?.visible) {
         const portReady = nowMs >= broadsideReload.port;
-        (portArcRef.current.material as THREE.MeshBasicMaterial).opacity = portReady ? 0.18 : 0.06;
+        (portArcRef.current.material as THREE.MeshBasicMaterial).opacity = portReady
+          ? 0.18 - elevCharge * 0.05
+          : 0.06 - elevCharge * 0.015;
       }
     }
     if (starboardArcRef.current) {
-      starboardArcRef.current.visible = store.combatMode && hasBroadside;
-      if (starboardArcRef.current.visible) {
+      if (starboardArcPivotRef.current?.visible) {
         const starReady = nowMs >= broadsideReload.starboard;
-        (starboardArcRef.current.material as THREE.MeshBasicMaterial).opacity = starReady ? 0.18 : 0.06;
+        (starboardArcRef.current.material as THREE.MeshBasicMaterial).opacity = starReady
+          ? 0.18 - elevCharge * 0.05
+          : 0.06 - elevCharge * 0.015;
       }
     }
 
@@ -2928,15 +2957,19 @@ export function Ship() {
           </group>
           {/* Broadside firing arcs — translucent wedges on port & starboard */}
           {/* Port (left) arc — red tint */}
-          <mesh ref={portArcRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
-            <circleGeometry args={[12, 16, Math.PI * 0.7, Math.PI * 0.6]} />
-            <meshBasicMaterial color="#ff4444" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
-          </mesh>
+          <group ref={portArcPivotRef} visible={false}>
+            <mesh ref={portArcRef} rotation={[-Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[12, 16, Math.PI * 0.7, Math.PI * 0.6]} />
+              <meshBasicMaterial color="#ff4444" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+          </group>
           {/* Starboard (right) arc — blue tint */}
-          <mesh ref={starboardArcRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
-            <circleGeometry args={[12, 16, -Math.PI * 0.3, Math.PI * 0.6]} />
-            <meshBasicMaterial color="#4488ff" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
-          </mesh>
+          <group ref={starboardArcPivotRef} visible={false}>
+            <mesh ref={starboardArcRef} rotation={[-Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[12, 16, -Math.PI * 0.3, Math.PI * 0.6]} />
+              <meshBasicMaterial color="#4488ff" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+          </group>
           {/* Night torch on stern cabin */}
           <group position={profile.equipment.torch}>
             <pointLight

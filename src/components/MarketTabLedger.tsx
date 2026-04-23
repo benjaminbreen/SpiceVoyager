@@ -133,7 +133,8 @@ export function MarketTabLedger({
         : Math.max(1, Math.floor(getGlobalAveragePrice(commodity) * 0.5));
       const maxBuyByGold = price > 0 ? Math.floor(gold / price) : 0;
       const maxBuyBySpace = def.weight > 0 ? Math.floor(spaceLeft / def.weight) : 0;
-      const maxBuy = Math.max(0, Math.min(maxBuyByGold, maxBuyBySpace, portInv));
+      const maxBuyByHoldCap = commodity === 'War Rockets' ? Math.max(0, 20 - playerInv) : Infinity;
+      const maxBuy = Math.max(0, Math.min(maxBuyByGold, maxBuyBySpace, portInv, maxBuyByHoldCap));
       const ratio = avg > 0 && price > 0 ? price / avg : 1;
 
       return [{

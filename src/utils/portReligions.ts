@@ -39,6 +39,9 @@ export const PORT_FAITHS: Record<string, readonly Faith[]> = {
   aden:      ['sunni'],                         // Ottoman Yemen
   zanzibar:  ['sunni'],                         // Swahili coast
   macau:     ['buddhist', 'catholic', 'chinese-folk'], // Chinese majority + Jesuit enclave
+  manila:    ['catholic', 'chinese-folk', 'buddhist'], // Spanish Intramuros + Sangley Parián
+  nagasaki:  ['buddhist', 'catholic'],                 // Pre-1614 peak of the Kirishitan mission alongside Buddhist majority
+  masulipatnam: ['shia', 'hindu', 'sunni'],            // Shia Qutb Shahi sultanate over a mixed Hindu-Muslim port population
   mombasa:   ['sunni'],                         // Swahili coast
   surat:     ['sunni', 'hindu'],                // Mughal imperial port, large Banian Hindu merchant caste
   muscat:    ['ibadi'],                         // Omani Ibadi
@@ -50,6 +53,7 @@ export const PORT_FAITHS: Record<string, readonly Faith[]> = {
   amsterdam: ['protestant', 'jewish'],          // Calvinist Republic + Sephardic refuge
   seville:   ['catholic'],
   london:    ['protestant'],                    // Anglican; Catholicism proscribed
+  venice:    ['catholic', 'jewish'],            // Catholic Republic + the Ghetto Vecchio/Nuovo
   elmina:    ['animist', 'catholic'],           // Akan traditional + Portuguese garrison chapel
   luanda:    ['catholic', 'animist'],
   salvador:  ['catholic'],                      // (Candomblé roots not yet visibly institutionalised by 1612)

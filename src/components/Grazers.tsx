@@ -355,13 +355,17 @@ function buildGeometryForKind(kind: GrazerKind): THREE.BufferGeometry {
       hump: false, shoulderHump: false, fluff: false,
     });
     case 'camel': return buildQuadruped({
-      bodyR: 0.3, bodyScale: [1.5, 0.78, 0.78],
-      legLen: 0.68, legR: 0.032, hoofR: 0.045,
-      neckLen: 0.42, neckRFront: 0.08, neckRBack: 0.11, neckTilt: -1.15,
-      headOffset: [0.6, 0.55], headScale: [1.4, 0.85, 0.75], headR: 0.11,
-      muzzleOffset: [0.73, 0.5], muzzleR: 0.07, muzzleScale: [1.2, 0.75, 0.8],
-      earAngle: 0.3, earR: 0.025, earH: 0.06, // small ears
-      tailOffset: [-0.48, 0.1], tailR: 0.022, tailH: 0.2, tailTilt: 0.3,
+      // Neck geometry tuned so the neck cylinder terminates *inside* the head
+      // sphere. Previous values left a ~0.3u gap where the head floated free.
+      // With neckLen 0.56 and tilt -0.85, neck top lands at ~(0.70, 0.45) —
+      // comfortably overlapping the head at (0.70, 0.48).
+      bodyR: 0.3, bodyScale: [1.55, 0.74, 0.76],
+      legLen: 0.68, legR: 0.032, hoofR: 0.05,
+      neckLen: 0.56, neckRFront: 0.07, neckRBack: 0.12, neckTilt: -0.85,
+      headOffset: [0.7, 0.48], headScale: [1.5, 0.7, 0.72], headR: 0.11,
+      muzzleOffset: [0.86, 0.42], muzzleR: 0.065, muzzleScale: [1.45, 0.75, 0.75],
+      earAngle: 0.3, earR: 0.022, earH: 0.055,
+      tailOffset: [-0.48, 0.0], tailR: 0.025, tailH: 0.14, tailTilt: -0.15,
       hornKind: 'none', hornLen: 0,
       hump: true, shoulderHump: false, fluff: false,
     });
@@ -768,7 +772,14 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
         radii.push(BODY_RADIUS.grazer * s);
       }
       const isWalking = (off.wDirX !== 0 || off.wDirZ !== 0) && !isFleeing;
-      const headBob = isFleeing || isWalking ? 0 : Math.sin(time * 0.8 + i * 2.1) * 0.03;
+      // Camels get a slow vertical undulation while walking — the pacing gait
+      // (both legs on one side moving together) gives them a characteristic
+      // rolling sway that other grazers don't have.
+      const headBob = isFleeing
+        ? 0
+        : isWalking
+          ? (kind === 'camel' ? Math.sin(time * 1.6 + i * 1.7) * 0.045 : 0)
+          : Math.sin(time * 0.8 + i * 2.1) * 0.03;
 
       // Follow terrain so they don't float off the hill when fleeing or wandering.
       // Sampling only when displaced keeps the cost bounded to animals actually moving.

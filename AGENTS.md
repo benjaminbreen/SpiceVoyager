@@ -97,6 +97,12 @@ src/
 | `pedestrianSystem.ts` | Pedestrian generation for ports |
 | `buildingLabels.ts` | Contextual building names (~42KB) |
 | `cityGenerator.ts` | Procedural city layout |
+| `cityDistricts.ts` | District classification + boundary pruning |
+| `cityBuildings.ts` | Per-building form assignment (stories, setback, housing class) |
+| `cityFields.ts` | Additive field model (sanctity/prestige/centrality/…) |
+| `semanticClasses.ts` | Eyebrow + marker classes (RELIGIOUS / CIVIC / LEARNED / MERCANTILE / ROYAL) |
+| `portReligions.ts` | Per-port faith list → spiritual buildings |
+| `palaceStyles.ts` | Per-port palace style → royal palace buildings |
 | `combatState.ts` | Mutable combat state: aim, projectiles, NPC/wildlife positions |
 | `huntLoot.ts` / `lootRoll.ts` | Hunting drops |
 | `oceanEncounters.ts` | Random events at sea |
@@ -157,37 +163,107 @@ Single D3 Mercator projection in `WorldMapModal.tsx` (not tabs). Covers Atlantic
 ### Climate & vegetation
 Climate profiles: `tropical`, `monsoon`, `arid`, `temperate`, `mediterranean`. Each drives water palette (`waterPalettes.ts`), moisture / vegetation (`terrain.ts`, `World.tsx`), and wind strength (`wind.ts`). Tree placement in `World.tsx` respects climate: temperate = firs only, mediterranean = mixed firs + coastal palms, tropical/monsoon = palms dominant.
 
-### Spiritual buildings & sacred-site system
-Each port carries a typed faith list (`PORT_FAITHS` in `src/utils/portReligions.ts`) derived from its real c.1612 demographics, ordered by prominence. 10 faith keys: `catholic`, `protestant`, `sunni`, `shia`, `ibadi`, `hindu`, `buddhist`, `chinese-folk`, `animist`, `jewish`.
+### Building system
+Port cities are composed of typed `Building`s placed by `cityGenerator.ts` and rendered by `ProceduralCity.tsx`. Three orthogonal axes control a building's identity and presentation:
 
-**Placement** (`cityGenerator.ts`, step 2c): up to 3 spiritual buildings per port (capped 1/2/3 by Small/Medium/Large+). Each faith gets one, in prominence order. Scoring prefers inland, elevated, and well-separated sites. `BUILDING_SIZES.spiritual = [8, 4, 8]` reserves a clearing around them. They register as road-connection anchors (priority 0, alongside market/plaza).
+- **`type: BuildingType`** — what the building *is* mechanically (drives placement, occupancy, pedestrian traffic, road priority, district classification).
+- **`district: DistrictKey`** — what *neighborhood* it sits in (drives form assignment: stories, setback, housing class).
+- **semantic class** — what *category of importance* it signals to the player (drives hover eyebrow color + optional 3D marker). Computed from `type` + `landmarkId` + other fields at generation time.
 
-**Landmark / generic deduplication**: some `PortLandmark` entries are themselves religious (Bom Jesus, Oude Kerk, Giralda, Al-Shādhilī, Mesjid Agung, Tali gopuram, Jesuit College, Palacio de la Inquisición). When a landmark represents a faith on the port's faith list, the generator drops that faith from the generic spiritual loop and seeds the landmark cell into the separation-avoidance set so the remaining faiths stay spatially separated from it. See `LANDMARK_FAITH` map in `cityGenerator.ts`.
+#### BuildingType catalog
+12 types in `gameStore.ts`, each with distinct placement and rendering logic:
 
-**Landmark building type**: landmarks live as `type: 'landmark'` (a real `BuildingType`), not as `type: 'fort'` with a landmarkId marker. Every `Record<BuildingType, …>` table (`SCALE_COUNTS`, `BUILDING_SIZES`, `BUILDING_ACTIVITY`, `BUILDING_CLEARANCE`, `BUILDING_TRAFFIC`, the road-anchor priority order) has a landmark entry. Render dispatch in `ProceduralCity.tsx` gates on `b.type === 'landmark' && b.landmarkId` before drawing the custom geometry; the generic `'fort'` branch never sees landmarks. Label dispatch in `buildingLabels.ts` looks up `LANDMARK_LABELS[landmarkId]` first and returns label+sub. When adding a new landmark: register in `LANDMARK_RULES` (cityGenerator.ts), `LANDMARK_LABELS` (buildingLabels.ts), `LANDMARK_CLASS` (semanticClasses.ts), and the renderer dispatch (ProceduralCity.tsx). Religious landmarks additionally need an entry in `LANDMARK_FAITH` (cityGenerator.ts) so the generic spiritual-building loop dedupes against them.
+| Type | Count | Placement | Notes |
+|---|---|---|---|
+| `dock` | 1-6 by scale | Along coast | Anchor for avenue network. Moors boats. |
+| `warehouse` | 1-5 by scale | Near docks / waterside | Anchor. Long+low when waterside. |
+| `fort` | 0-2 by scale | Commanding ground (ridge/headland) | Anchor. Auto-tagged `civic` semantic class. |
+| `estate` | 0-7 by scale | Prestigious cells (high prestige field) | Gets `housingClass: 'elite'`. |
+| `market` | 0-4 by scale | Urban core | Anchor. Culture-keyed name (bazaar/chowk/praça…). |
+| `plaza` | 0-2 by scale | Urban core | Anchor. Flat footprint, no height. |
+| `house` | 8-110 by scale | Field-driven | Bulk of city. Stories/setback from district + form assigner. |
+| `shack` | 5-25 by scale | Fringe / waterside | Poor housing. |
+| `farmhouse` | 3-20 by scale | Fringe / outer ring | Rural. |
+| `spiritual` | 0-3 per port | Inland, elevated, separated | Driven by `PORT_FAITHS` (portReligions.ts). Carries `faith` field. Always `religious` class. |
+| `landmark` | 0-1 per port | Per-port `LANDMARK_RULES` (historical positioning) | Carries `landmarkId`. Bespoke geometry. Class from `LANDMARK_CLASS`. |
+| `palace` | 0-1 per port | Inland, elevated, central-ish, separated from fort+spirituals | Driven by `PORT_PALACE_STYLE` (palaceStyles.ts). Carries `palaceStyle` field. Always `royal` class. Skipped when port has a `royal`-classed landmark. |
 
-**Rendering** (`ProceduralCity.tsx`, `b.type === 'spiritual'` branch): per-faith geometry within the 8×8 reserved footprint — Catholic nave+tile roof+bell tower+cross; Protestant brick hall+pyramid-cap tower; Sunni/Shia dome+minaret (Safavid-blue dome for Shia); Ibadi plainer cube+short minaret; Hindu stepped shikhara+copper roofs+brass flag mast; Buddhist tiered red+gold pagoda; Chinese-folk red-pillar hall+green sweeping tile roof; animist raised platform+thatch canopy+fetish pole+stone altars; Jewish stone hall+small dome+arched windows+Star of David.
+#### Adding a new BuildingType — where to touch
+Every `BuildingType` must have an entry in all of these `Record<BuildingType, …>` tables (TypeScript's exhaustiveness check catches misses, unless someone bypasses with `as Record<…>`):
 
-**Sacred markers** (Sims "plumbob" style): floating glowing purple octahedron + billboard halo above every spiritual building and every religious landmark. Instanced (`SacredBuildingMarkers` in `ProceduralCity.tsx`) — one draw call for diamonds, one for halos. Toggleable in Settings → Display → Map Markers → "Sacred Site Markers". Defaults on. State in `RenderDebugSettings.sacredMarkers` in `gameStore.ts`.
+| File | Table | Purpose |
+|---|---|---|
+| `cityGenerator.ts` | `SCALE_COUNTS[scale][type]` | Count per scale (0 = placement driven by per-port data, not this table) |
+| `cityGenerator.ts` | `BUILDING_SIZES[type]` | `[w, h, d]` occupancy footprint |
+| `cityGenerator.ts` | road-anchor sort order | Road connection priority (0 = highest) |
+| `landCharacter.ts` | `BUILDING_ACTIVITY[type]` | Urban-heat contribution to settlement score |
+| `pedestrianSystem.ts` | `BUILDING_CLEARANCE[type]` | Corridor-endpoint offset from building center |
+| `pedestrianSystem.ts` | `BUILDING_TRAFFIC[type]` | Pedestrian traffic weight |
+| `cityDistricts.ts` | `BUILDING_TYPE_HINT[type]` | Optional district hint (fort→citadel, palace→elite-residential, spiritual→sacred, etc.) |
+| `cityDistricts.ts` | `ANCHOR_TYPES` set | Whether the type is pruned-protected |
+| `cityBuildings.ts` | `isAnchor` check | Whether form assignment skips the type (anchors have bespoke geometry) |
+| `cityFields.ts` | `BUILDING_FIELD_INFLUENCE` | Optional: how the building emits to sanctity/prestige/nuisance/etc fields (Partial — omit for no influence) |
+| `semanticClasses.ts` | `buildingSemanticClass()` | Map type → semantic class (may return null) |
+| `ProceduralCity.tsx` | render dispatch | Bespoke geometry branch |
+| `buildingLabels.ts` | type switch + naming helper | Label + sub for the type |
 
-**Labels**: `buildingLabels.ts` has a `spiritualLabel()` generator (faith + culture + region aware — e.g. Igreja de São Francisco, Zuiderkerk, Masjid al-Jāmiʿ, Tali Śiva Kōvil, Bet Yaʿaqov Synagogue) and a `LANDMARK_LABELS` override table for all 13 named landmarks. Eyebrows (RELIGIOUS / CIVIC / ROYAL / LEARNED / MERCANTILE) are not set here — they come from the semantic class system (see below). `BuildingTooltip.tsx` renders the eyebrow as a glowing all-caps prefix above the title; `drawBuildingLabel()` in `worldLabelTextures.ts` bumps the label canvas height from 84 → 104 when an eyebrow is present.
+When the new type is a per-port singleton driven by external data (spiritual, landmark, palace), also create a helper module: `portReligions.ts` / `palaceStyles.ts` style, and thread through `mapGenerator.ts` → `generateCity()`.
 
-### Semantic classes
-`src/utils/semanticClasses.ts` is the single source of truth for what "kind of important thing" a building is. Five classes with their own color and optional 3D marker:
-- `religious` — purple `#c4a1ff`, diamond marker (only class with an always-on 3D marker today)
-- `civic` — gold `#e8c872`, hover-only (forts, town halls, civic markets, customs houses)
-- `learned` — pale blue `#9bc4e8`, hover-only (colleges, hospitals, apothecaries, observatories, libraries)
-- `mercantile` — teal `#6dc3b0`, hover-only (guild halls, factories, counting houses)
-- `royal` — crimson `#e89b9b`, hover-only (viceroyalty, treasury, inquisition, crown fortresses)
+#### Semantic classes (eyebrow + marker system)
+`src/utils/semanticClasses.ts` is the single source of truth for what *category of importance* a building signals. Five classes, each with a color and an optional 3D marker:
 
-The resolver `buildingSemanticClass(b)` maps buildings to classes: all spiritual buildings → `religious`; landmarks → `LANDMARK_CLASS[landmarkId]`; generic buildings → null (keeps the eyebrow signal scarce). `cityGenerator.ts` calls the resolver after labels are assigned and stamps `labelEyebrow` + `labelEyebrowColor` onto the Building. `BuildingTooltip.tsx` reads both fields. `SacredBuildingMarkers` in `ProceduralCity.tsx` filters by `SEMANTIC_STYLE[class].marker === 'diamond'` instead of maintaining a separate religious-landmarks set.
+| Class | Color | Marker | Covers |
+|---|---|---|---|
+| `religious` | purple `#c4a1ff` | Sims-style diamond (plumbob) | All `spiritual`; religious landmarks (Bom Jesus, Oude Kerk, Giralda, Al-Shādhilī, Mesjid Agung, Tali gopuram, Jesuit College) |
+| `civic` | gold `#e8c872` | hover-only | All generic `fort`; civic landmarks (Belém, Fort Jesus, Diu, Elmina) |
+| `learned` | pale blue `#9bc4e8` | hover-only | LEARNED landmarks (Colégio de São Paulo @ Macau) |
+| `mercantile` | teal `#6dc3b0` | hover-only | MERCANTILE landmarks (English Factory @ Surat) |
+| `royal` | crimson `#e89b9b` | hover-only | All `palace`; royal landmarks (Tower of London, Palacio de la Inquisición) |
 
-The table is designed to extend into POIs. When the POI system lands, `POIDefinition` will carry `class: SemanticClass`, and the marker renderer will iterate both building and POI lists through the same style lookup.
+The resolver `buildingSemanticClass(b)` is called after labels are assigned in `cityGenerator.ts` and stamps `labelEyebrow` + `labelEyebrowColor` onto the Building. `BuildingTooltip.tsx` reads both fields. `SacredBuildingMarkers` in `ProceduralCity.tsx` iterates buildings and filters by `SEMANTIC_STYLE[class].marker === 'diamond'` — no separate landmark-specific set.
 
-### Building style system
-`buildingStyle` on `PortDefinition` is the visual-only differentiator (separate from `culture`, which drives gameplay — markets, flags, language, awning dyes). 14 styles currently defined: `iberian`, `dutch-brick`, `english-tudor`, `luso-colonial`, `swahili-coral`, `arab-cubic`, `persian-gulf`, `malabar-hindu`, `mughal-gujarati`, `malay-stilted`, `west-african-round`, `luso-brazilian`, `spanish-caribbean`, `khoikhoi-minimal`.
+When adding a new marker shape (e.g. a crown for ROYAL): extend `SemanticStyle['marker']` union, add the shape to `SEMANTIC_STYLE[class].marker`, add a render branch in `SacredBuildingMarkers`. One-line changes in each place.
 
-Rendering lives in `ProceduralCity.tsx`. Differentiation is palette + proportion + weighted variant mix, plus three cheap feature primitives: **stilts**, **wind-catcher**, **veranda**. No per-facade detail. `PortLandmark` type exists as a data scaffold but the landmark renderer is not yet built.
+The system extends cleanly to POIs: `POIDefinition` will carry `class: SemanticClass`, and the marker renderer will iterate buildings + POIs through the same `SEMANTIC_STYLE` lookup. A pilgrimage shrine POI inland of Calicut would get the exact same purple plumbob as an in-city spiritual building, with zero new visual code.
+
+#### Per-port singleton building systems
+Three types are placed as 0-1 per port based on external data tables, all following the same pattern:
+
+- **Spiritual** (`portReligions.ts` → `PORT_FAITHS`): list of faith keys per port in prominence order. Generator places up to 3 (capped 1/2/3 by Small/Medium/Large+). Per-faith bespoke geometry in `ProceduralCity.tsx`: Catholic nave+tile+bell tower+cross; Protestant brick hall+pyramid tower; Sunni/Shia dome+minaret (blue dome for Shia); Ibadi plain cube+short minaret; Hindu stepped shikhara+copper+brass flag; Buddhist red+gold pagoda; Chinese-folk red-pillar hall+sweeping green tile; animist raised platform+thatch canopy+fetish pole; Jewish stone hall+small dome+Star of David.
+- **Landmark** (`portArchetypes.ts` `landmark` field + `LANDMARK_RULES` in cityGenerator + `LANDMARK_LABELS` in buildingLabels + `LANDMARK_CLASS` in semanticClasses + render dispatch in ProceduralCity): 13 named monuments today. Religious landmarks also need `LANDMARK_FAITH` entry so the generic spiritual loop dedupes against them.
+- **Palace** (`palaceStyles.ts` → `PORT_PALACE_STYLE`): keyed to ruling culture. 3 styles implemented (`iberian-colonial`, `mughal`, `malay-istana`) covering 13 ports. Phase-2 candidates: `ottoman` (Aden, Mocha), `swahili` (Mombasa/Zanzibar), `omani` (Muscat), `hindu-zamorin` (Calicut). Skipped when the port already has a `royal`-classed landmark.
+
+#### Sacred-site markers
+Floating glowing purple octahedron + camera-billboarded halo above every building whose semantic class has `marker === 'diamond'`. Instanced — one draw call for diamonds, one for halos. Toggleable at Settings → Display → Map Markers → "Sacred Site Markers". Defaults on. State in `RenderDebugSettings.sacredMarkers`.
+
+#### Hover labels
+`BuildingTooltip.tsx` reads `b.label`, `b.labelSub`, `b.labelEyebrow`, `b.labelEyebrowColor`. `drawBuildingLabel()` in `worldLabelTextures.ts` renders the eyebrow (if present) as a glowing all-caps prefix above the title; canvas height bumps from 84 → 104 when an eyebrow is present. Label text comes from `buildingLabels.ts` via `generateBuildingLabel()` — dispatches on type with per-type naming pools + cultural/regional variations + named-landmark / faith / palace-style overrides.
+
+### District system
+Every non-generic building carries a `district: DistrictKey`. Seven districts in `cityDistricts.ts`:
+
+| District | Color | Driven by | Typical contents |
+|---|---|---|---|
+| `citadel` | dark red | fort + landmark (fallback for out-of-footprint) | Forts, military landmarks |
+| `sacred` | purple | sanctity field + spiritual type hint | Churches, mosques, temples, sacred groves (future POIs) |
+| `urban-core` | amber | centrality + access fields | Markets, plazas, dense merchant housing |
+| `elite-residential` | cream | prestige + centrality fields + palace/estate hints | Estates, palaces, governor's residences |
+| `artisan` | brown | centrality + nuisance fields | Workshops, craft housing |
+| `waterside` | blue | waterfront + access/nuisance fields | Docks, waterside warehouses |
+| `fringe` | green | low centrality/access | Farmhouses, shacks, edge housing |
+
+Classification happens in two places:
+- **`classifyDistrict(fieldValues, scale, buildingType?)`**: samples the additive field model at a point and picks a district. Building-type hints override (e.g. `palace` → `elite-residential`, `spiritual` → `sacred`) before field classification runs. Scale-gating demotes forbidden districts (Small ports can't have `elite-residential` or `artisan`).
+- **`classifyBuildingDistrict(b, …)`**: convenience wrapper that samples the field at the building's position.
+
+Scale → district requirements (`REQUIRED_BY_SCALE`): Small has `urban-core`; Medium adds `sacred`; Large adds `waterside`; Very Large adds `elite-residential` + `artisan`; Huge adds `citadel` + `fringe`. Districts drive form assignment in `cityBuildings.ts` (stories, setback, housing class) and district-boundary pruning (`pruneDistrictBoundaries()` drops housing whose neighborhood is dominated by a different district — creates visible separation between neighborhoods).
+
+Field model (`cityFields.ts`) is the substrate: buildings and roads emit falloff into per-cell fields (`sanctity`, `prestige`, `centrality`, `access`, `waterfront`, `nuisance`, `safety`, `danger`), and classification reads those fields. `spiritual`, `palace`, and `landmark` emit field influence too — spirituals radiate sanctity into their precinct, palaces radiate prestige+safety, so housing around them tags correctly via field classification rather than relying on the type-hint layer alone.
+
+### Building style (houses only)
+`buildingStyle` on `PortDefinition` is the visual-only differentiator for generic `house` geometry (separate from `culture`, which drives gameplay — markets, flags, language, awning dyes). 14 styles currently defined: `iberian`, `dutch-brick`, `english-tudor`, `luso-colonial`, `swahili-coral`, `arab-cubic`, `persian-gulf`, `malabar-hindu`, `mughal-gujarati`, `malay-stilted`, `west-african-round`, `luso-brazilian`, `spanish-caribbean`, `khoikhoi-minimal`.
+
+Rendering lives in `ProceduralCity.tsx`. Differentiation is palette + proportion + weighted variant mix, plus three cheap feature primitives: **stilts**, **wind-catcher**, **veranda**. No per-facade detail. Does *not* affect anchor buildings (forts, markets, landmarks, spirituals, palaces) — those have bespoke geometry of their own.
 
 ### Wildlife
 Four templates, all implemented: `Grazers.tsx`, `Primates.tsx`, `WadingBirds.tsx`, `Reptiles.tsx`. Each is an instanced mesh with per-port variants (color, scale, herd/flock size, biome preference).
@@ -205,6 +281,19 @@ Four templates, all implemented: `Grazers.tsx`, `Primates.tsx`, `WadingBirds.tsx
 
 ### Walking mode
 `playerMode: 'ship' | 'walking'`. `Player.tsx` is the character controller, `landCharacter.ts` holds avatar config. Pedestrians (`Pedestrians.tsx`, generated by `pedestrianSystem.ts`) populate port streets. Buildings tooltip on hover via `BuildingTooltip.tsx` (labels from `buildingLabels.ts`).
+
+#### Building entry detection (walking mode)
+`UI.tsx` polls every 250ms with two separate pipelines gated by `playerMode`:
+
+- **Ship**: `findNearbyPort(playerPos, ports)` — distance-only check, opens PortModal when the ship sails within `PORT_RADIUS_SQ` (20×20 units) of a port center. Unchanged from original.
+- **Walking**: `findNearbyPortWalking(walkingPos, ports)` — candidate port by `WALKING_PORT_SEARCH_RADIUS_SQ`, then `findBuildingAtPoint()` rotated-AABB test returning the specific `Building | null`. Branches on type:
+  - `building.type === 'market'` → `setActivePort(port)` → PortModal (market tab). Same audio + dismissed-port logic as before.
+  - any other type → `setActiveBuildingToast({ building, port })` → `BuildingToast` component. PortModal stays closed.
+  - no building → clears both `activePort` and `activeBuildingToast`.
+
+`BuildingToast` is a local-state component in `UI.tsx` backed by a ref (`activeBuildingToastRef`) to avoid stale closures inside the interval. It slides up with a spring animation, sits at `bottom-32` (mobile) / `bottom-40` (desktop) above the bottom button panel, shows `labelEyebrow` (colored pill), `label`, `labelSub`, and a stubbed **Enter** button (`onEnter` prop, no-op for now). No backdrop; doesn't block movement; auto-dismisses when player walks out of the building footprint. Re-triggers on re-entry (no dismissed-building tracking).
+
+**Wiring up Enter**: the `onEnter` stub is where time-of-day checks, reputation gates ("the door is locked"), and eventual building-interior mechanics will go. When ready, thread port + building through `onEnter` and dispatch to gameStore.
 
 ### Road & path rendering
 Three small modules share one invariant: the renderer, the ground-height resolver, and the topology pass all read road tier geometry from one place so they can't drift.
@@ -244,17 +333,41 @@ Three small modules share one invariant: the renderer, the ground-height resolve
 ## Planned / in progress
 
 ### POI System (largest unbuilt feature)
-Points of Interest on local port maps — temples, monasteries, naturalist houses, guilds. Each POI is a location you sail/walk to with its own modal containing a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`).
+Points of Interest — one-off, port-specific, hand-authored sites the player sails or walks to. Each POI is a location with its own modal containing a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`).
 
-Planned data model — not yet in code:
+**Landmark vs POI — the split**:
+
+| | Landmark | POI |
+|---|---|---|
+| Location | Inside the port's city footprint | Outside it (hinterland, pilgrimage site, ruins, sacred grove) or bound to an existing landmark |
+| Placed by | City generator (anchor system) | Hand-authored coords per port |
+| Interaction | Hover label only | Walk up / click → modal with Learn + Converse tabs |
+| Uniqueness | One per `landmarkId` | One per POI id |
+| Content | name + sub + semantic class | all that + `lore`, `npcName`, `knowledgeDomain`, `masteryGoods`, `cost` |
+
+The overlap case: a city landmark that's *also* a POI (Jesuit College at Goa is a landmark you see AND a POI you can enter). Model: POI references the landmark as its location via `location: { kind: 'landmark'; landmarkId: string }`. No duplicate placement.
+
+**Shared infrastructure POIs will reuse**:
+- `SemanticClass` + `SEMANTIC_STYLE` from `semanticClasses.ts` — POIs carry `class: SemanticClass` and get the same eyebrow color + marker as classified buildings. A pilgrimage shrine POI (class: religious) gets the same purple plumbob as an in-city mosque. A merchant-guild POI (class: mercantile) gets the same teal eyebrow as the English Factory landmark.
+- `buildingLabels.ts` label-texture pipeline — `createWorldLabelTexture({ eyebrow, eyebrowColor })` already accepts arbitrary classes.
+- `SacredBuildingMarkers` renderer in `ProceduralCity.tsx` — extend to iterate POI positions alongside buildings, filter by the same `marker === 'diamond'` gate. Zero new visual code for religious POIs.
+
+**Planned data model** — not yet in code:
 
 ```typescript
+type SemanticClass = 'religious' | 'civic' | 'learned' | 'mercantile' | 'royal';
+type POIKind = 'temple' | 'monastery' | 'naturalist' | 'merchant_guild' | 'ruin' | 'garden' | 'court';
+
 interface POIDefinition {
   id: string;
   name: string;
-  type: 'temple' | 'monastery' | 'naturalist' | 'merchant_guild' | 'ruin' | 'garden' | 'court';
+  kind: POIKind;                  // fine-grained type for prose / filtering
+  class: SemanticClass;           // drives eyebrow + marker (shared with buildings)
   port: string;
-  position: [number, number];
+  location:
+    | { kind: 'landmark'; landmarkId: string }       // anchored to an in-city landmark
+    | { kind: 'coords'; position: [number, number] }  // in-city POI at explicit coords
+    | { kind: 'hinterland'; position: [number, number] }; // outside city exclusion radius
   knowledgeDomain: string[];      // commodity IDs identifiable here
   masteryGoods: string[];         // subset upgradeable to Mastered
   cost: { type: 'gold' | 'commodity' | 'reputation'; amount?: number; commodityId?: string };
@@ -265,9 +378,17 @@ interface POIDefinition {
 }
 ```
 
-Example POIs by port (drafted, not built): Goa → Jesuit College of St. Paul; Calicut → Temple of Thalassery; Malacca → Chinese merchant guild; Mocha → Sufi lodge; Hormuz → Persian royal factor; Surat → Banyan merchant house; Macau → Jesuit observatory; Bantam → pepper gardens; Socotra → aloe groves; Lisbon → Royal Hospital of All Saints; Amsterdam → VOC Spice Warehouse; London → Apothecaries' Hall; Salvador → Jesuit college; Cartagena → Inquisition library; Cape → Khoikhoi pastoral camp.
+**Example POIs by port** (drafted, not built): Goa → Jesuit College of St. Paul (religious, bound to jesuit-college landmark — wait, that's at Salvador; Goa needs its own LEARNED POI bound to Bom Jesus); Calicut → Tali Temple priest (religious, bound to calicut-gopuram); Malacca → Chinese merchant guild (mercantile, in-city); Mocha → Sufi lodge (religious, bound to al-shadhili-mosque); Hormuz → Persian royal factor (royal, in-city); Surat → Banyan merchant house (mercantile, in-city, distinct from english-factory landmark); Macau → Jesuit observatory (learned, bound to colegio-sao-paulo); Bantam → pepper gardens (mercantile, hinterland); Socotra → aloe groves (learned, hinterland); Lisbon → Royal Hospital of All Saints (learned, in-city); Amsterdam → VOC Spice Warehouse (mercantile, in-city); London → Apothecaries' Hall (learned, in-city); Salvador → Jesuit college apothecary (learned, bound to jesuit-college); Cartagena → Inquisition library (learned, bound to palacio-inquisicion); Cape → Khoikhoi pastoral camp (naturalist, hinterland).
 
-Files to create: `src/utils/poiDefinitions.ts`, `src/utils/poiConversation.ts`, `src/components/POIModal.tsx`, `src/components/POIMarker.tsx`.
+**Files to create**: `src/utils/poiDefinitions.ts`, `src/utils/poiConversation.ts`, `src/components/POIModal.tsx`, `src/components/POIMarker.tsx`.
+
+**Implementation order** (when this kicks off):
+1. `poiDefinitions.ts` with 6-10 POIs across 3-4 ports, data-only.
+2. Marker renderer — extend `SacredBuildingMarkers` to pull POI positions + classes alongside buildings.
+3. Hover label for POIs (reuse `createWorldLabelTexture` + eyebrow system).
+4. Walk-up proximity detection (pattern from `interactionPrompt` in gameStore).
+5. `POIModal.tsx` with Learn tab wired to `knowledgeSystem.ts`.
+6. `poiConversation.ts` + Converse tab (copy the `TavernTab.tsx` / `tavernConversation.ts` pattern).
 
 ### Fraud detection surface
 Fraud rolls on Unknown-level purchases are specced in `knowledgeSystem.ts` design but the reveal-on-sale moment + Gujarati factor warning on purchase are not yet wired into `MarketTabLedger.tsx` / `PortModal.tsx`.
@@ -316,5 +437,5 @@ Hoofbeats, bird wingbeats, splashing — not yet in `SoundEffects.ts`.
 - **Determinism via `mulberry32`**: procedural generators (cities, labels, NPCs, portraits, terrain) use mulberry32-seeded RNG so the same port looks the same across sessions. The function is currently re-implemented in ~9 files — if you're adding generation code, copy the existing implementation from a nearby file rather than importing a new one. Consolidating into `src/utils/rng.ts` is on the cleanup list but hasn't happened; don't do it as a drive-by refactor.
 - **Historical dates**: game start is **May 1, 1612** (see `gameDate.ts`). Features, ships, weapons, commodities should be plausibly available in that year. Tobacco and cacao are new-entrant commodities; cinchona bark is barely known; Virginia tobacco = 1612 John Rolfe first crop; the Dutch are emerging rivals to the Portuguese, not yet dominant. If a tavern prompt or LLM system prompt says "around 1600–1620," pin it to 1612.
 - **Road tier constants live in `roadStyle.ts`**, not inline. If you add a new road-like surface (e.g. market flagstones, a canal towpath), either route it through an existing tier or extend `ROAD_TIER_STYLE` — don't hardcode `yLift`, `polygonOffsetFactor`, or `width` in a new mesh. The renderer and the ground-height resolver both read from this table; drift between them is what caused the old "player sinks into road" bug.
-- **Road polyline Y semantics**: for `path` / `road` / `avenue`, `points[i][1]` is terrain height at that (x, z). The visible ribbon sits at `polylineY + tier.yLift`. For `bridge`, the polyline Y is the authored deck ramp (terrain at abutments, `SEA_LEVEL + 0.8` over water). `getGroundHeight()` and the renderer both respect this — don't confuse bridge polyline Y with other tiers.
+- **Road polyline Y semantics**: for `path` / `road` / `avenue`, `points[i][1]` is terrain height at that (x, z). The visible ribbon sits at `polylineY + tier.yLift`. For `bridge`, the polyline Y is the authored deck ramp (terrain at abutments, `BRIDGE_DECK_Y` over water — shared constant in `roadStyle.ts`). `getGroundHeight()` and the renderer both respect this — don't confuse bridge polyline Y with other tiers. Piers filter to `y ≤ BRIDGE_DECK_Y + ε` so abutment points don't spawn columns above the deck.
 - **Road generation runs once per port**, inside `mapGenerator.ts`. `postprocessRoads()` mutates the roads array in place (densify + weld) and returns the graph. If you generate roads at runtime (you shouldn't), you also have to rebuild `port.roadGraph` and any downstream `RoadSurfaceIndex` refs — they are cached on `useEffect` / `initPedestrianSystem`.

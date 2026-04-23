@@ -73,6 +73,14 @@ export const FACTIONS: Record<Nationality, FactionInfo> = {
     colors: ['#C8102E', '#FFFFFF', '#C8102E'],  // Dannebrog
     flagPattern: 'cross',
   },
+  Venetian: {
+    id: 'Venetian',
+    displayName: 'Most Serene Republic of Venice',
+    shortName: 'Venetian',
+    description: 'The Republic of Saint Mark — Levantine spice broker, master of the Adriatic, sustained by Murano glass and the theriac monopoly.',
+    colors: ['#A51E1E', '#F4C430', '#A51E1E'],  // crimson field, gold lion of St Mark
+    flagPattern: 'plain',
+  },
 
   // ── Indian Subcontinent ──────────────────────────────
   Mughal: {

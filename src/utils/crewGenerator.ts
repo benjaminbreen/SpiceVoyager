@@ -43,6 +43,11 @@ const NAME_POOLS: Record<Nationality, NamePool> = {
     last: ['Gjedde', 'Bille', 'Crappe', 'Hansen', 'Pedersen', 'Andersen', 'Larsen', 'Jørgensen', 'Christensen', 'Rasmussen', 'Sørensen', 'Madsen', 'Mortensen', 'Eriksen', 'Knudsen', 'Olsen', 'Thomsen', 'Lund', 'Bech', 'Dahl'],
     birthplaces: ['Copenhagen', 'Helsingør', 'Aalborg', 'Odense', 'Bergen', 'Tranquebar', 'Aarhus', 'Ribe', 'Roskilde', 'Malmø'],
   },
+  Venetian: {
+    first: ['Marco', 'Pietro', 'Giovanni', 'Domenico', 'Andrea', 'Francesco', 'Nicolò', 'Vincenzo', 'Antonio', 'Bartolomeo', 'Lorenzo', 'Tommaso', 'Sebastiano', 'Gerolamo', 'Alvise', 'Zuan', 'Daniele', 'Cristoforo', 'Filippo', 'Benedetto'],
+    last: ['Contarini', 'Mocenigo', 'Foscari', 'Dandolo', 'Morosini', 'Loredan', 'Grimani', 'Querini', 'Trevisan', 'Barbarigo', 'Pisani', 'Zorzi', 'Ziani', 'Vendramin', 'Bembo', 'Soranzo', 'Gritti', 'Tiepolo', 'Venier', 'Donà'],
+    birthplaces: ['Venice', 'Murano', 'Chioggia', 'Padua', 'Verona', 'Treviso', 'Vicenza', 'Brescia', 'Bergamo', 'Candia', 'Corfu', 'Zara'],
+  },
   Mughal: {
     first: ['Mirza', 'Khwaja', 'Asaf', 'Muqarrab', 'Itimad', 'Nur', 'Sher', 'Dara', 'Aurangzeb', 'Shah', 'Iftikhar', 'Zulfiqar', 'Hakim', 'Qasim', 'Yusuf', 'Ibrahim', 'Salim', 'Rahim', 'Farid', 'Akbar'],
     last: ['Khan', 'Beg', 'ud-Daula', 'Ali', 'Jahan', 'Shah', 'Mirza', 'Bahadur', 'Singh', 'Ahmad', 'Husain', 'Malik', 'Quli', 'Baksh', 'Alam'],
@@ -273,6 +278,7 @@ const NATIVE_LANGUAGE: Record<Nationality, Language> = {
   Dutch: 'Dutch',
   Spanish: 'Spanish',
   French: 'French',
+  Venetian: 'Italian',
   Danish: 'Dutch',
   Mughal: 'Hindustani',
   Gujarati: 'Gujarati',
@@ -295,6 +301,9 @@ const CONTACT_LANGUAGES: Record<Nationality, Language[]> = {
   Dutch: ['Portuguese', 'Malay', 'Chinese', 'Gujarati', 'English'],
   Spanish: ['Portuguese', 'Chinese', 'Malay', 'Japanese'],
   French: ['Portuguese', 'Arabic', 'Gujarati', 'Swahili'],
+  // Venetians ran the Levant trade — Greek-speaking islands, Ottoman lands,
+  // Persian carpet/silk middlemen. Most educated merchants also had Latin.
+  Venetian: ['Turkish', 'Arabic', 'Persian', 'Portuguese', 'Spanish'],
   Danish: ['Dutch', 'English', 'Portuguese', 'Malay'],
   Mughal: ['Persian', 'Gujarati', 'Arabic', 'Portuguese'],
   Gujarati: ['Hindustani', 'Persian', 'Arabic', 'Portuguese'],
@@ -696,7 +705,7 @@ const ROLE_HUMOUR_BIAS: Record<CrewRole, Partial<Record<HumourKey, number>>> = {
 // Regional tendencies — stereotypes of the era (how Europeans and others perceived each other)
 type RegionKey = 'european' | 'indian' | 'southeast_asian' | 'east_asian' | 'african';
 const NAT_REGION: Record<Nationality, RegionKey> = {
-  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european',
+  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european', Venetian: 'european',
   Mughal: 'indian', Gujarati: 'indian', Persian: 'indian', Ottoman: 'indian', Omani: 'indian',
   Swahili: 'african',
   Malay: 'southeast_asian', Acehnese: 'southeast_asian', Javanese: 'southeast_asian', Moluccan: 'southeast_asian', Siamese: 'southeast_asian',

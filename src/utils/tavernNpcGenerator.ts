@@ -190,6 +190,10 @@ const PORT_ROLE_WEIGHTS: Record<string, string[]> = {
   amsterdam:['spice_merchant', 'spice_merchant', 'sailor', 'naturalist', 'textile_factor'],
   seville:  ['soldier', 'sailor', 'drug_trader', 'textile_factor'],
   london:   ['naturalist', 'sailor', 'spice_merchant', 'drug_trader'],
+  venice:   ['spice_merchant', 'drug_trader', 'naturalist', 'textile_factor', 'sailor', 'incense_dealer'],
+  manila:   ['spice_merchant', 'drug_trader', 'soldier', 'sailor', 'textile_factor', 'naturalist'],
+  nagasaki: ['spice_merchant', 'drug_trader', 'sailor', 'soldier', 'naturalist'],
+  masulipatnam: ['drug_trader', 'drug_trader', 'textile_factor', 'spice_merchant', 'sailor'],
   elmina:   ['soldier', 'sailor', 'ivory_trader'],
   luanda:   ['soldier', 'sailor'],
   salvador: ['sailor', 'drug_trader', 'textile_factor'],
@@ -220,6 +224,18 @@ const PORT_TAVERN_NATIONALITIES: Record<string, Nationality[]> = {
   amsterdam:['Dutch', 'English', 'Portuguese', 'Danish', 'French'],
   seville:  ['Spanish', 'Portuguese', 'French', 'English'],
   london:   ['English', 'Dutch', 'Portuguese', 'French', 'Danish'],
+  venice:   ['Venetian', 'Venetian', 'Ottoman', 'Portuguese', 'Spanish', 'English', 'Dutch', 'French', 'Persian'],
+  // Manila — Spanish Intramuros plus the Sangley Chinese Parián (the actual
+  // commercial majority). Japanese Red Seal traders and Malay merchants
+  // round out the bay's polyglot taverns.
+  manila:   ['Chinese', 'Chinese', 'Spanish', 'Spanish', 'Portuguese', 'Japanese', 'Malay', 'Javanese'],
+  // Nagasaki — Japanese majority with a sizable Portuguese commercial enclave
+  // (Jesuits, factors, lascar crews from Goa/Macau) and Chinese traders from Fujian.
+  nagasaki: ['Japanese', 'Japanese', 'Japanese', 'Portuguese', 'Portuguese', 'Chinese', 'Chinese', 'Malay'],
+  // Masulipatnam — Deccani/Telugu majority read as 'Mughal' in-game, with
+  // Persian merchants (strong Safavid-Golconda trade ties), Gujarati brokers,
+  // and the new Dutch + English factors.
+  masulipatnam: ['Mughal', 'Mughal', 'Persian', 'Gujarati', 'Dutch', 'English', 'Portuguese', 'Ottoman'],
   elmina:   ['Portuguese', 'Dutch', 'English'],
   luanda:   ['Portuguese', 'Spanish'],
   salvador: ['Portuguese', 'Spanish', 'Dutch'],
@@ -746,6 +762,20 @@ const PORT_COLOR: Record<string, string[]> = {
     '"The VOC is hiring. They are always hiring. You know why? Because men keep dying."',
     '"This city runs on money and herring. In that order."',
     '"They are building new warehouses on the Keizersgracht. For spices. Always spices."',
+  ],
+  venice: [
+    '"The Cape route was supposed to ruin us. And yet here we are, still selling pepper."',
+    '"The theriac will be compounded on the Piazza this autumn. They will need a witness from the College of Physicians."',
+    '"Every Jew in the Ghetto knows three languages. The Council of Ten knows them all."',
+    '"Murano glass goes to Constantinople and comes back as silk. That is the trade."',
+    '"The Arsenale launches a galley a day when the Republic wills it. Most days it does not will it."',
+  ],
+  manila: [
+    '"The galleon from Acapulco is late again. Half the Parián is waiting on silver to make next year\'s shipment."',
+    '"The Sangleys do all the work and most of the trade. The friars complain. The friars always complain."',
+    '"Star anise from Fujian, betel from Mindanao, silk from Hangzhou — and none of it grown by a Spaniard."',
+    '"Have you seen the new church? Stone, not bamboo. The friars say it will outlast us all."',
+    '"They massacred eight thousand Sangleys nine years ago and still can\'t do business without them."',
   ],
   cochin: [
     '"The pepper here is the best in the world and everyone knows it."',

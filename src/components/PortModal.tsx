@@ -18,7 +18,7 @@ import {
   Package, Wind, Heart, Hammer, Check,
 } from 'lucide-react';
 
-type PlaceTab = 'market' | 'shipyard' | 'tavern' | 'governor';
+export type PlaceTab = 'market' | 'shipyard' | 'tavern' | 'governor';
 type Tab = 'overview' | PlaceTab;
 type PortSeason = 'northeast' | 'intermonsoon' | 'southwest' | 'postmonsoon';
 
@@ -545,7 +545,7 @@ function getPortMusicTrack(portId: string) {
 
 // ── Main Component ──
 
-export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
+export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; initialTab?: PlaceTab }) {
   const {
     activePort, setActivePort, gold, cargo, stats, ship,
     buyCommodity, sellCommodity, repairShip, buyWeapon, sellWeapon, buyUpgrade,
@@ -565,7 +565,7 @@ export function PortModal({ onDismiss }: { onDismiss?: () => void }) {
 
   useEffect(() => {
     if (!activePort) return;
-    setActiveTab('overview');
+    setActiveTab(initialTab ?? 'overview');
     setShowSources(false);
   }, [activePort?.id]);
 

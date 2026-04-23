@@ -1,12 +1,13 @@
 import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion, Road, RoadTier } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from './terrain';
+import { BRIDGE_DECK_Y } from './roadStyle';
 import { generateBuildingLabel } from './buildingLabels';
 import type { CanalLayout } from './canalLayout';
 import { distanceToNearestCanal } from './canalLayout';
 import { classifyBuildingDistrict, pruneDistrictBoundaries } from './cityDistricts';
 import { assignBuildingForms } from './cityBuildings';
-import { buildingSemanticClass, SEMANTIC_STYLE } from './semanticClasses';
+import { buildingSemanticClass, SEMANTIC_STYLE, LANDMARK_CLASS } from './semanticClasses';
 import {
   pickPathOrigin,
   pickPathTarget,
@@ -33,11 +34,11 @@ function hashStr(s: string): number {
 // driven by the port's faith list and its `landmarkId`, not by this table.
 // The entries exist solely to keep the Record exhaustive for TypeScript.
 const SCALE_COUNTS: Record<PortScale, Record<BuildingType, number>> = {
-  'Small':      { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, plaza: 0, spiritual: 0, landmark: 0, house: 8,   shack: 5,  farmhouse: 3 },
-  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, plaza: 1, spiritual: 0, landmark: 0, house: 20,  shack: 8,  farmhouse: 6 },
-  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, plaza: 1, spiritual: 0, landmark: 0, house: 40,  shack: 12, farmhouse: 10 },
-  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, plaza: 2, spiritual: 0, landmark: 0, house: 70,  shack: 20, farmhouse: 15 },
-  'Huge':       { dock: 6, warehouse: 5, fort: 2, estate: 7, market: 4, plaza: 2, spiritual: 0, landmark: 0, house: 110, shack: 25, farmhouse: 20 },
+  'Small':      { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, plaza: 0, spiritual: 0, landmark: 0, palace: 0, house: 8,   shack: 5,  farmhouse: 3 },
+  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 20,  shack: 8,  farmhouse: 6 },
+  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 40,  shack: 12, farmhouse: 10 },
+  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, plaza: 2, spiritual: 0, landmark: 0, palace: 0, house: 70,  shack: 20, farmhouse: 15 },
+  'Huge':       { dock: 6, warehouse: 5, fort: 2, estate: 7, market: 4, plaza: 2, spiritual: 0, landmark: 0, palace: 0, house: 110, shack: 25, farmhouse: 20 },
 };
 
 // Plaza footprint grows with port stature. Medium gets a compact 7×7; Huge
@@ -83,7 +84,21 @@ const BUILDING_SIZES: Record<BuildingType, [number, number, number]> = {
   // Landmarks override this per-rule (LANDMARK_RULES[id].size). This value
   // is only a safety fallback if a landmark is ever placed without a rule.
   landmark: [10, 4, 10],
+  // Palaces reserve a large footprint so findSpot's +1 occupancy pad carves
+  // out a proper courtyard clearing around them. Actual rendered geometry
+  // uses hardcoded ~10×10 dimensions (see palace render branch in
+  // ProceduralCity.tsx) and ignores this scale — the 16×16 reservation here
+  // is purely to widen the empty buffer between the palace and generic
+  // housing, so the royal precinct reads as set-apart.
+  palace: [16, 5, 16],
 };
+
+// Forts use b.scale for their rendered geometry (walls, corner towers), so
+// we can't widen the reservation by bumping BUILDING_SIZES.fort without
+// making the fort itself bigger. Instead, findSpot is called with this
+// enlarged footprint only for the occupancy/pad check; b.scale stays at
+// BUILDING_SIZES.fort so the render is unchanged.
+const FORT_RESERVE_SIZE: [number, number, number] = [16, 6, 16];
 
 interface Cell {
   x: number;
@@ -247,7 +262,8 @@ function chaikin3(
   return result;
 }
 
-const BRIDGE_DECK_Y = SEA_LEVEL + 0.8;
+// BRIDGE_DECK_Y is shared with the renderer via roadStyle.ts so pier
+// filtering can test points against the canonical deck plane.
 
 function pathToRoad(
   id: string,
@@ -258,9 +274,18 @@ function pathToRoad(
 ): Road {
   // Pre-compute y per input cell so bridge spans ride the deck instead of
   // floating a ribbon at sea level underneath. Land cells keep terrain height.
+  //
+  // Only tier='bridge' roads get lifted to BRIDGE_DECK_Y. Other tiers (path,
+  // road, avenue) may reuse bridge cells during pathfinding (BFS allows it),
+  // but if we lifted those points too the ribbon would jump from terrain Y
+  // up to deck Y and back — rendering as a stack of near-vertical trapezoid
+  // panels cutting through the bridge. Leaving non-bridge roads at terrain
+  // Y means they duck under the water surface where they cross a bridge
+  // cell, which is invisible (the bridge's own deck covers the span).
+  const liftToDeck = tier === 'bridge';
   const raw: [number, number, number][] = cellPath.map(c => {
     const onBridge = bridgeCells?.has(`${c.x},${c.z}`) ?? false;
-    if (onBridge) return [c.x, BRIDGE_DECK_Y, c.z];
+    if (onBridge && liftToDeck) return [c.x, BRIDGE_DECK_Y, c.z];
     const h = getTerrainData(c.x, c.z).height;
     return [c.x, Math.max(h, SEA_LEVEL + 0.05), c.z];
   });
@@ -333,6 +358,7 @@ export function generateCity(
   canalLayout?: CanalLayout,
   landmarkId?: string,
   faiths: readonly string[] = [],
+  palaceStyle?: string | null,
 ): { buildings: Building[]; roads: Road[] } {
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
@@ -599,12 +625,43 @@ export function generateCity(
       }
       roadCells.add(`${best.start.x},${best.start.z}`);
       roadCells.add(`${best.end.x},${best.end.z}`);
-      const deckY = SEA_LEVEL + 0.8;
-      const path = [best.start, ...best.water, best.end];
-      const points: [number, number, number][] = path.map(c => {
-        const y = c.isWater ? deckY : Math.max(c.height, deckY);
+      // Extend one extra land cell onto each bank so the approach ramp
+      // spans two segments instead of one — keeps the slope walkable when
+      // BRIDGE_DECK_Y sits well above the beach.
+      const extendOuter = (anchor: Cell, inward: Cell): Cell | null => {
+        const ox = anchor.x + (anchor.x - inward.x);
+        const oz = anchor.z + (anchor.z - inward.z);
+        const n = gridMap.get(`${ox},${oz}`);
+        if (!n || !(n.isLand || n.isBeach)) return null;
+        return n;
+      };
+      const startOuter = extendOuter(best.start, best.water[0] ?? best.end);
+      const endOuter = extendOuter(best.end, best.water[best.water.length - 1] ?? best.start);
+      const path: Cell[] = [
+        ...(startOuter ? [startOuter] : []),
+        best.start,
+        ...best.water,
+        best.end,
+        ...(endOuter ? [endOuter] : []),
+      ];
+      const pathN = path.length;
+      // Outermost abutment cell rides its own terrain; the inner-abutment
+      // cell sits just above deck height. That gives a single-segment ramp
+      // from terrain up to BRIDGE_DECK_Y over (roughly) one cellSize on
+      // each end, plus the deck proper over the water. When terrain exceeds
+      // the deck (clifftop), we lift so the deck meets the cliff cleanly.
+      // The +0.1 lift on the inner abutment keeps the renderer's pier
+      // filter from mistakenly dropping a column onto land.
+      const points: [number, number, number][] = path.map((c, i) => {
+        if (c.isWater) return [c.x, BRIDGE_DECK_Y, c.z];
+        const outermost = i === 0 || i === pathN - 1;
+        const y = outermost ? c.height : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
         return [c.x, y, c.z];
       });
+      // Also record the extension cells into roadCells so later A* can
+      // connect into them without reopening water cells on its own.
+      if (startOuter) roadCells.add(`${startOuter.x},${startOuter.z}`);
+      if (endOuter) roadCells.add(`${endOuter.x},${endOuter.z}`);
       roads.push({ id: `bridge_${bi}`, tier: 'bridge', points });
       bridgeRoads.push(path);
       const mid = best.water[Math.floor(best.water.length / 2)];
@@ -657,9 +714,15 @@ export function generateCity(
         if (cell.isWater) bridgeCells.add(k);
         roadCells.add(k);
       }
-      const deckY = SEA_LEVEL + 0.8;
-      const points: [number, number, number][] = path.map(c => {
-        const y = c.isWater ? deckY : Math.max(c.height, deckY);
+      const canalPathN = path.length;
+      // Same abutment-ramp rule as dual-bank bridges: outermost land cells
+      // ride their own terrain so there's a visible approach ramp up to the
+      // deck instead of a cliff edge. Inner abutment sits just above the
+      // deck plane so the pier filter won't drop columns on it.
+      const points: [number, number, number][] = path.map((c, i) => {
+        if (c.isWater) return [c.x, BRIDGE_DECK_Y, c.z];
+        const outermost = i === 0 || i === canalPathN - 1;
+        const y = outermost ? c.height : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
         return [c.x, y, c.z];
       });
       roads.push({ id: `canal_bridge_${canalBridgeIdx++}`, tier: 'bridge', points });
@@ -760,14 +823,14 @@ export function generateCity(
     let spot = fortPreferBank >= 0
       ? findSpot(
           c => c.isLand && c.bank === fortPreferBank,
-          BUILDING_SIZES.fort,
+          FORT_RESERVE_SIZE,
           (a, b) => fortScore(a) - fortScore(b),
         )
       : null;
     if (!spot) {
       spot = findSpot(
         c => c.isLand && (!dualBank || majorBanks.has(c.bank)),
-        BUILDING_SIZES.fort,
+        FORT_RESERVE_SIZE,
         (a, b) => fortScore(a) - fortScore(b),
       );
     }
@@ -960,8 +1023,18 @@ export function generateCity(
       // Prefer inland: penalise coastal-adjacent cells for this building
       // class (spiritual sites usually sit back from the working waterfront).
       if (hasNearWater(c)) score += 18;
-      // Elevation bonus
-      score -= Math.max(0, (c.height - SEA_LEVEL)) * 0.6;
+      // Elevation bonus — sacrality reads more strongly on a rise.
+      score -= Math.max(0, (c.height - SEA_LEVEL)) * 0.8;
+      // Local prominence — a churchyard on a small knoll feels right even
+      // when absolute elevation is modest (think Oude Kerk on a terp).
+      score -= localProminence(c) * 0.7;
+      // Quiet proxy: penalise proximity to the docks. Sanctity is the
+      // inverse of nuisance, and docks are the biggest nuisance source
+      // already placed. Falls off over ~22u so mid-ring faiths are fine.
+      for (const dockC of dockCells) {
+        const dsq = (c.x - dockC.x) ** 2 + (c.z - dockC.z) ** 2;
+        if (dsq < 22 * 22) score += (22 * 22 - dsq) * 0.018;
+      }
       // Distance from other spiritual buildings — each faith should stand apart.
       for (const prev of placedSpiritualCells) {
         const dsq = (c.x - prev.x) ** 2 + (c.z - prev.z) ** 2;
@@ -988,6 +1061,79 @@ export function generateCity(
     });
     anchorCells.push({ type: 'spiritual', cell: spot, idx: si });
     placedSpiritualCells.push(spot);
+  }
+
+  // ── 2d. Palace (royal residence / governor's house) ────────────────────────
+  // One per port, keyed to palaceStyle. Skipped when the port already has a
+  // royal-classed landmark (Tower of London, Palacio de la Inquisición) —
+  // the landmark carries the royal identity, adding a second royal building
+  // would be redundant.
+  //
+  // Placement goals: the palace should read as "in the orbit of the port"
+  // without sitting in the merchant core. We push the ideal radius to ~0.42
+  // of the city footprint — clearly outside the bazaar-and-warehouse ring
+  // but still inside the fields/estate zone — and bias strongly for
+  // prominence (elevation + local rise) and the fort's flank (same defensible
+  // precinct, short walk from the citadel, but not wall-sharing). Kept
+  // separated from sacred precincts so royal and religious centres read
+  // as distinct.
+  const landmarkIsRoyal = landmarkId ? LANDMARK_CLASS[landmarkId] === 'royal' : false;
+  let palaceCell: Cell | null = null;
+  if (palaceStyle && !landmarkIsRoyal) {
+    const palaceIdealDist = gridRadius * cellSize * 0.42;
+    const fortCell = anchorCells.find(a => a.type === 'fort')?.cell;
+    const palaceScore = (c: Cell): number => {
+      const distFromIdeal = Math.abs(c.distToCenter - palaceIdealDist);
+      let score = distFromIdeal;
+      // Inland bias (palaces sit back from the working waterfront)
+      if (hasNearWater(c)) score += 18;
+      // Elevation bonus — palaces like a real rise above sea level.
+      score -= Math.max(0, (c.height - SEA_LEVEL)) * 0.9;
+      // Local prominence — prefer cells that rise above their immediate
+      // neighbourhood (same term the fort uses, slightly weaker weight).
+      score -= localProminence(c) * 1.1;
+      // Fort-flank soft attraction. Palaces should sit in the same defensible
+      // precinct as the citadel — close enough to be visibly "in its orbit",
+      // not so close that they share a wall.
+      if (fortCell) {
+        const dsq = (c.x - fortCell.x) ** 2 + (c.z - fortCell.z) ** 2;
+        const d = Math.sqrt(dsq);
+        if (d < 18) {
+          // Hard repel — too close, shares fort footprint.
+          score += (18 - d) * 1.8;
+        } else if (d >= 22 && d <= 42) {
+          // Sweet spot — same precinct, short walk.
+          score -= 2.6;
+        } else if (d > 58) {
+          // Too far — palace loses contact with the seat of power.
+          score += (d - 58) * 0.09;
+        }
+      }
+      // Separate from spirituals (royal precinct ≠ sacred precinct)
+      for (const prev of placedSpiritualCells) {
+        const dsq = (c.x - prev.x) ** 2 + (c.z - prev.z) ** 2;
+        if (dsq < 20 * 20) score += (20 * 20 - dsq) * 0.028;
+      }
+      return score;
+    };
+    const spot = findSpot(
+      c => c.isLand,
+      BUILDING_SIZES.palace,
+      (a, b) => palaceScore(a) - palaceScore(b),
+    );
+    if (spot) {
+      const faceCity = Math.atan2(portX - spot.x, portZ - spot.z);
+      buildings.push({
+        id: `palace_${palaceStyle}`,
+        type: 'palace',
+        position: [spot.x, spot.height, spot.z],
+        rotation: faceCity,
+        scale: BUILDING_SIZES.palace,
+        palaceStyle,
+      });
+      anchorCells.push({ type: 'palace', cell: spot, idx: 0 });
+      palaceCell = spot;
+    }
   }
 
   for (let i = 0; i < counts.market; i++) {
@@ -1108,6 +1254,27 @@ export function generateCity(
     tryAddRoad('avenue', 'avenue_1', altStart ?? null, altEnd ?? null, avenueOpts, 3);
   }
 
+  // Dedicated palace avenue — built whenever a palace exists, independent of
+  // the scale's avenue count. The palace is set apart from the urban core,
+  // so a proper processional boulevard (not a back road) is what visually
+  // connects it to the rest of the port. Prefers market → palace so the
+  // avenue reads as "from the city to the seat of power"; falls back to
+  // fort or dock if no market was placed.
+  if (palaceCell) {
+    const palaceAvenueStart = market?.cell ?? fort?.cell ?? dockAnchor ?? null;
+    // Skip if the start sits right on top of the palace footprint (can happen
+    // when both are pulled to the same prominent cell on tiny maps).
+    if (palaceAvenueStart) {
+      const d = Math.sqrt(
+        (palaceAvenueStart.x - palaceCell.x) ** 2 +
+        (palaceAvenueStart.z - palaceCell.z) ** 2
+      );
+      if (d >= 8) {
+        tryAddRoad('avenue', 'avenue_palace', palaceAvenueStart, palaceCell, avenueOpts, 3);
+      }
+    }
+  }
+
   // Roads: remaining anchors → nearest existing road terminus
   const roadEndpoints = (): Cell[] => {
     const ends: Cell[] = [];
@@ -1145,7 +1312,7 @@ export function generateCity(
   // Prefer connecting markets, forts, warehouses that are off-network
   const sortedAnchors = unconnected.sort((a, b) => {
     const order: Record<BuildingType, number> = {
-      market: 0, plaza: 0, spiritual: 0, landmark: 1, fort: 1,
+      market: 0, plaza: 0, spiritual: 0, palace: 0, landmark: 1, fort: 1,
       warehouse: 2, estate: 3, dock: 4, house: 5, farmhouse: 6, shack: 7,
     };
     return (order[a.type] ?? 9) - (order[b.type] ?? 9);
@@ -1541,7 +1708,7 @@ export function generateCity(
     const result = generateBuildingLabel(
       b.id, b.type, culture, portName,
       b.position[1], distToCenter, moisture, labelSeed, nationality, region,
-      { faith: b.faith, landmarkId: b.landmarkId },
+      { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle },
     );
     b.label = result.label;
     b.labelSub = result.sub;

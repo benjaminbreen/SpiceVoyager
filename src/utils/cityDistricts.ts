@@ -71,6 +71,7 @@ const BUILDING_TYPE_HINT: Partial<Record<BuildingType, DistrictKey>> = {
   estate:    'elite-residential',
   farmhouse: 'fringe',
   spiritual: 'sacred',
+  palace:    'elite-residential',
 };
 
 function demoteForScale(
@@ -179,7 +180,7 @@ export function districtAtPoint(
 
 // Anchors (these drive district identity) are never pruned.
 const ANCHOR_TYPES: ReadonlySet<string> = new Set([
-  'fort', 'dock', 'market', 'estate', 'warehouse', 'plaza', 'spiritual', 'landmark',
+  'fort', 'dock', 'market', 'estate', 'warehouse', 'plaza', 'spiritual', 'landmark', 'palace',
 ]);
 
 /**

@@ -48,6 +48,7 @@ const BUILDING_ACTIVITY: Record<BuildingType, number> = {
   plaza:     0.95,
   spiritual: 0.5,
   landmark:  0.85,
+  palace:    0.8,
   fort:      0.6,
   estate:    0.7,
   house:     0.4,

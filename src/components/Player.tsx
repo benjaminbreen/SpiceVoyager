@@ -12,6 +12,7 @@ import {
 } from '../utils/livePlayerTransform';
 import { spawnSplash } from '../utils/splashState';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
+import { resolvePedestrianPush } from '../utils/livePedestrians';
 import { PLAYER_RADIUS } from '../utils/animalBump';
 import { huntAimAngle, huntAimPitch, landWeaponReload } from '../utils/combatState';
 import { touchWalkInput } from '../utils/touchInput';
@@ -300,19 +301,32 @@ export function Player() {
         }
       }
 
+      // Pedestrians — soft one-way push; player slides around NPCs without thud.
+      const pedPush = resolvePedestrianPush(newX, newZ, PLAYER_RADIUS);
+      if (pedPush.hit) {
+        newX += pedPush.px;
+        newZ += pedPush.pz;
+      }
+
+      const terrainYNew = getTerrainHeight(newX, newZ);
       const targetY = getGroundHeight(newX, newZ, roadIndexRef.current);
 
-      // Smooth Y transitions so stepping onto a road ribbon (yLift ~0.1u)
-      // or onto a bridge ramp doesn't pop the character vertically. The
-      // previous Y lives on walkingPos[1].
-      const prevY = walkingPos[1];
-      const dy = targetY - prevY;
+      // Smooth only the *artificial* lift above terrain — road ribbons
+      // (yLift ~0.1u) and bridge decks. Natural terrain has lift == 0, so
+      // the character tracks hillsides exactly. Without this split, walking
+      // up a steep slope at 10u/s outpaces the 2.4u/s clamp and the figure
+      // sinks into the hill until the slope levels off.
+      const liftNew = Math.max(0, targetY - terrainYNew);
+      const terrainYPrev = getTerrainHeight(walkingPos[0], walkingPos[2]);
+      const prevLift = Math.max(0, walkingPos[1] - terrainYPrev);
+      const dLift = liftNew - prevLift;
       const maxUp = MAX_STEP_UP_PER_SEC * delta;
       const maxDown = MAX_STEP_DOWN_PER_SEC * delta;
-      let groundY: number;
-      if (dy > maxUp) groundY = prevY + maxUp;
-      else if (dy < -maxDown) groundY = prevY - maxDown;
-      else groundY = targetY;
+      let smoothedLift: number;
+      if (dLift > maxUp) smoothedLift = prevLift + maxUp;
+      else if (dLift < -maxDown) smoothedLift = prevLift - maxDown;
+      else smoothedLift = liftNew;
+      const groundY = terrainYNew + smoothedLift;
 
       // While jumping, allow movement over water
       if (isJumping.current) {

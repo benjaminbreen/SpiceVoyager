@@ -234,6 +234,16 @@ export function weldAndJunction(roads: Road[]): WeldManifest {
 
     const target = roads[hit.roadIdx];
 
+    // Welding X/Z together is always wanted, but Y is different: if the
+    // target is a bridge (authored at BRIDGE_DECK_Y over water), snapping a
+    // ground-level road's endpoint onto it produces a near-vertical ribbon
+    // segment from the approach's terrain Y up to deck Y over <1 cell — a
+    // thin brown "blade" piercing the bridge deck at every cross-street
+    // weld. For bridge targets, snap only X/Z and let the approach keep
+    // its own Y; the road then visually terminates under/at the abutment
+    // with no vertical jump.
+    const targetIsBridge = target.tier === 'bridge';
+
     if (hit.targetIsEndpoint) {
       // Both roads end near each other — merge both to a shared mid-point.
       // Averaging the two positions lets neither road "win" visually.
@@ -243,9 +253,16 @@ export function weldAndJunction(roads: Road[]): WeldManifest {
       const tep = target.points[targetEpIdx];
       const mx = (ep[0] + tep[0]) * 0.5;
       const mz = (ep[2] + tep[2]) * 0.5;
-      const my = (ep[1] + tep[1]) * 0.5;
-      pts[epIdx] = [mx, my, mz];
-      target.points[targetEpIdx] = [mx, my, mz];
+      if (targetIsBridge) {
+        // Keep each road's own Y. Bridge abutment stays at its authored
+        // height, approach stays at terrain.
+        pts[epIdx] = [mx, ep[1], mz];
+        target.points[targetEpIdx] = [mx, tep[1], mz];
+      } else {
+        const my = (ep[1] + tep[1]) * 0.5;
+        pts[epIdx] = [mx, my, mz];
+        target.points[targetEpIdx] = [mx, my, mz];
+      }
     } else {
       // T-junction. Try to reuse an existing vertex on the target road; if
       // none is close enough, insert a new one at the hit location and
@@ -262,7 +279,11 @@ export function weldAndJunction(roads: Road[]): WeldManifest {
       // trim, a road's ribbon ends stamped across half of an avenue's
       // width, producing the visible "road stub" seam where colors compete.
       const tv = target.points[insertedAt];
-      pts[epIdx] = [tv[0], tv[1], tv[2]];
+      // For bridge targets, don't adopt the target's Y — use the approach's
+      // current endpoint Y, resampled to terrain for safety. Otherwise use
+      // the target vertex Y as before.
+      const weldY = targetIsBridge ? getTerrainHeight(tv[0], tv[2]) : tv[1];
+      pts[epIdx] = [tv[0], weldY, tv[2]];
       // Record the logical anchor (target centerline) before trimming so
       // the graph can still recognise this endpoint as a T-welded junction
       // rather than a dead-end.
