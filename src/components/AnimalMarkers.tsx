@@ -101,6 +101,7 @@ export function AnimalMarkers({
 }) {
   const fishShoals = useGameStore(s => s.fishShoals);
   const oceanEncounters = useGameStore(s => s.oceanEncounters);
+  const markersEnabled = useGameStore(s => s.renderDebug.animalMarkers);
 
   const clusters = useMemo<Cluster[]>(() => {
     const out: Cluster[] = [];
@@ -173,6 +174,7 @@ export function AnimalMarkers({
     setOpacities(next);
   });
 
+  if (!markersEnabled) return null;
   if (clusters.length === 0) return null;
 
   return (

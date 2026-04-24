@@ -16,6 +16,7 @@ import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { useIsMobile } from '../utils/useIsMobile';
 import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { perfSignals, reportCollisionMs } from '../utils/performanceStats';
 
 // Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
 // course corrections actually have time to register. Tuned by playtest.
@@ -142,6 +143,7 @@ export function Ship() {
   const heelVelocity = useRef(0);
   const yawSlide = useRef(0); // visual drift slip — hull lags physics heading
   const prevVelocity = useRef(0); // for throttle weight-transfer pitch
+  const smoothWeightPitch = useRef(0); // low-pass filtered to avoid single-frame pitch snaps
   // Recoil state: slow drift away from land after collision
   const recoilVelX = useRef(0);
   const recoilVelZ = useRef(0);
@@ -938,6 +940,7 @@ export function Ship() {
         [1.5, 0]    // Starboard
       ];
       
+      const collisionT0 = perfSignals.enabled ? performance.now() : 0;
       let hitLand = false;
       let hitNormalX = 0;
       let hitNormalZ = 0;
@@ -960,6 +963,7 @@ export function Ship() {
           break;
         }
       }
+      if (perfSignals.enabled) reportCollisionMs(performance.now() - collisionT0);
 
       // Apply recoil drift from previous collisions (water-like slow push)
       const recoilDamping = Math.exp(-delta * 1.8); // slow decay — feels like water drag
@@ -1230,11 +1234,14 @@ export function Ship() {
       const sternY = sampleWave(sternX, sternZ);
       const portY = sampleWave(portX, portZ);
       const stbdY = sampleWave(stbdX, stbdZ);
-      const centerY = (bowY + sternY) * 0.5;
+      // At speed, the hull planes through swells rather than riding them —
+      // damp wave-coupled motion so fast sailing feels stable, not seasick.
+      const waveDamp = 1 - speedRatio * 0.7;
+      const centerY = (bowY + sternY) * 0.5 * waveDamp;
       // Divisors match the probe spacings so the pitch/roll output stays in
       // the same visual range regardless of ship size.
-      const pitchFromWave = (bowY - sternY) / (bowProbe + sternProbe);
-      const rollFromWave = (stbdY - portY) / (beamProbe * 2) * 0.6;
+      const pitchFromWave = (bowY - sternY) / (bowProbe + sternProbe) * waveDamp;
+      const rollFromWave = (stbdY - portY) / (beamProbe * 2) * 0.6 * waveDamp;
 
       // Low side of the hull settles deeper when banking.
       const heelSink = Math.abs(heel.current) * 0.22;
@@ -1243,7 +1250,12 @@ export function Ship() {
       // kick (bow up on W press, bow down on S press / decel). Clamped small.
       const frameAccel = (velocity.current - prevVelocity.current) / Math.max(delta, 1 / 120);
       prevVelocity.current = velocity.current;
-      const weightPitch = THREE.MathUtils.clamp(-frameAccel * 0.008, -0.08, 0.08);
+      const rawWeightPitch = THREE.MathUtils.clamp(-frameAccel * 0.008, -0.08, 0.08);
+      // Smooth over ~4 frames so throttle input doesn't snap pitch in one frame.
+      smoothWeightPitch.current = THREE.MathUtils.lerp(
+        smoothWeightPitch.current, rawWeightPitch, 1 - Math.exp(-delta * 18),
+      );
+      const weightPitch = smoothWeightPitch.current;
 
       // Drift yaw-slide — visual hull angles outward from physics heading.
       const yawSlideTarget = heelDrifting ? -steerIntent * 0.09 * speedRatio : 0;

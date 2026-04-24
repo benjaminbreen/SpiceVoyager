@@ -82,6 +82,10 @@ function quantityUnit(amount: number) {
   return amount === 1 ? 'unit' : 'units';
 }
 
+function commodityTestId(commodity: Commodity) {
+  return commodity.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
 export function MarketTabLedger({
   port,
   cargo,
@@ -222,7 +226,7 @@ export function MarketTabLedger({
   const priceMeterPct = Math.round(clamp(selected.ratio / 2, 0.06, 1) * 100);
 
   return (
-    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.46fr)]">
+    <div data-testid="market-ledger" className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.46fr)]">
       <section className="min-w-0">
         <div className="mb-2 flex flex-wrap items-end justify-between gap-2 px-1">
           <div>
@@ -294,6 +298,7 @@ export function MarketTabLedger({
                     return (
                       <button
                         key={row.commodity}
+                        data-testid={`market-row-${commodityTestId(row.commodity)}`}
                         type="button"
                         aria-selected={isSelected}
                         onMouseEnter={() => sfxHover()}
@@ -549,6 +554,7 @@ export function MarketTabLedger({
 
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button
+            data-testid="market-sell-button"
             type="button"
             disabled={sellQty <= 0}
             onClick={() => executeTrade(false)}
@@ -558,6 +564,7 @@ export function MarketTabLedger({
             Sell {sellQty}
           </button>
           <button
+            data-testid="market-buy-button"
             type="button"
             disabled={buyQty <= 0}
             onClick={() => executeTrade(true)}

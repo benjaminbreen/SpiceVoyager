@@ -12,6 +12,7 @@ import { getTerrainHeight } from './terrain';
 import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from './roadSurface';
 import { SEA_LEVEL } from '../constants/world';
 import { gunfireAlerts } from './combatState';
+import { placeHinterlandScenes, getSceneLoadout, SceneInstance } from './hinterlandScenes';
 
 // ── Seeded PRNG ─────────────────────────────────────────────────────────────
 function mulberry32(a: number) {
@@ -84,6 +85,11 @@ export interface PedestrianSystemState {
   portX: number;
   portZ: number;
   roadIndex: RoadSurfaceIndex; // bucketed road segments for ground-height queries
+  scenes: SceneInstance[];  // hinterland gatherings (fire rings, brazier mats, etc.)
+  // Scene NPCs sit at the front of the pedestrians array and are ALWAYS active,
+  // regardless of time-of-day density. Without this floor, night-only scenes
+  // (shepherds' fire, shrine lamp) would render their prop with nobody around.
+  sceneNpcCount: number;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -470,6 +476,59 @@ export function initPedestrianSystem(
 
   // Create all pedestrian slots
   const pedestrians: Pedestrian[] = [];
+
+  // ── Hinterland scenes (spawn FIRST so they sit at the front of the array) ──
+  // These NPCs are always active regardless of time-of-day density, so they
+  // need to be at indices 0..sceneNpcCount-1 where the update/render loops
+  // are guaranteed to reach them even at 3am density (~0.02).
+  const scenes = placeHinterlandScenes(portX, portZ, culture, buildings, seed);
+  let sceneNpcCount = 0;
+  for (const scene of scenes) {
+    const loadout = getSceneLoadout(scene.kind);
+    for (const slot of loadout) {
+      const a = rng() * Math.PI * 2;
+      const r = 1.5 + rng() * 1.2;
+      const wx = scene.x + Math.cos(a) * r;
+      const wz = scene.z + Math.sin(a) * r;
+      const h = getTerrainHeight(wx, wz);
+      if (h < SEA_LEVEL + 0.3) continue;
+
+      const ta = rng() * Math.PI * 2;
+      const tr = 1.2 + rng() * 1.3;
+      pedestrians.push({
+        corridorIdx: -1,
+        progress: 0,
+        // Slow pace — these are loiterers, not commuters.
+        speed: 0.15 + rng() * 0.1,
+        direction: 1,
+        type: slot.type,
+        figureType: slot.figure,
+        phase: rng() * Math.PI * 2,
+        wobbleAmp: 0,
+        x: wx, y: Math.max(h, SEA_LEVEL + 0.3), z: wz,
+        angle: rng() * Math.PI * 2,
+        wanderTargetX: scene.x + Math.cos(ta) * tr,
+        wanderTargetZ: scene.z + Math.sin(ta) * tr,
+        wanderSeed: Math.floor(rng() * 100000),
+        dwellUntil: 0,
+        isDwelling: false,
+        homeX: scene.x,
+        homeZ: scene.z,
+        // 12 is a compromise: findWalkableLandPoint picks 5–18 away, so a
+        // radius much smaller than that triggers the 15-unit drift-back on
+        // every target pick and the NPC ends up ping-ponging far from home.
+        // At 12, enough picks land inside the radius that NPCs settle into
+        // a visible cluster around the scene prop.
+        wanderRadius: 12,
+        panicUntil: 0,
+        panicFleeX: 0,
+        panicFleeZ: 0,
+        dead: false,
+      });
+      sceneNpcCount++;
+    }
+  }
+
   const wandererFraction = 0.1; // 10% are wanderers
 
   for (let i = 0; i < maxActive; i++) {
@@ -521,6 +580,7 @@ export function initPedestrianSystem(
         panicUntil: 0,
         panicFleeX: 0,
         panicFleeZ: 0,
+        dead: false,
       });
     } else {
       // Weighted corridor selection — busier corridors get more pedestrians
@@ -582,15 +642,21 @@ export function initPedestrianSystem(
         panicUntil: 0,
         panicFleeX: 0,
         panicFleeZ: 0,
+        dead: false,
       });
       hinterlandAdded++;
     }
   }
-  // Include hinterland in the active budget so they also scale with the
-  // time-of-day density curve (fields empty at 3am, populated at noon).
-  const effectiveMaxActive = maxActive + hinterlandAdded;
+  // Include hinterland + scene NPCs in the active budget so they also scale
+  // with the time-of-day density curve (fields empty at 3am, populated at noon).
+  // Scene NPCs additionally get a hard floor in updatePedestrians so they're
+  // never squeezed out by low density at night.
+  const effectiveMaxActive = maxActive + hinterlandAdded + sceneNpcCount;
 
-  return { corridors, pedestrians, maxActive: effectiveMaxActive, culture, portX, portZ, roadIndex };
+  return {
+    corridors, pedestrians, maxActive: effectiveMaxActive,
+    culture, portX, portZ, roadIndex, scenes, sceneNpcCount,
+  };
 }
 
 function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number, portX: number, portZ: number): Pedestrian {
@@ -616,6 +682,7 @@ function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number, p
     panicUntil: 0,
     panicFleeX: 0,
     panicFleeZ: 0,
+    dead: false,
   };
 }
 
@@ -627,9 +694,11 @@ export function updatePedestrians(
   delta: number,
   hourOfDay: number,
 ): number {
-  const { corridors, pedestrians, maxActive, roadIndex } = state;
+  const { corridors, pedestrians, maxActive, roadIndex, sceneNpcCount } = state;
   const density = getCrowdDensity(hourOfDay);
-  const activeCount = Math.max(1, Math.floor(maxActive * density));
+  // Scene NPCs (at the front of the array) are exempt from the density curve —
+  // without this floor, night-only scenes render their prop with nobody around.
+  const activeCount = Math.max(1, sceneNpcCount, Math.floor(maxActive * density));
 
   // Clamp delta to avoid huge jumps when tab is backgrounded
   const dt = Math.min(delta, 0.1);
@@ -638,6 +707,7 @@ export function updatePedestrians(
 
   for (let i = 0; i < activeCount; i++) {
     const p = pedestrians[i];
+    if (p.dead) { p.x = 99999; p.z = 99999; continue; }
 
     // ── Gunfire scatter ────────────────────────────────────────────────
     // Any active alert within its hearing radius triggers (or extends) a

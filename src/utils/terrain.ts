@@ -944,7 +944,14 @@ function applyClimateTint(color: TerrainColor, climate: ClimateProfile): Terrain
   return [clamp01(r), clamp01(g), clamp01(b)];
 }
 
-// Keep this for backwards compatibility if needed, but we'll use getTerrainData mostly
+// Height-only fast path — skips biome/color/moisture/volcano/river work and
+// the 4-sample slope estimation that getTerrainData runs internally. The full
+// getTerrainData path costs ~50 noise samples per call; this costs ~10. Hot
+// callers (ship/NPC collision, InteractionController land-scan, animal
+// ground-follow, pedestrian walking) only need the surface elevation for
+// positioning and can't see volcano craters or river carving anyway (those
+// only affect inland terrain well above sea level). Callers that genuinely
+// need volcano/river-corrected height use getTerrainData(x, z).height instead.
 export function getTerrainHeight(x: number, z: number): number {
-  return getTerrainData(x, z).height;
+  return getHeightOnly(x, z);
 }

@@ -3,16 +3,23 @@ import { UI } from './UI';
 import { TouchControls } from './TouchControls';
 import { CrewDeathModal } from './CrewDeathModal';
 import { GameOverScreen } from './GameOverScreen';
-import { PERFORMANCE_STATS_EVENT, type PerformanceStats } from '../utils/performanceStats';
+import { PERFORMANCE_STATS_EVENT, type PerformanceStats, setPerfEnabled } from '../utils/performanceStats';
+import { getTestModeConfig } from '../test/testMode';
+import { useGameStore } from '../store/gameStore';
 
 const GameScene = lazy(() => import('./GameScene').then((module) => ({
   default: module.GameScene,
 })));
 
 export function Game() {
-  const [showPerformance, setShowPerformance] = useState(false);
+  const testMode = getTestModeConfig();
+  const [showPerformance, setShowPerformance] = useState(() => testMode.showPerformance);
   const [performanceStats, setPerformanceStats] = useState<PerformanceStats | null>(null);
-  const showPerformanceRef = useRef(false);
+  const showPerformanceRef = useRef(testMode.showPerformance);
+
+  useEffect(() => {
+    setPerfEnabled(showPerformance);
+  }, [showPerformance]);
 
   useEffect(() => {
     const handleStats = (event: Event) => {
@@ -41,17 +48,26 @@ export function Game() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const transitionsDisabled = useGameStore((s) => s.renderDebug.disableTransitions);
+  const voyageBegun = useGameStore((s) => s.voyageBegun);
+
   return (
     <div
+      data-testid="game-root"
       className="w-full bg-black overflow-hidden relative"
       // 100dvh — dynamic viewport height — tracks iOS Safari's URL bar
       // show/hide so the game doesn't get cropped when the bar appears.
       // 100vh fallback for browsers that don't support dvh.
-      style={{ height: '100dvh', minHeight: '100vh' }}
+      style={{ height: '100dvh', minHeight: '100vh', transform: 'translateZ(0)' }}
     >
-      <Suspense fallback={null}>
-        <GameScene />
-      </Suspense>
+      {transitionsDisabled && (
+        <style>{`* { transition: none !important; animation: none !important; }`}</style>
+      )}
+      {voyageBegun && (
+        <Suspense fallback={null}>
+          <GameScene />
+        </Suspense>
+      )}
       <UI />
       <TouchControls />
       <CrewDeathModal />
@@ -72,6 +88,7 @@ function compact(value: number) {
 function PerformanceOverlay({ stats }: { stats: PerformanceStats | null }) {
   return (
     <div
+      data-testid="performance-overlay"
       className="fixed top-3 left-3 z-[10000] pointer-events-none select-none"
       style={{
         width: 260,
@@ -96,6 +113,11 @@ function PerformanceOverlay({ stats }: { stats: PerformanceStats | null }) {
         <>
           <Metric label="FPS" value={fmt(stats.fps)} />
           <Metric label="Frame avg/max" value={`${fmt(stats.avgFrameMs, 1)} / ${fmt(stats.maxFrameMs, 1)} ms`} />
+          <Metric label="Peak frame (5s)" value={`${fmt(stats.peakFrameMs5s, 1)} ms`} />
+          <Metric label="Long frames (5s)" value={compact(stats.longFrames5s)} />
+          <Metric label="Collision avg/max" value={`${fmt(stats.collisionAvgMs, 2)} / ${fmt(stats.collisionMaxMs, 2)} ms`} />
+          <Metric label="Collision/s" value={fmt(stats.collisionChecksPerSec, 0)} />
+          <Metric label="Atmosphere rcmp/s" value={`${fmt(stats.atmosphereRecomputesPerSec, 1)} @ ${fmt(stats.atmosphereAvgMs, 2)}ms`} />
           <Metric label="Draw calls" value={compact(stats.drawCalls)} />
           <Metric label="Triangles" value={compact(stats.triangles)} />
           <Metric label="Lines / points" value={`${compact(stats.lines)} / ${compact(stats.points)}`} />

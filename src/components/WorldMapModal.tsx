@@ -533,6 +533,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
 
   return (
     <motion.div
+      data-testid="world-map-modal"
       {...modalBackdropMotion}
       className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-4 z-40"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}

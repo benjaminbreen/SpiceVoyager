@@ -5,12 +5,14 @@ import { Ocean } from './Ocean';
 import { World, getTreeImpactTargets } from './World';
 import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
+import { HinterlandScenes } from './HinterlandScenes';
 import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building } from '../store/gameStore';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
+import { IS_SAFARI } from '../utils/platform';
 import { ShiftSelectOverlay } from './ShiftSelectOverlay';
 import { TouchSteerRaycaster } from './TouchControls';
 import { getTerrainHeight, getTerrainData, BiomeType } from '../utils/terrain';
@@ -54,8 +56,16 @@ import {
 import { WEAPON_DEFS, LAND_WEAPON_DEFS, type WeaponType, type LandWeaponType } from '../store/gameStore';
 import { lootForKill } from '../utils/huntLoot';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
-import { PERFORMANCE_STATS_EVENT, type PerformanceStats } from '../utils/performanceStats';
+import { computeDayMood, MOOD_OVERCAST_WARM_HEX, type DayMood } from '../utils/dayMood';
+import {
+  PERFORMANCE_STATS_EVENT,
+  type PerformanceStats,
+  drainPerfSignals,
+  reportAtmosphereMs,
+  perfSignals,
+} from '../utils/performanceStats';
 import { sampleCameraShake } from '../utils/cameraShakeState';
+import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -1961,6 +1971,16 @@ function ProjectileSystem() {
           projectiles.splice(i, 1);
           continue;
         }
+        const pedIdx = pointHitsPedestrian(p.pos.x, p.pos.y, p.pos.z);
+        if (pedIdx >= 0) {
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, 0.4);
+          markKillPedestrian(pedIdx);
+          const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
+          if (portFaction) adjustReputation(portFaction, -30);
+          addNotification('A bystander struck down.', 'warning');
+          projectiles.splice(i, 1);
+          continue;
+        }
         const building = pointHitsBuilding(p.pos);
         if (building) {
           const impactIntensity = p.weaponType === 'musket' ? 0.9 : 0.55;
@@ -2396,14 +2416,14 @@ function TimeController() {
   const paused = useGameStore((state) => state.paused);
   const accumulatedDelta = useRef(0);
   const ambientAccum = useRef(0);
-  const STORE_TIME_STEP = 0.2;
+  const STORE_TIME_STEP = 0.1;
 
   useFrame((_, delta) => {
     if (paused) return;
     accumulatedDelta.current += delta;
     if (accumulatedDelta.current < STORE_TIME_STEP) return;
 
-    // 1 real second = 0.1 game hours
+    // 1 real second = 0.1 game hours → 4 real minutes per in-game day.
     advanceTime(accumulatedDelta.current * 0.1);
     accumulatedDelta.current = 0;
 
@@ -2427,123 +2447,164 @@ function TimeController() {
   return null;
 }
 
-// Syncs fog color, background color, and computes postprocessing params from timeOfDay
-function useAtmosphere() {
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
-  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
-
-  return useMemo(() => {
-    const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(angle);
-    const horizonFactor = Math.exp(-sunH * sunH * 10);
-
-    // The Sky dome handles most visible sky color. These colors primarily
-    // drive fallback background and distant atmospheric fog.
-    let skyColor: THREE.Color;
-    let fogColor: THREE.Color;
-    const climateSky = {
-      daySky: waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc',
-      dayFog: waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede',
-      duskSky: waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158',
-      duskFog: waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42',
-      warmSky: waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b',
-      warmFog: waterPaletteId === 'monsoon' ? '#bca887' : waterPaletteId === 'temperate' ? '#b5aa99' : '#d9b59a',
-      nightSky: waterPaletteId === 'monsoon' ? '#122b3d' : waterPaletteId === 'temperate' ? '#182832' : '#14284a',
-      nightFog: waterPaletteId === 'monsoon' ? '#142633' : waterPaletteId === 'temperate' ? '#1a2a31' : '#18243a',
-    };
-    if (sunH > 0.3) {
-      // Full day — cheerful tropical blue with a little humid warmth.
-      skyColor = new THREE.Color(climateSky.daySky);
-      fogColor = new THREE.Color(climateSky.dayFog);
-    } else if (sunH > 0.05) {
-      // Golden hour — more theatrical warmth, less realistic gray.
-      const t = (sunH - 0.05) / 0.25;
-      skyColor = new THREE.Color().lerpColors(
-        new THREE.Color(climateSky.warmSky),
-        new THREE.Color(climateSky.daySky),
-        t
-      );
-      fogColor = new THREE.Color().lerpColors(
-        new THREE.Color(climateSky.warmFog),
-        new THREE.Color(climateSky.dayFog),
-        t
-      );
-    } else if (sunH > -0.15) {
-      // Sunset/sunrise — warm amber into a readable blue night.
-      const t = (sunH + 0.15) / 0.2;
-      skyColor = new THREE.Color().lerpColors(
-        new THREE.Color(climateSky.duskSky),
-        new THREE.Color(climateSky.warmSky),
-        t
-      );
-      fogColor = new THREE.Color().lerpColors(
-        new THREE.Color(climateSky.duskFog),
-        new THREE.Color(climateSky.warmFog),
-        t
-      );
-    } else {
-      // Night — still blue, but not grim.
-      skyColor = new THREE.Color(climateSky.nightSky);
-      fogColor = new THREE.Color(climateSky.nightFog);
-    }
-
-    // Keep a faint baseline haze everywhere so the world is not unnaturally
-    // crisp, then let AtmosphereSync add stronger fog near map edges.
-    const clearDayPalette = waterPaletteId === 'tropical'
-      || waterPaletteId === 'monsoon'
-      || waterPaletteId === 'arid'
-      || waterPaletteId === 'mediterranean';
-    const fogNear = sunH > 0
-      ? clearDayPalette ? 300 : 280
-      : 100 + Math.max(0, sunH + 0.3) * 200;
-    const fogFar = sunH > 0
-      ? clearDayPalette ? 1000 : 880
-      : 300 + Math.max(0, sunH + 0.3) * 580;
-
-    // Postprocessing — golden hour warm, night cool/desaturated
-    let brightness = 0;
-    let contrast = 0;
-    let hue = 0;
-    let saturation = 0;
-
-    if (sunH > 0.3) {
-      // Day — gentle with restrained saturation for a period-painterly feel.
-      brightness = 0.01;
-      contrast = 0.02;
-      saturation = 0.02;
-    } else if (sunH > -0.05) {
-      // Golden hour — warm, slightly saturated
-      const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
-      brightness = -0.005 * t;
-      contrast = 0.04 * t;
-      hue = 0.05 * t;
-      saturation = 0.18 * t;
-    } else {
-      // Night — blue-shifted, slightly saturated for lush midnight feel
-      const t = Math.max(0, Math.min(1, (-0.05 - sunH) / 0.3));
-      brightness = -0.02 * t;
-      contrast = 0;
-      hue = -0.12 * t;
-      saturation = 0.06 * t;
-    }
-
-    return { skyColor, fogColor, fogNear, fogFar, brightness, contrast, hue, saturation };
-  }, [timeOfDay, waterPaletteId]);
+// Output bag for computeAtmosphere — callers preallocate once and we mutate
+// in place each call. Avoids per-frame THREE.Color allocations in AtmosphereSync.
+interface AtmosphereOut {
+  skyColor: THREE.Color;
+  fogColor: THREE.Color;
+  fogNear: number;
+  fogFar: number;
+  brightness: number;
+  contrast: number;
+  hue: number;
+  saturation: number;
 }
 
-// Syncs Three.js fog and background with computed atmosphere colors
+function makeAtmosphereOut(): AtmosphereOut {
+  return {
+    skyColor: new THREE.Color(),
+    fogColor: new THREE.Color(),
+    fogNear: 0,
+    fogFar: 0,
+    brightness: 0,
+    contrast: 0,
+    hue: 0,
+    saturation: 0,
+  };
+}
+
+// Scratch colors for lerp — kept module-local so computeAtmosphere doesn't
+// allocate. Safe because this runs only on the render thread.
+const _atmScratchA = new THREE.Color();
+const _atmScratchB = new THREE.Color();
+const _atmMoodWarmSky = new THREE.Color();
+const _atmMoodWarmFog = new THREE.Color();
+
+// Pure function — no hooks. Mutates `out`. Callable from useFrame without
+// any React subscription, which is how we avoid the 5Hz re-render wave.
+function computeAtmosphere(
+  timeOfDay: number,
+  waterPaletteId: ReturnType<typeof resolveWaterPaletteId>,
+  mood: DayMood,
+  out: AtmosphereOut,
+): void {
+  const t0 = perfSignals.enabled ? performance.now() : 0;
+  const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
+  const sunH = Math.sin(angle);
+
+  // Climate-conditioned palette lookups. Strings only — cheap.
+  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
+  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
+  const duskSky = waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158';
+  const duskFog = waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42';
+  const warmSky = waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b';
+  const warmFog = waterPaletteId === 'monsoon' ? '#bca887' : waterPaletteId === 'temperate' ? '#b5aa99' : '#d9b59a';
+  const nightSky = waterPaletteId === 'monsoon' ? '#122b3d' : waterPaletteId === 'temperate' ? '#182832' : '#14284a';
+  const nightFog = waterPaletteId === 'monsoon' ? '#142633' : waterPaletteId === 'temperate' ? '#1a2a31' : '#18243a';
+
+  // Blend each climate's warm sky/fog hex toward the overcast gray as warmth
+  // drops. warmth=1 keeps the saturated hex; warmth=0 fully desaturates.
+  _atmMoodWarmSky.set(MOOD_OVERCAST_WARM_HEX).lerp(_atmScratchA.set(warmSky), mood.warmth);
+  _atmMoodWarmFog.set(MOOD_OVERCAST_WARM_HEX).lerp(_atmScratchA.set(warmFog), mood.warmth);
+
+  if (sunH > 0.3) {
+    out.skyColor.set(daySky);
+    out.fogColor.set(dayFog);
+  } else if (sunH > 0.05) {
+    const t = (sunH - 0.05) / 0.25;
+    out.skyColor.copy(_atmMoodWarmSky).lerp(_atmScratchB.set(daySky), t);
+    out.fogColor.copy(_atmMoodWarmFog).lerp(_atmScratchB.set(dayFog), t);
+  } else if (sunH > -0.15) {
+    const t = (sunH + 0.15) / 0.2;
+    out.skyColor.copy(_atmScratchA.set(duskSky)).lerp(_atmMoodWarmSky, t);
+    out.fogColor.copy(_atmScratchA.set(duskFog)).lerp(_atmMoodWarmFog, t);
+  } else {
+    out.skyColor.set(nightSky);
+    out.fogColor.set(nightFog);
+  }
+
+  const clearDayPalette = waterPaletteId === 'tropical'
+    || waterPaletteId === 'monsoon'
+    || waterPaletteId === 'arid'
+    || waterPaletteId === 'mediterranean';
+  out.fogNear = sunH > 0
+    ? clearDayPalette ? 300 : 280
+    : 100 + Math.max(0, sunH + 0.3) * 200;
+  out.fogFar = sunH > 0
+    ? clearDayPalette ? 1000 : 880
+    : 300 + Math.max(0, sunH + 0.3) * 580;
+
+  // Mood-driven haze on the golden-hour band. Peaks near the horizon
+  // (sunH ≈ 0.1), tapers to 0 effect at high noon and at full night, so
+  // overall day/night haze structure is preserved — just the sunset lag of
+  // haze thickens or thins per day.
+  if (sunH > -0.15 && sunH < 0.45) {
+    const bandT = 1 - Math.min(1, Math.abs(sunH - 0.1) / 0.35);
+    const densityMul = 1 - (1 - mood.fogDensity) * bandT;
+    out.fogFar *= densityMul;
+    out.fogNear *= densityMul;
+  }
+
+  if (sunH > 0.3) {
+    out.brightness = 0.01;
+    out.contrast = 0.02;
+    out.hue = 0;
+    out.saturation = 0.02;
+  } else if (sunH > -0.05) {
+    const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
+    out.brightness = -0.005 * t;
+    out.contrast = 0.04 * t;
+    out.hue = 0.05 * t * mood.saturation;
+    out.saturation = 0.18 * t * mood.saturation;
+  } else {
+    const t = Math.max(0, Math.min(1, (-0.05 - sunH) / 0.3));
+    out.brightness = -0.02 * t;
+    out.contrast = 0;
+    out.hue = -0.12 * t;
+    out.saturation = 0.06 * t;
+  }
+
+  if (perfSignals.enabled) reportAtmosphereMs(performance.now() - t0);
+}
+
+// Hook used by React consumers that can't mutate (BrightnessContrast and
+// HueSaturation need JSX props). Quantizes timeOfDay to 0.25 game-hours —
+// ~2.5s of real time — so the subscriber only re-renders a handful of times
+// per in-game hour. The postprocessing visuals ramp slowly enough that the
+// coarser cadence is imperceptible.
+function useQuantizedAtmosphere(): AtmosphereOut {
+  const quantizedTime = useGameStore((state) => Math.round(state.timeOfDay * 4) / 4);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const worldSeed = useGameStore((state) => state.worldSeed);
+
+  return useMemo(() => {
+    const out = makeAtmosphereOut();
+    const mood = computeDayMood(quantizedTime, worldSeed);
+    computeAtmosphere(quantizedTime, waterPaletteId, mood, out);
+    return out;
+  }, [quantizedTime, waterPaletteId, worldSeed]);
+}
+
+// Syncs Three.js fog and background with computed atmosphere colors. Reads
+// timeOfDay / waterPaletteId via getState() inside useFrame so the component
+// does not subscribe — no React re-renders per time tick. Mutates a
+// pre-allocated AtmosphereOut bag so there are no per-frame THREE.Color allocs.
 function AtmosphereSync() {
-  const { skyColor, fogColor, fogNear, fogFar } = useAtmosphere();
-  const devSoloPort = useGameStore((state) => state.devSoloPort);
   const { scene } = useThree();
+  const atmosphereOut = useMemo(makeAtmosphereOut, []);
 
   useFrame(() => {
+    const state = useGameStore.getState();
+    const mood = computeDayMood(state.timeOfDay, state.worldSeed);
+    computeAtmosphere(state.timeOfDay, resolveWaterPaletteId(state), mood, atmosphereOut);
+    const { skyColor, fogColor, fogNear, fogFar } = atmosphereOut;
+
     if (scene.background instanceof THREE.Color) {
       scene.background.copy(skyColor);
     }
     if (scene.fog instanceof THREE.Fog) {
       const shipTransform = getLiveShipTransform();
-      const mapHalf = (devSoloPort ? 1000 : 900) / 2;
+      const mapHalf = (state.devSoloPort ? 1000 : 900) / 2;
       const edgeDistance = mapHalf - Math.max(
         Math.abs(shipTransform.pos[0]),
         Math.abs(shipTransform.pos[2]),
@@ -2561,17 +2622,49 @@ function AtmosphereSync() {
   return null;
 }
 
+// Rolling buffer length — 10 samples × 0.5s each = 5s of history. Long enough
+// that a one-frame spike stays on screen for several reads before aging out.
+const PERF_RING_SIZE = 10;
+const LONG_FRAME_THRESHOLD_S = 1 / 30; // 33.3ms — drop below 30fps
+
 function PerformanceSampler() {
   const { gl } = useThree();
-  const sampleRef = useRef({ elapsed: 0, frames: 0, maxDelta: 0 });
+  const sampleRef = useRef({ elapsed: 0, frames: 0, maxDelta: 0, longFrames: 0 });
+  // Ring buffer of per-sample peaks. Write index wraps modulo PERF_RING_SIZE.
+  const ringRef = useRef({
+    maxMs: new Float32Array(PERF_RING_SIZE),
+    longFrames: new Int16Array(PERF_RING_SIZE),
+    idx: 0,
+  });
 
   useFrame((_, delta) => {
     const sample = sampleRef.current;
     sample.elapsed += delta;
     sample.frames++;
     sample.maxDelta = Math.max(sample.maxDelta, delta);
+    if (delta > LONG_FRAME_THRESHOLD_S) sample.longFrames++;
 
     if (sample.elapsed < 0.5) return;
+
+    const ring = ringRef.current;
+    ring.maxMs[ring.idx] = sample.maxDelta * 1000;
+    ring.longFrames[ring.idx] = sample.longFrames;
+    ring.idx = (ring.idx + 1) % PERF_RING_SIZE;
+
+    let peakFrameMs5s = 0;
+    let longFrames5s = 0;
+    for (let i = 0; i < PERF_RING_SIZE; i++) {
+      if (ring.maxMs[i] > peakFrameMs5s) peakFrameMs5s = ring.maxMs[i];
+      longFrames5s += ring.longFrames[i];
+    }
+
+    const drained = drainPerfSignals();
+    const collisionAvgMs = drained.collisionChecks > 0
+      ? drained.collisionMsSum / drained.collisionChecks
+      : 0;
+    const atmosphereAvgMs = drained.atmosphereRecomputes > 0
+      ? drained.atmosphereMsSum / drained.atmosphereRecomputes
+      : 0;
 
     const state = useGameStore.getState();
     const info = gl.info;
@@ -2579,6 +2672,13 @@ function PerformanceSampler() {
       fps: sample.frames / sample.elapsed,
       avgFrameMs: (sample.elapsed / sample.frames) * 1000,
       maxFrameMs: sample.maxDelta * 1000,
+      peakFrameMs5s,
+      longFrames5s,
+      collisionAvgMs,
+      collisionMaxMs: drained.collisionMaxMs,
+      collisionChecksPerSec: drained.collisionChecks / sample.elapsed,
+      atmosphereRecomputesPerSec: drained.atmosphereRecomputes / sample.elapsed,
+      atmosphereAvgMs,
       drawCalls: info.render.calls,
       triangles: info.render.triangles,
       lines: info.render.lines,
@@ -2597,6 +2697,7 @@ function PerformanceSampler() {
     sample.elapsed = 0;
     sample.frames = 0;
     sample.maxDelta = 0;
+    sample.longFrames = 0;
   });
 
   return null;
@@ -2620,8 +2721,8 @@ export function GameScene() {
     <>
       {canvasReadyToMount && (
         <Canvas
-          dpr={[1, 1.25]}
-          gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
+          dpr={[1, IS_SAFARI ? 1.0 : 1.25]}
+          gl={{ antialias: !IS_SAFARI, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
           shadows={{ type: THREE.PCFShadowMap }}
           camera={{ position: [0, 50, 50], fov: 45 }}
         >
@@ -2634,6 +2735,7 @@ export function GameScene() {
             <Ship />
             <Player />
             <Pedestrians />
+            <HinterlandScenes />
 
             <CameraController />
             <TouchSteerRaycaster />
@@ -2679,15 +2781,28 @@ function PostProcessing({
   brightnessContrastEnabled: boolean;
   hueSaturationEnabled: boolean;
 }) {
-  const { brightness, contrast, hue, saturation } = useAtmosphere();
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
-  const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
+  const { brightness, contrast, hue, saturation } = useQuantizedAtmosphere();
+  // Vignette strength ramps slowly — quantize to 0.25h so this subscriber
+  // wakes at ~2.5s intervals instead of every 200ms.
+  const quantizedTime = useGameStore((state) => Math.round(state.timeOfDay * 4) / 4);
+  const sunH = Math.sin(((quantizedTime - 6) / 24) * Math.PI * 2);
   const nightFactor = THREE.MathUtils.smoothstep((0.12 - sunH) / 0.42, 0, 1);
   const vignetteOffset = THREE.MathUtils.lerp(0.18, 0.12, nightFactor);
   const vignetteDarkness = THREE.MathUtils.lerp(0.85, 1.12, nightFactor);
 
+  // EffectComposer builds its pass chain once at mount and does not cleanly
+  // rebuild when effect children are added/removed. Force a remount whenever
+  // the set of enabled effects changes so toggles in the dev panel don't
+  // freeze the canvas.
+  const composerKey =
+    (aoEnabled ? 'a' : '-') +
+    (bloomEnabled ? 'b' : '-') +
+    (brightnessContrastEnabled ? 'c' : '-') +
+    (hueSaturationEnabled ? 'h' : '-') +
+    (vignetteEnabled ? 'v' : '-');
+
   return (
-    <EffectComposer>
+    <EffectComposer key={composerKey}>
       {aoEnabled ? (
         <N8AO
           aoRadius={1.2}
@@ -2709,11 +2824,14 @@ function PostProcessing({
 }
 
 function NightVignetteOverlay({ enabled }: { enabled: boolean }) {
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  // DOM overlay — has to stay reactive, but only the alpha values matter and
+  // they ramp slowly. Quantize to 0.25h steps (~2.5s real) so we re-render
+  // the overlay far less often than the 5Hz time tick.
+  const quantizedTime = useGameStore((state) => Math.round(state.timeOfDay * 4) / 4);
 
   if (!enabled) return null;
 
-  const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
+  const sunH = Math.sin(((quantizedTime - 6) / 24) * Math.PI * 2);
   const nightFactor = THREE.MathUtils.smoothstep((0.14 - sunH) / 0.48, 0, 1);
   const bottomAlpha = THREE.MathUtils.lerp(0.10, 0.36, nightFactor);
   const sideAlpha = THREE.MathUtils.lerp(0.05, 0.18, nightFactor);

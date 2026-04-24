@@ -98,6 +98,11 @@ const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
   Moluccan: [
     'Cloves', 'Nutmeg', 'Camphor', 'Benzoin', 'Aloes',
   ],
+  Venetian: [
+    'Black Pepper', 'Cinnamon', 'Ginger', 'Sugar',
+    'Indigo', 'Red Coral', 'Theriac', 'Venetian Soap',
+    'Murano Glass', 'Frankincense', 'Mumia',
+  ],
 };
 
 // ── Crew knowledge domains ──
@@ -185,6 +190,12 @@ export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgePr
     identifies: ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg',
                  'Indigo', 'Sugar', 'Camphor'],
     masters: ['Cloves', 'Nutmeg'],
+  },
+  Venetian: {
+    identifies: ['Black Pepper', 'Cinnamon', 'Indigo', 'Red Coral',
+                 'Theriac', 'Venetian Soap', 'Murano Glass',
+                 'Frankincense', 'Mumia', 'Sugar'],
+    masters: ['Theriac', 'Murano Glass'],
   },
 };
 

@@ -14,6 +14,11 @@ import {
   onTerrainReady,
   startTerrainPreRender,
 } from '../utils/worldMapTerrainCache';
+import {
+  placeHinterlandScenes,
+  getSceneLabel,
+  SceneInstance,
+} from '../utils/hinterlandScenes';
 
 const WORLD_HALF = 550;
 
@@ -63,6 +68,10 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const [mapWorldHalf, setMapWorldHalf] = useState(getTerrainMapWorldHalf());
   const containerRef = useRef<HTMLDivElement>(null);
   const didSetInitialOffsetRef = useRef(false);
+
+  // Scene placement is pure & deterministic but non-trivial (~80 sample points
+  // per scene def per port). Cache per portId so we only compute each port once.
+  const sceneCache = useRef<Map<string, SceneInstance[]>>(new Map());
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   const playerPos = useGameStore(s => s.playerPos);
@@ -70,6 +79,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const discoveredPorts = useGameStore(s => s.discoveredPorts);
   const playerRot = useGameStore(s => s.playerRot);
   const playerMode = useGameStore(s => s.playerMode);
+  const worldSeed = useGameStore(s => s.worldSeed);
 
   // Wait for the module-level pre-render (usually already done by the time modal opens)
   useEffect(() => {
@@ -234,6 +244,61 @@ export function WorldMap({ onClose }: WorldMapProps) {
       ctx.globalAlpha = 1;
     }
 
+    // Draw hinterland scenes — amber diamonds for each scene in a discovered
+    // port's outer ring. Fade out at low zoom to avoid clutter.
+    const sceneOpacity = Math.min(1, Math.max(0, (zoom - 0.7) / 0.5));
+    if (sceneOpacity > 0.05) {
+      ctx.globalAlpha = sceneOpacity;
+      const showLabels = zoom > 1.3;
+      for (const port of ports) {
+        if (!discoveredPorts.includes(port.id)) continue;
+        const cacheKey = `${port.id}|${worldSeed}`;
+        let scenes = sceneCache.current.get(cacheKey);
+        if (!scenes) {
+          scenes = placeHinterlandScenes(
+            port.position[0], port.position[2],
+            port.culture, port.buildings, worldSeed,
+          );
+          sceneCache.current.set(cacheKey, scenes);
+        }
+        for (const scene of scenes) {
+          const p = worldToCanvas(scene.x, scene.z);
+          const half = 3 / zoom;
+
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillStyle = '#f2b840';
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = 1 / zoom;
+          ctx.beginPath();
+          ctx.rect(-half, -half, half * 2, half * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+
+          if (showLabels) {
+            const fs = Math.max(8, 10 / zoom);
+            ctx.font = `500 ${fs}px "Inter", system-ui, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            const label = getSceneLabel(scene.kind);
+            const lw = ctx.measureText(label).width;
+            const lx = p.x + half + 4 / zoom;
+            const ly = p.y;
+            const pad = 2 / zoom;
+            ctx.fillStyle = 'rgba(10, 14, 24, 0.55)';
+            ctx.beginPath();
+            ctx.roundRect(lx - pad, ly - fs / 2 - pad, lw + pad * 2, fs + pad * 2, 2 / zoom);
+            ctx.fill();
+            ctx.fillStyle = '#f2d890';
+            ctx.fillText(label, lx, ly);
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Draw ports
     ports.forEach(port => {
       const isDiscovered = discoveredPorts.includes(port.id);
@@ -384,7 +449,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
     ctx.stroke();
 
     ctx.restore();
-  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, mapWorldHalf]);
+  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, mapWorldHalf, worldSeed]);
 
   useEffect(() => {
     if (isRendering) return;

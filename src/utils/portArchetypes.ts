@@ -215,8 +215,8 @@ export interface PortDefinition {
     | 'calicut-gopuram'        // Calicut — tiered-roof Kerala Hindu shrine
     | 'campanile-san-marco'    // Venice — slim brick campanile + pyramidal cap, gold-tipped
     | 'san-agustin-manila'     // Manila — squat Spanish stone church, twin-tower facade (built 1607)
-    | 'church-of-the-assumption' // Nagasaki — Jesuit cathedral, largest church in East Asia until the 1614 expulsion (renderer pending)
-    | 'dutch-factory-masulipatnam' // Masulipatnam — VOC factory, founded 1606 (renderer pending)
+    | 'church-of-the-assumption' // Nagasaki — Jesuit cathedral, largest church in East Asia until the 1614 expulsion
+    | 'dutch-factory-masulipatnam' // Masulipatnam — VOC factory, founded 1606
     | 'elmina-castle';         // Elmina — squat white Portuguese coastal castle (São Jorge da Mina)
 }
 
@@ -787,44 +787,53 @@ export const CORE_PORTS: PortDefinition[] = [
     description: 'The Republic\'s shallow-water capital sits on a hundred islands in a brackish lagoon, the Lido shielding it from the Adriatic. Galleys from Alexandria and Aleppo unload sacks of pepper, cardamom, and indigo at the Rialto, where Greek, German, and Jewish merchants haggle in half a dozen tongues. Murano glass, mirrors, and theriac — the city\'s monopoly polypharmacy compound — flow outward in return. The Cape route has been gnawing at the spice trade for a century, but Levantine pepper still arrives in volume, and the Arsenale lays new galleys at a pace no other yard can match. The air smells of canal silt, wet brick, and woodsmoke from the glass furnaces.',
     openDirection: 'E',
     coastRuggedness: 0.55,           // low alluvial coast, gentle noise
-    // Lido — long thin barrier strip on the seaward (open) side
+    // Satellite dx/dz are UNROTATED world coords (the satellite loop does not
+    // apply openDirection rotation). For openDirection='E', rotateToOpen maps
+    // unrotated (lx, lz) → rotated (wrx, wrz) = (lz, -lx). We want the named
+    // islands to sit at specific positions in the rotated lagoon frame (where
+    // the city is at wrx≈-0.04, wrz≈0.24), so we invert: lx = -wrz, lz = wrx.
     satellites: [
-      // Murano — small islet cluster NE of the city, the glassworks island
+      // Murano — glassworks island, NE of the city in the northern lagoon.
+      // Target rotated (wrx=-0.22, wrz=0.08) → unrotated (lx=-0.08, lz=-0.22)
       {
-        dx: -0.04,
-        dz: -0.18,
-        size: 0.045,
-        aspectRatio: 1.6,
-        orientation: 60,
+        dx: -0.08,
+        dz: -0.22,
+        size: 0.050,
+        aspectRatio: 1.7,
+        orientation: 25,
+        shape: 'rugged',
+        ruggedness: 0.9,
+      },
+      // Burano / Torcello — further NE into the northern lagoon.
+      // Target rotated (wrx=-0.38, wrz=0.14) → unrotated (lx=-0.14, lz=-0.38)
+      {
+        dx: -0.14,
+        dz: -0.38,
+        size: 0.040,
+        aspectRatio: 1.5,
+        orientation: 10,
+        shape: 'rugged',
+        ruggedness: 1.0,
+      },
+      // Giudecca — long island just S of the main Venice cluster, across the
+      // Canale della Giudecca. Target rotated (wrx=0.06, wrz=0.38)
+      // → unrotated (lx=-0.38, lz=0.06)
+      {
+        dx: -0.38,
+        dz: 0.06,
+        size: 0.065,
+        aspectRatio: 3.2,
+        orientation: 5,              // lz axis ≈ rotated wrx, so runs along the lagoon
         shape: 'ovoid',
         ruggedness: 0.7,
       },
-      // Burano / Torcello — smaller distant islets further into the northern lagoon
+      // San Giorgio Maggiore — small islet just SE of central Venice.
+      // Target rotated (wrx=0.10, wrz=0.14) → unrotated (lx=-0.14, lz=0.10)
       {
-        dx: -0.20,
-        dz: -0.32,
-        size: 0.035,
-        aspectRatio: 1.4,
-        orientation: 30,
-        shape: 'ovoid',
-        ruggedness: 0.7,
-      },
-      // Giudecca — long thin island just south of the main Venice cluster
-      {
-        dx: 0.18,
-        dz: 0.28,
-        size: 0.07,
-        aspectRatio: 4.2,
-        orientation: 95,             // runs roughly E-W, parallel to the city
-        shape: 'elongated',
-        ruggedness: 0.6,
-      },
-      // San Giorgio Maggiore — small islet just E of central Venice
-      {
-        dx: 0.10,
-        dz: 0.18,
-        size: 0.025,
-        aspectRatio: 1.2,
+        dx: -0.14,
+        dz: 0.10,
+        size: 0.022,
+        aspectRatio: 1.1,
         orientation: 0,
         shape: 'ovoid',
         ruggedness: 0.5,
@@ -1782,46 +1791,73 @@ export function getArchetypeShape(
 
     case 'lagoon': {
       // Shallow basin shielded by a barrier-island chain (Lido), with the city
-      // sitting on a tight cluster of islets in the middle and mainland coast
-      // on the back side (terra firma). All coords here use rotated wrx/wrz
-      // (rotated to openDirection), so the open sea sits at wrz < ~0 and the
-      // mainland at wrz > ~0.55.
+      // as a solid contiguous mass of closely-packed islands in the middle and
+      // a marshy mainland coast on the back side (terra firma). All coords use
+      // rotated wrx/wrz: open sea sits at wrz < ~0, mainland at wrz > ~0.55.
       //
-      // Layered three contributions, then took the max:
-      //  1. Lido — long thin barrier strip near wrz ≈ 0, with two porti gaps.
-      //  2. City — noisy cluster of small islets in the lagoon middle.
-      //  3. Mainland — solid land beyond wrz ≈ 0.55.
+      // Composed of three coherent landmasses with organic outlines:
+      //  1. Lido — curved barrier chain near wrz ≈ -0.05, broken into several
+      //     islands by three porti (tidal inlets).
+      //  2. City — one solid cluster at (~-0.04, 0.24), carved by a sinuous
+      //     Grand Canal and thin ridge-noise rii, not fragmented into scraps.
+      //  3. Mainland — terra firma beyond wrz ≈ 0.58, with marshy inlets.
 
-      // ── Lido (barrier islands) ────────────────────────────────────────────
-      const lidoCenter = -0.05;
-      const lidoHalfW = 0.055;
-      const lidoNoise = cn * 0.30;
-      const lidoDist = Math.abs(wrz - lidoCenter);
-      // Two porti (tidal inlets through the Lido) at fixed positions
-      const porto1 = 1 - smoothstep(0.0, 0.05, Math.abs(wrx - 0.22));
-      const porto2 = 1 - smoothstep(0.0, 0.05, Math.abs(wrx + 0.30));
-      const lidoEnvelope = (1 - smoothstep(lidoHalfW * 0.4, lidoHalfW + Math.abs(lidoNoise), lidoDist));
-      const lidoStrength = lidoEnvelope * (1 - 0.95 * Math.max(porto1, porto2)) * 0.85;
+      // ── Lido (barrier chain) ─────────────────────────────────────────────
+      // Gentle arc: slightly bows seaward near the ends so the chain reads as
+      // a curved barrier rather than a ruler-straight strip.
+      const lidoArcZ = -0.05 - 0.03 * (wrx * wrx) * 4;
+      // Width varies along length — fattest near center (the Lido proper),
+      // thinning toward Pellestrina and Sottomarina at the ends.
+      const lidoHalfW = 0.075 * (1 - 0.45 * Math.abs(wrx));
+      const lidoNoise = cn * 0.35;
+      const lidoDist = Math.abs(wrz - lidoArcZ);
+      // Three porti (historical Lido, Malamocco, Chioggia inlets)
+      const porto1 = 1 - smoothstep(0.0, 0.045, Math.abs(wrx - 0.30));
+      const porto2 = 1 - smoothstep(0.0, 0.035, Math.abs(wrx + 0.05));
+      const porto3 = 1 - smoothstep(0.0, 0.045, Math.abs(wrx + 0.42));
+      const portiMax = Math.max(porto1, Math.max(porto2, porto3));
+      const lidoEnv = 1 - smoothstep(lidoHalfW * 0.25, lidoHalfW + Math.abs(lidoNoise), lidoDist);
+      // Low-freq dropout gives natural width variation without hollowing it.
+      const lidoWobble = 0.85 + _coastNoise(localX * 0.018 + 77, localZ * 0.022) * 0.15;
+      const lidoStrength = lidoEnv * lidoWobble * (1 - 0.95 * portiMax) * 0.85;
 
-      // ── Mainland (terra firma) ────────────────────────────────────────────
-      const mainlandStart = 0.55 + cn * 0.35;
-      const mainland = smoothstep(mainlandStart, mainlandStart + 0.18, wrz) * 0.95;
+      // ── Mainland (terra firma) with marshy inlets ────────────────────────
+      // Coast offset by low-freq noise so shoreline has peninsulas and bays
+      // rather than a single ruler-straight smoothstep transition.
+      const marshOffset = _featureNoise(localX * 0.009 + 420, localZ * 0.011 - 160) * 0.14;
+      const coastLine = 0.58 + cn * 0.45 + marshOffset;
+      const mainland = smoothstep(coastLine, coastLine + 0.22, wrz) * 0.95;
 
-      // ── City islets ──────────────────────────────────────────────────────
+      // ── City core (solid contiguous mass) ────────────────────────────────
       const cityCx = -0.04;
       const cityCz = 0.24;
       const dCx = wrx - cityCx;
       const dCz = wrz - cityCz;
-      // Slightly elliptical envelope, longer along the lagoon axis (wrx)
-      const cityRadius = Math.sqrt(dCx * dCx * 0.85 + dCz * dCz * 1.4);
-      const cityEnvelope = smoothstep(0.32, 0.08, cityRadius);
-      // Patchy fragmentation noise — high-freq feature noise carves rii (canals)
-      const cityPatch = (_featureNoise(localX * 0.030 + 240, localZ * 0.030 - 180) + 1) * 0.5;
-      const cityIslets = smoothstep(0.40, 0.62, cityPatch) * cityEnvelope * 0.85;
-      // Subtract narrow channels through the cluster
-      const canals = smoothstep(0.66, 0.82, cityPatch) * cityEnvelope * 0.45;
+      // Elliptical envelope — elongated along lagoon axis, slightly larger
+      // than before so building density has room to breathe.
+      const cityRadius = Math.sqrt(dCx * dCx * 0.80 + dCz * dCz * 1.50);
+      // Organic outline: modulate the envelope with coast noise so the island
+      // silhouette wobbles rather than reading as a clean ellipse.
+      const outlineWobble = _coastNoise(localX * 0.022 + 60, localZ * 0.022 - 40) * 0.06;
+      const cityEnv = smoothstep(0.36 + outlineWobble, 0.12 + outlineWobble, cityRadius);
+      // Solid mass — no fragmentation noise. Peak stays at 0.90 so even the
+      // outline is comfortably buildable, not teetering near sea level.
+      const cityMass = cityEnv * 0.90;
 
-      shape = Math.max(lidoStrength, mainland, cityIslets) - canals - 0.05;
+      // Grand Canal: a single sinuous S-cut running through the city core,
+      // dividing it roughly into sestieri. Width ~0.018 in normalized coords.
+      const gcPhase = (wrz - cityCz) * 5.2;
+      const gcCenterline = cityCx + Math.sin(gcPhase) * 0.07;
+      const gcDist = Math.abs(wrx - gcCenterline);
+      const gcWidth = 0.020 + Math.sin(gcPhase * 0.6) * 0.004;
+      const grandCanal = (1 - smoothstep(gcWidth * 0.4, gcWidth, gcDist)) * cityEnv * 0.55;
+
+      // Thin rii (secondary canals) carved by ridge noise — narrow lines, not
+      // blobs. These create texture without dissecting the island.
+      const riiRidge = 1 - Math.abs(_ridgeNoise(localX * 0.048 + 120, localZ * 0.052 - 80));
+      const riiCarve = smoothstep(0.88, 0.98, riiRidge) * cityEnv * 0.30;
+
+      shape = Math.max(lidoStrength, mainland, cityMass) - grandCanal - riiCarve - 0.05;
       break;
     }
   }
@@ -1829,9 +1865,13 @@ export function getArchetypeShape(
   // Interior variety: ridges and valleys across all land areas
   shape = interiorVariety(localX, localZ, shape);
 
-  // Offshore features: small islands and rocky outcrops near coastlines
-  const offshore = offshoreFeatures(localX, localZ, shape);
-  if (offshore > 0) shape = Math.max(shape, offshore);
+  // Offshore features: small islands and rocky outcrops near coastlines.
+  // Skip for lagoon — a sheltered basin shouldn't be sprinkled with random
+  // rocks; all its land is authored explicitly (Lido, city, mainland, satellites).
+  if (def.geography !== 'lagoon') {
+    const offshore = offshoreFeatures(localX, localZ, shape);
+    if (offshore > 0) shape = Math.max(shape, offshore);
+  }
 
   // Named satellite features: explicit offshore islands/rocks
   if (def.satellites && def.satellites.length > 0) {
@@ -1854,13 +1894,18 @@ export function getArchetypeShape(
       const shapeType = s.shape ?? 'ovoid';
       let d: number;
       if (shapeType === 'elongated') {
+        // Pow 2.0 is a pure ellipse; higher powers read as a rounded rectangle
+        // ("squircle") which looks unnaturally geometric for an island. We add
+        // noise to the distance metric to break up the outline as well.
         const px = Math.abs(ix / semiShort);
         const pz = Math.abs(iz / semiLong);
-        d = Math.pow(Math.pow(px, 2.5) + Math.pow(pz, 2.5), 1 / 2.5);
+        d = Math.pow(Math.pow(px, 2.0) + Math.pow(pz, 2.0), 1 / 2.0) + sn * 0.35;
       } else if (shapeType === 'rugged') {
         d = Math.sqrt((ix / semiShort) ** 2 + (iz / semiLong) ** 2) + sn * 1.8;
       } else {
-        d = Math.sqrt((ix / semiShort) ** 2 + (iz / semiLong) ** 2);
+        // ovoid: still add a touch of outline noise so the silhouette isn't
+        // a textbook-perfect ellipse.
+        d = Math.sqrt((ix / semiShort) ** 2 + (iz / semiLong) ** 2) + sn * 0.45;
       }
       const satStrength = smoothstep(1.0 + sn, 0.4, d) * 0.75;
       if (satStrength > 0.02) shape = Math.max(shape, satStrength);

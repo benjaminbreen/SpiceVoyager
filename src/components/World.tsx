@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { IS_SAFARI } from '../utils/platform';
 import * as THREE from 'three';
 import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { NPCShip } from './NPCShip';
@@ -9,6 +10,7 @@ import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '..
 import { setLandCharacterBuildings } from '../utils/landCharacter';
 import { SEA_LEVEL } from '../constants/world';
 import { resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
+import { computeDayMood, MOOD_OVERCAST_WARM_HEX } from '../utils/dayMood';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN } from '../utils/animalTerrain';
@@ -93,6 +95,18 @@ function lerpColorHex(a: string, b: string, t: number): THREE.Color {
   return new THREE.Color(a).lerp(new THREE.Color(b), THREE.MathUtils.clamp(t, 0, 1));
 }
 
+// Allocation-free version: writes result into `target`, reuses `_lerpB` scratch.
+const _lerpB = new THREE.Color();
+function lerpColorHexInto(a: string, b: string, t: number, target: THREE.Color): void {
+  target.set(a).lerp(_lerpB.set(b), THREE.MathUtils.clamp(t, 0, 1));
+}
+
+// Variant that takes a pre-set Color as the source — used when the source hex
+// itself is mood-dependent and already lives in a scratch Color.
+function lerpColorInto(src: THREE.Color, destHex: string, t: number, target: THREE.Color): void {
+  target.copy(src).lerp(_lerpB.set(destHex), THREE.MathUtils.clamp(t, 0, 1));
+}
+
 function ClearSkyDome() {
   const meshRef = useRef<THREE.Mesh>(null);
   const uniforms = useMemo(() => ({
@@ -101,36 +115,38 @@ function ClearSkyDome() {
     uLowerColor: { value: new THREE.Color('#7fcff4') },
   }), []);
 
+  // Pre-allocated scratch colors — avoids `new THREE.Color()` every frame.
+  const scratch = useMemo(() => ({
+    zenith: new THREE.Color(),
+    horizon: new THREE.Color(),
+    lower: new THREE.Color(),
+    warm: new THREE.Color(),
+  }), []);
+
   useFrame(({ camera }) => {
     if (!meshRef.current) return;
     meshRef.current.position.copy(camera.position);
 
     const state = useGameStore.getState();
     const waterPaletteId = resolveWaterPaletteId(state);
+    const mood = computeDayMood(state.timeOfDay, state.worldSeed);
     const angle = ((state.timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(angle);
 
-    let zenith: THREE.Color;
-    let horizon: THREE.Color;
-    let lower: THREE.Color;
+    const { zenith, horizon, lower, warm } = scratch;
+    // Mood-adjusted warm band: blend the saturated sunset orange toward an
+    // overcast gray as warmth drops. warmth=1 → '#f0a36b', warmth=0 → overcast.
+    warm.set(MOOD_OVERCAST_WARM_HEX).lerp(_lerpB.set('#f0a36b'), mood.warmth);
 
     if (sunH > 0.3) {
       if (waterPaletteId === 'monsoon') {
-        zenith = new THREE.Color('#3d9fbb');
-        horizon = new THREE.Color('#75bfc9');
-        lower = new THREE.Color('#9acdcf');
+        zenith.set('#3d9fbb'); horizon.set('#75bfc9'); lower.set('#9acdcf');
       } else if (waterPaletteId === 'tropical') {
-        zenith = new THREE.Color('#0289e8');
-        horizon = new THREE.Color('#50c7ff');
-        lower = new THREE.Color('#7ed5ff');
+        zenith.set('#0289e8'); horizon.set('#50c7ff'); lower.set('#7ed5ff');
       } else if (waterPaletteId === 'temperate') {
-        zenith = new THREE.Color('#6f8894');
-        horizon = new THREE.Color('#9fb4bc');
-        lower = new THREE.Color('#b5c3c8');
+        zenith.set('#6f8894'); horizon.set('#9fb4bc'); lower.set('#b5c3c8');
       } else {
-        zenith = new THREE.Color('#158bd8');
-        horizon = new THREE.Color('#68c4f2');
-        lower = new THREE.Color('#94d6f4');
+        zenith.set('#158bd8'); horizon.set('#68c4f2'); lower.set('#94d6f4');
       }
     } else if (sunH > 0.0) {
       const t = sunH / 0.3;
@@ -148,18 +164,18 @@ function ClearSkyDome() {
         : waterPaletteId === 'tropical'
         ? '#50c7ff'
         : '#4ec2ee';
-      zenith = lerpColorHex('#223a68', dayZenith, t);
-      horizon = lerpColorHex('#f0a36b', dayHorizon, t);
-      lower = lerpColorHex('#f0a36b', dayHorizon, t);
+      lerpColorHexInto('#223a68', dayZenith, t, zenith);
+      lerpColorInto(warm, dayHorizon, t, horizon);
+      lerpColorInto(warm, dayHorizon, t, lower);
     } else if (sunH > -0.15) {
       const t = (sunH + 0.15) / 0.15;
-      zenith = lerpColorHex('#101f42', '#223a68', t);
-      horizon = lerpColorHex('#172747', '#f0a36b', t);
-      lower = lerpColorHex('#172747', '#f0a36b', t);
+      lerpColorHexInto('#101f42', '#223a68', t, zenith);
+      // Deep-dusk side blends the night color up toward the mood-adjusted warm.
+      horizon.set('#172747');
+      horizon.lerp(warm, THREE.MathUtils.clamp(t, 0, 1));
+      lower.copy(horizon);
     } else {
-      zenith = new THREE.Color('#081833');
-      horizon = new THREE.Color('#102241');
-      lower = new THREE.Color('#102241');
+      zenith.set('#081833'); horizon.set('#102241'); lower.set('#102241');
     }
 
     uniforms.uZenithColor.value.copy(zenith);
@@ -508,7 +524,7 @@ function buildBackgroundRingGeometry(
       const i10 = getOrAddVert(ix + 1, iy);
       const i01 = getOrAddVert(ix, iy + 1);
       const i11 = getOrAddVert(ix + 1, iy + 1);
-      indices.push(i00, i11, i10, i00, i01, i11);
+      indices.push(i00, i10, i11, i00, i11, i01);
     }
   }
 
@@ -521,7 +537,11 @@ function buildBackgroundRingGeometry(
 
 export function World() {
   const initWorld = useGameStore((state) => state.initWorld);
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  // Quantize timeOfDay to 0.05 game-hour steps (~3 game-min ≈ 0.5s real time
+  // at the current tick rate). The raw value updates every 200ms; quantizing
+  // cuts World's re-render cadence from 5 Hz to ~2 Hz without any visible
+  // difference in the lighting ramp (which already stepped at 0.2s chunks).
+  const timeOfDay = useGameStore((state) => Math.round(state.timeOfDay * 20) / 20);
   const setNpcPositions = useGameStore((state) => state.setNpcPositions);
   const setNpcShips = useGameStore((state) => state.setNpcShips);
   const setOceanEncounters = useGameStore((state) => state.setOceanEncounters);
@@ -1403,6 +1423,7 @@ export function World() {
   } = useMemo(() => {
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2; // 6 AM is sunrise
     const sunH = Math.sin(angle); // -1 to 1, how high the sun is
+    const mood = computeDayMood(timeOfDay, worldSeed);
 
     // Tropical sun path — arcs from east, very high overhead at midday, to west.
     // Height uses a flattened curve so the sun stays near-overhead for hours (short shadows).
@@ -1481,7 +1502,9 @@ export function World() {
       groundCol = new THREE.Color(0.07, 0.07, 0.13);
     }
 
-    // Directional sun light — intensity and color shaped by climate
+    // Directional sun light — intensity and color shaped by climate, with the
+    // low-sun warm color biased by daymood warmth (overcast dawns drop the
+    // aggressive orange toward a silver-gray).
     let sInt: number, sCol: THREE.Color;
     if (sunH > 0.35) {
       sInt = lp.sunBase + sunH * lp.sunScale;
@@ -1489,11 +1512,11 @@ export function World() {
     } else if (sunH > -0.05) {
       const t = (sunH + 0.05) / 0.4;
       sInt = t * lp.sunBase;
-      sCol = new THREE.Color().lerpColors(
+      const moodWarmSun = new THREE.Color(0.86, 0.84, 0.80).lerp(
         new THREE.Color(1.0, 0.42, 0.12),
-        lp.sunCol,
-        t
+        mood.warmth,
       );
+      sCol = new THREE.Color().lerpColors(moodWarmSun, lp.sunCol, t);
     } else {
       sInt = 0;
       sCol = new THREE.Color(0, 0, 0);
@@ -1517,7 +1540,7 @@ export function World() {
       moonIntensity: moonInt,
       shadowRadius: lp.shadowRadius,
     };
-  }, [timeOfDay, waterPaletteId]);
+  }, [timeOfDay, waterPaletteId, worldSeed]);
 
   // ── Terrain material with procedural detail noise ──────────────────────────
   const terrainShaderUniformsRef = useRef<{ uPlayerPos: { value: THREE.Vector3 } } | null>(null);
@@ -2961,7 +2984,7 @@ export function World() {
         intensity={sunIntensity}
         color={sunColor}
         castShadow={shadowsActive}
-        shadow-mapSize={[2048, 2048]}
+        shadow-mapSize={IS_SAFARI ? [1024, 1024] : [2048, 2048]}
         shadow-bias={-0.0000}
         shadow-normalBias={0.0}
         shadow-radius={shadowRadius}

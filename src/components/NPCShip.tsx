@@ -440,6 +440,10 @@ export function NPCShip({
 
   useFrame((state, delta) => {
     if (!group.current) return;
+    // Freeze NPC AI + movement while the game is paused (e.g. hail modal open).
+    // Allow the active sinking animation to continue so a ship in its death
+    // throes doesn't visibly freeze mid-roll if the player pauses for UI.
+    if (useGameStore.getState().paused && !sinking) return;
 
     // ── Sinking animation (3 phases) ──
     if (sinking) {

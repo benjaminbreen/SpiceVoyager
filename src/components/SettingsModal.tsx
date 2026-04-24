@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, RenderDebugSettings } from '../store/gameStore';
 import { sfxTab, sfxClose, sfxClick, setSfxVolume, getSfxVolume } from '../audio/SoundEffects';
@@ -25,7 +25,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Globe }[] = [
   { id: 'about',    label: 'About',    icon: Info },
 ];
 
-export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsModal({ open, onClose, initialTab }: { open: boolean; onClose: () => void; initialTab?: SettingsTab }) {
   const worldSeed = useGameStore(s => s.worldSeed);
   const setWorldSeed = useGameStore(s => s.setWorldSeed);
   const worldSize = useGameStore(s => s.worldSize);
@@ -38,7 +38,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const renderDebug = useGameStore(s => s.renderDebug);
   const updateRenderDebug = useGameStore(s => s.updateRenderDebug);
   const resetRenderDebug = useGameStore(s => s.resetRenderDebug);
-  const [tab, setTab] = useState<SettingsTab>('world');
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'world');
+  useEffect(() => { if (open && initialTab) setTab(initialTab); }, [open, initialTab]);
   const [newSeed, setNewSeed] = useState('');
   const [copied, setCopied] = useState(false);
 

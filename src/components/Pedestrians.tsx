@@ -21,7 +21,7 @@ import {
   PedestrianSystemState, FigureType,
   initPedestrianSystem, updatePedestrians,
 } from '../utils/pedestrianSystem';
-import { syncLivePedestrians, clearLivePedestrians } from '../utils/livePedestrians';
+import { syncLivePedestrians, clearLivePedestrians, consumePendingKills } from '../utils/livePedestrians';
 import {
   BodyArchetype, HeadwearType, ArmType, PropType, VisualProfile,
   BODY_ARCHETYPES, HEADWEAR_TYPES, ARM_TYPES, PROP_TYPES, HEAD_TOP_Y,
@@ -103,7 +103,9 @@ const FIGURE_TYPES: FigureType[] = ['man', 'woman', 'child'];
 
 export function Pedestrians() {
   const ports = useGameStore(s => s.ports);
-  const timeOfDay = useGameStore(s => s.timeOfDay);
+  // timeOfDay changes every 200ms; we only need the current value per frame,
+  // not a React re-render on every tick. Read inside useFrame to avoid the
+  // re-render cascade across all instanced meshes.
   const worldSeed = useGameStore(s => s.worldSeed);
 
   const bodyRefs = useRef<Record<BodyArchetype, THREE.InstancedMesh | null>>({
@@ -138,6 +140,7 @@ export function Pedestrians() {
   const colorsNeedInit = useRef(true);
   const animAccumRef = useRef(0);
   const livePedXs = useRef<Float32Array>(new Float32Array(256));
+  const livePedYs = useRef<Float32Array>(new Float32Array(256));
   const livePedZs = useRef<Float32Array>(new Float32Array(256));
 
   const bodyGeos = useMemo(() => {
@@ -306,19 +309,28 @@ export function Pedestrians() {
     animAccumRef.current = 0;
 
     const time = state.clock.elapsedTime;
-    const hour = timeOfDay;
+    const hour = useGameStore.getState().timeOfDay;
+
+    // Apply kills from projectile hits before updating positions.
+    const kills = consumePendingKills();
+    for (const idx of kills) {
+      if (idx < system.pedestrians.length) system.pedestrians[idx].dead = true;
+    }
+
     const activeCount = updatePedestrians(system, time, dt, hour);
 
     // Publish live positions for Player collision. Only the active slice moves;
     // inactive peds stay parked off-screen so they won't be reached by the scan.
     const pxs = livePedXs.current;
+    const pys = livePedYs.current;
     const pzs = livePedZs.current;
     const pubCount = Math.min(activeCount, pxs.length);
     for (let i = 0; i < pubCount; i++) {
       pxs[i] = system.pedestrians[i].x;
+      pys[i] = system.pedestrians[i].y;
       pzs[i] = system.pedestrians[i].z;
     }
-    syncLivePedestrians(pubCount, pxs, pzs);
+    syncLivePedestrians(pubCount, pxs, pys, pzs);
 
     const d = dummy.current;
 
@@ -351,6 +363,7 @@ export function Pedestrians() {
 
     for (let i = 0; i < activeCount; i++) {
       const p = system.pedestrians[i];
+      if (p.dead) continue;
       const prof = profiles[i];
       const rig = ARCHETYPE_SHOULDER[prof.body];
 

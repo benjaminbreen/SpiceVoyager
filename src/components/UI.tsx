@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { useGameStore, Port, Building, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
 import { getWorldPortById } from '../utils/worldPorts';
-import type { CrewMember, Language, ShipStats, ShipInfo } from '../store/gameStore';
+import type { CrewMember, ShipStats, ShipInfo } from '../store/gameStore';
 import type { PlaceTab } from './PortModal';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
@@ -15,16 +15,16 @@ import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
-import { ArrivalCurtain } from './ArrivalCurtain';
+import { ArrivalCurtain, DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
 import { CrewPortraitSquare } from './CrewPortrait';
+import { HailPanel } from './HailPanel';
 import { Opening } from './Opening';
 import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
-import { floatingPanelMotion } from '../utils/uiMotion';
 import { activeBowWeapon, getCurrentElevationCharge } from '../utils/combatState';
 import {
   getLiveShipTransform,
@@ -35,6 +35,7 @@ import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
 import { DISTRICT_LABELS } from '../utils/cityDistricts';
+import { getTestModeConfig } from '../test/testMode';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
@@ -230,6 +231,7 @@ function BuildingToast({
 
   return (
     <motion.div
+      data-testid="building-toast"
       key={building.id}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
@@ -598,6 +600,7 @@ function CollisionBanner({ shipDesc }: { shipDesc: string }) {
 }
 
 export function UI() {
+  const testMode = getTestModeConfig();
   const gold = useGameStore((state) => state.gold);
   const cargo = useGameStore((state) => state.cargo);
   const stats = useGameStore((state) => state.stats);
@@ -631,8 +634,15 @@ export function UI() {
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
-  const [showInstructions, setShowInstructions] = useState(true);
+  const [showInstructions, setShowInstructions] = useState(() => !testMode.skipOpening);
   const [arrivalCurtainPort, setArrivalCurtainPort] = useState<string | null>(null);
+  // When skipping the opening (dev/test mode), begin the voyage immediately
+  // so GameScene mounts without waiting for the splash screen flow.
+  const _setVoyageBegunOnce = useGameStore(s => s.setVoyageBegun);
+  useEffect(() => {
+    if (testMode.skipOpening) _setVoyageBegunOnce();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Voyage arrival → cinematic curtain that masks the world-map → port swap.
   // Caller passes the destination port name and the swap closure (fastTravel +
@@ -677,6 +687,8 @@ export function UI() {
   const { isMobile } = useIsMobile();
   const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
+  const [showVoyageCurtain, setShowVoyageCurtain] = useState(false);
+  const setVoyageBegun = useGameStore(s => s.setVoyageBegun);
   const [splashComplete, setSplashComplete] = useState(false);
   const [splashMinElapsed, setSplashMinElapsed] = useState(false);
   const worldReady = portCount > 0;
@@ -687,7 +699,7 @@ export function UI() {
   const previousHullRef = useRef(stats.hull);
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
-  const startupOverlayActive = showInstructions || showCommission;
+  const startupOverlayActive = showInstructions || showCommission || showVoyageCurtain;
 
   // Building entry toast (walking mode, non-market buildings)
   const [portEntryTab, setPortEntryTab] = useState<PlaceTab | undefined>(undefined);
@@ -749,9 +761,10 @@ export function UI() {
     if (splashComplete) {
       sfxSail();
       setShowInstructions(false);
-      setShowCommission(true);
+      setVoyageBegun();       // triggers GameScene mount in Game.tsx
+      setShowVoyageCurtain(true);
     }
-  }, [splashComplete]);
+  }, [splashComplete, setVoyageBegun]);
 
   const closeCommission = useCallback(() => {
     setShowCommission(false);
@@ -787,7 +800,7 @@ export function UI() {
   }, [showInstructions]);
 
   useEffect(() => {
-    if (!showInstructions || splashComplete || worldReady) return;
+    if (!showInstructions || splashComplete) return;
 
     const MESSAGE_INTERVAL_MS = 380;
     let i = 0;
@@ -797,22 +810,16 @@ export function UI() {
     }, MESSAGE_INTERVAL_MS);
 
     return () => clearInterval(msgTimer);
-  }, [showInstructions, splashComplete, worldReady]);
+  }, [showInstructions, splashComplete]);
 
+  // Splash is ready once the minimum timer elapses — no longer waiting for
+  // worldReady, since the canvas now mounts only after Set Sail is clicked.
   useEffect(() => {
-    if (!showInstructions || splashComplete || !worldReady) return;
-
+    if (!showInstructions || splashComplete || !splashMinElapsed) return;
     setLoadingProgress(100);
-    setLoadingMessage(
-      splashMinElapsed
-        ? 'Harbors charted. Holds secured. The monsoon favors departure.'
-        : 'Harbors charted. Final departure checks underway.'
-    );
-
-    if (splashMinElapsed) {
-      setSplashComplete(true);
-    }
-  }, [showInstructions, splashComplete, worldReady, splashMinElapsed]);
+    setLoadingMessage('Harbors charted. Holds secured. The monsoon favors departure.');
+    setSplashComplete(true);
+  }, [showInstructions, splashComplete, splashMinElapsed]);
 
   useEffect(() => {
     if (!showInstructions || !splashComplete) return;
@@ -827,6 +834,13 @@ export function UI() {
     window.addEventListener('keydown', handleLaunchKey);
     return () => window.removeEventListener('keydown', handleLaunchKey);
   }, [showInstructions, splashComplete, closeOpeningOverlay]);
+
+  // Dismiss the voyage curtain once the world finishes generating behind it.
+  useEffect(() => {
+    if (!showVoyageCurtain || !worldReady) return;
+    setShowVoyageCurtain(false);
+    setShowCommission(true);
+  }, [showVoyageCurtain, worldReady]);
 
   // Check for nearby ports — approach toast + activation
   const PORT_APPROACH_RADIUS_SQ = 60 * 60; // grand toast at ~60 units
@@ -1080,7 +1094,10 @@ export function UI() {
     : { x: 0, y: 0 };
 
   return (
-    <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none">
+    <div
+      className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none"
+      style={{ transform: 'translateZ(0)', willChange: 'transform' }}
+    >
       <AnimatePresence>
         {hullDamagePulse && (
           <motion.div
@@ -1195,6 +1212,7 @@ export function UI() {
                 <button
                   onClick={() => { sfxOpen(); setShowWorldMap(true); }}
                   onMouseEnter={() => sfxHover()}
+                  data-testid="open-world-map"
                   className="group flex items-center gap-1.5 text-amber-200/80 hover:text-amber-200 transition-colors duration-200
                     decoration-dotted decoration-amber-600/60 underline-offset-[3px] hover:underline"
                   title={`${FACTIONS[ship.flag].displayName} — open world map`}
@@ -1718,6 +1736,9 @@ export function UI() {
       {/* Arrival curtain — masks the world-map → port swap after a voyage */}
       <ArrivalCurtain portName={arrivalCurtainPort} />
 
+      {/* Departure curtain — masks canvas mount + terrain gen after Set Sail */}
+      <DepartureCurtain active={showVoyageCurtain} />
+
       {/* Journal Panel (compact, above button) */}
       {showJournal && (
         <Suspense fallback={null}>
@@ -2172,6 +2193,16 @@ function RenderTestPanel() {
           label="Wildlife Motion"
           enabled={renderDebug.wildlifeMotion}
           onToggle={() => updateRenderDebug({ wildlifeMotion: !renderDebug.wildlifeMotion })}
+        />
+        <RenderToggleRow
+          label="Animal Markers"
+          enabled={renderDebug.animalMarkers}
+          onToggle={() => updateRenderDebug({ animalMarkers: !renderDebug.animalMarkers })}
+        />
+        <RenderToggleRow
+          label="Kill Transitions (diag)"
+          enabled={renderDebug.disableTransitions}
+          onToggle={() => updateRenderDebug({ disableTransitions: !renderDebug.disableTransitions })}
         />
         <RenderToggleRow
           label="City Fields"
@@ -2712,331 +2743,6 @@ function StatBar({ icon, label, value, max, color, active, onClick }: { icon: Re
   );
 }
 
-type HailMood = 'HOSTILE' | 'COLD' | 'WARY' | 'CORDIAL' | 'WARM';
-type HailAction = 'news' | 'trade' | 'bearing' | 'leave';
-
-function hashString(value: string): number {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash);
-}
-
-function pickStable<T>(items: T[], key: string): T {
-  return items[hashString(key) % items.length];
-}
-
-function getHailMood(rep: number): HailMood {
-  if (rep <= -60) return 'HOSTILE';
-  if (rep <= -25) return 'COLD';
-  if (rep >= 60) return 'WARM';
-  if (rep >= 25) return 'CORDIAL';
-  return 'WARY';
-}
-
-function getHailMoodColor(mood: HailMood): string {
-  if (mood === 'HOSTILE') return '#f87171';
-  if (mood === 'COLD') return '#f59e0b';
-  if (mood === 'CORDIAL') return '#86efac';
-  if (mood === 'WARM') return '#34d399';
-  return '#cbd5e1';
-}
-
-function getHailGreeting(npc: NPCShipIdentity, mood: HailMood): string {
-  const name = npc.captainName.split(' ')[0] || npc.captainName;
-  const lines: Record<HailMood, string[]> = {
-    HOSTILE: [
-      `"Keep off. One more cable and we fire."`,
-      `"We know your flag. Hold your course away from us."`,
-      `"No talk. No trade. Stand clear."`,
-    ],
-    COLD: [
-      `"State your business and keep your guns quiet."`,
-      `"We will answer once. Make it useful."`,
-      `"Speak plainly. We have no wish to linger."`,
-    ],
-    WARY: [
-      `"Fair water. What do you need?"`,
-      `"We hear you. Keep a respectful distance."`,
-      `"Captain ${name} answers. Be quick about it."`,
-    ],
-    CORDIAL: [
-      `"Fair winds. We have news if you need it."`,
-      `"Good sailing to you. What word do you seek?"`,
-      `"Come no closer, friend, but speak freely."`,
-    ],
-    WARM: [
-      `"Well met. We will help where we can."`,
-      `"A welcome sail. Ask what you need."`,
-      `"Good fortune to you. Our deck has news and spare stores."`,
-    ],
-  };
-  return pickStable(lines[mood], npc.id + mood);
-}
-
-function bearingFromTo(from: [number, number, number], to: [number, number, number]): string {
-  const dx = to[0] - from[0];
-  const dz = to[2] - from[2];
-  const angle = (Math.atan2(dx, dz) + Math.PI * 2) % (Math.PI * 2);
-  const points = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
-  return points[Math.round(angle / (Math.PI / 4)) % points.length];
-}
-
-const UNTRANSLATED_HAIL: Record<Language, string> = {
-  Arabic: 'لا أفهمك. سأمضي في طريقي.',
-  Persian: 'سخنت را نمی‌فهمم. راه خود را می‌روم.',
-  Gujarati: 'હું તમને સમજતો નથી. હું મારા રસ્તે જાઉં છું.',
-  Hindustani: 'मैं तुम्हारी बात नहीं समझता। मैं अपने रास्ते जाऊँगा।',
-  Portuguese: 'Não vos entendo. Sigo o meu caminho.',
-  Dutch: 'Ik versta u niet. Ik vaar verder.',
-  English: "I cannot understand you. I'll be on my way.",
-  Spanish: 'No os entiendo. Seguiré mi rumbo.',
-  French: 'Je ne vous comprends pas. Je poursuis ma route.',
-  Italian: 'Non vi capisco. Vado per la mia strada.',
-  Turkish: 'Sizi anlamıyorum. Yoluma devam edeceğim.',
-  Malay: 'Aku tidak faham. Aku akan meneruskan pelayaran.',
-  Swahili: 'Sikuelewi. Nitaendelea na safari yangu.',
-  Chinese: '我听不懂你。我继续走我的航路。',
-  Japanese: '何を言っているかわからぬ。このまま進む。',
-};
-
-function getCrewLanguages(member: CrewMember): Language[] {
-  return member.languages ?? [];
-}
-
-function pickTranslator(crew: CrewMember[], language: Language): CrewMember | null {
-  const roleRank: Record<string, number> = {
-    Factor: 5,
-    Navigator: 4,
-    Captain: 3,
-    Surgeon: 2,
-    Sailor: 1,
-    Gunner: 1,
-  };
-  return crew
-    .filter((member) => getCrewLanguages(member).includes(language))
-    .sort((a, b) =>
-      (roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0) ||
-      b.stats.charisma - a.stats.charisma ||
-      b.skill - a.skill
-    )[0] ?? null;
-}
-
-function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void }) {
-  const rep = useGameStore((state) => state.getReputation(npc.flag));
-  const gold = useGameStore((state) => state.gold);
-  const crew = useGameStore((state) => state.crew);
-  const hailLanguage = npc.hailLanguage ?? 'Portuguese';
-  const translator = useMemo(() => pickTranslator(crew, hailLanguage), [crew, hailLanguage]);
-  const canUnderstand = Boolean(translator);
-  const mood = getHailMood(rep);
-  const moodColor = getHailMoodColor(mood);
-  const greeting = useMemo(() => getHailGreeting(npc, mood), [npc, mood]);
-  const tradeOffer = useMemo(() => {
-    const seed = hashString(npc.id + npc.shipName);
-    const amount = 4 + (seed % 5);
-    const cost = amount * (mood === 'WARM' ? 2 : mood === 'CORDIAL' ? 3 : 4);
-    return { amount, cost };
-  }, [npc.id, npc.shipName, mood]);
-  const [used, setUsed] = useState<Record<string, boolean>>({});
-  const [result, setResult] = useState<{ tone: 'good' | 'warn' | 'neutral'; text: string; impact?: string } | null>(null);
-  const awardedTranslationRef = useRef(false);
-
-  useEffect(() => {
-    if (!translator || awardedTranslationRef.current) return;
-    awardedTranslationRef.current = true;
-    useGameStore.getState().adjustReputation(npc.flag, 1);
-    useGameStore.setState((state) => ({
-      crew: state.crew.map((member) => member.id === translator.id
-        ? {
-            ...member,
-            xp: member.xp + 1,
-            history: [
-              ...member.history,
-              { day: state.dayCount, event: `Translated ${hailLanguage} during a hail with a ${npc.flag} ${npc.shipType}` },
-            ],
-          }
-        : member
-      ),
-    }));
-  }, [hailLanguage, npc.flag, npc.shipType, translator]);
-
-  const canTrade = canUnderstand && mood !== 'HOSTILE' && mood !== 'COLD';
-  const availableActions = useMemo(() => [
-    canUnderstand && !used.news ? { id: 'news' as HailAction, label: 'News' } : null,
-    canTrade && !used.trade ? { id: 'trade' as HailAction, label: 'Trade' } : null,
-    canUnderstand && !used.bearing ? { id: 'bearing' as HailAction, label: 'Bearing' } : null,
-  ].filter(Boolean) as { id: HailAction; label: string }[], [canTrade, canUnderstand, used]);
-
-  const resolveAction = useCallback((action: HailAction) => {
-    sfxClick();
-    const state = useGameStore.getState();
-
-    if (action === 'leave') {
-      onClose();
-      return;
-    }
-
-    if (!canUnderstand) return;
-
-    if (action === 'news') {
-      const news = pickStable([
-        `${npc.flag} captains report patrols searching holds near the next busy anchorage.`,
-        `A damaged trader was seen drifting downwind before dawn. Gulls marked the water behind her.`,
-        `Fresh water is dear along this coast. Captains are paying hard coin for sound casks.`,
-        `Two armed sails were seen shadowing merchantmen beyond the headland.`,
-        `The monsoon has been holding steady. Fast passages favor captains who trim their canvas cleanly.`,
-      ], npc.id + state.dayCount + 'news');
-      state.addJournalEntry('encounter', `Hailed the ${npc.shipName}: ${news}`);
-      setUsed((prev) => ({ ...prev, news: true }));
-      setResult({ tone: 'good', text: `"${news}"`, impact: '+ journal updated' });
-      return;
-    }
-
-    if (action === 'bearing') {
-      const shipPos = getLiveShipTransform().pos;
-      const byDistance = (a: Port, b: Port) => {
-        const adx = a.position[0] - shipPos[0];
-        const adz = a.position[2] - shipPos[2];
-        const bdx = b.position[0] - shipPos[0];
-        const bdz = b.position[2] - shipPos[2];
-        return adx * adx + adz * adz - (bdx * bdx + bdz * bdz);
-      };
-      const target = state.ports
-        .filter((port) => !state.discoveredPorts.includes(port.id))
-        .sort(byDistance)[0] ?? state.ports
-        .filter((port) => port.id !== state.currentWorldPortId)
-        .sort(byDistance)[0];
-
-      if (!target) {
-        setResult({ tone: 'neutral', text: `"No useful bearing. Only open water from here."` });
-        return;
-      }
-
-      const bearing = bearingFromTo(shipPos, target.position);
-      const line = `They mark ${target.name} ${bearing} by their reckoning.`;
-      state.addJournalEntry('navigation', `Bearing from the ${npc.shipName}: ${target.name} lies ${bearing}.`, target.name);
-      setUsed((prev) => ({ ...prev, bearing: true }));
-      setResult({ tone: 'good', text: `"${line}"`, impact: '+ bearing noted' });
-      return;
-    }
-
-    if (action === 'trade') {
-      if (!canTrade) {
-        setResult({ tone: 'warn', text: `"No trade. Keep clear."` });
-        return;
-      }
-      if (gold < tradeOffer.cost) {
-        setResult({ tone: 'warn', text: `"Dried fish and water, ${tradeOffer.cost} gold. You lack the coin."` });
-        return;
-      }
-
-      useGameStore.setState((prev) => ({
-        gold: prev.gold - tradeOffer.cost,
-        provisions: prev.provisions + tradeOffer.amount,
-      }));
-      state.addJournalEntry('commerce', `Bought ${tradeOffer.amount} provisions from the ${npc.shipName} for ${tradeOffer.cost} gold.`);
-      setUsed((prev) => ({ ...prev, trade: true }));
-      setResult({
-        tone: 'good',
-        text: `"We can spare dried fish and water casks."`,
-        impact: `+${tradeOffer.amount} provisions · -${tradeOffer.cost} gold`,
-      });
-    }
-  }, [canTrade, canUnderstand, gold, npc, onClose, tradeOffer]);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-        return;
-      }
-      const idx = Number(e.key) - 1;
-      if (!Number.isInteger(idx) || idx < 0 || idx >= availableActions.length) return;
-      e.preventDefault();
-      resolveAction(availableActions[idx].id);
-    };
-
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [availableActions, onClose, resolveAction]);
-
-  const resultColor = result?.tone === 'warn' ? '#f59e0b' : result?.tone === 'good' ? '#86efac' : '#cbd5e1';
-  const displayText = canUnderstand
-    ? (result ? result.text : greeting)
-    : `"${UNTRANSLATED_HAIL[hailLanguage]}"`;
-
-  return (
-    <motion.div
-      {...floatingPanelMotion}
-      className="absolute bottom-24 left-1/2 z-40 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto"
-    >
-      <div className="bg-[#050812]/78 backdrop-blur-md border border-[#2a2d3a]/45 rounded-xl px-4 py-3 shadow-[0_10px_34px_rgba(0,0,0,0.45)]">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#8a8060]">
-              HAIL // {npc.flag} {npc.shipType}{canUnderstand && <> // <span style={{ color: moodColor }}>{mood}</span></>}
-            </div>
-            <div className="mt-1 truncate text-sm font-semibold text-slate-100">
-              {canUnderstand
-                ? <>{npc.shipName} <span className="text-slate-500">·</span> <span className="text-slate-300">Capt. {npc.captainName}</span></>
-                : <span className="text-slate-300">Unknown vessel</span>}
-            </div>
-          </div>
-          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-600">
-            PAUSED
-          </span>
-        </div>
-
-        <div className="my-3 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
-
-        <div className="text-[13px] leading-relaxed text-slate-200">
-          {displayText}
-        </div>
-        {canUnderstand && translator && !result && (
-          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-emerald-300/80">
-            {translator.name} translates from {hailLanguage}. +1 xp
-          </div>
-        )}
-        {!canUnderstand && (
-          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-300/85">
-            No one aboard understands {hailLanguage}.
-          </div>
-        )}
-        {result?.impact && (
-          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: resultColor }}>
-            {result.impact}
-          </div>
-        )}
-
-        {availableActions.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-            {availableActions.map((action, index) => (
-              <button
-                key={action.id}
-                onClick={() => resolveAction(action.id)}
-                className="font-mono text-[11px] uppercase tracking-[0.12em] text-slate-400 hover:text-amber-300 transition-colors"
-              >
-                <span className="text-[#8a8060]">[{index + 1}]</span> {action.label}
-                {action.id === 'trade' && <span className="text-slate-600"> {tradeOffer.cost}g</span>}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="mt-4 flex justify-center">
-          <button
-            onClick={onClose}
-            className="font-mono text-[11px] uppercase tracking-[0.16em] px-6 py-2 rounded border border-slate-600/50 text-slate-300 hover:text-amber-300 hover:border-amber-500/50 transition-colors bg-white/[0.04]"
-          >
-            Sail On <span className="text-slate-500 ml-1">[Esc]</span>
-          </button>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
 
 function getTrimCueColor(grade: ReturnType<typeof getWindTrimInfo>['grade']): string {
   if (grade === 'full') return '#22c55e';

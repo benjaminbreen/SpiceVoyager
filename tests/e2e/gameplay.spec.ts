@@ -1,0 +1,124 @@
+import { expect, test, type Page } from '@playwright/test';
+
+async function bootTestWorld(page: Page) {
+  await page.goto('/?testMode=1&skipOpening=1&showPerformance=1&seed=1612&port=goa&time=9');
+  await page.waitForFunction(() => Boolean(window.__SPICE_VOYAGER_TEST__?.getSnapshot().portsReady));
+}
+
+test('market flow buys a seeded good through the real port UI', async ({ page }) => {
+  await bootTestWorld(page);
+
+  await page.evaluate(() => {
+    const api = window.__SPICE_VOYAGER_TEST__!;
+    const state = api.getState();
+    const port = state.ports.find((entry) => entry.id === 'goa') ?? state.ports[0];
+    if (!port) throw new Error('No generated port available for market test.');
+
+    const zeroCargo = { ...state.cargo };
+    for (const key of Object.keys(zeroCargo) as Array<keyof typeof zeroCargo>) {
+      zeroCargo[key] = 0;
+    }
+    const activePort = {
+      ...port,
+      inventory: { ...port.inventory, 'Black Pepper': 10 },
+      baseInventory: { ...port.baseInventory, 'Black Pepper': 10 },
+      basePrices: { ...port.basePrices, 'Black Pepper': 100 },
+      prices: { ...port.prices, 'Black Pepper': 100 },
+    };
+
+    api.setState({
+      gold: 500,
+      cargo: zeroCargo,
+      cargoProvenance: [],
+      knowledgeState: { ...state.knowledgeState, 'Black Pepper': 1 },
+      notifications: [],
+      journalEntries: [],
+      ports: state.ports.map((entry) => entry.id === activePort.id ? activePort : entry),
+    });
+    api.getState().addNotification('Open Goa market', 'info', { openPortId: activePort.id });
+  });
+
+  const openMarketToast = page.getByRole('button', { name: /Open Goa market/i });
+  await expect(openMarketToast).toBeVisible();
+  await openMarketToast.click({ force: true });
+  await expect(page.getByTestId('port-modal')).toBeVisible();
+  await page.getByTestId('port-tab-market').click();
+  await expect(page.getByTestId('market-ledger')).toBeVisible();
+  await page.getByTestId('market-row-black-pepper').click();
+  await page.getByTestId('market-buy-button').click();
+
+  await page.waitForFunction(() => window.__SPICE_VOYAGER_TEST__?.getState().cargo['Black Pepper'] === 1);
+
+  const result = await page.evaluate(() => {
+    const state = window.__SPICE_VOYAGER_TEST__!.getState();
+    return {
+      gold: state.gold,
+      pepper: state.cargo['Black Pepper'],
+      activeInventory: state.activePort?.inventory['Black Pepper'],
+      reputation: state.getReputation('Portuguese'),
+      notification: state.notifications.at(-1)?.message ?? '',
+    };
+  });
+
+  expect(result).toMatchObject({
+    gold: 400,
+    pepper: 1,
+    activeInventory: 9,
+    reputation: 2,
+  });
+  expect(result.notification).toContain('Bought 1 Black Pepper');
+});
+
+test('travel flow updates voyage state and surfaces the arrival notice', async ({ page }) => {
+  await bootTestWorld(page);
+
+  await page.evaluate(() => {
+    const api = window.__SPICE_VOYAGER_TEST__!;
+    api.setState({
+      currentWorldPortId: 'london',
+      activePort: null,
+      notifications: [],
+      journalEntries: [],
+      provisions: 50,
+      dayCount: 1,
+      playerMode: 'walking',
+      playerVelocity: 3,
+    });
+    api.getState().fastTravel('jamestown');
+  });
+
+  await page.waitForFunction(() => window.__SPICE_VOYAGER_TEST__?.getSnapshot().currentWorldPortId === 'jamestown');
+  await expect(page.getByRole('button', { name: /Arrived at Jamestown/i })).toBeVisible();
+
+  const result = await page.evaluate(() => {
+    const state = window.__SPICE_VOYAGER_TEST__!.getState();
+    const entry = state.journalEntries.at(-1);
+    return {
+      currentWorldPortId: state.currentWorldPortId,
+      playerMode: state.playerMode,
+      playerVelocity: state.playerVelocity,
+      activePort: state.activePort,
+      timeOfDay: state.timeOfDay,
+      dayCount: state.dayCount,
+      provisions: state.provisions,
+      journalCategory: entry?.category ?? null,
+    };
+  });
+
+  expect(result.currentWorldPortId).toBe('jamestown');
+  expect(result.playerMode).toBe('ship');
+  expect(result.playerVelocity).toBe(0);
+  expect(result.activePort).toBeNull();
+  expect(result.timeOfDay).toBeGreaterThanOrEqual(8);
+  expect(result.dayCount).toBeGreaterThan(1);
+  expect(result.provisions).toBeLessThan(50);
+  expect(result.journalCategory).toBe('navigation');
+});
+
+test('world map opens from the HUD and reflects the current port', async ({ page }) => {
+  await bootTestWorld(page);
+
+  await page.getByTestId('open-world-map').click();
+  await expect(page.getByTestId('world-map-modal')).toBeVisible();
+  await expect(page.getByText(/Near Goa/i)).toBeVisible();
+});

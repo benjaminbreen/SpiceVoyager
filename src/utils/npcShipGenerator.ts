@@ -672,6 +672,45 @@ function generateCargo(profile: Weighted<Commodity>[]): Partial<Record<Commodity
   return cargo;
 }
 
+/**
+ * Clamp a tradition-rolled hail language so it stays plausible for the
+ * captain's flag. Tradition pools can mix in non-native lingua francas
+ * (a Dutch VOC ship rolling Malay makes sense in the Indies), but when
+ * a European-flagged captain turns up in London speaking Malay it reads
+ * as a bug. This filter keeps European captains to European languages.
+ */
+const EUROPEAN_FLAGS: Nationality[] = ['English', 'Portuguese', 'Dutch', 'Spanish', 'French', 'Danish', 'Venetian'];
+const EUROPEAN_LANGUAGES: Language[] = ['Portuguese', 'Dutch', 'English', 'Spanish', 'French', 'Italian'];
+const FLAG_NATIVE_LANGUAGE: Partial<Record<Nationality, Language>> = {
+  English: 'English',
+  Portuguese: 'Portuguese',
+  Dutch: 'Dutch',
+  Spanish: 'Spanish',
+  French: 'French',
+  Danish: 'Dutch',       // closest represented; Danish isn't in Language type
+  Venetian: 'Italian',
+  Mughal: 'Hindustani',
+  Gujarati: 'Gujarati',
+  Persian: 'Persian',
+  Ottoman: 'Turkish',
+  Omani: 'Arabic',
+  Swahili: 'Swahili',
+  Malay: 'Malay',
+  Acehnese: 'Malay',
+  Javanese: 'Malay',
+  Moluccan: 'Malay',
+  Siamese: 'Malay',
+  Japanese: 'Japanese',
+  Chinese: 'Chinese',
+};
+
+function clampHailLanguage(rolled: Language, flag: Nationality): Language {
+  if (EUROPEAN_FLAGS.includes(flag) && !EUROPEAN_LANGUAGES.includes(rolled)) {
+    return FLAG_NATIVE_LANGUAGE[flag] ?? rolled;
+  }
+  return rolled;
+}
+
 function conditionForMorale(morale: number): string {
   if (morale > 74) return pick(['trim', 'well-kept', 'freshly painted', 'proud']);
   if (morale > 42) return pick(['weathered', 'salt-crusted', 'laden', 'sun-bleached']);
@@ -759,7 +798,7 @@ export function generateNPCShip(
     shipName: pick(SHIP_NAMES[shipType]),
     shipType,
     flag,
-    hailLanguage: weightedPick(tradition.hailLanguages),
+    hailLanguage: clampHailLanguage(weightedPick(tradition.hailLanguages), flag),
     crewCount: randInt(minCrew, maxCrew),
     morale,
     armed,

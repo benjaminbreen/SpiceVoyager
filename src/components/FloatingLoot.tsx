@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
+import { useGameStore } from '../store/gameStore';
 
 export interface FloatingLoot {
   id: number;
@@ -24,6 +25,7 @@ export function spawnFloatingLoot(x: number, y: number, z: number, lines: string
 export function FloatingLootSystem() {
   const [, setTick] = useState(0);
   const tickAccum = useRef(0);
+  const enabled = useGameStore(s => s.renderDebug.animalMarkers);
 
   // Clear module-scope events on unmount so stale labels don't pop in after
   // a scene swap.
@@ -46,6 +48,7 @@ export function FloatingLootSystem() {
     }
   });
 
+  if (!enabled) return null;
   if (events.length === 0) return null;
 
   return (

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { useIsMobile } from '../utils/useIsMobile';
+import { SettingsModal } from './SettingsModal';
 
 // Responsive opening splash. Keeps the ASCII charm of the original — title
 // block letters, the ship, animated waves, pennants, twinkles, SET SAIL
@@ -67,55 +68,22 @@ function Pennant({ color = PALETTE.gold }: { color?: string }) {
   return <span style={{ color }}>{frames[i]}</span>;
 }
 
-// Small foamy waves directly beneath the ship, scrolling horizontally.
-function ShipWater() {
-  const ref = useRef<HTMLPreElement>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    let phase = 0;
-    const COLS = ['#1a3a4a', '#2a5a6a', '#3a6a7a', '#4a7a8a', '#5a8a9a', '#4a7a8a', '#3a6a7a', '#2a5a6a'];
-    const tick = () => {
-      if (!ref.current) return;
-      phase++;
-      let h = '  ';
-      for (let i = 0; i < 30; i++) {
-        const col = COLS[(i + phase) % COLS.length];
-        const ch = (i + phase) % 5 < 2 ? '≈' : '∼';
-        h += `<span style="color:${col}">${ch}</span>`;
-      }
-      h += '\n        ';
-      for (let i = 0; i < 7; i++) {
-        const col = COLS[(i + phase + 3) % COLS.length];
-        h += `<span style="color:${col}">∼</span>`;
-      }
-      h += '         ';
-      for (let i = 0; i < 7; i++) {
-        const col = COLS[(i + phase + 6) % COLS.length];
-        h += `<span style="color:${col}">∼</span>`;
-      }
-      ref.current.innerHTML = h;
-    };
-    tick();
-    const id = setInterval(tick, 750);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <pre
-      ref={ref}
-      className="leading-[1.4] whitespace-pre"
-      style={{ fontSize: 'clamp(8px, 2.3vw, 10px)', contain: 'content' }}
-    />
-  );
-}
-
 // ── Ambient wave field ───────────────────────────────────────────────────────
 // On wide viewports this renders as two flanking panels; on narrow viewports
 // a single full-width field is placed behind the content at lower opacity.
 
-const WAVE_CHARS = [' ', ' ', '·', '·', '~', '∼', '≈', '≈'];
+const WAVE_CHARS = [' ', '·', '·', '∙', '~', '∼', '≈', '≈', '≋', '≋'];
 const WAVE_COLORS = [
-  '#0d1a22', '#142830', '#1a3a4a', '#2a4a5a',
-  '#3a6a7a', '#4a7a8a', '#5a8a9a', '#6a9aaa',
+  '#04101c',  // deep-ocean near-black
+  '#081e33',  // dark navy
+  '#0e2f4e',  // ocean navy
+  '#144870',  // deep sea blue
+  '#1a6494',  // ocean blue
+  '#2284bb',  // mid-ocean
+  '#2ea8d8',  // bright sea
+  '#42bce4',  // clear tropical
+  '#62cfed',  // turquoise
+  '#88dff4',  // surf highlight
 ];
 
 // Top-down caravel. Matches original dimensions so wave-panel timing behaves
@@ -246,7 +214,7 @@ function WaveField({ variant, withShip, active }: { variant: WaveVariant; withSh
     if (active) {
       const tick = (time: number) => {
         animId = requestAnimationFrame(tick);
-        if (time - lastTime < 180) return;
+        if (time - lastTime < 80) return;
         lastTime = time;
         renderFrame(time);
       };
@@ -298,6 +266,70 @@ function WaveField({ variant, withShip, active }: { variant: WaveVariant; withSh
         WebkitMaskImage: 'radial-gradient(ellipse at center, transparent 25%, black 80%)',
       }}
     />
+  );
+}
+
+// ── Player ship overlay — WASD-controllable during loading ──────────────────
+// Rendered as an absolute element above the wave panels (z-5) but below the
+// content column (z-10). Position is tracked in a ref to avoid re-renders.
+
+type ShipPos = { x: number; y: number; heading: number; vx: number; vy: number };
+
+function PlayerShip({ posRef }: { posRef: React.MutableRefObject<ShipPos> }) {
+  const { isMobile } = useIsMobile();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const rotRef  = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isMobile) return;
+    let animId: number;
+    const tick = () => {
+      if (wrapRef.current && rotRef.current) {
+        const { x, y, heading } = posRef.current;
+        wrapRef.current.style.left = `${x}%`;
+        wrapRef.current.style.top  = `${y}%`;
+        rotRef.current.style.transform = `translate(-50%, -50%) rotate(${heading}rad)`;
+      }
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [posRef, isMobile]);
+
+  if (isMobile) return null;
+
+  return (
+    <div
+      ref={wrapRef}
+      className="absolute pointer-events-none select-none"
+      style={{ zIndex: 5 }}
+    >
+      <div
+        ref={rotRef}
+        style={{
+          fontFamily: MONO,
+          fontSize: 10,
+          lineHeight: '13px',
+          filter: 'drop-shadow(0 0 5px rgba(74,122,138,0.75))',
+          transform: 'translate(-50%, -50%)',
+        }}
+      >
+        {SHIP_SHAPE.map((row, ri) => (
+          <div key={ri} style={{ whiteSpace: 'pre' }}>
+            {row.split('').map((ch, ci) => {
+              const color = SHIP_COLORS[ch];
+              return color
+                ? <span key={ci} style={{ color }}>{ch}</span>
+                : ch;
+            })}
+          </div>
+        ))}
+        {/* Wake — always south in local space, so it trails behind in any heading */}
+        <div style={{ whiteSpace: 'pre', color: WAKE_COLOR, opacity: 0.65 }}>{'  ≈ ≈'}</div>
+        <div style={{ whiteSpace: 'pre', color: WAKE_COLOR, opacity: 0.38 }}>{' ≈   ≈'}</div>
+        <div style={{ whiteSpace: 'pre', color: WAKE_COLOR, opacity: 0.18 }}>{'≈     ≈'}</div>
+      </div>
+    </div>
   );
 }
 
@@ -402,6 +434,89 @@ export function Opening({
   }, [ready, onStart]);
 
   const [btnHovered, setBtnHovered] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'world' | 'display' | 'audio' | 'gameplay' | 'dev' | 'about'>('world');
+  const [hoveredSecBtn, setHoveredSecBtn] = useState<null | 'about' | 'settings'>(null);
+
+  // WASD: let the player navigate the ship across the wave panels while loading.
+  const shipPos = useRef<ShipPos>({ x: 20, y: 50, heading: 0, vx: 0, vy: 0 });
+  const keysHeld = useRef({ w: false, a: false, s: false, d: false });
+
+  useEffect(() => {
+    if (isMobile) return;
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === 'w' || e.key === 'W') { keysHeld.current.w = true; e.preventDefault(); }
+      if (e.key === 's' || e.key === 'S') { keysHeld.current.s = true; e.preventDefault(); }
+      if (e.key === 'a' || e.key === 'A') { keysHeld.current.a = true; e.preventDefault(); }
+      if (e.key === 'd' || e.key === 'D') { keysHeld.current.d = true; e.preventDefault(); }
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === 'w' || e.key === 'W') keysHeld.current.w = false;
+      if (e.key === 's' || e.key === 'S') keysHeld.current.s = false;
+      if (e.key === 'a' || e.key === 'A') keysHeld.current.a = false;
+      if (e.key === 'd' || e.key === 'D') keysHeld.current.d = false;
+    };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+
+    // Nautical heading physics: A/D turns, W thrusts forward, S brakes.
+    // heading=0 → bow points north (up); positive heading = clockwise.
+    const TURN_RATE = 2.8;   // rad/s
+    const THRUST    = 70;    // %/s² forward acceleration
+    const DRAG      = 1.6;   // velocity damping (exp decay coefficient)
+    const MAX_SPEED = 30;    // %/s
+
+    let last = 0;
+    let animId: number;
+    const tick = (now: number) => {
+      const dt = Math.min((now - last) / 1000, 0.08);
+      last = now;
+      const k = keysHeld.current;
+      const s = shipPos.current;
+
+      // Turn helm
+      if (k.a) s.heading -= TURN_RATE * dt;
+      if (k.d) s.heading += TURN_RATE * dt;
+
+      // Bow direction vector (heading 0 = pointing up, y-axis inverted in CSS)
+      const fx = Math.sin(s.heading);
+      const fy = -Math.cos(s.heading);
+
+      // Thrust / brake
+      if (k.w) {
+        s.vx += fx * THRUST * dt;
+        s.vy += fy * THRUST * dt;
+      } else if (k.s) {
+        s.vx -= fx * THRUST * 0.55 * dt;
+        s.vy -= fy * THRUST * 0.55 * dt;
+      } else if (k.a || k.d) {
+        // Auto-creep forward when turning without W/S
+        s.vx += fx * THRUST * 0.4 * dt;
+        s.vy += fy * THRUST * 0.4 * dt;
+      }
+
+      // Drag (exponential — frame-rate independent)
+      const drag = Math.exp(-DRAG * dt);
+      s.vx *= drag;
+      s.vy *= drag;
+
+      // Speed cap
+      const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy);
+      if (spd > MAX_SPEED) { s.vx = s.vx / spd * MAX_SPEED; s.vy = s.vy / spd * MAX_SPEED; }
+
+      // Integrate position
+      s.x = Math.max(3, Math.min(97, s.x + s.vx * dt));
+      s.y = Math.max(3, Math.min(97, s.y + s.vy * dt));
+
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      cancelAnimationFrame(animId);
+    };
+  }, [isMobile]);
 
   // Local progress — decoupled from the parent's rAF loop so main-thread
   // blocking (from 3D world-gen mounting underneath) can't stall the bar.
@@ -448,22 +563,40 @@ export function Opening({
         <BaroqueBorder />
       </motion.div>
 
-      {/* Wave field — dual sides on wide, single background on narrow */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 1.2, ease: 'easeOut', delay: 0.3 }}
-        className="absolute inset-0 z-0 pointer-events-none"
-      >
-        {useSidePanels ? (
-          <>
-            <WaveField variant="side-left" withShip active={ready} />
-            <WaveField variant="side-right" withShip={false} active={ready} />
-          </>
-        ) : (
-          <WaveField variant="background" withShip={false} active={ready} />
-        )}
-      </motion.div>
+      {/* Wave field — side panels slide in from their respective edges after a
+          brief pause; background variant just fades on narrow viewports. */}
+      {useSidePanels ? (
+        <>
+          <motion.div
+            className="absolute inset-0 z-0 pointer-events-none"
+            initial={{ opacity: 0, x: -90 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1.3, ease: [0.22, 1, 0.36, 1], delay: 2.2 }}
+          >
+            <WaveField variant="side-left" withShip={false} active />
+          </motion.div>
+          <motion.div
+            className="absolute inset-0 z-0 pointer-events-none"
+            initial={{ opacity: 0, x: 90 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1.3, ease: [0.22, 1, 0.36, 1], delay: 2.2 }}
+          >
+            <WaveField variant="side-right" withShip={false} active />
+          </motion.div>
+        </>
+      ) : (
+        <motion.div
+          className="absolute inset-0 z-0 pointer-events-none"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 1.4, ease: 'easeOut', delay: 1.8 }}
+        >
+          <WaveField variant="background" withShip={false} active />
+        </motion.div>
+      )}
+
+      {/* Player-controlled ship (desktop only) */}
+      <PlayerShip posRef={shipPos} />
 
       {/* Content column */}
       <motion.div
@@ -536,35 +669,6 @@ export function Opening({
         <pre
           className="text-center whitespace-pre"
           style={{ color: PALETTE.rule, fontSize: 'clamp(9px, 2.6vw, 11px)', marginTop: 'clamp(10px, 2.5vw, 16px)' }}
-        >
-          {'─'.repeat(30)}
-        </pre>
-
-        {/* Ship art */}
-        <div className="flex justify-center" style={{ marginTop: 'clamp(6px, 1.8vw, 12px)' }}>
-          <div style={{ display: 'inline-block' }}>
-            <pre
-              className="whitespace-pre leading-[1.4]"
-              style={{ fontSize: 'clamp(8px, 2.3vw, 10px)' }}
-            >
-              {'               '}<C c={PALETTE.gold}>{'·'}</C><Pennant color={PALETTE.gold} />{'\n'}
-              {'          '}<Twinkle char={'·'} delay={0} />{'     '}<Twinkle char={'✦'} delay={0.8} color={PALETTE.gold} />{'     '}<Twinkle char={'·'} delay={1.6} />{'\n'}
-              <C c={PALETTE.warm}>{'          ▵    ▵    ▵'}</C>{'\n'}
-              <C c={PALETTE.mast}>{'          |    |    |'}</C>{'\n'}
-              <C c={PALETTE.sail}>{'         )_)  )_)  )_)'}</C>{'\n'}
-              <C c={PALETTE.sail}>{'        )___))___))___)'}</C><C c={PALETTE.hull}>{'\\'}</C>{'\n'}
-              <C c={PALETTE.sail}>{'       )____)____)_____)'}</C><C c={PALETTE.hull}>{'\\\\\\'}</C>{'\n'}
-              <C c={PALETTE.hull}>{'   _____|____|____|____\\\\\\__'}</C>{'\n'}
-              <C c={PALETTE.hullBody}>{'  |'}</C>{'  '}<C c={PALETTE.gold}>{'◦'}</C>{'    '}<C c={PALETTE.gold}>{'◦'}</C>{'    '}<C c={PALETTE.gold}>{'◦'}</C>{'    '}<C c={PALETTE.gold}>{'◦'}</C>{'   '}<C c={PALETTE.hullBody}>{'|'}</C>{'\n'}
-              <C c={PALETTE.hullBody}>{'   \\_________________________/'}</C>
-            </pre>
-            <ShipWater />
-          </div>
-        </div>
-
-        <pre
-          className="text-center whitespace-pre"
-          style={{ color: PALETTE.rule, fontSize: 'clamp(9px, 2.6vw, 11px)', marginTop: 'clamp(8px, 2vw, 12px)' }}
         >
           {'─'.repeat(30)}
         </pre>
@@ -794,6 +898,38 @@ export function Opening({
           </motion.div>
         )}
 
+        {/* Secondary buttons — About + Settings */}
+        <div className="flex justify-center w-full" style={{ marginTop: 'clamp(10px, 2.5vw, 14px)', gap: 'clamp(8px, 2vw, 12px)' }}>
+          {(['about', 'settings'] as const).map(btn => (
+            <button
+              key={btn}
+              onClick={() => {
+                setSettingsTab(btn === 'about' ? 'about' : 'world');
+                setShowSettings(true);
+              }}
+              onMouseEnter={() => setHoveredSecBtn(btn)}
+              onMouseLeave={() => setHoveredSecBtn(null)}
+              style={{
+                flex: 1,
+                maxWidth: 'min(155px, 43%)',
+                minHeight: 38,
+                fontFamily: MONO,
+                fontSize: 'clamp(10px, 2.6vw, 11px)',
+                letterSpacing: '0.22em',
+                textTransform: 'uppercase',
+                color: hoveredSecBtn === btn ? PALETTE.txt : PALETTE.dim,
+                backgroundColor: 'transparent',
+                border: `1px solid ${hoveredSecBtn === btn ? PALETTE.dimGold + '88' : PALETTE.rule}`,
+                borderRadius: 3,
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {btn}
+            </button>
+          ))}
+        </div>
+
         <pre
           className="text-center whitespace-pre"
           style={{ color: PALETTE.rule, fontSize: 'clamp(9px, 2.6vw, 11px)', marginTop: 'clamp(12px, 3vw, 18px)' }}
@@ -859,6 +995,12 @@ export function Opening({
           v0.1
         </div>
       </motion.div>
+
+      <SettingsModal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        initialTab={settingsTab}
+      />
     </motion.div>
   );
 }

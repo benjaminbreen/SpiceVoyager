@@ -94,7 +94,7 @@ const NAME_POOLS: Record<Nationality, NamePool> = {
     birthplaces: ['Mataram', 'Karta', 'Banten', 'Surabaya', 'Demak', 'Cirebon', 'Gresik', 'Tuban', 'Japara', 'Semarang'],
   },
   Moluccan: {
-    first: ['Kaicili', 'Sultan', 'Said', 'Nuku', 'Baab', 'Hairun', 'Babullah', 'Mudafar', 'Hamza', 'Zainal', 'Alam', 'Syah', 'Jou', 'Kolano', 'Amsterdam'],
+    first: ['Kaicili', 'Sultan', 'Said', 'Nuku', 'Baab', 'Hairun', 'Babullah', 'Mudafar', 'Hamza', 'Zainal', 'Alam', 'Syah', 'Jou', 'Kolano'],
     last: ['Ternate', 'Tidore', 'Bacan', 'Jailolo', 'Sahmardan', 'Abidin', 'Shah', 'Siru', 'Kamaluddin', 'Marsaoli'],
     birthplaces: ['Ternate', 'Tidore', 'Bacan', 'Jailolo', 'Ambon', 'Banda', 'Makian', 'Halmahera', 'Seram', 'Hitu'],
   },
@@ -106,7 +106,7 @@ const NAME_POOLS: Record<Nationality, NamePool> = {
   Japanese: {
     first: ['Yamada', 'Tanaka', 'Hasekura', 'Anjin', 'Matsuura', 'Suetsugu', 'Araki', 'Murayama', 'Nishi', 'Suminokura', 'Funai', 'Itami', 'Kadoya', 'Shirai', 'Harada'],
     last: ['Nagamasa', 'Shiro', 'Tsunenaga', 'Miura', 'Takanobu', 'Heizo', 'Sotaro', 'Toan', 'Ryoi', 'Jinbei', 'Kichibei', 'Jirobe', 'Juzaburo', 'Magoshiro', 'Kiemon'],
-    birthplaces: ['Nagasaki', 'Hirado', 'Sakai', 'Kyoto', 'Edo', 'Osaka', 'Hakata', 'Shimabara', 'Dejima', 'Sunpu'],
+    birthplaces: ['Nagasaki', 'Hirado', 'Sakai', 'Kyoto', 'Edo', 'Osaka', 'Hakata', 'Shimabara', 'Funai', 'Sunpu'],
   },
   Chinese: {
     first: ['Li', 'Zhang', 'Chen', 'Wang', 'Lin', 'Zheng', 'Yang', 'Huang', 'Wu', 'Xu', 'He', 'Ma', 'Guo', 'Luo', 'Tan', 'Cai', 'Zhu', 'Wei', 'Liang', 'Song'],

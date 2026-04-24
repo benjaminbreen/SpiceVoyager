@@ -612,6 +612,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
       onClick={handleClose}
     >
       <motion.div
+        data-testid="port-modal"
         onClick={(e) => e.stopPropagation()}
         {...modalPanelMotion}
         className="w-full max-w-7xl h-full max-h-[92vh] bg-[#0c1019]/95 backdrop-blur-xl border border-[#2a2d3a]/50 rounded-2xl overflow-hidden flex shadow-[0_16px_64px_rgba(0,0,0,0.6)]"
@@ -670,6 +671,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               return (
                 <button
                   key={tab.id}
+                  data-testid={`port-tab-${tab.id}`}
                   onClick={() => { sfxTab(); setActiveTab(tab.id); }}
                   aria-selected={isActive}
                   className={`group relative w-10 h-10 rounded-full flex items-center justify-center

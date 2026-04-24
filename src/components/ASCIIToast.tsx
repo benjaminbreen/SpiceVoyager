@@ -261,9 +261,18 @@ function TickerToast({
       exit={{ opacity: 0, x: 20 }}
       transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       onHoverStart={onHoverStart}
       onHoverEnd={onHoverEnd}
       className="pointer-events-auto cursor-pointer flex items-stretch"
+      role="button"
+      tabIndex={0}
+      aria-label={notification.message}
       style={{
         background: `linear-gradient(135deg, ${BG}, #100f0c)`,
         boxShadow: `0 3px 14px rgba(0,0,0,0.45), inset 0 0 ${glowBoost}px ${accent.glow}`,
@@ -392,9 +401,18 @@ function GrandFrame({
           : { duration: 0.4, ease: [0.22, 1, 0.36, 1] }
       }
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       onHoverStart={onHoverStart}
       onHoverEnd={onHoverEnd}
       className="pointer-events-auto cursor-pointer relative"
+      role="button"
+      tabIndex={0}
+      aria-label={notification.message}
       style={{
         background: `linear-gradient(180deg, #0e0d0a, ${BG})`,
         boxShadow: `0 8px 40px rgba(0,0,0,0.6), inset 0 0 ${glowPx}px ${accent.glow}, 0 0 1px ${accent.border}`,

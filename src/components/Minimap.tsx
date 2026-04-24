@@ -6,6 +6,11 @@ import {
   getLiveShipTransform,
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
+import {
+  placeHinterlandScenes,
+  getSceneLabel,
+  SceneInstance,
+} from '../utils/hinterlandScenes';
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
@@ -31,6 +36,10 @@ export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: 
     currentRow: number;
   } | null>(null);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+
+  // Cache scenes per (portId, worldSeed) so we don't regenerate 60×/sec.
+  // placeHinterlandScenes is pure, so hitting the same key returns the same list.
+  const sceneCache = useRef<{ key: string; scenes: SceneInstance[] } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -161,6 +170,53 @@ export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: 
           ctx.shadowBlur = 0; // reset
         }
       });
+
+      // Draw Hinterland Scenes (current port only — scenes are local-map features).
+      if (state.ports.length > 0) {
+        const port = state.ports[0];
+        if (state.discoveredPorts.includes(port.id)) {
+          const key = `${port.id}|${state.worldSeed}`;
+          if (!sceneCache.current || sceneCache.current.key !== key) {
+            sceneCache.current = {
+              key,
+              scenes: placeHinterlandScenes(
+                port.position[0], port.position[2],
+                port.culture, port.buildings, state.worldSeed,
+              ),
+            };
+          }
+
+          const scenes = sceneCache.current.scenes;
+          for (const scene of scenes) {
+            const dx = scene.x - px;
+            const dz = scene.z - pz;
+            if (Math.abs(dx) >= WORLD_RANGE / 2 || Math.abs(dz) >= WORLD_RANGE / 2) continue;
+
+            const mapX = MAP_SIZE / 2 + (dx / unitsPerPixel);
+            const mapY = MAP_SIZE / 2 + (dz / unitsPerPixel);
+
+            // Small amber diamond — smaller than port dots, clearly subordinate.
+            ctx.save();
+            ctx.translate(mapX, mapY);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillStyle = '#f2b840';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(-2.5, -2.5, 5, 5);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.fillStyle = '#f2d890';
+            ctx.font = '9px sans-serif';
+            ctx.shadowColor = 'rgba(0,0,0,0.85)';
+            ctx.shadowBlur = 2;
+            ctx.fillText(getSceneLabel(scene.kind), mapX + 5, mapY + 3);
+            ctx.shadowBlur = 0;
+          }
+        }
+      }
 
       // Draw Player Arrow
       ctx.save();

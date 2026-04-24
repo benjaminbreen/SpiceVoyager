@@ -39,11 +39,23 @@ These bias toward caution over speed. Use judgment for trivial edits.
 - Strong success criteria let you loop independently. Weak ones ("make it work") force clarification mid-flight.
 
 ### Project-specific
-- **There is no test suite.** `npm run lint` is `tsc --noEmit` only — no ESLint, no Vitest, no CI. Never claim tests passed. Verification for this project means: (a) `tsc --noEmit` clean, (b) dev server starts, (c) the specific feature works in the browser when Ben tries it.
+- **Testing is now minimal but real.** `npm run lint` is still `tsc --noEmit`, `npm test` runs the Vitest unit suite, and `npm run test:e2e` runs the Playwright browser smoke test. For UI / 3D / gameplay work, don't treat those as sufficient proof of visual correctness; Ben still needs to sanity-check in the browser.
 - **For UI / 3D / gameplay changes, you cannot verify correctness by types alone.** Report what you changed and ask Ben to sanity-check in the browser. Don't claim visual/feel outcomes you haven't seen.
 - **Historical claims in code/content**: when introducing a fact (a commodity's origin, a port's 1612 political status, an NPC role), cite it or flag it as your inference. Ben will catch errors; better to flag than to assert.
 - **LLM-generated prose in-game**: keep NPC dialogue short, period-specific, and plain. No "Ah, a fellow traveler of the seven seas" style openings.
 - **Don't invent features to document.** If AGENTS.md has a gap, ask — don't fill it with speculation.
+
+### Testing roadmap
+- Build testing in layers, not as one giant suite: pure logic first, then store integration, then browser scenarios, then seeded screenshot/performance checks.
+- Phase 1 goal: install a real harness (`vitest` + `playwright`), add a deterministic test boot path, and prove it with a few smoke tests.
+- Determinism first: if a system relies on `Math.random()` or live external APIs, either inject a seedable RNG or mock it before adding broad coverage.
+- Browser tests should target fixed seeded scenes and explicit debug toggles; avoid free-roaming screenshot tests.
+- Performance tests should read the existing runtime stats event and enforce budgets on a few canonical scenes, not every port.
+
+### Testing progress
+- 2026-04-23: Phase 1 started. Plan recorded here; harness scaffold and first smoke tests in progress.
+- 2026-04-23: Phase 1 complete. Added `vitest` + `playwright`, deterministic `testMode` URL hooks, opening-overlay bypass for automation, 2 unit test files, and 1 browser smoke test. Verified with `npm run lint`, `npm test`, and `npm run test:e2e`.
+- 2026-04-23: Phase 2 complete. Added store integration tests for `buyCommodity`, `sellCommodity`, `adjustReputation`, `damageShip`, `fastTravel`, `killCrewMember`, and `learnAboutCommodity`. Verified with `npm run lint` and `npm test`.
 
 ## Orientation — codebase map
 
@@ -153,12 +165,14 @@ Core progression system. Goods exist at three knowledge levels (0 Unknown, 1 Ide
 **Not yet implemented**: POI system (temples, monasteries, naturalist houses with LLM-powered conversations). See Planned section.
 
 ### World map
-Single D3 Mercator projection in `WorldMapModal.tsx` (not tabs). Covers Atlantic + Indian Ocean in one view. 28 ports total — Indian Ocean core (Goa, Calicut, Surat, Diu, Cochin, Malacca, Aceh, Bantam, Macau, Aden, Mocha, Muscat, Socotra, Hormuz, Zanzibar, Mombasa, Mogadishu, Kilwa) + Atlantic expansion (Lisbon, Amsterdam, Seville, London, Elmina, Luanda, Salvador, Havana, Cartagena, Jamestown, Cape of Good Hope).
+Single D3 Mercator projection in `WorldMapModal.tsx` (not tabs). Covers Atlantic + Indian Ocean + the western Pacific in one view. 29 ports total — Indian Ocean / East Indies core (Goa, Calicut, Surat, Diu, Malacca, Bantam, Macau, Aden, Mocha, Muscat, Socotra, Hormuz, Zanzibar, Mombasa, Masulipatnam) + East Asian terminus ports (Manila, Nagasaki) + Europe (Lisbon, Amsterdam, Seville, London, Venice) + West Africa (Elmina, Luanda) + Atlantic Americas (Salvador, Havana, Cartagena, Jamestown) + Cape of Good Hope.
 
 - Coordinates + `SEA_LANE_GRAPH` in `worldPorts.ts`.
 - Archetypes (geography, climate, culture, `buildingStyle`) in `portArchetypes.ts`.
 - Cape of Good Hope is the bottleneck between Atlantic and Indian Ocean — intentional.
 - **Jamestown** is a London-only curiosity port (Virginia Company colony, ~300 settlers in 1612), not a general trade hub.
+- **Venice** is reachable only from Lisbon/Seville via the Mediterranean passage — Levantine ports (Alexandria, Aleppo, Constantinople) are not modelled, so Venice stands in for the whole Levant-pepper channel. Ships spawn there as `ottoman_red_sea` (proxy for Levantine galleys) alongside Iberian/French/English Atlantic.
+- **Manila / Nagasaki / Masulipatnam** are 1612-specific additions. Manila is the Sangley-Parián + Spanish Intramuros node (galleon link to Acapulco not yet modelled); Nagasaki is the Portuguese Nao do Trato terminus, two years before the 1614 Christian expulsion; Masulipatnam is the Qutb Shahi Golconda port with both VOC (1606) and EIC (1611) factories — the Deccan gateway on the Coromandel.
 
 ### Climate & vegetation
 Climate profiles: `tropical`, `monsoon`, `arid`, `temperate`, `mediterranean`. Each drives water palette (`waterPalettes.ts`), moisture / vegetation (`terrain.ts`, `World.tsx`), and wind strength (`wind.ts`). Tree placement in `World.tsx` respects climate: temperate = firs only, mediterranean = mixed firs + coastal palms, tropical/monsoon = palms dominant.
@@ -332,6 +346,9 @@ Three small modules share one invariant: the renderer, the ground-height resolve
 
 ## Planned / in progress
 
+### NPC ship hail — procedural deepening
+Full writeup: [`npcshipplan.md`](./npcshipplan.md). Transforms the existing single-response hail panel (`UI.tsx:2832-3045`, `npcShipGenerator.ts:715-762`) into a state-driven procedural dialogue system — disposition vector, captain traits, rumor ledger, language proficiency gradient with cognate matrix, tagged phrasebook, and encounter memory. Explicitly no LLM. Authored in 7 phases, each independently shippable; phase 1 is a non-visible foundation refactor.
+
 ### POI System (largest unbuilt feature)
 Points of Interest — one-off, port-specific, hand-authored sites the player sails or walks to. Each POI is a location with its own modal containing a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`).
 
@@ -436,6 +453,32 @@ Hoofbeats, bird wingbeats, splashing — not yet in `SoundEffects.ts`.
 - **Store access inside `useFrame`**: the pattern is `useGameStore.getState()` (direct, non-subscribing), not `useGameStore(selector)`. The hook form re-renders the component on every store change, which is wrong inside a render loop. Copy the existing pattern.
 - **Determinism via `mulberry32`**: procedural generators (cities, labels, NPCs, portraits, terrain) use mulberry32-seeded RNG so the same port looks the same across sessions. The function is currently re-implemented in ~9 files — if you're adding generation code, copy the existing implementation from a nearby file rather than importing a new one. Consolidating into `src/utils/rng.ts` is on the cleanup list but hasn't happened; don't do it as a drive-by refactor.
 - **Historical dates**: game start is **May 1, 1612** (see `gameDate.ts`). Features, ships, weapons, commodities should be plausibly available in that year. Tobacco and cacao are new-entrant commodities; cinchona bark is barely known; Virginia tobacco = 1612 John Rolfe first crop; the Dutch are emerging rivals to the Portuguese, not yet dominant. If a tavern prompt or LLM system prompt says "around 1600–1620," pin it to 1612.
+- **Port-anchor commodities** (not to be casually moved): `Japanese Silver` is the engine of the Macau–Nagasaki Nao do Trato — produced only at Nagasaki and recognized natively by Portuguese / Chinese / Japanese crews (see `knowledgeSystem.ts`). `Murano Glass`, `Venetian Soap`, and `Theriac` are Venice monopolies — Theriac in particular is the Republic's state-compounded sixty-ingredient polypharmacy (tier 5) and should not be produced elsewhere. If you add another origin for any of these, the information-asymmetry system stops making historical sense.
 - **Road tier constants live in `roadStyle.ts`**, not inline. If you add a new road-like surface (e.g. market flagstones, a canal towpath), either route it through an existing tier or extend `ROAD_TIER_STYLE` — don't hardcode `yLift`, `polygonOffsetFactor`, or `width` in a new mesh. The renderer and the ground-height resolver both read from this table; drift between them is what caused the old "player sinks into road" bug.
 - **Road polyline Y semantics**: for `path` / `road` / `avenue`, `points[i][1]` is terrain height at that (x, z). The visible ribbon sits at `polylineY + tier.yLift`. For `bridge`, the polyline Y is the authored deck ramp (terrain at abutments, `BRIDGE_DECK_Y` over water — shared constant in `roadStyle.ts`). `getGroundHeight()` and the renderer both respect this — don't confuse bridge polyline Y with other tiers. Piers filter to `y ≤ BRIDGE_DECK_Y + ε` so abutment points don't spawn columns above the deck.
 - **Road generation runs once per port**, inside `mapGenerator.ts`. `postprocessRoads()` mutates the roads array in place (densify + weld) and returns the graph. If you generate roads at runtime (you shouldn't), you also have to rebuild `port.roadGraph` and any downstream `RoadSurfaceIndex` refs — they are cached on `useEffect` / `initPedestrianSystem`.
+
+## Safari perf investigation (2026-04) — read before spending time on this
+
+Symptom: Safari sustains ~16 fps during normal play, "laggy especially at dusk." Chrome is fine. A Safari Timeline recording showed **Paint 49.3% / JS 47.1%** of main thread, ~140 CSS transition events per 6s, one **Full GC of 753ms**, CPU peaking 98.1%.
+
+**Every plausible cause was tested via dev-panel toggle or code change — all flat.** Don't repeat these unless you have new evidence:
+
+- GPU post-processing (N8AO, Bloom, BrightnessContrast, HueSaturation, Vignette) — no change
+- Shadow map resolution (2048² → 1024²), DPR cap (1.25 → 1.0), MSAA off — no change
+- Wildlife WebGL animation toggle — no change
+- drei `<Html>` DOM markers in `AnimalMarkers.tsx` / `FloatingLoot.tsx` — no change (gated by `renderDebug.animalMarkers`)
+- `STORE_TIME_STEP` at 0.1 / 0.4 / 0.5 / 1.0 — no change (currently 0.1)
+- Production build vs dev — no change
+- Global `* { transition: none !important; animation: none !important; }` — no change (gated by `renderDebug.disableTransitions`)
+- UI-root GPU layer promotion (`transform: translateZ(0)`) — marginal at best
+
+When the toggle surface is that broad and nothing moves the needle, the cost is distributed across many always-running `useFrame` callbacks (67 across 20 components) plus Safari's per-frame compositor/layer path that JS can't influence. There is no single "unplug this and FPS doubles" fix left; a real win requires a flame graph or accepting the perf.
+
+**The one productive next step** is profiling, not guessing: in Safari Web Inspector → Timelines, click the triangle next to the biggest "Animation Frame Fired" row (the ~120ms R3F render callback at `events-…esm.js:16027`). That expands into the actual call stack. Without that, another round of toggle-and-test will just stack more speculative changes. If a future session gets that flame graph, the hotspots it shows are the real targets.
+
+Changes left in the codebase from this investigation, with their actual value:
+- `src/utils/platform.ts`, Safari-only DPR 1.0 / MSAA off / shadow 1024² (`GameScene.tsx`, `World.tsx`) — speculative, didn't measurably help but don't hurt
+- `translateZ(0)` on `game-root` and UI overlay (`Game.tsx`, `UI.tsx`) — sound practice, negligible measured impact
+- **`EffectComposer` `key` prop tied to enabled-effects set (`GameScene.tsx`)** — real correctness fix: without it, toggling N8AO/Bloom/etc. at runtime freezes the canvas
+- Dev-panel diagnostic toggles: `animalMarkers`, `disableTransitions` — kept for future diagnostics, default state is identical to prior behavior

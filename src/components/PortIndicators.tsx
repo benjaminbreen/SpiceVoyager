@@ -32,7 +32,6 @@ function makeGlowTexture(): THREE.CanvasTexture {
 function PortGlow() {
   const ports = useGameStore((s) => s.ports);
   const discoveredPorts = useGameStore((s) => s.discoveredPorts);
-  const timeOfDay = useGameStore((s) => s.timeOfDay);
 
   const texture = useMemo(makeGlowTexture, []);
   const geometry = useMemo(() => new THREE.CircleGeometry(1, 32), []);
@@ -43,13 +42,17 @@ function PortGlow() {
     blending: THREE.AdditiveBlending,
     polygonOffset: true,
     polygonOffsetFactor: -1,
+    opacity: 0.06,
   }), [texture]);
 
-  // Compute night factor for opacity
-  const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
-  const sunH = Math.sin(sunAngle);
-  const t = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
-  material.opacity = 0.06 + t * 0.22;
+  // Mutate opacity in useFrame — no React render needed. Subscribing to
+  // timeOfDay would re-render every 200ms and flush all PortGlow meshes.
+  useFrame(() => {
+    const timeOfDay = useGameStore.getState().timeOfDay;
+    const sunH = Math.sin(((timeOfDay - 6) / 24) * Math.PI * 2);
+    const t = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
+    material.opacity = 0.06 + t * 0.22;
+  });
 
   const discovered = useMemo(
     () => ports.filter((p) => discoveredPorts.includes(p.id)),

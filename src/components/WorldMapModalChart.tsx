@@ -724,6 +724,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   // ── Rendering ─────────────────────────────────────────────────────────────
   return (
     <motion.div
+      data-testid="world-map-modal"
       {...modalBackdropMotion}
       className={`absolute inset-0 bg-black/65 backdrop-blur-sm pointer-events-auto flex items-center justify-center z-40 ${isMobile ? 'p-0' : 'p-4'}`}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}

@@ -706,6 +706,8 @@ export interface RenderDebugSettings {
   algae: boolean;
   coralReefs: boolean;
   wildlifeMotion: boolean;
+  animalMarkers: boolean;
+  disableTransitions: boolean;
   worldMapChart: boolean;
   cityFieldOverlay: boolean;
   cityFieldMode: CityFieldKey | 'district';
@@ -797,6 +799,8 @@ interface GameState {
   cycleLandWeapon: () => void;          // tab key handler — cycles through owned weapons
   requestWorldMap: boolean;
   setRequestWorldMap: (v: boolean) => void;
+  voyageBegun: boolean;
+  setVoyageBegun: () => void;
 
   // Captain expression override — temporary expression for game events
   captainExpression: Personality | null;
@@ -881,6 +885,8 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   algae: true,
   coralReefs: false,
   wildlifeMotion: true,
+  animalMarkers: true,
+  disableTransitions: false,
   worldMapChart: true,
   cityFieldOverlay: false,
   cityFieldMode: 'prestige',
@@ -1081,12 +1087,12 @@ const SHIP_BASE_STATS: Record<ShipInfo['type'], {
   Pinnace: { speed: 24, turnSpeed: 2.6, windward: 0.55, draft: 'shallow', maxHull:  60, maxCrew:  4, startMin: 3, startMax: 4  },
   Dhow:    { speed: 22, turnSpeed: 2.8, windward: 0.90, draft: 'shallow', maxHull:  70, maxCrew:  4, startMin: 3, startMax: 4  },
   Caravel: { speed: 21, turnSpeed: 2.5, windward: 0.78, draft: 'shallow', maxHull:  80, maxCrew:  5, startMin: 3, startMax: 5  },
-  Baghla:  { speed: 20, turnSpeed: 2.2, windward: 0.82, draft: 'medium',  maxHull: 100, maxCrew:  8, startMin: 4, startMax: 7  },
+  Baghla:  { speed: 18, turnSpeed: 2.2, windward: 0.82, draft: 'medium',  maxHull: 100, maxCrew:  8, startMin: 4, startMax: 7  },
   Fluyt:   { speed: 18, turnSpeed: 1.8, windward: 0.48, draft: 'medium',  maxHull: 110, maxCrew:  6, startMin: 4, startMax: 6  },
   Junk:    { speed: 17, turnSpeed: 2.0, windward: 0.65, draft: 'medium',  maxHull:  95, maxCrew:  6, startMin: 4, startMax: 6  },
-  Galleon: { speed: 18, turnSpeed: 1.3, windward: 0.35, draft: 'deep',    maxHull: 160, maxCrew: 12, startMin: 6, startMax: 10 },
-  Carrack: { speed: 17, turnSpeed: 1.5, windward: 0.38, draft: 'deep',    maxHull: 130, maxCrew:  8, startMin: 5, startMax: 8  },
-  Jong:    { speed: 15, turnSpeed: 1.2, windward: 0.60, draft: 'deep',    maxHull: 140, maxCrew: 12, startMin: 6, startMax: 10 },
+  Galleon: { speed: 16, turnSpeed: 1.3, windward: 0.35, draft: 'deep',    maxHull: 160, maxCrew: 12, startMin: 6, startMax: 10 },
+  Carrack: { speed: 20, turnSpeed: 1.8, windward: 0.50, draft: 'deep',    maxHull: 130, maxCrew:  8, startMin: 5, startMax: 8  },
+  Jong:    { speed: 15, turnSpeed: 1.4, windward: 0.60, draft: 'deep',    maxHull: 140, maxCrew: 12, startMin: 6, startMax: 10 },
 };
 
 // Starting armament by ship type. Swivels are the universal anti-personnel
@@ -1143,7 +1149,7 @@ function buildStartingArmament(type: ShipInfo['type'], faction: Nationality): We
 const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold: number }> = {
   Pinnace: { cargoCapacity: 50,  gold: 600  },
   Caravel: { cargoCapacity: 65,  gold: 700  },
-  Fluyt:   { cargoCapacity: 95,  gold: 850  },
+  Fluyt:   { cargoCapacity: 120, gold: 1050 },
   Carrack: { cargoCapacity: 140, gold: 1400 },
   Galleon: { cargoCapacity: 130, gold: 1500 },
   Dhow:    { cargoCapacity: 60,  gold: 600  },
@@ -1286,6 +1292,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   activeLandWeapon: 'musket',
   requestWorldMap: false,
   setRequestWorldMap: (v) => set({ requestWorldMap: v }),
+  voyageBegun: false,
+  setVoyageBegun: () => set({ voyageBegun: true }),
   captainExpression: null,
   setCaptainExpression: (expr, durationMs = 4000) => {
     set({ captainExpression: expr });
