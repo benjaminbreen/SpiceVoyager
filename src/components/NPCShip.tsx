@@ -16,6 +16,7 @@ import {
   chooseInitiativePosture,
   chooseProvokedPosture,
   type CollisionResponse,
+  type WarningResponse,
   type NpcCombatPosture,
 } from '../utils/npcCombat';
 
@@ -496,6 +497,36 @@ export function NPCShip({
     return () => window.removeEventListener('npc-collision-response', handler);
   }, [identity]);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { npcId?: string; response?: WarningResponse } | undefined;
+      if (detail?.npcId !== identity.id) return;
+      const now = Date.now();
+      const hullFraction = hullRef.current / identity.maxHull;
+      let posture: NpcCombatPosture;
+      if (detail.response === 'alterCourse' || detail.response === 'payToll') {
+        posture = 'evade';
+      } else if (detail.response === 'threaten') {
+        posture = chooseProvokedPosture(identity, {
+          reputation: useGameStore.getState().getReputation(identity.flag) - 35,
+          provoked: true,
+          hullFraction,
+        });
+      } else {
+        posture = identity.armed && identity.morale >= 45 && hullFraction > 0.35 ? 'pursue' : 'evade';
+      }
+      setCombatPosture(posture, now + ALERT_DURATION);
+      useGameStore.getState().addNotification(
+        posture === 'evade'
+          ? `The ${identity.shipName} sheers off but keeps watch.`
+          : `The ${identity.shipName} presses closer, ready for violence.`,
+        'warning',
+      );
+    };
+    window.addEventListener('npc-warning-response', handler);
+    return () => window.removeEventListener('npc-warning-response', handler);
+  }, [identity]);
+
   useFrame((state, delta) => {
     if (!group.current) return;
     // Freeze NPC AI + movement while the game is paused (e.g. hail modal open).
@@ -788,7 +819,9 @@ export function NPCShip({
       if (initiative === 'warn' && now >= nextInitiativeWarningAt.current) {
         nextInitiativeWarningAt.current = now + ALERT_DURATION;
         setCombatPosture('pursue', now + ALERT_DURATION);
-        addNotification(`The ${identity.shipName} bears down and signals a warning.`, 'warning');
+        window.dispatchEvent(new CustomEvent('npc-warning-hail', {
+          detail: { npc: identity },
+        }));
       }
     }
 

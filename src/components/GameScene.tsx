@@ -209,6 +209,12 @@ const _segmentDelta = new THREE.Vector3();
 const _segmentOffset = new THREE.Vector3();
 const _segmentHit = new THREE.Vector3();
 const _markerBaseNormal = new THREE.Vector3(0, 0, 1);
+// Player world position used by intersect helpers so range-culling is
+// measured from the player (not the camera). Updated each frame.
+const _aimPlayerOrigin = new THREE.Vector3();
+// T-parameter along the current mouse ray at which it hits the aim plane.
+// Updated each frame; tells intersectAimSurface where to start marching.
+let _aimGroundT = 0;
 
 function bowWeaponGravity(weaponType: WeaponType) {
   switch (weaponType) {
@@ -411,7 +417,7 @@ function intersectWildlifeAimTarget(ray: THREE.Ray, maxDistance: number, out: TH
     _huntAimSphere.radius = Math.max(0.65, w.radius + HUNT_AIM_WILDLIFE_BUFFER);
     const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
     if (!hit) continue;
-    const distSq = ray.origin.distanceToSquared(hit);
+    const distSq = _aimPlayerOrigin.distanceToSquared(hit);
     if (distSq > maxDistanceSq) continue;
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
@@ -430,7 +436,7 @@ function intersectNpcShipAimTarget(ray: THREE.Ray, maxDistance: number, out: THR
     _huntAimSphere.radius = npc.radius;
     const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
     if (!hit) continue;
-    const distSq = ray.origin.distanceToSquared(hit);
+    const distSq = _aimPlayerOrigin.distanceToSquared(hit);
     if (distSq > maxDistanceSq) continue;
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
@@ -452,7 +458,7 @@ function intersectBuildingAimTarget(ray: THREE.Ray, maxDistance: number, out: TH
     _huntAimSphere.radius = buildingAimRadius(building);
     const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
     if (!hit) return;
-    const distSq = ray.origin.distanceToSquared(hit);
+    const distSq = _aimPlayerOrigin.distanceToSquared(hit);
     if (distSq > maxDistanceSq) return;
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
@@ -471,7 +477,7 @@ function intersectTreeAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.
     _huntAimSphere.radius = tree.radius;
     const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
     if (!hit) continue;
-    const distSq = ray.origin.distanceToSquared(hit);
+    const distSq = _aimPlayerOrigin.distanceToSquared(hit);
     if (distSq > maxDistanceSq) continue;
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
@@ -482,15 +488,21 @@ function intersectTreeAimTarget(ray: THREE.Ray, maxDistance: number, out: THREE.
 }
 
 function intersectAimSurface(ray: THREE.Ray, maxDistance: number, out: THREE.Vector3): number {
-  let prevT = HUNT_AIM_MIN_DISTANCE;
+  // Start the march near where the ray crosses the aim plane so this works
+  // correctly at any camera zoom (camera may be hundreds of units from the
+  // ground; marching from t=1 would miss it entirely when zoomed out).
+  const tNear = Math.max(HUNT_AIM_MIN_DISTANCE, _aimGroundT - maxDistance);
+  const tFar  = _aimGroundT + maxDistance;
+
+  let prevT = tNear;
   _huntAimPoint.copy(ray.direction).multiplyScalar(prevT).add(ray.origin);
   let prevDelta = _huntAimPoint.y - aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z);
   if (prevDelta <= 0) {
     out.set(_huntAimPoint.x, aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z), _huntAimPoint.z);
-    return ray.origin.distanceToSquared(out);
+    return _aimPlayerOrigin.distanceToSquared(out);
   }
 
-  for (let t = prevT + HUNT_AIM_STEP; t <= maxDistance; t += HUNT_AIM_STEP) {
+  for (let t = prevT + HUNT_AIM_STEP; t <= tFar; t += HUNT_AIM_STEP) {
     _huntAimPoint.copy(ray.direction).multiplyScalar(t).add(ray.origin);
     const surfaceY = aimSurfaceHeight(_huntAimPoint.x, _huntAimPoint.z);
     const delta = _huntAimPoint.y - surfaceY;
@@ -508,7 +520,7 @@ function intersectAimSurface(ray: THREE.Ray, maxDistance: number, out: THREE.Vec
       }
       out.copy(ray.direction).multiplyScalar(high).add(ray.origin);
       out.y = aimSurfaceHeight(out.x, out.z);
-      return ray.origin.distanceToSquared(out);
+      return _aimPlayerOrigin.distanceToSquared(out);
     }
     prevT = t;
     prevDelta = delta;
@@ -1256,6 +1268,20 @@ function CameraController() {
       mouseWorldPos.x = hitVec.current.x;
       mouseWorldPos.z = hitVec.current.z;
       mouseWorldPos.valid = true;
+    }
+
+    // Update per-frame aim helpers so intersection functions are zoom-independent:
+    // _aimGroundT  — T-value along the mouse ray where it crosses the aim plane
+    // _aimPlayerOrigin — world position of the player/ship for range culling
+    _aimGroundT = mouseWorldPos.valid
+      ? raycaster.current.ray.origin.distanceTo(hitVec.current)
+      : HUNT_AIM_FALLBACK_DISTANCE;
+    if (inWalkingMode) {
+      const wp = walkingTransform.pos;
+      _aimPlayerOrigin.set(wp[0], wp[1], wp[2]);
+    } else {
+      const sp = getLiveShipTransform().pos;
+      _aimPlayerOrigin.set(sp[0], sp[1], sp[2]);
     }
 
     if (inWalkingMode && resolveHuntAimTarget(raycaster.current.ray, HUNT_AIM_FALLBACK_DISTANCE, _huntAimTarget)) {
@@ -2316,7 +2342,8 @@ function HuntAimMarker() {
     const distance = _huntMarkerOrigin.distanceTo(_huntMarkerImpact);
     const inRange = distance <= def.range;
     const pulse = 1 + Math.sin(state.clock.elapsedTime * 8) * 0.08;
-    group.scale.setScalar(inRange ? pulse : pulse * 1.04);
+    const zoomScale = THREE.MathUtils.clamp(gs.cameraZoom / 18, 0.5, 7);
+    group.scale.setScalar((inRange ? pulse : pulse * 1.04) * zoomScale);
 
     if (inRange) {
       if (hitKind === 'wildlife') {

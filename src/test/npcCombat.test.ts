@@ -116,4 +116,49 @@ describe('npcCombat', () => {
     expect(cargoTemptationScore({}, 100)).toBe(0);
     expect(cargoTemptationScore({ 'Black Pepper': 50 }, 100)).toBeGreaterThanOrEqual(55);
   });
+
+  it('does not let same-faction privateers prey on the player just because cargo is valuable', () => {
+    expect(chooseInitiativePosture(ship({ role: 'privateer', armed: true, morale: 65, flag: 'Spanish' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Spanish',
+      cargoTemptation: 90,
+    })).toBe('neutral');
+  });
+
+  it('does not let friendly-relation privateers prey on the player just because cargo is valuable', () => {
+    expect(chooseInitiativePosture(ship({ role: 'privateer', armed: true, morale: 65, flag: 'Portuguese' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Spanish',
+      cargoTemptation: 90,
+    })).toBe('neutral');
+  });
+
+  it('does not let neutral-relation privateers prey on the player just because cargo is valuable', () => {
+    expect(chooseInitiativePosture(ship({ role: 'privateer', armed: true, morale: 65, flag: 'Japanese' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Chinese',
+      cargoTemptation: 90,
+    })).toBe('neutral');
+  });
+
+  it('still lets privateers prey on negative-relation cargo targets', () => {
+    expect(chooseInitiativePosture(ship({ role: 'privateer', armed: true, morale: 65, flag: 'Dutch' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Spanish',
+      cargoTemptation: 90,
+    })).toBe('warn');
+  });
+
+  it('still lets privateers warn same-faction players who have earned hostile reputation', () => {
+    expect(chooseInitiativePosture(ship({ role: 'privateer', armed: true, morale: 65, flag: 'Spanish' }), {
+      reputation: -65,
+      hullFraction: 1,
+      playerFlag: 'Spanish',
+      cargoTemptation: 0,
+    })).toBe('warn');
+  });
 });

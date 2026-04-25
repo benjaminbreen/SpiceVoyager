@@ -706,6 +706,7 @@ export interface RenderDebugSettings {
   algae: boolean;
   coralReefs: boolean;
   wildlifeMotion: boolean;
+  cloudShadows: boolean;
   animalMarkers: boolean;
   disableTransitions: boolean;
   worldMapChart: boolean;
@@ -886,6 +887,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   algae: true,
   coralReefs: false,
   wildlifeMotion: true,
+  cloudShadows: true,
   animalMarkers: true,
   disableTransitions: false,
   worldMapChart: true,

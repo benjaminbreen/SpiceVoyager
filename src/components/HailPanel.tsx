@@ -10,7 +10,7 @@ import { sfxClick, sfxHover } from '../audio/SoundEffects';
 import { floatingPanelMotion } from '../utils/uiMotion';
 import { useIsMobile } from '../utils/useIsMobile';
 import { effectiveFactionReputation, sharesFactionLanguage } from '../utils/factionRelations';
-import { COLLISION_REPUTATION_TARGET, type CollisionResponse } from '../utils/npcCombat';
+import { COLLISION_REPUTATION_TARGET, type CollisionResponse, type WarningResponse } from '../utils/npcCombat';
 import {
   BARTER_CANDIDATE_POOL,
   DEFAULT_BARTER_QTY,
@@ -26,6 +26,7 @@ import {
   getHailGreeting,
   getHailMood,
   getHailMoodColor,
+  getPortPickerPrompt,
   hasAwardedTranslation,
   markAwardedTranslation,
   pickStable,
@@ -304,7 +305,7 @@ function BarterTray({
   );
 }
 
-export type HailContext = 'normal' | 'collision';
+export type HailContext = 'normal' | 'collision' | 'warning';
 
 export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipIdentity; onClose: () => void; context?: HailContext }) {
   const rep = useGameStore((state) => state.getReputation(npc.flag));
@@ -329,7 +330,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   const canUnderstand = understandsByFaction || Boolean(translator);
   const effectiveRep = useMemo(() => effectiveFactionReputation(rep, playerFlag, npc.flag), [npc.flag, playerFlag, rep]);
   const baseMood = getHailMood(effectiveRep);
-  const [collisionMood, setCollisionMood] = useState<HailMood | null>(context === 'collision' ? 'HOSTILE' : null);
+  const [collisionMood, setCollisionMood] = useState<HailMood | null>(context === 'collision' || context === 'warning' ? 'HOSTILE' : null);
   const mood = collisionMood ?? baseMood;
   const rememberedCollisionGreeting = useMemo(
     () => context === 'normal' ? getRememberedCollisionGreeting(npc, canUnderstand) : null,
@@ -340,6 +341,15 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     [rememberedCollisionGreeting, npc, mood],
   );
   const collisionGreeting = useMemo(() => getCollisionHail(npc, canUnderstand), [npc, canUnderstand]);
+  const warningGreeting = useMemo(() => {
+    if (!canUnderstand) return getCollisionHail(npc, false);
+    return pickStable([
+      `HEAVE OFF AND SHOW YOUR INTENT!! KEEP THAT COURSE AND WE TAKE YOU FOR PREY OR ENEMY!!`,
+      `STAND CLEAR!! ALTER COURSE NOW, OR WE WILL MAKE YOU ANSWER FOR IT!!`,
+      `YOU ARE TOO CLOSE AND TOO RICHLY LADEN!! TURN AWAY, PAY PASSAGE, OR FACE OUR GUNS!!`,
+      `WE KNOW YOUR FLAG. KEEP OFF, OR BY GOD WE OPEN FIRE!!`,
+    ], npc.id + 'warning-hail');
+  }, [canUnderstand, npc]);
   const impression = useMemo(() => buildImpression(npc, mood), [npc, mood]);
   const languageColor = LANGUAGE_COLOR[hailLanguage] ?? '#e2c87a';
 
@@ -370,6 +380,12 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     used.collision_ignore ||
     used.collision_threaten,
   );
+  const warningAnswered = Boolean(
+    used.warning_alter_course ||
+    used.warning_pay_toll ||
+    used.warning_ignore ||
+    used.warning_threaten,
+  );
 
   const setFactionReputation = useCallback((target: number) => {
     const state = useGameStore.getState();
@@ -378,6 +394,12 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
 
   const dispatchCollisionResponse = useCallback((response: CollisionResponse) => {
     window.dispatchEvent(new CustomEvent('npc-collision-response', {
+      detail: { npcId: npc.id, response },
+    }));
+  }, [npc.id]);
+
+  const dispatchWarningResponse = useCallback((response: WarningResponse) => {
+    window.dispatchEvent(new CustomEvent('npc-warning-response', {
       detail: { npcId: npc.id, response },
     }));
   }, [npc.id]);
@@ -452,6 +474,14 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         { id: 'collision_threaten', label: canUnderstand ? 'answer with threats' : 'gesture toward your guns' },
       ];
     }
+    if (context === 'warning') {
+      return [
+        { id: 'warning_alter_course', label: canUnderstand ? 'alter course and answer politely' : 'turn away with open hands' },
+        { id: 'warning_pay_toll', label: npc.role === 'privateer' ? 'offer a toll' : 'offer coin anyway', detail: gold >= 30 ? '30 gold' : 'not enough gold' },
+        { id: 'warning_ignore', label: 'hold your course' },
+        { id: 'warning_threaten', label: canUnderstand ? 'threaten them back' : 'gesture toward your guns' },
+      ];
+    }
     const entries: (HailActionEntry | null)[] = [
       canUnderstand && !used.news ? { id: 'news', label: 'ask what news he carries' } : null,
       canBarter && !used.trade ? { id: 'trade', label: 'barter cargo', detail: barterDetail } : null,
@@ -460,7 +490,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         : null,
     ];
     return entries.filter((e): e is HailActionEntry => e !== null);
-  }, [canBarter, canUnderstand, used, barterDetail, context, gold, intelCandidates]);
+  }, [canBarter, canUnderstand, used, barterDetail, context, gold, intelCandidates, npc.role]);
 
   const resolveAction = useCallback((action: HailAction) => {
     sfxClick();
@@ -527,6 +557,52 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       }
     }
 
+    if (context === 'warning') {
+      if (action === 'warning_alter_course') {
+        state.addJournalEntry('encounter', `Altered course after a warning from the ${npc.shipName}.`);
+        setUsed((prev) => ({ ...prev, warning_alter_course: true }));
+        dispatchWarningResponse('alterCourse');
+        onClose();
+        return;
+      }
+      if (action === 'warning_pay_toll') {
+        if (npc.role !== 'privateer') {
+          setResult({
+            tone: 'warn',
+            text: canUnderstand ? `We are no thief to be bought off. Stand clear and alter course!!` : getCollisionHail(npc, false),
+            impact: 'toll refused',
+          });
+          return;
+        }
+        if (state.gold < 30) {
+          setResult({ tone: 'warn', text: canUnderstand ? `You offer empty hands. Turn away now!!` : getCollisionHail(npc, false), impact: 'no gold' });
+          return;
+        }
+        useGameStore.setState((prev) => ({ gold: prev.gold - 30 }));
+        state.addJournalEntry('encounter', `Paid 30 gold to make the ${npc.shipName} break off.`);
+        setUsed((prev) => ({ ...prev, warning_pay_toll: true }));
+        dispatchWarningResponse('payToll');
+        onClose();
+        return;
+      }
+      if (action === 'warning_ignore') {
+        state.adjustReputation(npc.flag, -10);
+        state.addJournalEntry('encounter', `Ignored a warning from the ${npc.shipName}.`);
+        setUsed((prev) => ({ ...prev, warning_ignore: true }));
+        dispatchWarningResponse('ignore');
+        onClose();
+        return;
+      }
+      if (action === 'warning_threaten') {
+        state.adjustReputation(npc.flag, -15);
+        state.addJournalEntry('encounter', `Threatened the ${npc.shipName} after she warned us off.`);
+        setUsed((prev) => ({ ...prev, warning_threaten: true }));
+        dispatchWarningResponse('threaten');
+        onClose();
+        return;
+      }
+    }
+
     if (!canUnderstand) return;
     setXpChipVisible(false);
 
@@ -562,7 +638,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       setBarterMode({ yourGood: firstGood, yourQty: firstQty });
       setResult(null);
     }
-  }, [canBarter, canUnderstand, context, dispatchCollisionResponse, intelCandidates.length, npc, onClose, playerHeld, setFactionReputation]);
+  }, [canBarter, canUnderstand, context, dispatchCollisionResponse, dispatchWarningResponse, intelCandidates.length, npc, onClose, playerHeld, setFactionReputation]);
 
   const resolvePortIntel = useCallback((port: Port) => {
     sfxClick();
@@ -598,8 +674,14 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       state.addNotification(`Ignored the ${npc.shipName}'s protest. Reputation with ${npc.flag} worsened.`, 'warning');
       dispatchCollisionResponse('ignore');
     }
+    if (context === 'warning' && !warningAnswered) {
+      const state = useGameStore.getState();
+      state.adjustReputation(npc.flag, -10);
+      state.addJournalEntry('encounter', `Held course after a warning from the ${npc.shipName}.`);
+      dispatchWarningResponse('ignore');
+    }
     onClose();
-  }, [collisionAnswered, context, dispatchCollisionResponse, npc.id, npc.flag, npc.shipName, onClose, setFactionReputation]);
+  }, [collisionAnswered, context, dispatchCollisionResponse, dispatchWarningResponse, npc.id, npc.flag, npc.shipName, onClose, setFactionReputation, warningAnswered]);
 
   const acceptBarter = useCallback(() => {
     if (!barterMode?.yourGood || !counterOffer) return;
@@ -691,10 +773,18 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   }, [availableActions, closePanel, resolveAction, barterMode, cancelBarter, portPicker, intelCandidates, resolvePortIntel]);
 
   const resultColor = result?.tone === 'warn' ? '#f59e0b' : result?.tone === 'good' ? '#86efac' : '#cbd5e1';
+  const pickerPrompt = useMemo(
+    () => (portPicker ? getPortPickerPrompt(npc, mood) : null),
+    [portPicker, npc, mood],
+  );
   const spokenText = barterMode && canUnderstand && barterDialogue
     ? barterDialogue
     : context === 'collision'
     ? (result ? result.text : collisionGreeting)
+    : context === 'warning'
+    ? (result ? result.text : warningGreeting)
+    : portPicker && canUnderstand && pickerPrompt
+    ? pickerPrompt
     : canUnderstand
     ? (result ? result.text : greeting)
     : UNTRANSLATED_HAIL[hailLanguage];
@@ -829,15 +919,15 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
             style={{ borderLeft: `2px solid ${result?.tone === 'warn' ? 'rgba(245,158,11,0.35)' : 'rgba(226,200,122,0.35)'}` }}
           >
             <div
-              className={context === 'collision'
+              className={context === 'collision' || context === 'warning'
                 ? 'text-[18px] leading-[1.45] text-red-100 uppercase tracking-[0.035em]'
                 : canUnderstand
                 ? 'text-[17px] leading-[1.55] text-slate-50'
                 : 'text-[17px] leading-[1.7] text-slate-200 italic'}
               style={{
-                fontFamily: context === 'collision' ? '"DM Sans", sans-serif' : '"Fraunces", serif',
-                fontWeight: context === 'collision' ? 800 : 400,
-                textShadow: context === 'collision' ? '0 0 14px rgba(248,113,113,0.25)' : undefined,
+                fontFamily: context === 'collision' || context === 'warning' ? '"DM Sans", sans-serif' : '"Fraunces", serif',
+                fontWeight: context === 'collision' || context === 'warning' ? 800 : 400,
+                textShadow: context === 'collision' || context === 'warning' ? '0 0 14px rgba(248,113,113,0.25)' : undefined,
               }}
             >
               <span
@@ -1091,7 +1181,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
             onClick={closePanel}
             className="group font-bold font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 hover:text-amber-300 transition-colors"
           >
-            {context === 'collision' && !collisionAnswered ? 'ignore and sail on' : 'sail on'}
+            {context === 'collision' && !collisionAnswered ? 'ignore and sail on' : context === 'warning' && !warningAnswered ? 'hold course' : 'sail on'}
             <span className="ml-2 text-slate-600 group-hover:text-amber-400 transition-colors">[esc]</span>
           </button>
         </div>

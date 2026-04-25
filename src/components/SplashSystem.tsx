@@ -90,6 +90,13 @@ export function SplashSystem() {
   }, []);
 
   useFrame((state, delta) => {
+    // Guard against the init useEffect not having committed yet — useFrame
+    // can fire before useEffect on the first render. Without this, an early
+    // event (rocket fire on first tick) indexes into an empty pool and the
+    // spawn loop throws on `p.life`, which then throws every frame and tanks
+    // FPS via React's error overlay.
+    if (rocketTrailParticles.current.length === 0) return;
+
     const elapsed = state.clock.elapsedTime;
     setSplashClock(elapsed);
 

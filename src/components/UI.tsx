@@ -999,6 +999,23 @@ export function UI() {
     return () => window.removeEventListener('npc-collision-hail', handleCollisionHail);
   }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
 
+  useEffect(() => {
+    const handleWarningHail = (e: Event) => {
+      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
+      const npc = (e as CustomEvent).detail?.npc as NPCShipIdentity | undefined;
+      if (!npc) return;
+      const state = useGameStore.getState();
+      if (state.playerMode !== 'ship') return;
+      hailWasPausedRef.current = state.paused;
+      state.setPaused(true);
+      setHailContext('warning');
+      setHailNpc(npc);
+      sfxShipHail(npc.hailLanguage);
+    };
+    window.addEventListener('npc-warning-hail', handleWarningHail);
+    return () => window.removeEventListener('npc-warning-hail', handleWarningHail);
+  }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
+
   // Escape key closes modals
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1506,7 +1523,7 @@ export function UI() {
           typography. Hidden on mobile and whenever any modal overlay is up. */}
       <AnimatePresence>
         {!isMobile && !startupOverlayActive && !showLocalMap && !showWorldMap
-          && !activePort && !showDashboard && playerMode === 'ship'
+          && !activePort && !showDashboard && (playerMode === 'ship' || playerMode === 'walking')
           && currentWorldPortId && (() => {
           const port = getWorldPortById(currentWorldPortId);
           if (!port) return null;
@@ -2147,6 +2164,7 @@ function RenderTestPanel() {
             shipWake: false,
             algae: false,
             wildlifeMotion: false,
+            cloudShadows: false,
           })}
           className="flex-1 rounded-lg border border-amber-600/20 bg-amber-600/10 px-3 py-2 text-[11px] font-medium text-amber-300 transition-all hover:bg-amber-600/15"
         >
@@ -2225,6 +2243,11 @@ function RenderTestPanel() {
           label="Wildlife Motion"
           enabled={renderDebug.wildlifeMotion}
           onToggle={() => updateRenderDebug({ wildlifeMotion: !renderDebug.wildlifeMotion })}
+        />
+        <RenderToggleRow
+          label="Cloud Shadows"
+          enabled={renderDebug.cloudShadows}
+          onToggle={() => updateRenderDebug({ cloudShadows: !renderDebug.cloudShadows })}
         />
         <RenderToggleRow
           label="Animal Markers"

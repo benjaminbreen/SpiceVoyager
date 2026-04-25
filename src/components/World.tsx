@@ -15,6 +15,7 @@ import { resolveCampaignPortId } from '../utils/worldPorts';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN } from '../utils/animalTerrain';
 import { treeShakes, type TreeImpactKind, getPalmDamage, getFelledTreeState, resetVegetationDamage } from '../utils/impactShakeState';
+import { applyWindSway, updateWindUniforms } from '../utils/windSway';
 
 /** Shift a hex color's HSL to match the current climate palette.
  *  Tropical is the baseline — other climates desaturate and hue-shift. */
@@ -567,7 +568,7 @@ export function World() {
   // Generate world data once
   const {
     landTerrainGeometry, backgroundRingTerrainGeometry, generatedPorts, generatedNpcs,
-    treeData, deadTreeData, broadleafData, baobabData, acaciaData, cactusData, crabData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, grazerKind, primateSpecies, reptileSpecies, wadingSpecies, encounterData,
+    treeData, deadTreeData, broadleafData, baobabData, acaciaData, cactusData, crabData, palmData, mangroveData, cypressData, datePalmData, bambooData, willowData, cherryData, orangeData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, grazerKind, primateSpecies, reptileSpecies, wadingSpecies, encounterData,
   } = useMemo(() => {
     // Reseed terrain noise before generating
     reseedTerrain(worldSeed);
@@ -596,6 +597,12 @@ export function World() {
     const baobabs: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const acacias: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const mangroves: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const cypresses: { position: [number, number, number], scale: number }[] = [];
+    const datePalms: PalmEntry[] = [];
+    const bamboos: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const willows: { position: [number, number, number], scale: number, rotation: number }[] = [];
+    const cherries: { position: [number, number, number], scale: number }[] = [];
+    const oranges: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const reedBeds: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const siltPatches: { position: [number, number, number], scale: number, rotation: number }[] = [];
     const saltStains: { position: [number, number, number], scale: number, rotation: number }[] = [];
@@ -619,6 +626,28 @@ export function World() {
     // Tree profile — which tree types appear at this port
     const africanPort = new Set(['mombasa', 'zanzibar', 'cape', 'elmina', 'luanda']).has(portId);
     const usesAcacia = africanPort || waterPaletteId === 'arid';
+    const mediterraneanPort = waterPaletteId === 'mediterranean';
+    // Persian-Gulf / Levantine ports — cypress is iconic here too (Cupressus
+    // sempervirens; Sarv-e Abarkuh on the Iranian plateau is the canonical example).
+    const persianCypressPort = new Set(['hormuz', 'muscat', 'aden']).has(portId);
+    const cypressPort = mediterraneanPort || persianCypressPort;
+    // Date palm — every arid-palette port is plausible (oases + irrigated coast).
+    const datePalmPort = waterPaletteId === 'arid';
+    // Bamboo — native across all of monsoon/tropical Asia plus East Africa coast.
+    // Atlantic colonial ports excluded (bamboo did spread there but later, and
+    // the silhouette would read as anachronistic in 1612).
+    const bambooPort = new Set([
+      'nagasaki', 'macau',                      // East Asia
+      'goa', 'calicut', 'surat', 'masulipatnam', 'diu', // Indian coast
+      'malacca', 'manila', 'bantam',            // Southeast Asia
+      'mombasa', 'zanzibar',                    // East African coast (Bambusa vulgaris)
+    ]).has(portId);
+    const cherryPort = portId === 'nagasaki';
+    // Orange tree — Iberian + Spanish-Caribbean ports. Citrus aurantium (sour
+    // orange) was already centuries-naturalized in Andalusia and Portugal by
+    // 1612; sweet oranges (C. sinensis) had reached Iberia from Goa c.1500
+    // and were planted in Cuba/Caribbean orchards within decades of contact.
+    const orangePort = new Set(['seville', 'lisbon', 'havana', 'cartagena']).has(portId);
     type GrazerKind = 'antelope' | 'deer' | 'goat' | 'camel' | 'sheep' | 'bovine' | 'pig' | 'capybara';
     type GrazerVariant = { color: [number, number, number]; scale: number; herdMin: number; herdMax: number; spawnChance: number; biomes: Set<string>; species: SpeciesInfo; kind: GrazerKind };
     const GRAZER_VARIANTS: GrazerVariant[] = (() => {
@@ -842,6 +871,39 @@ export function World() {
             broadleafs.push({ position: [x, height, worldZ], scale: 0.5 + Math.random() * 1.5 });
           }
         }
+        // Bamboo groves across monsoon/tropical Asia + East African coast
+        if (bambooPort && rand > 0.965 && bamboos.length < 200 && height < 14) {
+          bamboos.push({
+            position: [x, height, worldZ],
+            scale: 0.55 + Math.random() * 0.6,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        // Cherry blossoms — only Nagasaki, scattered through forest
+        if (cherryPort && rand > 0.992 && cherries.length < 60 && height < 12) {
+          cherries.push({ position: [x, height, worldZ], scale: 0.6 + Math.random() * 0.5 });
+        }
+        // Cypress in Mediterranean + Persian Gulf forest — sparse, on slopes
+        if (cypressPort && rand > 0.992 && cypresses.length < 80) {
+          cypresses.push({ position: [x, height, worldZ], scale: 0.85 + Math.random() * 0.55 });
+        }
+        // Orange grove — Iberian/Caribbean cultivated lowlands
+        if (orangePort && rand > 0.991 && oranges.length < 100 && height < 9) {
+          oranges.push({
+            position: [x, height, worldZ],
+            scale: 0.65 + Math.random() * 0.45,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        // Willow — temperate/Mediterranean low-elevation moist forest (riparian)
+        if ((waterPaletteId === 'temperate' || mediterraneanPort)
+            && height < 5 && moisture > 0.55 && rand > 0.992 && willows.length < 60) {
+          willows.push({
+            position: [x, height, worldZ],
+            scale: 0.7 + Math.random() * 0.5,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
       } else if (biome === 'swamp') {
         if (rand > 0.997) {
           deadTrees.push({ position: [x, height, worldZ], scale: 0.5 + Math.random() * 1.0 });
@@ -869,6 +931,27 @@ export function World() {
         // Baobab in African scrubland — sparse, majestic
         if (africanPort && rand > 0.997 && baobabs.length < 40) {
           baobabs.push({ position: [x, height, worldZ], scale: 0.7 + Math.random() * 0.6, rotation: Math.random() * Math.PI * 2 });
+        }
+        // Cypress dotting Mediterranean + Persian scrubland
+        if (cypressPort && rand > 0.994 && cypresses.length < 80) {
+          cypresses.push({ position: [x, height, worldZ], scale: 0.8 + Math.random() * 0.55 });
+        }
+        // Orange grove edge — Iberian/Caribbean dry-lowland
+        if (orangePort && rand > 0.994 && oranges.length < 100) {
+          oranges.push({
+            position: [x, height, worldZ],
+            scale: 0.6 + Math.random() * 0.4,
+            rotation: Math.random() * Math.PI * 2,
+          });
+        }
+        // Date palm in arid scrubland (oasis hint)
+        if (datePalmPort && rand > 0.996 && datePalms.length < 200 && moisture > 0.25) {
+          datePalms.push({
+            position: [x, height, worldZ],
+            scale: 0.75 + Math.random() * 0.6,
+            lean: (Math.random() - 0.5) * 0.04, // nearly upright
+            rotation: Math.random() * Math.PI * 2,
+          });
         }
       } else if (biome === 'grassland') {
         // Umbrella acacia dotting the savanna
@@ -971,15 +1054,25 @@ export function World() {
           });
         }
       } else if (biome === 'beach') {
-        // Palm trees on tropical/monsoon beaches (never in temperate climates)
+        // Palm trees on tropical/monsoon beaches (never in temperate climates).
+        // Arid palm ports (Hormuz, Aden, etc.) get date palms instead of coconut palms.
         const stableSand = beachFactor > wetSandFactor && slope < 0.32;
-        if (stableSand && moisture > 0.35 && waterPaletteId !== 'temperate' && rand > 0.94 && palms.length < 500) {
-          palms.push({
-            position: [x, height, worldZ],
-            scale: 0.7 + Math.random() * 0.8,
-            lean: 0.1 + Math.random() * 0.25,
-            rotation: Math.random() * Math.PI * 2,
-          });
+        if (stableSand && moisture > 0.35 && waterPaletteId !== 'temperate' && rand > 0.94) {
+          if (datePalmPort && datePalms.length < 200) {
+            datePalms.push({
+              position: [x, height, worldZ],
+              scale: 0.8 + Math.random() * 0.7,
+              lean: (Math.random() - 0.5) * 0.06,
+              rotation: Math.random() * Math.PI * 2,
+            });
+          } else if (!datePalmPort && palms.length < 500) {
+            palms.push({
+              position: [x, height, worldZ],
+              scale: 0.7 + Math.random() * 0.8,
+              lean: 0.1 + Math.random() * 0.25,
+              rotation: Math.random() * Math.PI * 2,
+            });
+          }
         }
         // Food score: higher near shallow water, sheltered coasts, river mouths
         // coastSteepness < 0.4 = sheltered/flat = more food; shallow nearby = tidal zone
@@ -1312,6 +1405,54 @@ export function World() {
         z: tree.position[2],
         radius: Math.max(1.0, tree.scale * 1.65),
       })),
+      ...cypresses.map((tree, index) => ({
+        kind: 'cypress' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.6,
+        z: tree.position[2],
+        radius: Math.max(0.8, tree.scale * 1.1),
+      })),
+      ...datePalms.map((tree, index) => ({
+        kind: 'datePalm' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 4.5,
+        z: tree.position[2],
+        radius: Math.max(1.0, tree.scale * 1.4),
+      })),
+      ...bamboos.map((tree, index) => ({
+        kind: 'bamboo' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.0,
+        z: tree.position[2],
+        radius: Math.max(0.7, tree.scale * 1.0),
+      })),
+      ...willows.map((tree, index) => ({
+        kind: 'willow' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.0,
+        z: tree.position[2],
+        radius: Math.max(1.0, tree.scale * 1.5),
+      })),
+      ...cherries.map((tree, index) => ({
+        kind: 'cherry' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 2.3,
+        z: tree.position[2],
+        radius: Math.max(0.95, tree.scale * 1.4),
+      })),
+      ...oranges.map((tree, index) => ({
+        kind: 'orange' as const,
+        index,
+        x: tree.position[0],
+        y: tree.position[1] + tree.scale * 1.7,
+        z: tree.position[2],
+        radius: Math.max(0.85, tree.scale * 1.2),
+      })),
       ...mangroves.map((tree, index) => ({
         kind: 'mangrove' as const,
         index,
@@ -1336,6 +1477,12 @@ export function World() {
       crabData: crabs,
       palmData: palms,
       mangroveData: mangroves,
+      cypressData: cypresses,
+      datePalmData: datePalms,
+      bambooData: bamboos,
+      willowData: willows,
+      cherryData: cherries,
+      orangeData: oranges,
       reedBedData: reedBeds,
       siltPatchData: siltPatches,
       saltStainData: saltStains,
@@ -1393,7 +1540,14 @@ export function World() {
     thornbushData.forEach(b => addObstacle(b.position[0], b.position[2], 0.4 * b.scale));
     mangroveData.forEach(m => addObstacle(m.position[0], m.position[2], 0.5 * m.scale));
     beachRockData.forEach(r => addObstacle(r.position[0], r.position[2], 0.8 * r.scale));
-  }, [palmData, treeData, broadleafData, baobabData, acaciaData, deadTreeData, cactusData, thornbushData, mangroveData, beachRockData]);
+    // New species
+    cypressData.forEach(t => addObstacle(t.position[0], t.position[2], 0.22 * t.scale));
+    datePalmData.forEach(p => addObstacle(p.position[0], p.position[2], 0.22 * p.scale));
+    bambooData.forEach(b => addObstacle(b.position[0], b.position[2], 0.35 * b.scale));
+    willowData.forEach(t => addObstacle(t.position[0], t.position[2], 0.5 * t.scale));
+    cherryData.forEach(t => addObstacle(t.position[0], t.position[2], 0.4 * t.scale));
+    orangeData.forEach(t => addObstacle(t.position[0], t.position[2], 0.35 * t.scale));
+  }, [palmData, treeData, broadleafData, baobabData, acaciaData, deadTreeData, cactusData, thornbushData, mangroveData, beachRockData, cypressData, datePalmData, bambooData, willowData, cherryData, orangeData]);
 
   useEffect(() => {
     initWorld(generatedPorts);
@@ -1543,12 +1697,20 @@ export function World() {
   }, [timeOfDay, waterPaletteId, worldSeed]);
 
   // ── Terrain material with procedural detail noise ──────────────────────────
-  const terrainShaderUniformsRef = useRef<{ uPlayerPos: { value: THREE.Vector3 } } | null>(null);
+  const terrainShaderUniformsRef = useRef<{
+    uPlayerPos: { value: THREE.Vector3 };
+    uCloudTime: { value: number };
+    uCloudWindDir: { value: THREE.Vector2 };
+    uCloudStrength: { value: number };
+  } | null>(null);
   const terrainMaterial = useMemo(() => {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uPlayerPos = { value: new THREE.Vector3() };
-      terrainShaderUniformsRef.current = shader.uniforms as { uPlayerPos: { value: THREE.Vector3 } };
+      shader.uniforms.uCloudTime = { value: 0 };
+      shader.uniforms.uCloudWindDir = { value: new THREE.Vector2(1, 0) };
+      shader.uniforms.uCloudStrength = { value: 0 };
+      terrainShaderUniformsRef.current = shader.uniforms as any;
 
       // Pass world-position varying from vertex to fragment shader
       shader.vertexShader = shader.vertexShader.replace(
@@ -1567,6 +1729,9 @@ export function World() {
         '#include <common>',
         `#include <common>
         uniform vec3 uPlayerPos;
+        uniform float uCloudTime;
+        uniform vec2 uCloudWindDir;
+        uniform float uCloudStrength;
         varying vec3 vWorldPos;
 
         // Hash-based noise — fast, no texture lookups
@@ -1660,6 +1825,18 @@ export function World() {
           float _shadowFactor = ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;
           float _shadowFade = smoothstep(50.0, 110.0, distance(vWorldPos.xz, uPlayerPos.xz));
           directLight.color *= mix(_shadowFactor, 1.0, _shadowFade);
+
+          // Cloud shadows — drift along wind direction; reuses terrainFBM/terrainNoise.
+          // Uniform branch is free (all threads take same path), so when toggle is off
+          // cost collapses to a single comparison per fragment.
+          if (uCloudStrength > 0.001) {
+            vec2 _cloudP = vWorldPos.xz * 0.013 - uCloudWindDir * uCloudTime * 0.6;
+            float _cloud = terrainFBM(_cloudP);
+            _cloud += terrainNoise(_cloudP * 2.7 + 13.7) * 0.25;
+            // Threshold so most ground stays sunlit; soft edges so patches feel volumetric
+            float _cloudMask = smoothstep(0.42, 0.72, _cloud);
+            directLight.color *= 1.0 - _cloudMask * uCloudStrength;
+          }
         }`
       );
     };
@@ -1670,7 +1847,11 @@ export function World() {
   const treeTrunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.2, 0.3, 2, 5), []);
   const treeLeavesGeometry = useMemo(() => new THREE.ConeGeometry(1.5, 4, 5), []);
   const treeTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#4a3b32', waterPaletteId) }), [waterPaletteId]);
-  const treeLeavesMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#2d4c1e', waterPaletteId) }), [waterPaletteId]);
+  const treeLeavesMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: tintVegetation('#2d4c1e', waterPaletteId) });
+    applyWindSway(m, { anchorY: -2.0, spanY: 4.0, amplitude: 0.18, flutter: 0.04 });
+    return m;
+  }, [waterPaletteId]);
 
   const deadTreeMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#3a3a3a', waterPaletteId) }), [waterPaletteId]);
 
@@ -1734,7 +1915,11 @@ export function World() {
     return canopy;
   }, []);
   const broadleafTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#5a4530', waterPaletteId) }), [waterPaletteId]);
-  const broadleafCanopyMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#2a5e1a', waterPaletteId) }), [waterPaletteId]);
+  const broadleafCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: tintVegetation('#2a5e1a', waterPaletteId) });
+    applyWindSway(m, { anchorY: -1.3, spanY: 2.6, amplitude: 0.15, flutter: 0.03 });
+    return m;
+  }, [waterPaletteId]);
 
   // Baobab — fat bottle trunk with sparse, gnarly crown blobs
   const baobabTrunkGeometry = useMemo(() => {
@@ -1768,7 +1953,11 @@ export function World() {
     return merged ?? new THREE.IcosahedronGeometry(0.8, 0);
   }, []);
   const baobabTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#7a6b55', waterPaletteId) }), [waterPaletteId]);
-  const baobabCanopyMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#4a6e30', waterPaletteId) }), [waterPaletteId]);
+  const baobabCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: tintVegetation('#4a6e30', waterPaletteId) });
+    applyWindSway(m, { anchorY: 2.8, spanY: 1.0, amplitude: 0.08, flutter: 0.02 });
+    return m;
+  }, [waterPaletteId]);
 
   // Umbrella acacia — thin trunk with a wide flat-topped canopy
   const acaciaTrunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.08, 0.14, 3, 5), []);
@@ -1779,7 +1968,11 @@ export function World() {
     return canopy;
   }, []);
   const acaciaTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#5a4a30', waterPaletteId) }), [waterPaletteId]);
-  const acaciaCanopyMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#3a6628', waterPaletteId) }), [waterPaletteId]);
+  const acaciaCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({ color: tintVegetation('#3a6628', waterPaletteId) });
+    applyWindSway(m, { anchorY: 2.5, spanY: 1.0, amplitude: 0.20, flutter: 0.04 });
+    return m;
+  }, [waterPaletteId]);
 
   // Mangrove cluster — separate prop roots and canopy so the silhouette reads at distance.
   const mangroveRootGeometry = useMemo(() => {
@@ -1928,7 +2121,243 @@ export function World() {
   const riceShootMaterial = useMemo(() => new THREE.MeshStandardMaterial({
     color: tintVegetation('#5a8c2a', waterPaletteId), side: THREE.DoubleSide,
   }), [waterPaletteId]);
-  
+
+  // Cypress — tall columnar conifer (Mediterranean + Persian Gulf).
+  // Trunk base sits at y=0; canopy is a stack of cones from y=0 up to ~y=10,
+  // with subtle vertex perturbation to break the perfectly-smooth silhouette.
+  const cypressTrunkGeometry = useMemo(() => {
+    const geo = new THREE.CylinderGeometry(0.16, 0.24, 2.0, 6);
+    geo.translate(0, 1.0, 0); // base at y=0
+    return geo;
+  }, []);
+  const cypressCanopyGeometry = useMemo(() => {
+    // Four overlapping cones, each rotated and perturbed differently.
+    const layers = [
+      { radius: 1.10, height: 4.2, baseY: 0.4,  twist: 0.0,  noiseSeed: 1.3 },
+      { radius: 0.85, height: 5.0, baseY: 2.6,  twist: 0.45, noiseSeed: 2.7 },
+      { radius: 0.55, height: 5.0, baseY: 5.0,  twist: 0.95, noiseSeed: 4.1 },
+      { radius: 0.28, height: 3.6, baseY: 7.4,  twist: 1.55, noiseSeed: 5.9 },
+    ];
+    const cones: THREE.BufferGeometry[] = [];
+    for (const l of layers) {
+      const c = new THREE.ConeGeometry(l.radius, l.height, 9, 2);
+      const pos = c.attributes.position;
+      // Perturb radius per-vertex for organic edge — keeps centerline straight.
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), z = pos.getZ(i);
+        const r = Math.hypot(x, z);
+        if (r > 0.01) {
+          const angle = Math.atan2(z, x);
+          const noise =
+            Math.sin(angle * 7.0 + l.noiseSeed * 5) * 0.08 +
+            Math.cos(angle * 13.0 + l.noiseSeed * 3) * 0.05;
+          const newR = r * (1 + noise);
+          pos.setX(i, Math.cos(angle) * newR);
+          pos.setZ(i, Math.sin(angle) * newR);
+        }
+      }
+      pos.needsUpdate = true;
+      c.rotateY(l.twist);
+      // Cone is centered at y=0 by default; lift so its base sits at l.baseY
+      c.translate(0, l.baseY + l.height / 2, 0);
+      cones.push(c);
+    }
+    const merged = mergeCompatibleGeometries(cones);
+    cones.forEach(g => g.dispose());
+    if (merged) merged.computeVertexNormals();
+    return merged ?? new THREE.ConeGeometry(0.7, 5.5, 7);
+  }, []);
+  const cypressTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#3e2f24', waterPaletteId) }), [waterPaletteId]);
+  const cypressCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#243f1f', waterPaletteId),
+      roughness: 0.92,
+    });
+    applyWindSway(m, { anchorY: 1.0, spanY: 9.0, amplitude: 0.07, flutter: 0.015 });
+    return m;
+  }, [waterPaletteId]);
+
+  // Orange tree — short rounded canopy with baked-in fruit via vertex colors,
+  // so a single InstancedMesh shows green leaves + bright orange fruit. The
+  // material is white with vertexColors:true; instanceColor jitter is skipped
+  // here so the orange stays orange across instances.
+  const orangeTrunkGeometry = useMemo(() => {
+    const geo = new THREE.CylinderGeometry(0.14, 0.20, 1.4, 5);
+    geo.translate(0, 0.7, 0);
+    return geo;
+  }, []);
+  const orangeCanopyGeometry = useMemo(() => {
+    const leafColor = new THREE.Color('#3e6f24');
+    const fruitColor = new THREE.Color('#f0892a');
+    const paint = (geo: THREE.BufferGeometry, color: THREE.Color) => {
+      const c = new Float32Array(geo.attributes.position.count * 3);
+      for (let i = 0; i < geo.attributes.position.count; i++) {
+        c[i * 3] = color.r;
+        c[i * 3 + 1] = color.g;
+        c[i * 3 + 2] = color.b;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    };
+    const main = new THREE.IcosahedronGeometry(0.95, 1);
+    main.scale(1.0, 0.85, 1.0);
+    main.translate(0, 0.85, 0); // canopy base ~y=0
+    paint(main, leafColor);
+    const parts: THREE.BufferGeometry[] = [main];
+    // 9 fruits clustered on the upper hemisphere — deterministic so all
+    // canopies share one geometry, but rotated differently per instance.
+    for (let f = 0; f < 9; f++) {
+      const fruit = new THREE.IcosahedronGeometry(0.10, 0);
+      const theta = (f * 2.39996) % (Math.PI * 2); // golden-angle spacing
+      const phi = 0.25 + ((f * 0.611) % 1) * 0.9;  // 0.25..1.15 rad from top
+      const r = 0.85;
+      fruit.translate(
+        Math.cos(theta) * Math.sin(phi) * r,
+        0.85 + Math.cos(phi) * r * 0.78,
+        Math.sin(theta) * Math.sin(phi) * r,
+      );
+      paint(fruit, fruitColor);
+      parts.push(fruit);
+    }
+    const merged = mergeCompatibleGeometries(parts);
+    parts.forEach(g => g.dispose());
+    if (merged) merged.computeVertexNormals();
+    return merged ?? new THREE.IcosahedronGeometry(1.0, 1);
+  }, []);
+  const orangeTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#4a3424', waterPaletteId) }), [waterPaletteId]);
+  const orangeCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.85,
+    });
+    applyWindSway(m, { anchorY: -0.4, spanY: 1.8, amplitude: 0.10, flutter: 0.025 });
+    return m;
+  }, []);
+
+
+  // Date palm — straighter, taller trunk than coconut palm, denser frond cluster.
+  const datePalmTrunkGeometry = useMemo(() => {
+    // Slight ringed taper, no quadratic lean
+    const geo = new THREE.CylinderGeometry(0.10, 0.16, 5, 6, 12);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setY(i, pos.getY(i) + 2.5); // base at y=0
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
+  }, []);
+  const datePalmTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#7a6243', waterPaletteId) }), [waterPaletteId]);
+  const datePalmFrondGeometry = useMemo(() => {
+    const fronds: THREE.BufferGeometry[] = [];
+    for (let f = 0; f < 9; f++) {
+      const angle = (f / 9) * Math.PI * 2 + (f % 2) * 0.12;
+      const frond = new THREE.PlaneGeometry(0.30, 1.9, 1, 4);
+      const fPos = frond.attributes.position;
+      for (let i = 0; i < fPos.count; i++) {
+        const fy = fPos.getY(i);
+        const t = (fy + 0.95) / 1.9;
+        fPos.setZ(i, -t * t * 0.55); // less droop than coconut palm
+      }
+      fPos.needsUpdate = true;
+      frond.rotateX(-0.55); // more upright
+      frond.rotateY(angle);
+      frond.translate(Math.sin(angle) * 0.30, 0, Math.cos(angle) * 0.30);
+      fronds.push(frond);
+    }
+    const merged = mergeCompatibleGeometries(fronds);
+    fronds.forEach(f => f.dispose());
+    return merged ?? new THREE.SphereGeometry(1, 4, 4);
+  }, []);
+  const datePalmFrondMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#3a5a2a', waterPaletteId),
+      side: THREE.DoubleSide,
+    });
+    applyWindSway(m, { anchorY: -0.5, spanY: 1.8, amplitude: 0.14, flutter: 0.04 });
+    return m;
+  }, [waterPaletteId]);
+
+  // Bamboo — thin clustered canes for East Asian ports.
+  const bambooGeometry = useMemo(() => {
+    const canes: THREE.BufferGeometry[] = [];
+    const count = 7;
+    for (let c = 0; c < count; c++) {
+      const angle = (c / count) * Math.PI * 2 + Math.random() * 0.4;
+      const radius = 0.08 + Math.random() * 0.18;
+      const height = 3.6 + Math.random() * 1.6;
+      const cane = new THREE.CylinderGeometry(0.025, 0.035, height, 4, 1);
+      cane.translate(0, height * 0.5, 0);
+      // Tiny lean for each cane
+      const lean = (Math.random() - 0.5) * 0.18;
+      cane.rotateZ(lean);
+      cane.translate(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
+      canes.push(cane);
+    }
+    const merged = mergeCompatibleGeometries(canes);
+    canes.forEach(g => g.dispose());
+    return merged ?? new THREE.CylinderGeometry(0.03, 0.04, 4, 4);
+  }, []);
+  const bambooMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#8aa84a', waterPaletteId),
+      roughness: 0.85,
+    });
+    applyWindSway(m, { anchorY: 1.0, spanY: 3.5, amplitude: 0.22, flutter: 0.06 });
+    return m;
+  }, [waterPaletteId]);
+
+  // Willow — short stocky trunk + drooping canopy planes for temperate riparian zones.
+  const willowTrunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.22, 0.34, 2.2, 5), []);
+  const willowTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#4a3a2c', waterPaletteId) }), [waterPaletteId]);
+  const willowCanopyGeometry = useMemo(() => {
+    // Drooping curtain of leaf planes radiating from the crown
+    const fronds: THREE.BufferGeometry[] = [];
+    for (let f = 0; f < 8; f++) {
+      const angle = (f / 8) * Math.PI * 2;
+      const frond = new THREE.PlaneGeometry(0.55, 2.4, 1, 5);
+      const fPos = frond.attributes.position;
+      for (let i = 0; i < fPos.count; i++) {
+        const fy = fPos.getY(i);
+        const t = (fy + 1.2) / 2.4;
+        // Strong downward droop along the frond
+        fPos.setY(i, fy - t * t * 1.1);
+      }
+      fPos.needsUpdate = true;
+      frond.rotateX(0.2);
+      frond.rotateY(angle);
+      frond.translate(Math.sin(angle) * 0.55, 0, Math.cos(angle) * 0.55);
+      fronds.push(frond);
+    }
+    const merged = mergeCompatibleGeometries(fronds);
+    fronds.forEach(f => f.dispose());
+    return merged ?? new THREE.SphereGeometry(1, 4, 4);
+  }, []);
+  const willowCanopyMaterial = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#6e8a3a', waterPaletteId),
+      side: THREE.DoubleSide,
+    });
+    applyWindSway(m, { anchorY: -0.8, spanY: 2.2, amplitude: 0.22, flutter: 0.05 });
+    return m;
+  }, [waterPaletteId]);
+
+  // Cherry blossom — pink-tinted broadleaf canopy for Nagasaki (spring).
+  const cherryTrunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.18, 0.28, 2.0, 5), []);
+  const cherryCanopyGeometry = useMemo(() => {
+    const canopy = new THREE.IcosahedronGeometry(1.5, 1);
+    canopy.scale(1.0, 0.75, 1.0);
+    return canopy;
+  }, []);
+  const cherryTrunkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: tintVegetation('#3a2a22', waterPaletteId) }), [waterPaletteId]);
+  const cherryCanopyMaterial = useMemo(() => {
+    // Don't tint by palette — blossoms read pink regardless
+    const m = new THREE.MeshStandardMaterial({ color: '#e8b8c8' });
+    applyWindSway(m, { anchorY: -1.2, spanY: 2.4, amplitude: 0.14, flutter: 0.04 });
+    return m;
+  }, []);
+
+
   const crabGeometry = useMemo(() => {
     // Body — flat wide ellipsoid
     const body = new THREE.SphereGeometry(0.18, 8, 4);
@@ -2097,6 +2526,17 @@ export function World() {
   const acaciaCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
   const mangroveRootMeshRef = useRef<THREE.InstancedMesh>(null);
   const mangroveCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const cypressTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
+  const cypressCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const datePalmTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
+  const datePalmFrondMeshRef = useRef<THREE.InstancedMesh>(null);
+  const bambooMeshRef = useRef<THREE.InstancedMesh>(null);
+  const willowTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
+  const willowCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const cherryTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
+  const cherryCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const orangeTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
+  const orangeCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
   const reedBedMeshRef = useRef<THREE.InstancedMesh>(null);
   const siltPatchMeshRef = useRef<THREE.InstancedMesh>(null);
   const saltStainMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -2253,6 +2693,123 @@ export function World() {
     mangroveCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
   }
 
+  function setCypressMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!cypressTrunkMeshRef.current || !cypressCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('cypress', index);
+    if (felled) {
+      setFelledVerticalMesh(cypressTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.0, 0.20);
+      setFelledVerticalMesh(cypressCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 5.0, 0.85);
+      return;
+    }
+    const dummy = dummyRef.current;
+    // Trunk and canopy geometries are both authored from y=0 upward — share matrix.
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    cypressTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+    cypressCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setOrangeMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!orangeTrunkMeshRef.current || !orangeCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('orange', index);
+    if (felled) {
+      setFelledVerticalMesh(orangeTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 0.85, 0.20);
+      setFelledVerticalMesh(orangeCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.5, 0.45);
+      return;
+    }
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1], tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, tree.rotation, 0);
+    dummy.updateMatrix();
+    orangeTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+    // Canopy sits on trunk top (~y=1.4 in geometry units) — geometry already
+    // baked at the right offset.
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.4 * tree.scale, tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    orangeCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setDatePalmMatrixAt(palm: PalmEntry, index: number, trunkPitchOffset = 0, trunkRollOffset = 0, frondPitchOffset = 0, frondRollOffset = 0) {
+    if (!datePalmTrunkMeshRef.current || !datePalmFrondMeshRef.current) return;
+    const felled = getFelledTreeState('datePalm', index);
+    if (felled) {
+      setFelledVerticalMesh(datePalmTrunkMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 2.5, 0.22);
+      setFelledVerticalMesh(datePalmFrondMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 5.0, 0.55);
+      return;
+    }
+    const dummy = dummyRef.current;
+    const s = palm.scale;
+    dummy.position.set(palm.position[0], palm.position[1], palm.position[2]);
+    dummy.scale.set(s, s, s);
+    dummy.rotation.set(palm.lean + trunkPitchOffset, palm.rotation, trunkRollOffset);
+    dummy.updateMatrix();
+    datePalmTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(palm.position[0], palm.position[1] + 5 * s, palm.position[2]);
+    dummy.scale.set(s, s, s);
+    dummy.rotation.set(palm.lean * 0.4 + frondPitchOffset, palm.rotation, frondRollOffset);
+    dummy.updateMatrix();
+    datePalmFrondMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setBambooMatrixAt(b: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!bambooMeshRef.current) return;
+    const felled = getFelledTreeState('bamboo', index);
+    if (felled) {
+      setFelledVerticalMesh(bambooMeshRef.current, index, b.position[0], b.position[1], b.position[2], b.scale, felled.fallAngle, 1.6, 0.24);
+      return;
+    }
+    const dummy = dummyRef.current;
+    dummy.position.set(b.position[0] + xOffset, b.position[1], b.position[2] + zOffset);
+    dummy.scale.set(b.scale, b.scale, b.scale);
+    dummy.rotation.set(0, b.rotation, 0);
+    dummy.updateMatrix();
+    bambooMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setWillowMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!willowTrunkMeshRef.current || !willowCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('willow', index);
+    if (felled) {
+      setFelledVerticalMesh(willowTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.0, 0.26);
+      setFelledVerticalMesh(willowCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.8, 0.55);
+      return;
+    }
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.1 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, tree.rotation, 0);
+    dummy.updateMatrix();
+    willowTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 2.3 * tree.scale, tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    willowCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
+  function setCherryMatricesAt(tree: { position: [number, number, number], scale: number }, index: number, xOffset = 0, zOffset = 0) {
+    if (!cherryTrunkMeshRef.current || !cherryCanopyMeshRef.current) return;
+    const felled = getFelledTreeState('cherry', index);
+    if (felled) {
+      setFelledVerticalMesh(cherryTrunkMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 0.95, 0.24);
+      setFelledVerticalMesh(cherryCanopyMeshRef.current, index, tree.position[0], tree.position[1], tree.position[2], tree.scale, felled.fallAngle, 1.7, 0.55);
+      return;
+    }
+    const dummy = dummyRef.current;
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 1.0 * tree.scale, tree.position[2] + zOffset);
+    dummy.scale.set(tree.scale, tree.scale, tree.scale);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    cherryTrunkMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    dummy.position.set(tree.position[0] + xOffset, tree.position[1] + 2.6 * tree.scale, tree.position[2] + zOffset);
+    dummy.updateMatrix();
+    cherryCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
+  }
+
   function setPalmMatrixAt(
     palm: PalmEntry,
     index: number,
@@ -2310,13 +2867,37 @@ export function World() {
 
   useEffect(() => {
     const dummy = dummyRef.current;
-    
+
+    // Per-instance color jitter — multiplies the material base color by a
+    // near-1 RGB so identical canopies stop reading as clones. Deterministic
+    // hash from the instance index keeps results stable across re-populations.
+    const jitterCol = new THREE.Color();
+    const applyFoliageJitter = (
+      mesh: THREE.InstancedMesh,
+      count: number,
+      valRange = 0.18,
+      hueRange = 0.06,
+    ) => {
+      for (let i = 0; i < count; i++) {
+        const r1 = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+        const r2 = Math.sin(i * 269.5 + 183.3) * 43758.5453;
+        const v = (r1 - Math.floor(r1)) - 0.5;
+        const u = (r2 - Math.floor(r2)) - 0.5;
+        const value = 1 + v * valRange;
+        const tilt = u * hueRange;
+        jitterCol.setRGB(value * (1 + tilt), value, value * (1 - tilt));
+        mesh.setColorAt(i, jitterCol);
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    };
+
     if (trunkMeshRef.current && leavesMeshRef.current) {
       treeData.forEach((tree, i) => {
         setTreeMatricesAt(tree, i);
       });
       trunkMeshRef.current.instanceMatrix.needsUpdate = true;
       leavesMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(leavesMeshRef.current, treeData.length);
     }
 
     if (deadTreeMeshRef.current) {
@@ -2337,6 +2918,7 @@ export function World() {
       });
       broadleafTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       broadleafCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(broadleafCanopyMeshRef.current, broadleafData.length);
     }
 
     // Baobab trees — fat trunk, sparse crown
@@ -2346,6 +2928,8 @@ export function World() {
       });
       baobabTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       baobabCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      // Baobab crowns are sparse and dusty — narrower hue tilt, wider value range
+      applyFoliageJitter(baobabCanopyMeshRef.current, baobabData.length, 0.22, 0.04);
     }
 
     // Umbrella acacia — thin trunk, flat disc canopy
@@ -2355,6 +2939,7 @@ export function World() {
       });
       acaciaTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       acaciaCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(acaciaCanopyMeshRef.current, acaciaData.length, 0.20, 0.05);
     }
 
     // Palm trees — trunk and fronds as separate instanced meshes (like regular trees)
@@ -2364,6 +2949,7 @@ export function World() {
       });
       palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(palmFrondMeshRef.current, palmData.length, 0.16, 0.07);
     }
 
     if (mangroveRootMeshRef.current && mangroveCanopyMeshRef.current) {
@@ -2372,6 +2958,50 @@ export function World() {
       });
       mangroveRootMeshRef.current.instanceMatrix.needsUpdate = true;
       mangroveCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(mangroveCanopyMeshRef.current, mangroveData.length, 0.14, 0.05);
+    }
+
+    if (cypressTrunkMeshRef.current && cypressCanopyMeshRef.current) {
+      cypressData.forEach((tree, i) => setCypressMatricesAt(tree, i));
+      cypressTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      cypressCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(cypressCanopyMeshRef.current, cypressData.length, 0.14, 0.04);
+    }
+
+    if (datePalmTrunkMeshRef.current && datePalmFrondMeshRef.current) {
+      datePalmData.forEach((palm, i) => setDatePalmMatrixAt(palm, i));
+      datePalmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      datePalmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(datePalmFrondMeshRef.current, datePalmData.length, 0.16, 0.06);
+    }
+
+    if (bambooMeshRef.current) {
+      bambooData.forEach((b, i) => setBambooMatrixAt(b, i));
+      bambooMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(bambooMeshRef.current, bambooData.length, 0.20, 0.08);
+    }
+
+    if (willowTrunkMeshRef.current && willowCanopyMeshRef.current) {
+      willowData.forEach((tree, i) => setWillowMatricesAt(tree, i));
+      willowTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      willowCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(willowCanopyMeshRef.current, willowData.length, 0.18, 0.06);
+    }
+
+    if (cherryTrunkMeshRef.current && cherryCanopyMeshRef.current) {
+      cherryData.forEach((tree, i) => setCherryMatricesAt(tree, i));
+      cherryTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      cherryCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      // Tighter jitter on cherry — pink should stay pink, not greenish
+      applyFoliageJitter(cherryCanopyMeshRef.current, cherryData.length, 0.10, 0.03);
+    }
+
+    if (orangeTrunkMeshRef.current && orangeCanopyMeshRef.current) {
+      orangeData.forEach((tree, i) => setOrangeMatricesAt(tree, i));
+      orangeTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      orangeCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+      // Skip jitter on orange — vertex colors carry the leaf/fruit split,
+      // and a hue tilt would muddy the orange.
     }
 
     if (reedBedMeshRef.current) {
@@ -2383,6 +3013,7 @@ export function World() {
         reedBedMeshRef.current!.setMatrixAt(i, dummy.matrix);
       });
       reedBedMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(reedBedMeshRef.current, reedBedData.length, 0.20, 0.05);
     }
 
     if (siltPatchMeshRef.current) {
@@ -2427,6 +3058,7 @@ export function World() {
         thornbushMeshRef.current!.setMatrixAt(i, dummy.matrix);
       });
       thornbushMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(thornbushMeshRef.current, thornbushData.length, 0.22, 0.04);
     }
 
     if (riceShootMeshRef.current) {
@@ -2438,6 +3070,7 @@ export function World() {
         riceShootMeshRef.current!.setMatrixAt(i, dummy.matrix);
       });
       riceShootMeshRef.current.instanceMatrix.needsUpdate = true;
+      applyFoliageJitter(riceShootMeshRef.current, riceShootData.length, 0.18, 0.06);
     }
 
     if (driftwoodMeshRef.current) {
@@ -2536,20 +3169,30 @@ export function World() {
       gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
-  }, [treeData, deadTreeData, broadleafData, baobabData, acaciaData, palmData, mangroveData, reedBedData, siltPatchData, saltStainData, cactusData, thornbushData, riceShootData, driftwoodData, beachRockData, crabData, coralData, fishData, turtleData, gullData]);
+  }, [treeData, deadTreeData, broadleafData, baobabData, acaciaData, palmData, mangroveData, cypressData, datePalmData, bambooData, willowData, cherryData, orangeData, reedBedData, siltPatchData, saltStainData, cactusData, thornbushData, riceShootData, driftwoodData, beachRockData, crabData, coralData, fishData, turtleData, gullData]);
 
   // Stabilize shadow camera — snap target to texel grid to prevent shimmer,
   // and move the light position with the player so shadow direction stays constant.
   // Uses active player pos (walker when disembarked, ship otherwise) so shadows
   // follow whichever avatar the camera is on.
-  useFrame(() => {
+  useFrame((state) => {
     const light = sunLightRef.current;
     if (!light || !light.shadow?.camera) return;
     const playerPos = getActivePlayerPos();
 
-    // Feed player position to terrain shader for distance-based shadow fade
+    // Feed player position to terrain shader for distance-based shadow fade.
+    // Cloud shadow uniforms reuse the existing wind direction/speed; strength
+    // is gated by the renderDebug.cloudShadows toggle.
     if (terrainShaderUniformsRef.current) {
-      terrainShaderUniformsRef.current.uPlayerPos.value.set(playerPos[0], playerPos[1], playerPos[2]);
+      const u = terrainShaderUniformsRef.current;
+      u.uPlayerPos.value.set(playerPos[0], playerPos[1], playerPos[2]);
+      const cloudsOn = useGameStore.getState().renderDebug.cloudShadows;
+      const { windDirection, windSpeed } = useGameStore.getState();
+      u.uCloudTime.value = state.clock.elapsedTime;
+      u.uCloudWindDir.value.set(Math.sin(windDirection), Math.cos(windDirection));
+      // Strength scales with wind speed so calm days have weaker, slower shadows.
+      // Peak ~0.55: cloud patches darken sunlit ground by up to 55%.
+      u.uCloudStrength.value = cloudsOn ? 0.35 + 0.20 * THREE.MathUtils.clamp(windSpeed, 0, 1) : 0;
     }
 
     const cam = light.shadow.camera as THREE.OrthographicCamera;
@@ -2573,6 +3216,7 @@ export function World() {
   const PALM_SWAY_RANGE_SQ = 100 * 100;
 
   useFrame((state, delta) => {
+    updateWindUniforms(state.clock.elapsedTime);
     respawnCheckAccum.current += delta;
     if (respawnCheckAccum.current >= 1) {
       tickFishRespawn();
@@ -2831,6 +3475,12 @@ export function World() {
     let baobabDirty = false;
     let acaciaDirty = false;
     let mangroveDirty = false;
+    let cypressDirty = false;
+    let datePalmDirty = false;
+    let bambooDirty = false;
+    let willowDirty = false;
+    let cherryDirty = false;
+    let orangeDirty = false;
 
     for (const shake of treeShakes) {
       const age = now - shake.time;
@@ -2895,6 +3545,61 @@ export function World() {
           mangroveDirty = true;
           break;
         }
+        case 'cypress': {
+          const tree = cypressData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 58 + shake.index * 0.41) * tree.scale * 0.10 * sway;
+          const zOffset = Math.cos(age * 51 + shake.index * 0.35) * tree.scale * 0.08 * sway;
+          setCypressMatricesAt(tree, shake.index, xOffset, zOffset);
+          cypressDirty = true;
+          break;
+        }
+        case 'datePalm': {
+          const palm = datePalmData[shake.index];
+          if (!palm) break;
+          const pitch = Math.sin(age * 38 + shake.index * 0.49) * 0.14 * sway;
+          const roll = Math.cos(age * 34 + shake.index * 0.43) * 0.12 * sway;
+          setDatePalmMatrixAt(palm, shake.index, pitch, roll, pitch * 1.2, roll * 1.25);
+          datePalmDirty = true;
+          break;
+        }
+        case 'bamboo': {
+          const b = bambooData[shake.index];
+          if (!b) break;
+          // Bamboo whips more violently than rigid trees
+          const xOffset = Math.sin(age * 64 + shake.index * 0.33) * b.scale * 0.22 * sway;
+          const zOffset = Math.cos(age * 57 + shake.index * 0.29) * b.scale * 0.20 * sway;
+          setBambooMatrixAt(b, shake.index, xOffset, zOffset);
+          bambooDirty = true;
+          break;
+        }
+        case 'willow': {
+          const tree = willowData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 50 + shake.index * 0.32) * tree.scale * 0.16 * sway;
+          const zOffset = Math.cos(age * 45 + shake.index * 0.27) * tree.scale * 0.13 * sway;
+          setWillowMatricesAt(tree, shake.index, xOffset, zOffset);
+          willowDirty = true;
+          break;
+        }
+        case 'cherry': {
+          const tree = cherryData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 53 + shake.index * 0.30) * tree.scale * 0.17 * sway;
+          const zOffset = Math.cos(age * 48 + shake.index * 0.26) * tree.scale * 0.14 * sway;
+          setCherryMatricesAt(tree, shake.index, xOffset, zOffset);
+          cherryDirty = true;
+          break;
+        }
+        case 'orange': {
+          const tree = orangeData[shake.index];
+          if (!tree) break;
+          const xOffset = Math.sin(age * 56 + shake.index * 0.34) * tree.scale * 0.16 * sway;
+          const zOffset = Math.cos(age * 50 + shake.index * 0.28) * tree.scale * 0.13 * sway;
+          setOrangeMatricesAt(tree, shake.index, xOffset, zOffset);
+          orangeDirty = true;
+          break;
+        }
       }
     }
 
@@ -2941,6 +3646,42 @@ export function World() {
             mangroveDirty = true;
           }
           break;
+        case 'cypress':
+          if (cypressData[index]) {
+            setCypressMatricesAt(cypressData[index], index);
+            cypressDirty = true;
+          }
+          break;
+        case 'datePalm':
+          if (datePalmData[index]) {
+            setDatePalmMatrixAt(datePalmData[index], index);
+            datePalmDirty = true;
+          }
+          break;
+        case 'bamboo':
+          if (bambooData[index]) {
+            setBambooMatrixAt(bambooData[index], index);
+            bambooDirty = true;
+          }
+          break;
+        case 'willow':
+          if (willowData[index]) {
+            setWillowMatricesAt(willowData[index], index);
+            willowDirty = true;
+          }
+          break;
+        case 'cherry':
+          if (cherryData[index]) {
+            setCherryMatricesAt(cherryData[index], index);
+            cherryDirty = true;
+          }
+          break;
+        case 'orange':
+          if (orangeData[index]) {
+            setOrangeMatricesAt(orangeData[index], index);
+            orangeDirty = true;
+          }
+          break;
       }
     });
 
@@ -2970,6 +3711,29 @@ export function World() {
     if (mangroveDirty && mangroveRootMeshRef.current && mangroveCanopyMeshRef.current) {
       mangroveRootMeshRef.current.instanceMatrix.needsUpdate = true;
       mangroveCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (cypressDirty && cypressTrunkMeshRef.current && cypressCanopyMeshRef.current) {
+      cypressTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      cypressCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (datePalmDirty && datePalmTrunkMeshRef.current && datePalmFrondMeshRef.current) {
+      datePalmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      datePalmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (bambooDirty && bambooMeshRef.current) {
+      bambooMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (willowDirty && willowTrunkMeshRef.current && willowCanopyMeshRef.current) {
+      willowTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      willowCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (cherryDirty && cherryTrunkMeshRef.current && cherryCanopyMeshRef.current) {
+      cherryTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      cherryCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (orangeDirty && orangeTrunkMeshRef.current && orangeCanopyMeshRef.current) {
+      orangeTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+      orangeCanopyMeshRef.current.instanceMatrix.needsUpdate = true;
     }
   });
 
@@ -3059,6 +3823,39 @@ export function World() {
         <>
           <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
           <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        </>
+      )}
+      {cypressData.length > 0 && (
+        <>
+          <instancedMesh ref={cypressTrunkMeshRef} args={[cypressTrunkGeometry, cypressTrunkMaterial, cypressData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={cypressCanopyMeshRef} args={[cypressCanopyGeometry, cypressCanopyMaterial, cypressData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        </>
+      )}
+      {datePalmData.length > 0 && (
+        <>
+          <instancedMesh ref={datePalmTrunkMeshRef} args={[datePalmTrunkGeometry, datePalmTrunkMaterial, datePalmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={datePalmFrondMeshRef} args={[datePalmFrondGeometry, datePalmFrondMaterial, datePalmData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        </>
+      )}
+      {bambooData.length > 0 && (
+        <instancedMesh ref={bambooMeshRef} args={[bambooGeometry, bambooMaterial, bambooData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+      )}
+      {willowData.length > 0 && (
+        <>
+          <instancedMesh ref={willowTrunkMeshRef} args={[willowTrunkGeometry, willowTrunkMaterial, willowData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={willowCanopyMeshRef} args={[willowCanopyGeometry, willowCanopyMaterial, willowData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        </>
+      )}
+      {cherryData.length > 0 && (
+        <>
+          <instancedMesh ref={cherryTrunkMeshRef} args={[cherryTrunkGeometry, cherryTrunkMaterial, cherryData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={cherryCanopyMeshRef} args={[cherryCanopyGeometry, cherryCanopyMaterial, cherryData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        </>
+      )}
+      {orangeData.length > 0 && (
+        <>
+          <instancedMesh ref={orangeTrunkMeshRef} args={[orangeTrunkGeometry, orangeTrunkMaterial, orangeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={orangeCanopyMeshRef} args={[orangeCanopyGeometry, orangeCanopyMaterial, orangeData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
         </>
       )}
       {reedBedData.length > 0 && (

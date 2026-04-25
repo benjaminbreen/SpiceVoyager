@@ -12,6 +12,7 @@ export interface NpcCombatContext {
 }
 
 export type CollisionResponse = 'apologize' | 'pay' | 'ignore' | 'threaten';
+export type WarningResponse = 'alterCourse' | 'payToll' | 'ignore' | 'threaten';
 
 export const COLLISION_REPUTATION_TARGET: Record<CollisionResponse | 'ram', number> = {
   ram: -100,
@@ -86,11 +87,13 @@ export function chooseInitiativePosture(
   const hostile = context.reputation <= -60;
   const suspicious = context.reputation <= -25;
   const relationModifier = context.playerFlag ? factionRelationModifier(context.playerFlag, identity.flag) : 0;
+  const sameFaction = context.playerFlag === identity.flag;
   const rival = relationModifier <= -25;
   const bitterRival = relationModifier <= -35;
+  const eligiblePredationTarget = !sameFaction && (relationModifier < 0 || suspicious);
   const cargoTemptation = context.cargoTemptation ?? 0;
 
-  if (identity.role === 'privateer' && (hostile || bitterRival || cargoTemptation >= 55 || (suspicious && rival))) {
+  if (identity.role === 'privateer' && (hostile || bitterRival || (eligiblePredationTarget && cargoTemptation >= 55) || (suspicious && rival))) {
     return identity.morale >= 35 ? 'warn' : 'neutral';
   }
   if (identity.role === 'armed patrol' && (hostile || bitterRival || (suspicious && rival))) {

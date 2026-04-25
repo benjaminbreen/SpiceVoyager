@@ -1,5 +1,91 @@
 import type { Port } from '../store/gameStore';
 import { placeHinterlandScenes, type SceneKind } from './hinterlandScenes';
+import type { BiomeType } from './terrain';
+
+export type WindContext =
+  | 'sea'
+  | 'forest'
+  | 'grass'
+  | 'arid'
+  | 'wetland'
+  | 'stone';
+
+const WIND_LINES: Record<WindContext, string[]> = {
+  sea: [
+    'The rigging hums…',
+    'Sails snap taut.',
+    'The mast creaks aloud.',
+    'Spray hisses off the bow.',
+  ],
+  forest: [
+    'Leaves rustle…',
+    'Branches groan overhead.',
+    'A gust through the canopy.',
+  ],
+  grass: [
+    'The grass bends low.',
+    'Wind combs the field.',
+    'Reeds whisper at your ankles.',
+  ],
+  arid: [
+    'Sand hisses across the path.',
+    'A dust devil curls and is gone.',
+    'Hot wind, dry as paper.',
+  ],
+  wetland: [
+    'Reeds clatter in the gust.',
+    'The mangrove sighs.',
+    'Brackish wind, low and steady.',
+  ],
+  stone: [
+    'Wind moans across the stones.',
+    'A cold gust off the rocks.',
+    'The air goes thin and sharp.',
+  ],
+};
+
+const WIND_COLORS: Record<WindContext, string> = {
+  sea:     '#b8c8d8',
+  forest:  '#9ab088',
+  grass:   '#c8c088',
+  arid:    '#d8b878',
+  wetland: '#a8b89c',
+  stone:   '#b0b0b0',
+};
+
+export function biomeToWindContext(biome: BiomeType): WindContext {
+  switch (biome) {
+    case 'forest':
+    case 'jungle':
+      return 'forest';
+    case 'grassland':
+    case 'paddy':
+    case 'scrubland':
+      return 'grass';
+    case 'desert':
+    case 'beach':
+    case 'arroyo':
+      return 'arid';
+    case 'mangrove':
+    case 'swamp':
+    case 'tidal_flat':
+    case 'lagoon':
+    case 'river':
+    case 'waterfall':
+      return 'wetland';
+    case 'rocky_shore':
+    case 'snow':
+    case 'volcano':
+      return 'stone';
+    case 'ocean':
+    default:
+      return 'sea';
+  }
+}
+
+export function getWindLines(ctx: WindContext): { lines: string[]; color: string } {
+  return { lines: WIND_LINES[ctx], color: WIND_COLORS[ctx] };
+}
 
 export type AmbientSourceKind =
   | SceneKind

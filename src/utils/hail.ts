@@ -3,7 +3,19 @@ import type { NPCShipIdentity } from './npcShipGenerator';
 import { COMMODITY_DEFS, type Commodity } from './commodities';
 
 export type HailMood = 'HOSTILE' | 'COLD' | 'WARY' | 'CORDIAL' | 'WARM';
-export type HailAction = 'news' | 'trade' | 'portIntel' | 'leave' | 'collision_apologize' | 'collision_pay' | 'collision_ignore' | 'collision_threaten';
+export type HailAction =
+  | 'news'
+  | 'trade'
+  | 'portIntel'
+  | 'leave'
+  | 'collision_apologize'
+  | 'collision_pay'
+  | 'collision_ignore'
+  | 'collision_threaten'
+  | 'warning_alter_course'
+  | 'warning_pay_toll'
+  | 'warning_ignore'
+  | 'warning_threaten';
 
 export const DEFAULT_BARTER_QTY = 3;
 export const BARTER_CANDIDATE_POOL = 3;
@@ -65,6 +77,153 @@ export function getHailGreeting(npc: NPCShipIdentity, mood: HailMood): string {
     ],
   };
   return pickStable(lines[mood], npc.id + mood);
+}
+
+// ── Port-picker prompts ────────────────────────────────────────────
+// Said by an NPC captain while the player is choosing which of his
+// visited ports to ask about. Picked deterministically from the npc.id
+// so the line is stable across re-renders within a single picker
+// session, but varies between encounters.
+
+const PORT_PICKER_MOOD: Record<HailMood, string[]> = {
+  HOSTILE: [
+    `One word. Which port. Then we part.`,
+    `Speak — but I owe you nothing.`,
+    `Quickly, before my temper turns.`,
+    `Name it. I have no patience for your kind.`,
+    `Ask, and have done with us.`,
+  ],
+  COLD: [
+    `Choose. I will not stand here all watch.`,
+    `Be brief. Which port.`,
+    `Name it and have done.`,
+    `One question. Then we are away.`,
+    `If it must be asked, ask it.`,
+    `Pick the place. No more than that.`,
+  ],
+  WARY: [
+    `Which port? Be quick about it.`,
+    `Name it, and I will see what I can tell.`,
+    `Which one? I have business waiting.`,
+    `Pick the place. I will speak briefly.`,
+    `If you must ask — choose.`,
+    `Speak the name. We can spare a moment.`,
+    `Out with it. Which harbour?`,
+  ],
+  CORDIAL: [
+    `Speak the port. I will tell what I have seen.`,
+    `Which one? My memory holds enough.`,
+    `Name it. A captain owes another captain that much.`,
+    `I have run a few coasts. Pick your port.`,
+    `Choose, and I will give you the lay of the harbour.`,
+    `Ask freely. What we know, you may know.`,
+    `Which place would you have? I will be plain.`,
+  ],
+  WARM: [
+    `Many waters, friend. Which would you have me speak of?`,
+    `Gladly. Name the place and I will tell what I know.`,
+    `I have run many coasts. Choose one and I will paint it for you.`,
+    `Speak the port — anchorage, holders, who weighs his hand on the scales.`,
+    `Of which shall I tell? Spare nothing of your asking.`,
+    `Ask, and ask thoroughly. We have time enough.`,
+    `A captain's gift to another. Which port?`,
+  ],
+};
+
+// Role-flavoured variants. Used in WARY/CORDIAL/WARM moods only — a
+// hostile captain doesn't pause to characterise his trade.
+const PORT_PICKER_ROLE: Partial<Record<string, string[]>> = {
+  'pilgrim carrier': [
+    `I run the faithful between holy places. Which port do you ask of?`,
+    `My deck has carried hajjis and traders both. Name the place.`,
+  ],
+  'privateer': [
+    `What I know I took from fatter ships. Choose.`,
+    `I have smelled the smoke of half these harbours. Which one?`,
+  ],
+  'smuggler': [
+    `I do not write down where I have been. But ask, and we will see.`,
+    `Some ports remember me. Some prefer not to. Which?`,
+  ],
+  'spice convoy': [
+    `Spice and silk and salt — choose your port.`,
+    `I have run with the convoys. Pick a harbour.`,
+  ],
+  'horse transport': [
+    `I run horses up the gulf. Pick a place I might have watered.`,
+    `My hold is straw and beasts more often than not. Which port?`,
+  ],
+  'armed patrol': [
+    `I have stood guard off most of these coasts. Which?`,
+    `I know the lee of every fort here. Speak.`,
+  ],
+  'coastal trader': [
+    `I work the same waters year on year. Which port?`,
+    `I touch a dozen harbours each monsoon. Name one.`,
+  ],
+  'fisherman': [
+    `I'm only a fisherman. But ask, if you like.`,
+  ],
+  'courier': [
+    `I run despatches more than cargo. Which port?`,
+    `My business is letters and small chests. Speak the place.`,
+  ],
+  'blue-water merchant': [
+    `I have crossed open ocean for trade. Choose your port.`,
+    `My logbook runs to many coasts. Which one?`,
+  ],
+};
+
+// Tradition flourishes — tacked onto the front of a base line for
+// flavour. Kept short and culturally plausible. Empty entries fall
+// through to the plain mood line.
+const PORT_PICKER_PREFIX: Partial<Record<string, string[]>> = {
+  portuguese_estado:    [`By Santa Maria,`, `Por Deus,`],
+  portuguese_atlantic:  [`By Santa Maria,`, `Por Deus,`],
+  spanish_atlantic:     [`Por la Virgen,`, `Hombre,`],
+  english_eic:          [`By God,`, `Well,`],
+  english_atlantic:     [`By God,`, `Well now,`],
+  french_atlantic:      [`Par Dieu,`, `Eh bien,`],
+  dutch_voc:            [`Bij God,`, `Wel,`],
+  dutch_atlantic:       [`Bij God,`, `Kom,`],
+  gujarati_merchant:    [`Ram Ram,`, `Bhai,`],
+  mughal_surati:        [`Bismillah,`, `Sahib,`],
+  omani_dhow:           [`Bismillah,`, `Wallahi,`],
+  persian_gulf:         [`Bismillah,`, `Saheb,`],
+  ottoman_red_sea:      [`Bismillah,`, `Effendi,`],
+  swahili_coaster:      [`Insha'Allah,`, `Bwana,`],
+  malay_prau:           [`Demi Allah,`, `Tuan,`],
+  acehnese_raider:      [`Demi Allah,`],
+  javanese_jong:        [`Demi Allah,`, `Tuan,`],
+  chinese_junk:         [`Aiyah,`],
+  japanese_red_seal:    [],
+  local_caribbean:      [`Hombre,`, `Bueno,`],
+};
+
+export function getPortPickerPrompt(npc: NPCShipIdentity, mood: HailMood): string {
+  const seed = npc.id + 'picker';
+
+  // Friendly captains may volunteer a role-flavoured opener instead of
+  // a generic one. Roughly 1 in 3 of the time, only on WARY+ moods.
+  if (mood !== 'HOSTILE' && mood !== 'COLD') {
+    const rolePool = PORT_PICKER_ROLE[npc.role];
+    if (rolePool && rolePool.length > 0 && hashString(seed + 'role') % 3 === 0) {
+      return pickStable(rolePool, seed + 'rolepick');
+    }
+  }
+
+  const base = pickStable(PORT_PICKER_MOOD[mood], seed + 'mood');
+
+  // ~35% chance of a tradition prefix. Hostile captains skip it.
+  if (mood !== 'HOSTILE') {
+    const prefixPool = PORT_PICKER_PREFIX[npc.traditionId];
+    if (prefixPool && prefixPool.length > 0 && hashString(seed + 'prefix') % 100 < 35) {
+      const prefix = pickStable(prefixPool, seed + 'prefixpick');
+      return `${prefix} ${base.charAt(0).toLowerCase()}${base.slice(1)}`;
+    }
+  }
+
+  return base;
 }
 
 export function bearingFromTo(
