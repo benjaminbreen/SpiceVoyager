@@ -15,6 +15,8 @@ export interface Projectile {
   vel: THREE.Vector3;
   life: number;       // seconds remaining
   weaponType: ProjectileWeaponType;
+  owner: 'player' | 'npc';
+  ownerId?: string;
   /** Accumulator for rocket-trail spawning — fires a smoke puff every
    *  ~50ms while positive. Only set for fireRocket projectiles. */
   trailClock?: number;
@@ -72,6 +74,7 @@ export function spawnProjectile(
   direction: THREE.Vector3,
   speed: number,
   weaponType: ProjectileWeaponType = 'swivelGun',
+  opts: { owner?: 'player' | 'npc'; ownerId?: string } = {},
 ) {
   // Rockets fly slower but longer — give them more life so they reach the
   // extreme range their damage/reload cost pays for.
@@ -81,6 +84,8 @@ export function spawnProjectile(
     vel: direction.clone().multiplyScalar(speed),
     life,
     weaponType,
+    owner: opts.owner ?? 'player',
+    ownerId: opts.ownerId,
     trailClock: weaponType === 'fireRocket' ? 0 : undefined,
   };
   if (projectiles.length >= MAX_PROJECTILES) {
@@ -145,6 +150,8 @@ export interface BroadsideShot {
   direction: THREE.Vector3;
   speed: number;
   weaponType: ProjectileWeaponType;
+  owner?: 'player' | 'npc';
+  ownerId?: string;
   fired: boolean;
 }
 export const broadsideQueue: BroadsideShot[] = [];

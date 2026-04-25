@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { UI } from './UI';
+import { AmbientText } from './AmbientText';
 import { TouchControls } from './TouchControls';
 import { CrewDeathModal } from './CrewDeathModal';
 import { GameOverScreen } from './GameOverScreen';
@@ -69,6 +70,7 @@ export function Game() {
         </Suspense>
       )}
       <UI />
+      {voyageBegun && <AmbientText />}
       <TouchControls />
       <CrewDeathModal />
       <GameOverScreen />

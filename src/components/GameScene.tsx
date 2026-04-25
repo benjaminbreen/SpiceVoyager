@@ -7,6 +7,7 @@ import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
 import { HinterlandScenes } from './HinterlandScenes';
 import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building } from '../store/gameStore';
+import { resolveCampaignPortId } from '../utils/worldPorts';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
@@ -643,6 +644,22 @@ function pointHitsNpcShip(point: THREE.Vector3) {
     }
   }
   return null;
+}
+
+function pointHitsPlayerShip(point: THREE.Vector3) {
+  const player = getLiveShipTransform();
+  const dx = point.x - player.pos[0];
+  const dy = point.y - (player.pos[1] + 1.4);
+  const dz = point.z - player.pos[2];
+  const radius = 4.5;
+  return dx * dx + dz * dz < radius * radius && Math.abs(dy) < 3.2;
+}
+
+function npcProjectileDamage(weaponType: WeaponType | LandWeaponType) {
+  if (weaponType === 'musket' || weaponType === 'bow') {
+    return LAND_WEAPON_DEFS[weaponType].damage;
+  }
+  return WEAPON_DEFS[weaponType].damage;
 }
 
 function pointHitsBuilding(point: THREE.Vector3) {
@@ -1866,13 +1883,16 @@ function ProjectileSystem() {
         continue;
       }
       if (now >= shot.fireAt) {
-        spawnProjectile(shot.origin, shot.direction, shot.speed, shot.weaponType);
+        spawnProjectile(shot.origin, shot.direction, shot.speed, shot.weaponType, {
+          owner: shot.owner,
+          ownerId: shot.ownerId,
+        });
         sfxBroadsideCannon();
         shot.fired = true;
       }
     }
 
-    const { adjustReputation, addNotification } = useGameStore.getState();
+    const { adjustReputation, addNotification, damageShip } = useGameStore.getState();
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
@@ -1922,6 +1942,36 @@ function ProjectileSystem() {
       }
 
       let hit = false;
+
+      // NPC-owned shots are hostile fire: they can damage the player's ship,
+      // but they must not reuse player hit logic that damages NPCs/buildings
+      // or applies player reputation penalties.
+      if ((p.owner ?? 'player') === 'npc') {
+        if (pointHitsPlayerShip(p.pos)) {
+          const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
+          const damage = npcProjectileDamage(p.weaponType);
+          if (isRocket) {
+            sfxRocketImpact();
+            spawnImpactBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, 1.1);
+          } else {
+            sfxCannonImpact();
+          }
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.55 : 0.95);
+          damageShip(damage);
+          addNotification(`Enemy shot strikes the hull! -${damage} hull`, 'warning');
+          projectiles.splice(i, 1);
+          continue;
+        }
+
+        const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
+        if (p.pos.y <= surfaceY) {
+          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : 0.7);
+          projectiles.splice(i, 1);
+          continue;
+        }
+
+        continue;
+      }
 
       // ── Land weapon: hit-test against wildlife ──
       if (isLandWeapon) {
@@ -1973,11 +2023,11 @@ function ProjectileSystem() {
         }
         const pedIdx = pointHitsPedestrian(p.pos.x, p.pos.y, p.pos.z);
         if (pedIdx >= 0) {
-          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, 0.4);
+          spawnImpactBurst(p.pos.x, p.pos.y + 0.8, p.pos.z, 0.5);
           markKillPedestrian(pedIdx);
-          const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
-          if (portFaction) adjustReputation(portFaction, -30);
-          addNotification('A bystander struck down.', 'warning');
+          const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
+          if (portFaction) adjustReputation(portFaction, -50);
+          addNotification('A bystander has been shot down.', 'error');
           projectiles.splice(i, 1);
           continue;
         }
@@ -1988,7 +2038,7 @@ function ProjectileSystem() {
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.65);
           applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType), buildingMaxHp(building));
           spawnBuildingShake(building.id, impactIntensity);
-          const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
+          const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
           if (portFaction) adjustReputation(portFaction, -20);
           projectiles.splice(i, 1);
           continue;
@@ -2126,7 +2176,7 @@ function ProjectileSystem() {
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.7);
         applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType), buildingMaxHp(building));
         spawnBuildingShake(building.id, impactIntensity);
-        const portFaction = PORT_FACTION[useGameStore.getState().activePort?.id ?? ''];
+        const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
         const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
         if (portFaction) adjustReputation(portFaction, isAimable ? -10 : -25);
         projectiles.splice(i, 1);

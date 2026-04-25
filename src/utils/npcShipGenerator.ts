@@ -1,7 +1,8 @@
 import { Language, Nationality } from '../store/gameStore';
 import { type Commodity } from './commodities';
+import { TRADITION_VISITED_PORTS } from './portIntel';
 
-type Weighted<T> = [T, number];
+export type Weighted<T> = [T, number];
 
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -747,7 +748,7 @@ function generateVisual(tradition: ShipTradition, shipType: ShipType, morale: nu
       || shipType === 'Gallivat' || shipType === 'Brigantine' || shipType === 'Nao',
     hasSternCastle: shipType === 'Carrack' || shipType === 'Galleon' || shipType === 'Junk'
       || shipType === 'Jong' || shipType === 'Nao',
-    scale: visualScaleForShipType(shipType),
+    scale: visualScaleForShipType(shipType) * 1.2,
     wear: Math.max(0.05, Math.min(0.9, 1 - morale / 100 + Math.random() * 0.2)),
   };
 }
@@ -769,6 +770,31 @@ export interface NPCShipIdentity {
   position: [number, number, number];
   maxHull: number;
   visual: NPCShipVisual;
+  // Ports this captain has touched on prior voyages — seeded from the
+  // tradition's travel pool. Used by the hail "ask about a port" action.
+  visitedPorts: string[];
+}
+
+function generateVisitedPorts(traditionId: ShipTraditionId, currentPortId: string | undefined): string[] {
+  // Avoid a circular import — read the pool off the module lazily.
+  const pool = TRADITION_VISITED_PORTS[traditionId] ?? [];
+  const count = randInt(2, 4);
+  const picked = new Set<string>();
+
+  // The port the NPC was spawned at is almost always one they've visited.
+  if (currentPortId && pool.some(([id]) => id === currentPortId)) {
+    picked.add(currentPortId);
+  }
+
+  // Draw without replacement from the weighted pool.
+  const remaining: Weighted<string>[] = pool.filter(([id]) => !picked.has(id));
+  while (picked.size < count && remaining.length > 0) {
+    const chosen = weightedPick(remaining);
+    picked.add(chosen);
+    const idx = remaining.findIndex(([id]) => id === chosen);
+    if (idx >= 0) remaining.splice(idx, 1);
+  }
+  return [...picked];
 }
 
 export function generateNPCShip(
@@ -807,5 +833,6 @@ export function generateNPCShip(
     position,
     maxHull: randInt(minHull, maxHull),
     visual: generateVisual(tradition, shipType, morale),
+    visitedPorts: generateVisitedPorts(traditionId, context.portId),
   };
 }

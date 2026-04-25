@@ -712,6 +712,7 @@ export interface RenderDebugSettings {
   cityFieldOverlay: boolean;
   cityFieldMode: CityFieldKey | 'district';
   sacredMarkers: boolean;
+  settingsV2: boolean;
 }
 
 interface GameState {
@@ -891,6 +892,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   cityFieldOverlay: false,
   cityFieldMode: 'prestige',
   sacredMarkers: true,
+  settingsV2: true,
 };
 
 // ── Crew helper functions ──────────────────────────────────────────────

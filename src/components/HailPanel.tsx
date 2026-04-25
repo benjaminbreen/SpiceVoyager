@@ -1,25 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, type CargoStack, type Port } from '../store/gameStore';
+import { PORT_INTEL } from '../utils/portIntel';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import { ConfigPortrait, tavernNpcToPortraitConfig } from './CrewPortrait';
 import { FactionFlag } from './FactionFlag';
 import { sfxClick, sfxHover } from '../audio/SoundEffects';
 import { floatingPanelMotion } from '../utils/uiMotion';
-import { getLiveShipTransform } from '../utils/livePlayerTransform';
 import { useIsMobile } from '../utils/useIsMobile';
+import { effectiveFactionReputation, sharesFactionLanguage } from '../utils/factionRelations';
+import { COLLISION_REPUTATION_TARGET, type CollisionResponse } from '../utils/npcCombat';
 import {
   BARTER_CANDIDATE_POOL,
   DEFAULT_BARTER_QTY,
   LANGUAGE_COLOR,
   UNTRANSLATED_HAIL,
-  bearingFromTo,
   buildImpression,
   commodityUnitValue,
   dominantCommodity,
   getBarterCounterOffer,
   getBarterDialogue,
+  getCollisionHail,
+  getRememberedCollisionGreeting,
   getHailGreeting,
   getHailMood,
   getHailMoodColor,
@@ -27,6 +30,7 @@ import {
   markAwardedTranslation,
   pickStable,
   pickTranslator,
+  recordCollisionGrievance,
   type BarterCounterOffer,
   type HailAction,
   type HailMood,
@@ -300,11 +304,15 @@ function BarterTray({
   );
 }
 
-export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () => void }) {
+export type HailContext = 'normal' | 'collision';
+
+export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipIdentity; onClose: () => void; context?: HailContext }) {
   const rep = useGameStore((state) => state.getReputation(npc.flag));
   const cargo = useGameStore((state) => state.cargo);
   const crew = useGameStore((state) => state.crew);
   const cargoCapacity = useGameStore((state) => state.stats.cargoCapacity);
+  const gold = useGameStore((state) => state.gold);
+  const playerFlag = useGameStore((state) => state.ship.flag);
   const { isMobile } = useIsMobile();
 
   // Auto-close if the NPC is destroyed or leaves the active set.
@@ -316,10 +324,22 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
   }, [npcStillAlive, onClose]);
 
   const hailLanguage = npc.hailLanguage ?? 'Portuguese';
-  const translator = useMemo(() => pickTranslator(crew, hailLanguage), [crew, hailLanguage]);
-  const canUnderstand = Boolean(translator);
-  const mood = getHailMood(rep);
-  const greeting = useMemo(() => getHailGreeting(npc, mood), [npc, mood]);
+  const understandsByFaction = sharesFactionLanguage(playerFlag, npc.flag, hailLanguage);
+  const translator = useMemo(() => understandsByFaction ? null : pickTranslator(crew, hailLanguage), [crew, hailLanguage, understandsByFaction]);
+  const canUnderstand = understandsByFaction || Boolean(translator);
+  const effectiveRep = useMemo(() => effectiveFactionReputation(rep, playerFlag, npc.flag), [npc.flag, playerFlag, rep]);
+  const baseMood = getHailMood(effectiveRep);
+  const [collisionMood, setCollisionMood] = useState<HailMood | null>(context === 'collision' ? 'HOSTILE' : null);
+  const mood = collisionMood ?? baseMood;
+  const rememberedCollisionGreeting = useMemo(
+    () => context === 'normal' ? getRememberedCollisionGreeting(npc, canUnderstand) : null,
+    [canUnderstand, context, npc],
+  );
+  const greeting = useMemo(
+    () => rememberedCollisionGreeting ?? getHailGreeting(npc, mood),
+    [rememberedCollisionGreeting, npc, mood],
+  );
+  const collisionGreeting = useMemo(() => getCollisionHail(npc, canUnderstand), [npc, canUnderstand]);
   const impression = useMemo(() => buildImpression(npc, mood), [npc, mood]);
   const languageColor = LANGUAGE_COLOR[hailLanguage] ?? '#e2c87a';
 
@@ -344,6 +364,24 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
   const [result, setResult] = useState<{ tone: 'good' | 'warn' | 'neutral'; text: string; impact?: string } | null>(null);
   const [barterMode, setBarterMode] = useState<{ yourGood: Commodity | null; yourQty: number } | null>(null);
 
+  const collisionAnswered = Boolean(
+    used.collision_apologize ||
+    used.collision_pay ||
+    used.collision_ignore ||
+    used.collision_threaten,
+  );
+
+  const setFactionReputation = useCallback((target: number) => {
+    const state = useGameStore.getState();
+    state.adjustReputation(npc.flag, target - state.getReputation(npc.flag));
+  }, [npc.flag]);
+
+  const dispatchCollisionResponse = useCallback((response: CollisionResponse) => {
+    window.dispatchEvent(new CustomEvent('npc-collision-response', {
+      detail: { npcId: npc.id, response },
+    }));
+  }, [npc.id]);
+
   const counterOffer = useMemo(() => {
     if (!barterMode?.yourGood) return null;
     return getBarterCounterOffer(npc, barterMode.yourGood, barterMode.yourQty, mood);
@@ -359,6 +397,7 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
   // and let the player farm reputation by pressing T repeatedly.
   const [xpChipVisible, setXpChipVisible] = useState(false);
   useEffect(() => {
+    if (context !== 'normal') return;
     if (!translator) return;
     if (hasAwardedTranslation(npc.id)) return;
     markAwardedTranslation(npc.id);
@@ -380,7 +419,7 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
     }));
     const timer = setTimeout(() => setXpChipVisible(false), 2400);
     return () => clearTimeout(timer);
-  }, [hailLanguage, npc.id, npc.flag, npc.shipType, translator]);
+  }, [context, hailLanguage, npc.id, npc.flag, npc.shipType, translator]);
 
   const canBarter = canUnderstand && mood !== 'HOSTILE' && mood !== 'COLD'
     && dominantCommodity(npc.cargo) !== null;
@@ -389,14 +428,39 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
     return playerHeld.length > 0 ? 'open the trade' : 'your hold is empty';
   }, [canBarter, playerHeld.length]);
 
+  // Ports the NPC has touched that the player has not yet discovered.
+  // The intel action only appears if there's something genuinely new to learn.
+  const discoveredPorts = useGameStore((state) => state.discoveredPorts);
+  const portsById = useGameStore((state) => state.ports);
+  const intelCandidates = useMemo<Port[]>(() => {
+    const known = new Set(discoveredPorts);
+    const visited = npc.visitedPorts ?? [];
+    return visited
+      .filter((id) => !known.has(id))
+      .map((id) => portsById.find((p) => p.id === id))
+      .filter((p): p is Port => Boolean(p));
+  }, [discoveredPorts, npc.visitedPorts, portsById]);
+
+  const [portPicker, setPortPicker] = useState(false);
+
   const availableActions = useMemo<HailActionEntry[]>(() => {
+    if (context === 'collision') {
+      return [
+        { id: 'collision_apologize', label: canUnderstand ? 'shout an apology' : 'make apology gestures', detail: canUnderstand ? 'claim accident' : 'hands open, head bowed' },
+        { id: 'collision_pay', label: 'offer compensation', detail: gold >= 25 ? '25 gold' : 'not enough gold' },
+        { id: 'collision_ignore', label: 'sail on without answering' },
+        { id: 'collision_threaten', label: canUnderstand ? 'answer with threats' : 'gesture toward your guns' },
+      ];
+    }
     const entries: (HailActionEntry | null)[] = [
       canUnderstand && !used.news ? { id: 'news', label: 'ask what news he carries' } : null,
       canBarter && !used.trade ? { id: 'trade', label: 'barter cargo', detail: barterDetail } : null,
-      canUnderstand && !used.bearing ? { id: 'bearing', label: 'ask bearing to nearest port' } : null,
+      canUnderstand && !used.portIntel && intelCandidates.length > 0
+        ? { id: 'portIntel', label: 'ask about a port he has visited', detail: `${intelCandidates.length} new to you` }
+        : null,
     ];
     return entries.filter((e): e is HailActionEntry => e !== null);
-  }, [canBarter, canUnderstand, used, barterDetail]);
+  }, [canBarter, canUnderstand, used, barterDetail, context, gold, intelCandidates]);
 
   const resolveAction = useCallback((action: HailAction) => {
     sfxClick();
@@ -405,6 +469,62 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
     if (action === 'leave') {
       onClose();
       return;
+    }
+
+    if (context === 'collision') {
+      if (action === 'collision_apologize') {
+        recordCollisionGrievance(npc.id, state.dayCount);
+        setFactionReputation(COLLISION_REPUTATION_TARGET.apologize);
+        state.addJournalEntry('encounter', `After a collision with the ${npc.shipName}, we shouted apology across the water.`);
+        setResult({
+          tone: 'warn',
+          text: canUnderstand
+            ? `See that it was an accident. Keep clear, or we take it for an attack!!`
+            : getCollisionHail(npc, false),
+          impact: 'reputation: hostile',
+        });
+        setCollisionMood('COLD');
+        setUsed((prev) => ({ ...prev, collision_apologize: true }));
+        dispatchCollisionResponse('apologize');
+        return;
+      }
+      if (action === 'collision_pay') {
+        if (state.gold < 25) {
+          setResult({ tone: 'warn', text: canUnderstand ? `You offer words, not coin. Keep away from us!!` : getCollisionHail(npc, false), impact: 'no gold' });
+          return;
+        }
+        recordCollisionGrievance(npc.id, state.dayCount);
+        useGameStore.setState((prev) => ({ gold: prev.gold - 25 }));
+        setFactionReputation(COLLISION_REPUTATION_TARGET.pay);
+        state.addJournalEntry('encounter', `Paid 25 gold compensation after ramming the ${npc.shipName}.`);
+        setResult({
+          tone: 'good',
+          text: canUnderstand
+            ? `Coin mends less than timber, but it will serve. Keep your cursed bowsprit away from us!!`
+            : getCollisionHail(npc, false),
+          impact: '-25 gold · reputation: cold',
+        });
+        setCollisionMood('COLD');
+        setUsed((prev) => ({ ...prev, collision_pay: true }));
+        dispatchCollisionResponse('pay');
+        return;
+      }
+      if (action === 'collision_ignore') {
+        recordCollisionGrievance(npc.id, state.dayCount);
+        setFactionReputation(COLLISION_REPUTATION_TARGET.ignore);
+        state.addJournalEntry('encounter', `Ignored the ${npc.shipName} after a damaging collision.`);
+        dispatchCollisionResponse('ignore');
+        onClose();
+        return;
+      }
+      if (action === 'collision_threaten') {
+        recordCollisionGrievance(npc.id, state.dayCount);
+        setFactionReputation(COLLISION_REPUTATION_TARGET.threaten);
+        state.addJournalEntry('encounter', `Threatened the ${npc.shipName} after ramming her.`);
+        dispatchCollisionResponse('threaten');
+        onClose();
+        return;
+      }
     }
 
     if (!canUnderstand) return;
@@ -424,31 +544,11 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
       return;
     }
 
-    if (action === 'bearing') {
-      const shipPos = getLiveShipTransform().pos;
-      const byDistance = (a: Port, b: Port) => {
-        const adx = a.position[0] - shipPos[0];
-        const adz = a.position[2] - shipPos[2];
-        const bdx = b.position[0] - shipPos[0];
-        const bdz = b.position[2] - shipPos[2];
-        return adx * adx + adz * adz - (bdx * bdx + bdz * bdz);
-      };
-      const target = state.ports
-        .filter((port) => !state.discoveredPorts.includes(port.id))
-        .sort(byDistance)[0] ?? state.ports
-        .filter((port) => port.id !== state.currentWorldPortId)
-        .sort(byDistance)[0];
-
-      if (!target) {
-        setResult({ tone: 'neutral', text: `No useful bearing. Only open water from here.` });
-        return;
-      }
-
-      const bearing = bearingFromTo(shipPos, target.position);
-      const line = `They mark ${target.name} ${bearing} by their reckoning.`;
-      state.addJournalEntry('navigation', `Bearing from the ${npc.shipName}: ${target.name} lies ${bearing}.`, target.name);
-      setUsed((prev) => ({ ...prev, bearing: true }));
-      setResult({ tone: 'good', text: line, impact: '+ bearing noted' });
+    if (action === 'portIntel') {
+      // Open the inline port picker — actual resolution happens on port click.
+      if (intelCandidates.length === 0) return;
+      setPortPicker(true);
+      setResult(null);
       return;
     }
 
@@ -462,12 +562,44 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
       setBarterMode({ yourGood: firstGood, yourQty: firstQty });
       setResult(null);
     }
-  }, [canBarter, canUnderstand, npc, onClose, playerHeld]);
+  }, [canBarter, canUnderstand, context, dispatchCollisionResponse, intelCandidates.length, npc, onClose, playerHeld, setFactionReputation]);
+
+  const resolvePortIntel = useCallback((port: Port) => {
+    sfxClick();
+    const state = useGameStore.getState();
+    const intel = PORT_INTEL[port.id];
+    const detail = intel
+      ? `Capt. ${npc.captainName} of the ${npc.shipName} on ${port.name}: ${intel}`
+      : `Capt. ${npc.captainName} speaks of ${port.name}, but adds little we can verify.`;
+    state.addJournalEntry('encounter', detail, port.name);
+    state.adjustReputation(npc.flag, 1);
+    // TODO: when a fog-of-war minimap lands, also reveal `port.id` here so the
+    // intel translates into navigation knowledge.
+    setUsed((prev) => ({ ...prev, portIntel: true }));
+    setPortPicker(false);
+    setResult({
+      tone: 'good',
+      text: `He recounts ${port.name}. We have it down in the log.`,
+      impact: `+ ${npc.flag} rep · port intel logged`,
+    });
+  }, [npc.captainName, npc.flag, npc.shipName]);
 
   const cancelBarter = useCallback(() => {
     sfxClick();
     setBarterMode(null);
   }, []);
+
+  const closePanel = useCallback(() => {
+    if (context === 'collision' && !collisionAnswered) {
+      const state = useGameStore.getState();
+      recordCollisionGrievance(npc.id, state.dayCount);
+      setFactionReputation(COLLISION_REPUTATION_TARGET.ignore);
+      state.addJournalEntry('encounter', `Sailed on without answering the ${npc.shipName}'s protest after a collision.`);
+      state.addNotification(`Ignored the ${npc.shipName}'s protest. Reputation with ${npc.flag} worsened.`, 'warning');
+      dispatchCollisionResponse('ignore');
+    }
+    onClose();
+  }, [collisionAnswered, context, dispatchCollisionResponse, npc.id, npc.flag, npc.shipName, onClose, setFactionReputation]);
 
   const acceptBarter = useCallback(() => {
     if (!barterMode?.yourGood || !counterOffer) return;
@@ -529,27 +661,40 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (portPicker) {
+          setPortPicker(false);
+          return;
+        }
         if (barterMode) {
           cancelBarter();
           return;
         }
-        onClose();
+        closePanel();
         return;
       }
       if (barterMode) return;
       const idx = Number(e.key) - 1;
-      if (!Number.isInteger(idx) || idx < 0 || idx >= availableActions.length) return;
+      if (!Number.isInteger(idx)) return;
+      if (portPicker) {
+        if (idx < 0 || idx >= intelCandidates.length) return;
+        e.preventDefault();
+        resolvePortIntel(intelCandidates[idx]);
+        return;
+      }
+      if (idx < 0 || idx >= availableActions.length) return;
       e.preventDefault();
       resolveAction(availableActions[idx].id);
     };
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [availableActions, onClose, resolveAction, barterMode, cancelBarter]);
+  }, [availableActions, closePanel, resolveAction, barterMode, cancelBarter, portPicker, intelCandidates, resolvePortIntel]);
 
   const resultColor = result?.tone === 'warn' ? '#f59e0b' : result?.tone === 'good' ? '#86efac' : '#cbd5e1';
   const spokenText = barterMode && canUnderstand && barterDialogue
     ? barterDialogue
+    : context === 'collision'
+    ? (result ? result.text : collisionGreeting)
     : canUnderstand
     ? (result ? result.text : greeting)
     : UNTRANSLATED_HAIL[hailLanguage];
@@ -586,6 +731,42 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
             >
               {npc.flag} {npc.shipType}
             </span>
+            {captainKnown && npc.shipName && (
+              <motion.span
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.45, delay: 0.3 }}
+                className="flex items-baseline gap-[3px] text-amber-100/90 min-w-0"
+              >
+                <span
+                  className="text-[10px] text-amber-100/55"
+                  style={{ fontFamily: '"Fraunces", serif' }}
+                >
+                  the
+                </span>
+                <span
+                  className="italic text-[13px] truncate"
+                  style={{ fontFamily: '"Fraunces", serif', fontWeight: 500 }}
+                >
+                  {npc.shipName}
+                </span>
+              </motion.span>
+            )}
+            {impression.sense && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
+                className="hidden md:flex items-center gap-1.5 ml-2 pl-3 border-l border-[#2a2d3a] text-[11.5px] italic text-slate-400/90 min-w-0"
+                style={{ fontFamily: '"Fraunces", serif' }}
+                title={`${impression.sense.kind} on the air`}
+              >
+                <span aria-hidden className="text-[12px]">
+                  {impression.sense.kind === 'smell' ? '❦' : impression.sense.kind === 'sound' ? '♪' : '◉'}
+                </span>
+                <span className="truncate">{impression.sense.text}</span>
+              </motion.span>
+            )}
           </div>
           <DispositionBar mood={mood} />
         </div>
@@ -648,10 +829,16 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
             style={{ borderLeft: `2px solid ${result?.tone === 'warn' ? 'rgba(245,158,11,0.35)' : 'rgba(226,200,122,0.35)'}` }}
           >
             <div
-              className={canUnderstand
+              className={context === 'collision'
+                ? 'text-[18px] leading-[1.45] text-red-100 uppercase tracking-[0.035em]'
+                : canUnderstand
                 ? 'text-[17px] leading-[1.55] text-slate-50'
                 : 'text-[17px] leading-[1.7] text-slate-200 italic'}
-              style={{ fontFamily: '"Fraunces", serif', fontWeight: 400 }}
+              style={{
+                fontFamily: context === 'collision' ? '"DM Sans", sans-serif' : '"Fraunces", serif',
+                fontWeight: context === 'collision' ? 800 : 400,
+                textShadow: context === 'collision' ? '0 0 14px rgba(248,113,113,0.25)' : undefined,
+              }}
             >
               <span
                 aria-hidden
@@ -683,13 +870,17 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
             </div>
             {captainKnown && !barterMode && !result && (
               <motion.div
-                className="mt-2 text-[11.5px] text-slate-500"
-                style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}
+                className="mt-2 flex items-baseline gap-1 text-slate-300"
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.5, delay: 0.7 }}
               >
-                — Capt. {npc.captainName}
+                <span className="text-slate-600 mr-1" aria-hidden>—</span>
+                <span className="text-[9px] font-semibold tracking-[0.14em] uppercase text-slate-500">
+                  Capt.
+                </span>
+                <span className="font-medium text-[12px]">{npc.captainName}</span>
               </motion.div>
             )}
           </div>
@@ -697,12 +888,56 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
 
         {/* ── TRANSLATOR / STATUS LINE ───────────────────── */}
         <motion.div
-          className="px-5 pt-4"
+          className="relative px-5 pt-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, delay: 0.55 }}
         >
-          {canUnderstand && translator ? (
+          <AnimatePresence>
+            {xpChipVisible && (
+              <motion.div
+                key="xp-splat"
+                initial={{ opacity: 0, y: 6, scale: 0.8 }}
+                animate={{ opacity: 1, y: -18, scale: 1 }}
+                exit={{ opacity: 0, y: -42, scale: 0.95, transition: { duration: 0.7, ease: 'easeOut' } }}
+                transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                className="pointer-events-none absolute right-5 top-2 z-10 font-mono text-[13px] font-bold tracking-[0.1em] text-emerald-300"
+                style={{ textShadow: '0 0 10px rgba(134,239,172,0.6), 0 1px 2px rgba(0,0,0,0.8)' }}
+              >
+                +1 XP
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {understandsByFaction ? (
+            <div
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-slate-400"
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+            >
+              <span>You and the captain sail under the</span>
+              <span className="font-semibold" style={{ color: languageColor }}>{npc.flag}</span>
+              <span>flag.</span>
+              <span className="text-slate-500">No translation needed.</span>
+              <AnimatePresence mode="wait">
+                {result?.impact ? (
+                  <motion.span
+                    key="impact"
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="ml-auto inline-flex items-center rounded-sm border px-2 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
+                    style={{
+                      color: resultColor,
+                      borderColor: `${resultColor}55`,
+                      backgroundColor: `${resultColor}14`,
+                    }}
+                  >
+                    {result.impact}
+                  </motion.span>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          ) : canUnderstand && translator ? (
             <div
               className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-slate-400"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
@@ -728,17 +963,6 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
                     }}
                   >
                     {result.impact}
-                  </motion.span>
-                ) : xpChipVisible ? (
-                  <motion.span
-                    key="xp"
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.6 } }}
-                    transition={{ duration: 0.35, delay: 0.4 }}
-                    className="ml-auto inline-flex items-center rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-[1px] font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300"
-                  >
-                    +1 xp
                   </motion.span>
                 ) : null}
               </AnimatePresence>
@@ -780,6 +1004,51 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
             onAccept={acceptBarter}
             onCancel={cancelBarter}
           />
+        ) : portPicker ? (
+          <div className="px-5 pt-4 pb-1 flex flex-col gap-1.5">
+            <div
+              className="px-3 -mx-3 mb-1 text-[11px] uppercase tracking-[0.16em] text-slate-500"
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+            >
+              He has touched these ports —
+            </div>
+            {intelCandidates.map((port, index) => (
+              <motion.button
+                key={port.id}
+                onClick={() => resolvePortIntel(port)}
+                onMouseEnter={() => sfxHover()}
+                className="group flex items-baseline gap-3 text-left px-3 py-1.5 -mx-3 rounded-md hover:bg-amber-500/[0.06] transition-colors"
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.28, delay: 0.05 + index * 0.05, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <span
+                  className="font-mono text-[12px] font-bold transition-colors"
+                  style={{ color: '#e2c87a' }}
+                >
+                  {index + 1}
+                  <span className="ml-1 text-[10px] text-slate-500 group-hover:text-amber-300 transition-colors">❯</span>
+                </span>
+                <span className="text-[13px] text-slate-200 group-hover:text-amber-200 transition-colors flex-1">
+                  {port.name}
+                </span>
+              </motion.button>
+            ))}
+            <button
+              onClick={() => { sfxClick(); setPortPicker(false); }}
+              onMouseEnter={() => sfxHover()}
+              className="group flex items-baseline gap-3 text-left px-3 py-1 -mx-3 mt-0.5 rounded-md hover:bg-slate-500/[0.06] transition-colors"
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+            >
+              <span className="font-mono text-[10px] font-bold text-slate-500 group-hover:text-slate-300 tracking-[0.18em] uppercase">
+                esc
+              </span>
+              <span className="text-[12px] text-slate-500 group-hover:text-slate-300 transition-colors flex-1">
+                back
+              </span>
+            </button>
+          </div>
         ) : availableActions.length > 0 && (
           <div className="px-5 pt-4 pb-1 flex flex-col gap-1.5">
             {availableActions.map((action, index) => (
@@ -819,10 +1088,10 @@ export function HailPanel({ npc, onClose }: { npc: NPCShipIdentity; onClose: () 
         {/* ── FOOTER ─────────────────────────────────────── */}
         <div className="px-5 pt-3 pb-4 flex justify-end border-t border-[#2a2d3a]/40">
           <button
-            onClick={onClose}
+            onClick={closePanel}
             className="group font-bold font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 hover:text-amber-300 transition-colors"
           >
-            sail on
+            {context === 'collision' && !collisionAnswered ? 'ignore and sail on' : 'sail on'}
             <span className="ml-2 text-slate-600 group-hover:text-amber-400 transition-colors">[esc]</span>
           </button>
         </div>

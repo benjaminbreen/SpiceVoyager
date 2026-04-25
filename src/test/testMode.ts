@@ -2,6 +2,7 @@ import { ambientEngine } from '../audio/AmbientEngine';
 import { audioManager } from '../audio/AudioManager';
 import { type PerformanceStats, PERFORMANCE_STATS_EVENT } from '../utils/performanceStats';
 import { useGameStore } from '../store/gameStore';
+import { syncLivePlayerMode, syncLiveShipTransform, syncLiveWalkingTransform } from '../utils/livePlayerTransform';
 
 interface TestModeConfig {
   enabled: boolean;
@@ -28,6 +29,10 @@ interface TestHarnessApi {
   getState: () => ReturnType<typeof useGameStore.getState>;
   setState: typeof useGameStore.setState;
   getPerformanceStats: () => PerformanceStats | null;
+  setShipTransform: (pos: [number, number, number], rot?: number, vel?: number) => void;
+  setWalkingTransform: (pos: [number, number, number], rot?: number) => void;
+  dispatchKey: (key: string) => void;
+  openWorldMap: () => void;
 }
 
 declare global {
@@ -125,6 +130,26 @@ export function installTestMode() {
     getState: () => useGameStore.getState(),
     setState: useGameStore.setState,
     getPerformanceStats: () => latestPerformanceStats,
+    setShipTransform: (pos, rot = 0, vel = 0) => {
+      syncLivePlayerMode('ship');
+      syncLiveShipTransform(pos, rot, vel);
+      useGameStore.getState().setPlayerMode('ship');
+      useGameStore.getState().setPlayerTransform({ pos, rot, vel });
+    },
+    setWalkingTransform: (pos, rot = 0) => {
+      syncLivePlayerMode('walking');
+      syncLiveWalkingTransform(pos, rot);
+      useGameStore.getState().setPlayerMode('walking');
+      useGameStore.getState().setWalkingPos(pos);
+      useGameStore.getState().setWalkingRot(rot);
+    },
+    dispatchKey: (key) => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+    },
+    openWorldMap: () => {
+      window.dispatchEvent(new Event('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__'));
+    },
   };
 
   window.addEventListener(PERFORMANCE_STATS_EVENT, ((event: CustomEvent<PerformanceStats>) => {

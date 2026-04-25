@@ -3,7 +3,7 @@ import type { NPCShipIdentity } from './npcShipGenerator';
 import { COMMODITY_DEFS, type Commodity } from './commodities';
 
 export type HailMood = 'HOSTILE' | 'COLD' | 'WARY' | 'CORDIAL' | 'WARM';
-export type HailAction = 'news' | 'trade' | 'bearing' | 'leave';
+export type HailAction = 'news' | 'trade' | 'portIntel' | 'leave' | 'collision_apologize' | 'collision_pay' | 'collision_ignore' | 'collision_threaten';
 
 export const DEFAULT_BARTER_QTY = 3;
 export const BARTER_CANDIDATE_POOL = 3;
@@ -95,6 +95,96 @@ export const UNTRANSLATED_HAIL: Record<Language, string> = {
   Chinese: '我听不懂你。我继续走我的航路。',
   Japanese: '何を言っているかわからぬ。このまま進む。',
 };
+
+export const ROMANIZED_COLLISION_HAIL: Record<Language, string[]> = {
+  Arabic: [
+    'YA MAJNUN!! MADHA FAALT?!',
+    'YA MAJNUN!! MADHA FAALT?! KASARTA JANB AL-SAFINA! QUL KANA KHATA, WA ILLA NARMIKUM BIL-MADAFI!!',
+    'WALLAH, A ANTA AAMA?! DARABTANA KA-L-HIMAR! IBTAID AW IDFA THAMAN AL-KHASARA!!',
+  ],
+  Persian: [
+    'KHODAYA!! CHE KARDI, AHMAQ?!',
+    'KHODAYA!! CHE KARDI, MARD-E DIVANEH?! PAHLU-YE KESHTI RA SHEKASTI! BEGU KHATA BUD, VAGARNA JAVABASH RA MIGIRI!!',
+    'HEY, BI-AQL!! MAGAR KUR SHODI?! KESHTI-YE MAN RA ZADI! YA JARIMEH BEDEH YA TOOP MIBINI!!',
+  ],
+  Gujarati: [
+    'ARE PAGAL!! SHU KARYU?!',
+    'ARE PAGAL!! SHU KARYU?! AMARI NAAVNU PAASU TODI NAKHYU! KAHO KE BHUL HATI, NAHI TO PARINAM BHOGVASHO!!',
+    'O MURKH!! AANKH NATHI?! NAAVNE DHAKKA MARYO! HAVE MAAF MANGO KE BHUGTAN KARO!!',
+  ],
+  Hindustani: [
+    'ARRE PAGAL!! KYA KIYA TUMNE?!',
+    'ARRE PAGAL!! KYA KIYA TUMNE?! HAMARI KASHTI KA PAHLU TOD DIYA! KAHO YE HADSA THA, VARNA ANJAM BHUGTOGE!!',
+    'O BE-AQL!! ANDHE HO KYA?! JAHAAZ SE TAKKAR MAARI! MAAF MANGO YA TOPEIN BOLENGI!!',
+  ],
+  Portuguese: [
+    'QUE DIABO FOI ISSO?! ESTAIS LOUCO?!',
+    'QUE DIABO FOI ISSO?! ESTAIS LOUCO?! ABRISTES O NOSSO COSTADO! DIZEI QUE FOI ACASO, OU HAVERA CONSEQUENCIAS!!',
+    'CEGO DE TODO?! BATISTES COMO UM ASNO! PAGAI O DANO OU RESPONDEREIS AOS CANHOES!!',
+  ],
+  Dutch: [
+    'WAT IN GODS NAAM WAS DAT?! ZIJT GIJ GEK?!',
+    'WAT IN GODS NAAM WAS DAT?! ZIJT GIJ GEK?! GIJ HEBT ONZE ZIJDE GERAAKT! ZEG DAT HET ONGELUK WAS, OF GIJ ZULT BOETEN!!',
+    'VERDOMDE DWAAS!! KIJKT GIJ NIET UIT?! BETAAL DE SCHADE OF WIJ LATEN DE STUKKEN SPREKEN!!',
+  ],
+  English: [
+    'WHAT IN GODS NAME ARE YOU DOING, YOU UTTER FOOL?!',
+    'WHAT IN GODS NAME WAS THAT?! ARE YOU MAD?! YOU STOVE IN OUR SIDE! SAY IT WAS AN ACCIDENT OR WE ANSWER WITH GUNS!!',
+    'YOU BLIND FOOL!! KEEP YOUR HANDS OFF THE HELM IF YOU CANNOT STEER! PAY FOR THAT DAMAGE OR FACE CONSEQUENCES!!',
+  ],
+  Spanish: [
+    'QUE EN NOMBRE DE DIOS HACEIS, NECIO?!',
+    'QUE EN NOMBRE DE DIOS FUE ESO?! ESTAIS LOCO?! HABEIS ROTO NUESTRO COSTADO! DECID QUE FUE ACCIDENTE O HABRA CONSECUENCIAS!!',
+    'MALDITO NECIO!! NO VEIS EL MAR DELANTE?! PAGAD EL DANO O HABLARAN LOS CANONES!!',
+  ],
+  French: [
+    'NOM DE DIEU, QUE FAITES-VOUS, IMBECILE?!',
+    'NOM DE DIEU, QU ETAIT-CE?! ETES-VOUS FOU?! VOUS AVEZ ENFONCE NOTRE BORD! DITES QUE C ETAIT ACCIDENT OU VOUS PAIEREZ!!',
+    'ESPECE D IMBECILE!! VOUS NE SAVEZ PAS TENIR UN GOUVERNAIL?! PAYEZ LE DOMMAGE OU LES CANONS REPONDRONT!!',
+  ],
+  Italian: [
+    'PER DIO, CHE FATE, SCIOCCO?!',
+    'PER DIO, CHE COSA ERA?! SIETE PAZZO?! AVETE SFONDATO IL NOSTRO FIANCO! DITE CHE FU ACCIDENTE O PAGHERETE!!',
+    'SCIOCCO CIECO!! NON SAPETE GOVERNARE?! PAGATE IL DANNO O PARLERANNO I CANNONI!!',
+  ],
+  Turkish: [
+    'ALLAH ASKINA, NE YAPIYORSUN DELI?!',
+    'ALLAH ASKINA, BU NEYDI?! DELI MISIN?! GEMININ YANINI KIRDIN! KAZA DE, YOKSA BEDELINI ODEYECEKSIN!!',
+    'KOR MUSUN BE ADAM?! GEMIYE VURDUN! ZARARI ODE, YOKSA TOPLAR KONUSUR!!',
+  ],
+  Malay: [
+    'APA DEMI TUHAN KAU BUAT, BODOH?!',
+    'APA DEMI TUHAN ITU?! KAU GILA?! KAU PECAHKAN LAMBUNG KAPAL KAMI! KATAKAN INI SILAP, ATAU MERIAM MENJAWAB!!',
+    'BODOH BUTA!! TAK NAMPAK LAUT DI DEPAN?! BAYAR ROSAKNYA ATAU TERIMA AKIBATNYA!!',
+  ],
+  Swahili: [
+    'KWA MUNGU, UNAFANYA NINI, MPUMBAVU?!',
+    'KWA MUNGU, HILO NI NINI?! UMEPAGAWA?! UMEPASUA UBAVU WA CHOMBO CHETU! SEMA ILIKUWA AJALI AU UTAJUTA!!',
+    'MPUMBAVU WEWE!! HUNA MACHO?! LIPA UHARIBIFU AU MIZINGA ITAJIBU!!',
+  ],
+  Chinese: [
+    'TIAN NA!! NI ZAI GAN SHENME, BEN DAN?!',
+    'TIAN NA!! NI FENG LE MA?! NI ZHUANG HUAI LE WO MEN DE CHUANBANG! SHUO SHI SHIGU, FOUZE JIU KAI PAO!!',
+    'XIA YAN DE BEN DAN!! BU HUI ZHANG DUO JIU BIE KAI CHUAN! PEI QIAN, BU RAN WO MEN KAI PAO!!',
+  ],
+  Japanese: [
+    'KAMI YO!! NANI WO SHITE IRU, BAKA ME?!',
+    'KAMI YO!! NANI WO SHITA?! KURUTTA KA?! WAREWARE NO FUNABARA WO KOWASHITA! AYAMARI DA TO IE, SARENeba UTSU!!',
+    'KONO BAKA ME!! KAJI MO TORENU NO KA?! TSUGUNAE, SARENeba TEPPOU DE KOTAERU!!',
+  ],
+};
+
+export const TRANSLATED_COLLISION_HAIL: string[] = [
+  'WHAT IN GODS NAME ARE YOU DOING, YOU UTTER FOOL?!',
+  'WHAT IN GODS NAME WAS THAT?! ARE YOU MAD?! YOU DAMAGED MY SHIP, YOU FOOL!! TELL ME THAT WAS AN ACCIDENT, OR YOU WILL FACE CONSEQUENCES!!',
+  'YOU BLIND FOOL!! YOU STOVE IN OUR SIDE! APOLOGIZE NOW, OR PAY FOR IT WITH COIN OR GUNSMOKE!!',
+  'KEEP YOUR HANDS OFF THE HELM IF YOU CANNOT STEER!! WAS THAT AN ACCIDENT, OR DO YOU MEAN TO START A FIGHT?!',
+];
+
+export function getCollisionHail(npc: NPCShipIdentity, translated: boolean): string {
+  if (translated) return pickStable(TRANSLATED_COLLISION_HAIL, npc.id + 'collision-translated');
+  return pickStable(ROMANIZED_COLLISION_HAIL[npc.hailLanguage] ?? ROMANIZED_COLLISION_HAIL.English, npc.id + 'collision-romanized');
+}
 
 export const LANGUAGE_COLOR: Record<Language, string> = {
   Portuguese: '#e6b355',
@@ -206,18 +296,20 @@ export function capitalizeFirst(s: string): string {
   return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+export type SensoryKind = 'smell' | 'sight' | 'sound';
+export interface SensoryImpression { kind: SensoryKind; text: string }
+
 export function buildImpression(
   npc: NPCShipIdentity,
   mood: HailMood,
-): { sight: string; posture: string } {
+): { sight: string; posture: string; sense: SensoryImpression | null } {
   const draft = getDraftCondition(npc.cargo);
   const dom = dominantCommodity(npc.cargo);
   const scent = dom ? CARGO_SCENT[dom] : null;
-  const sight = scent
-    ? `${capitalizeFirst(npc.appearancePhrase)}, ${draft}. ${capitalizeFirst(scent)}.`
-    : `${capitalizeFirst(npc.appearancePhrase)}, ${draft}.`;
+  const sight = `${capitalizeFirst(npc.appearancePhrase)}, ${draft}.`;
   const posture = pickStable(DISPOSITION_POSTURE[mood], npc.id + mood + 'posture');
-  return { sight, posture };
+  const sense: SensoryImpression | null = scent ? { kind: 'smell', text: scent } : null;
+  return { sight, posture, sense };
 }
 
 export function moodMarkup(mood: HailMood): number {
@@ -297,6 +389,7 @@ export function getBarterDialogue(
  * Prevents the player from farming rep by repeatedly hailing the same ship.
  */
 const awardedTranslations = new Set<string>();
+const collisionMemory = new Map<string, { count: number; lastDay: number }>();
 
 export function hasAwardedTranslation(npcId: string): boolean {
   return awardedTranslations.has(npcId);
@@ -304,4 +397,36 @@ export function hasAwardedTranslation(npcId: string): boolean {
 
 export function markAwardedTranslation(npcId: string): void {
   awardedTranslations.add(npcId);
+}
+
+export function recordCollisionGrievance(npcId: string, day: number): void {
+  const current = collisionMemory.get(npcId);
+  collisionMemory.set(npcId, {
+    count: (current?.count ?? 0) + 1,
+    lastDay: day,
+  });
+}
+
+export function getCollisionGrievance(npcId: string): { count: number; lastDay: number } | null {
+  return collisionMemory.get(npcId) ?? null;
+}
+
+export function getRememberedCollisionGreeting(npc: NPCShipIdentity, translated: boolean): string | null {
+  const memory = getCollisionGrievance(npc.id);
+  if (!memory) return null;
+  if (!translated) {
+    return pickStable(ROMANIZED_COLLISION_HAIL[npc.hailLanguage] ?? ROMANIZED_COLLISION_HAIL.English, npc.id + 'remembered-collision');
+  }
+  if (memory.count > 1) {
+    return pickStable([
+      `YOU AGAIN?! Keep that damned bow away from us!!`,
+      `Still afloat, are you? Do not ram us a third time, you menace!!`,
+      `There is the fool who struck us before. Speak quickly, and keep clear!!`,
+    ], npc.id + 'remembered-collision-many');
+  }
+  return pickStable([
+    `You again?! Have you learned to steer since you struck us?`,
+    `I know that sail. You are the fool who hit us. Speak, but keep off!!`,
+    `Back again? If this is another accident, I swear by God we fire!!`,
+  ], npc.id + 'remembered-collision-one');
 }

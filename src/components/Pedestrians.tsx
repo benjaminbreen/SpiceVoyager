@@ -22,6 +22,8 @@ import {
   initPedestrianSystem, updatePedestrians,
 } from '../utils/pedestrianSystem';
 import { syncLivePedestrians, clearLivePedestrians, consumePendingKills } from '../utils/livePedestrians';
+import { applyRimLight, updateRimFromFog } from '../utils/rimLight';
+import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import {
   BodyArchetype, HeadwearType, ArmType, PropType, VisualProfile,
   BODY_ARCHETYPES, HEADWEAR_TYPES, ARM_TYPES, PROP_TYPES, HEAD_TOP_Y,
@@ -53,12 +55,40 @@ function pickWeighted<T extends { weight: number }>(arr: T[], rng: () => number)
   return arr[arr.length - 1];
 }
 
-function vary(base: [number, number, number], rng: () => number, amt = 0.04): [number, number, number] {
-  return [
-    Math.max(0, Math.min(1, base[0] + (rng() - 0.5) * amt)),
-    Math.max(0, Math.min(1, base[1] + (rng() - 0.5) * amt)),
-    Math.max(0, Math.min(1, base[2] + (rng() - 0.5) * amt)),
-  ];
+// Reusable scratch colors for HSL conversions during init.
+const _varyColor = new THREE.Color();
+const _varyHSL = { h: 0, s: 0, l: 0 };
+
+// HSL-space jitter — channel-wise RGB noise just desaturates everything, but
+// hue/sat/value shifts read as real dye variation, fading, and lighting differences.
+// `huePull` warms (positive) or cools (negative) the result by a small amount,
+// useful for clothing where a tiny shared bias makes a crowd feel weather-aged.
+function varyHSL(
+  base: [number, number, number],
+  rng: () => number,
+  hueAmt = 0.025,
+  satAmt = 0.10,
+  lightAmt = 0.12,
+  huePull = 0,
+): [number, number, number] {
+  _varyColor.setRGB(base[0], base[1], base[2]);
+  _varyColor.getHSL(_varyHSL);
+  let h = _varyHSL.h + (rng() - 0.5) * hueAmt + huePull;
+  // Wrap hue
+  h = h - Math.floor(h);
+  const s = Math.max(0, Math.min(1, _varyHSL.s + (rng() - 0.5) * satAmt));
+  const l = Math.max(0, Math.min(1, _varyHSL.l + (rng() - 0.5) * lightAmt));
+  _varyColor.setHSL(h, s, l);
+  return [_varyColor.r, _varyColor.g, _varyColor.b];
+}
+
+// Skin variation — keep hue tight so the culture's palette stays coherent,
+// but allow meaningful value shift so a crowd has light/dark range within a tone.
+function varySkin(
+  base: [number, number, number],
+  rng: () => number,
+): [number, number, number] {
+  return varyHSL(base, rng, 0.008, 0.06, 0.08);
 }
 
 const SKIN_TONES: Record<Culture, { color: [number, number, number]; weight: number }[]> = {
@@ -101,6 +131,14 @@ function createLanternGeometry(): THREE.BufferGeometry {
 const MAX_PER_MESH = 160; // ample headroom; arm meshes take 2 slots per ped
 const FIGURE_TYPES: FigureType[] = ['man', 'woman', 'child'];
 
+// Head-turn: peds within this radius rotate their head toward the player.
+const HEAD_TURN_RADIUS = 6;
+const HEAD_TURN_RADIUS_SQ = HEAD_TURN_RADIUS * HEAD_TURN_RADIUS;
+const HEAD_TURN_MAX_YAW = Math.PI / 3; // ±60°, anything more reads as inhuman
+// Cluster-facing: dwelling peds within this radius pivot to face their nearest dwelling neighbor.
+const CLUSTER_RADIUS = 2.5;
+const CLUSTER_RADIUS_SQ = CLUSTER_RADIUS * CLUSTER_RADIUS;
+
 export function Pedestrians() {
   const ports = useGameStore(s => s.ports);
   // timeOfDay changes every 200ms; we only need the current value per frame,
@@ -128,8 +166,10 @@ export function Pedestrians() {
   const lanternRef = useRef<THREE.InstancedMesh>(null);
 
   const dummy = useRef(new THREE.Object3D());
+  const headDummy = useRef(new THREE.Object3D());
   const scratchMat = useRef(new THREE.Matrix4());
   const scratchLocal = useRef(new THREE.Matrix4());
+  const dwellingIdx = useRef<number[]>([]);
   const scratchPos = useRef(new THREE.Vector3());
   const scratchQuat = useRef(new THREE.Quaternion());
   const scratchScale = useRef(new THREE.Vector3(1, 1, 1));
@@ -179,6 +219,16 @@ export function Pedestrians() {
     color: '#ff8800', emissive: '#ff6600', emissiveIntensity: 2.0, roughness: 0.3,
   }), []);
 
+  // Rim-light pass for silhouette read against sky/fog. Skin gets a softer
+  // multiplier so faces don't glow; lanternMat is left alone (emissive).
+  useEffect(() => {
+    applyRimLight(bodyMat, 1.0);
+    applyRimLight(headwearMat, 1.0);
+    applyRimLight(armMat, 1.0);
+    applyRimLight(propMat, 1.0);
+    applyRimLight(skinMat, 0.5);
+  }, [bodyMat, headwearMat, armMat, propMat, skinMat]);
+
   useEffect(() => {
     if (ports.length === 0) return;
     const port = ports[0];
@@ -198,6 +248,7 @@ export function Pedestrians() {
   }, [ports, worldSeed]);
 
   useFrame((state, delta) => {
+    updateRimFromFog(state.scene);
     const system = systemRef.current;
     if (!system) return;
     const profiles = profilesRef.current;
@@ -235,13 +286,17 @@ export function Pedestrians() {
         const prof = profiles[i];
         const rig = ARCHETYPE_SHOULDER[prof.body];
 
-        // Body
-        const clothing = vary(pickWeighted(CLOTHING_BY_ARCHETYPE[prof.body], rng).color, rng);
+        // Body — warm/cool tint per ped reads as sun-fade vs fresh dye.
+        const huePull = (rng() - 0.5) * 0.012;
+        const clothing = varyHSL(
+          pickWeighted(CLOTHING_BY_ARCHETYPE[prof.body], rng).color,
+          rng, 0.025, 0.10, 0.13, huePull,
+        );
         col.setRGB(clothing[0], clothing[1], clothing[2]);
         bodyRefs.current[prof.body]!.setColorAt(bodyCounters[prof.body]++, col);
 
-        // Head (skin)
-        const skin = vary(pickWeighted(skinPool, rng).color, rng);
+        // Head (skin) — tight hue, real value range.
+        const skin = varySkin(pickWeighted(skinPool, rng).color, rng);
         const skinR = skin[0], skinG = skin[1], skinB = skin[2];
         col.setRGB(skinR, skinG, skinB);
         headRefs.current[p.figureType]!.setColorAt(headCounters[p.figureType]++, col);
@@ -255,23 +310,23 @@ export function Pedestrians() {
         armMesh.setColorAt(armCounters[rig.armType]++, col);
         armMesh.setColorAt(armCounters[rig.armType]++, col);
 
-        // Headwear
+        // Headwear — wider value range than clothing (hats fade unevenly in sun).
         if (prof.headwear !== 'none') {
           const hw = prof.headwear;
           const mesh = headwearRefs.current[hw];
           if (mesh) {
-            const hwColor = vary(pickWeighted(HEADWEAR_COLORS[hw], rng).color, rng);
+            const hwColor = varyHSL(pickWeighted(HEADWEAR_COLORS[hw], rng).color, rng, 0.03, 0.12, 0.16);
             col.setRGB(hwColor[0], hwColor[1], hwColor[2]);
             mesh.setColorAt(hwCounters[hw]++, col);
           }
         }
 
-        // Prop
+        // Prop — natural materials (wood, fiber, ceramic) — value-weighted variation.
         if (prof.prop !== 'none') {
           const pp = prof.prop;
           const mesh = propRefs.current[pp];
           if (mesh) {
-            const pc = vary(pickWeighted(PROP_COLORS[pp], rng).color, rng);
+            const pc = varyHSL(pickWeighted(PROP_COLORS[pp], rng).color, rng, 0.015, 0.08, 0.18);
             col.setRGB(pc[0], pc[1], pc[2]);
             mesh.setColorAt(propCounters[pp]++, col);
           }
@@ -300,6 +355,14 @@ export function Pedestrians() {
       }
 
       colorsNeedInit.current = false;
+    }
+
+    // ── Freeze entire animation while the game is paused (hail modal, etc.) ─
+    // Existing instance matrices stay as they were last frame, so peds hold
+    // their pose — no arm swing, no bob, no walking — until the game resumes.
+    if (useGameStore.getState().paused) {
+      animAccumRef.current = 0;
+      return;
     }
 
     // ── Throttle main update to ~20fps (arm swing reads fine at this rate) ─
@@ -360,12 +423,73 @@ export function Pedestrians() {
     const armQuat = scratchQuat.current;
     const armScale = scratchScale.current;
     const armEuler = scratchEuler.current;
+    const hd = headDummy.current;
+
+    // Build a quick index of dwelling pedestrians for cluster-facing lookups.
+    // Dwelling peds pivot to face their nearest dwelling neighbor within
+    // CLUSTER_RADIUS, which reads as conversation rather than statues.
+    const dwellList = dwellingIdx.current;
+    dwellList.length = 0;
+    for (let i = 0; i < activeCount; i++) {
+      const pi = system.pedestrians[i];
+      if (pi.isDwelling && !pi.dead) dwellList.push(i);
+    }
+
+    const playerPos = getActivePlayerPos();
+    const playerX = playerPos[0];
+    const playerZ = playerPos[2];
 
     for (let i = 0; i < activeCount; i++) {
       const p = system.pedestrians[i];
-      if (p.dead) continue;
       const prof = profiles[i];
+
+      if (p.dead) {
+        // Render as a fallen body. Fall direction is backward from the ped's facing
+        // angle, using the same axis-angle approach as felled trees in World.tsx.
+        // armPos and scratchPos.current are the same ref, so capture scalar components
+        // before the second set() call overwrites them.
+        const fallAngle = p.angle + Math.PI;
+        const fdx = Math.sin(fallAngle);
+        const fdz = Math.cos(fallAngle);
+        // fallAxis = perpendicular to fallDir in XZ plane, reuse armPos as temp
+        armPos.set(fdz, 0, -fdx).normalize();
+        armQuat.setFromAxisAngle(armPos, Math.PI * 0.48);
+        d.position.set(p.x + fdx * 0.85, p.y, p.z + fdz * 0.85);
+        d.scale.setScalar(1);
+        d.quaternion.copy(armQuat);
+        d.updateMatrix();
+        const bodyMesh = bodyRefs.current[prof.body];
+        if (bodyMesh) bodyMesh.setMatrixAt(bodyCounts[prof.body]++, d.matrix);
+        const headMesh = headRefs.current[p.figureType];
+        if (headMesh) headMesh.setMatrixAt(headCounts[p.figureType]++, d.matrix);
+        continue;
+      }
+
       const rig = ARCHETYPE_SHOULDER[prof.body];
+
+      // ── Cluster facing: when dwelling, pivot toward nearest dwelling neighbor ──
+      // Mutating p.angle here is safe because the system reassigns angle from
+      // velocity once the ped starts walking again.
+      if (p.isDwelling) {
+        let bestSq = CLUSTER_RADIUS_SQ;
+        let bestDx = 0, bestDz = 0;
+        for (let k = 0; k < dwellList.length; k++) {
+          const j = dwellList[k];
+          if (j === i) continue;
+          const q = system.pedestrians[j];
+          const dx = q.x - p.x;
+          const dz = q.z - p.z;
+          const dsq = dx * dx + dz * dz;
+          if (dsq < bestSq && dsq > 0.04) { // ignore overlapping spawns
+            bestSq = dsq;
+            bestDx = dx;
+            bestDz = dz;
+          }
+        }
+        if (bestSq < CLUSTER_RADIUS_SQ) {
+          p.angle = Math.atan2(bestDx, bestDz);
+        }
+      }
 
       // When dwelling, suppress sway/bob slightly and zero the arm swing.
       const motionGate = p.isDwelling ? 0.2 : 1.0;
@@ -375,8 +499,31 @@ export function Pedestrians() {
 
       d.position.set(p.x + sway, p.y + bob, p.z);
       d.rotation.set(tilt, p.angle, 0);
-      d.scale.setScalar(1);
+      d.scale.setScalar(1.12);
       d.updateMatrix();
+
+      // ── Head turn: nearby peds rotate the head (and headwear) toward the player ──
+      // Clamped to ±60°; outside HEAD_TURN_RADIUS we just reuse the body matrix.
+      const dxP = playerX - p.x;
+      const dzP = playerZ - p.z;
+      const distSqP = dxP * dxP + dzP * dzP;
+      let useHeadMatrix = false;
+      if (distSqP < HEAD_TURN_RADIUS_SQ) {
+        const bearing = Math.atan2(dxP, dzP);
+        let yawDelta = bearing - p.angle;
+        while (yawDelta > Math.PI) yawDelta -= Math.PI * 2;
+        while (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
+        if (yawDelta > HEAD_TURN_MAX_YAW) yawDelta = HEAD_TURN_MAX_YAW;
+        else if (yawDelta < -HEAD_TURN_MAX_YAW) yawDelta = -HEAD_TURN_MAX_YAW;
+        if (Math.abs(yawDelta) > 0.05) {
+          hd.position.set(p.x + sway, p.y + bob, p.z);
+          hd.rotation.set(tilt, p.angle + yawDelta, 0);
+          hd.scale.setScalar(1.12);
+          hd.updateMatrix();
+          useHeadMatrix = true;
+        }
+      }
+      const headMat = useHeadMatrix ? hd.matrix : d.matrix;
 
       // Body
       const bodyMesh = bodyRefs.current[prof.body];
@@ -384,7 +531,7 @@ export function Pedestrians() {
 
       // Head
       const headMesh = headRefs.current[p.figureType];
-      if (headMesh) headMesh.setMatrixAt(headCounts[p.figureType]++, d.matrix);
+      if (headMesh) headMesh.setMatrixAt(headCounts[p.figureType]++, headMat);
 
       // Arms — compute shoulder local transform × swing, for each side
       const swing = p.isDwelling ? 0 : Math.sin(time * 8 + p.phase) * rig.swingAmp;
@@ -409,7 +556,7 @@ export function Pedestrians() {
           armEuler.set(0, 0, 0);
           armQuat.setFromEuler(armEuler);
           armLocal.compose(armPos, armQuat, armScale);
-          armMatW.multiplyMatrices(d.matrix, armLocal);
+          armMatW.multiplyMatrices(headMat, armLocal);
           hwMesh.setMatrixAt(hwCounts[prof.headwear]++, armMatW);
         }
       }

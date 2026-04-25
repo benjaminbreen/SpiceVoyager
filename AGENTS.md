@@ -53,9 +53,9 @@ These bias toward caution over speed. Use judgment for trivial edits.
 - Performance tests should read the existing runtime stats event and enforce budgets on a few canonical scenes, not every port.
 
 ### Testing progress
-- 2026-04-23: Phase 1 started. Plan recorded here; harness scaffold and first smoke tests in progress.
-- 2026-04-23: Phase 1 complete. Added `vitest` + `playwright`, deterministic `testMode` URL hooks, opening-overlay bypass for automation, 2 unit test files, and 1 browser smoke test. Verified with `npm run lint`, `npm test`, and `npm run test:e2e`.
-- 2026-04-23: Phase 2 complete. Added store integration tests for `buyCommodity`, `sellCommodity`, `adjustReputation`, `damageShip`, `fastTravel`, `killCrewMember`, and `learnAboutCommodity`. Verified with `npm run lint` and `npm test`.
+- 2026-04-23: Phase 1 complete. Added the real harness: `vitest`, `playwright`, deterministic `testMode` URL hooks, opening-overlay bypass, and the first smoke/unit coverage. Baseline verification reached `npm run lint`, `npm test`, and an initial `npm run test:e2e`.
+- 2026-04-23: Phase 2 complete. Added store-level integration coverage for core gameplay actions: `buyCommodity`, `sellCommodity`, `adjustReputation`, `damageShip`, `fastTravel`, `killCrewMember`, and `learnAboutCommodity`. Verified with `npm run lint` and `npm test`.
+- 2026-04-25: Phase 3 partially implemented, not complete. Added Playwright-facing hooks/selectors for market, arrival, toast, and world-map flows, plus `tests/e2e/gameplay.spec.ts`. Missing: stable green browser scenarios for market/arrival/world-map, and a clean full `npm run test:e2e` pass.
 
 ## Orientation — codebase map
 

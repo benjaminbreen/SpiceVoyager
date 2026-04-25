@@ -10,10 +10,18 @@ import { sfxShipSink } from '../audio/SoundEffects';
 import { spawnSplash } from '../utils/splashState';
 import { addCameraImpulse } from '../utils/cameraShakeState';
 import { SEA_LEVEL } from '../constants/world';
+import {
+  COLLISION_REPUTATION_TARGET,
+  cargoTemptationScore,
+  chooseInitiativePosture,
+  chooseProvokedPosture,
+  type CollisionResponse,
+  type NpcCombatPosture,
+} from '../utils/npcCombat';
 
 const APPROACH_RADIUS = 40;  // show "approaching" toast
-const HAIL_RADIUS = 12;     // show "Press T to Talk" prompt
-const COLLISION_RADIUS = 4;
+const HAIL_RADIUS = 14;     // show "Press T to Talk" prompt — bumped with NPC visual scale (1.2×)
+const COLLISION_RADIUS = 4.8; // bumped with NPC visual scale (1.2×) to match larger silhouettes
 const NPC_NPC_COLLISION_RADIUS = 6;
 const NPC_NPC_COLLISION_PUSH = 1.6;
 const NPC_DRAFT_BLOCK_HEIGHT = -0.8;
@@ -417,13 +425,31 @@ export function NPCShip({
   const lastClickToast = useRef(0);
   const nextTargetSearchAt = useRef(0);
 
-  // Alert mode: triggered by collision, ship flees from player
+  // Combat posture: Phase 2 adds flee/evade/engage choices, but no NPC firing yet.
+  // Boarding/capture may be added later; it is intentionally not implemented here.
   const alertUntil = useRef(0); // timestamp when alert ends
+  const postureUntil = useRef(0);
+  const combatPosture = useRef<NpcCombatPosture>('neutral');
+  const lastProcessedHitAlert = useRef(0);
   const lastCollisionTime = useRef(0); // cooldown to prevent spam
+  const collisionGrievanceCount = useRef(0);
+  const lastCollisionHailTime = useRef(0);
+  const nextInitiativeCheckAt = useRef(0);
+  const nextInitiativeWarningAt = useRef(0);
   const ALERT_DURATION = 8000; // 8 seconds of fleeing
   const COLLISION_COOLDOWN = 2000; // match Ship.tsx's 2-second cooldown
+  const INITIATIVE_CHECK_MS = 3000;
+  const INITIATIVE_RADIUS = 110;
+  const orbitSide = useRef(identity.id.charCodeAt(0) % 2 === 0 ? 1 : -1);
 
   const speed = useMemo(() => 2 + Math.random() * 3, []);
+
+  const setCombatPosture = (posture: NpcCombatPosture, until: number) => {
+    combatPosture.current = posture;
+    postureUntil.current = until;
+    alertUntil.current = Math.max(alertUntil.current, until);
+    nextTargetSearchAt.current = 0;
+  };
 
   // Deselect when clicking elsewhere (deferred so R3F onClick fires first)
   useEffect(() => {
@@ -437,6 +463,38 @@ export function NPCShip({
     window.addEventListener('pointerdown', handler);
     return () => window.removeEventListener('pointerdown', handler);
   }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { npcId?: string; response?: CollisionResponse } | undefined;
+      if (detail?.npcId !== identity.id) return;
+      const now = Date.now();
+      const hullFraction = hullRef.current / identity.maxHull;
+      let posture: NpcCombatPosture;
+      if (detail.response === 'apologize' || detail.response === 'pay') {
+        posture = identity.armed && hullFraction > 0.35 ? 'evade' : 'flee';
+      } else if (detail.response === 'threaten') {
+        posture = chooseProvokedPosture(identity, {
+          reputation: useGameStore.getState().getReputation(identity.flag) - 40,
+          provoked: true,
+          hullFraction,
+        });
+      } else {
+        posture = identity.armed && identity.morale >= 55 && hullFraction > 0.35 ? 'engage' : 'flee';
+      }
+      setCombatPosture(posture, now + ALERT_DURATION);
+      useGameStore.getState().addNotification(
+        detail.response === 'apologize' || detail.response === 'pay'
+          ? `The ${identity.shipName} keeps clear, still cursing your helm.`
+          : posture === 'flee'
+          ? `The ${identity.shipName} breaks away, shouting curses.`
+          : `The ${identity.shipName} clears for action.`,
+        'warning',
+      );
+    };
+    window.addEventListener('npc-collision-response', handler);
+    return () => window.removeEventListener('npc-collision-response', handler);
+  }, [identity]);
 
   useFrame((state, delta) => {
     if (!group.current) return;
@@ -561,7 +619,7 @@ export function NPCShip({
       accumulatedDelta.current = 0;
     }
 
-    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, setNearestHailableNpc, defeatedNpc, nearestHailableNpc } = useGameStore.getState();
+    const { playerMode, timeOfDay, addNotification, interactionPrompt, setInteractionPrompt, adjustReputation, getReputation, setNearestHailableNpc, defeatedNpc, nearestHailableNpc, cargo, stats, ship } = useGameStore.getState();
 
     // ── Check for hull damage from projectile hits ──
     const liveEntry = npcLivePositions.get(identity.id);
@@ -649,11 +707,21 @@ export function NPCShip({
             approachSpeed,
           },
         }));
+        collisionGrievanceCount.current += 1;
+        if (now - lastCollisionHailTime.current > 9000) {
+          lastCollisionHailTime.current = now;
+          window.dispatchEvent(new CustomEvent('npc-collision-hail', {
+            detail: {
+              npc: identity,
+              collisionCount: collisionGrievanceCount.current,
+            },
+          }));
+        }
         // Camera nudge — one-shot directional push away from the ram point.
         addCameraImpulse(-nx, -nz, Math.min(1.8, 0.45 + approachSpeed * 0.22));
         hullRef.current = Math.max(0, hullRef.current - NPC_COLLISION_DAMAGE);
         if (liveEntry) liveEntry.hull = hullRef.current;
-        adjustReputation(identity.flag, -5);
+        adjustReputation(identity.flag, COLLISION_REPUTATION_TARGET.ram - getReputation(identity.flag));
 
         if (hullRef.current <= 0) {
           if (liveEntry) liveEntry.sunk = true;
@@ -665,27 +733,67 @@ export function NPCShip({
         }
 
         const hullPct = Math.round((hullRef.current / identity.maxHull) * 100);
-        addNotification(`Rammed the ${identity.shipName}! Hull: ${hullPct}%`, 'warning');
+        addNotification(
+          collisionGrievanceCount.current > 1
+            ? `Rammed the ${identity.shipName} again! They take it as deliberate. Hull: ${hullPct}%`
+            : `Rammed the ${identity.shipName}! Hull: ${hullPct}%`,
+          'warning',
+        );
       }
 
-      // Always refresh alert mode so the ship keeps fleeing
-      alertUntil.current = now + ALERT_DURATION;
-      targetRef.current.set(
-        currentPos.x + nx * 80, 0, currentPos.z + nz * 80
-      );
+      const posture = chooseProvokedPosture(identity, {
+        reputation: getReputation(identity.flag),
+        provoked: true,
+        hullFraction: hullRef.current / identity.maxHull,
+      });
+      setCombatPosture(posture, now + ALERT_DURATION);
+      if (posture === 'flee') {
+        targetRef.current.set(
+          currentPos.x + nx * 80, 0, currentPos.z + nz * 80
+        );
+      }
     }
 
     // Check for projectile hit alert from combat system
-    if (liveEntry?.hitAlert && Date.now() < liveEntry.hitAlert) {
-      alertUntil.current = Math.max(alertUntil.current, liveEntry.hitAlert);
+    if (liveEntry?.hitAlert && Date.now() < liveEntry.hitAlert && liveEntry.hitAlert > lastProcessedHitAlert.current) {
+      lastProcessedHitAlert.current = liveEntry.hitAlert;
+      const posture = chooseProvokedPosture(identity, {
+        reputation: getReputation(identity.flag),
+        provoked: true,
+        hullFraction: hullRef.current / identity.maxHull,
+      });
+      setCombatPosture(posture, liveEntry.hitAlert);
     }
 
-    const isAlerted = Date.now() < alertUntil.current;
-
     const now = Date.now();
+    if (now >= postureUntil.current && combatPosture.current !== 'neutral') {
+      combatPosture.current = 'neutral';
+    }
+    const activePosture = combatPosture.current;
+    const isAlerted = activePosture !== 'neutral' || now < alertUntil.current;
+
+    if (
+      playerMode === 'ship' &&
+      activePosture === 'neutral' &&
+      distToPlayer < INITIATIVE_RADIUS &&
+      now >= nextInitiativeCheckAt.current
+    ) {
+      nextInitiativeCheckAt.current = now + INITIATIVE_CHECK_MS;
+      const initiative = chooseInitiativePosture(identity, {
+        reputation: getReputation(identity.flag),
+        hullFraction: hullRef.current / identity.maxHull,
+        playerFlag: ship.flag,
+        cargoTemptation: cargoTemptationScore(cargo, stats.cargoCapacity),
+      });
+      if (initiative === 'warn' && now >= nextInitiativeWarningAt.current) {
+        nextInitiativeWarningAt.current = now + ALERT_DURATION;
+        setCombatPosture('pursue', now + ALERT_DURATION);
+        addNotification(`The ${identity.shipName} bears down and signals a warning.`, 'warning');
+      }
+    }
 
     // ── Movement AI ──
-    if (isAlerted) {
+    if (activePosture === 'flee' || (isAlerted && activePosture === 'neutral')) {
       // While alerted, keep fleeing away from the player
       const fleeDir = _tmpVec.current.set(
         currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
@@ -702,6 +810,48 @@ export function NPCShip({
         }
         nextTargetSearchAt.current = now + 500;
       }
+    } else if (activePosture === 'evade') {
+      // Keep distance, but angle off rather than running straight away. Phase 3
+      // will let these ships fire while doing this.
+      const awayDir = _tmpVec.current.set(
+        currentPos.x - playerPos[0], 0, currentPos.z - playerPos[2]
+      ).normalize();
+      if (now >= nextTargetSearchAt.current) {
+        const evadeAngle = Math.atan2(awayDir.x, awayDir.z) + orbitSide.current * Math.PI * 0.28;
+        const waterTarget = findWaterTarget(currentPos.x, currentPos.z, NPC_FLEE_TARGET_RADIUS, evadeAngle);
+        if (waterTarget) {
+          targetRef.current.set(waterTarget[0], 0, waterTarget[1]);
+        } else {
+          targetRef.current.set(
+            currentPos.x + awayDir.x * 36, 0, currentPos.z + awayDir.z * 36
+          );
+        }
+        nextTargetSearchAt.current = now + 650;
+      }
+    } else if (activePosture === 'engage' || activePosture === 'pursue') {
+      // Hold a rough fighting band instead of fleeing. This is movement-only
+      // until the Phase 3 weapon-firing work lands.
+      const toPlayer = _tmpVec.current.set(
+        playerPos[0] - currentPos.x, 0, playerPos[2] - currentPos.z
+      );
+      const dist = Math.max(toPlayer.length(), 0.001);
+      toPlayer.normalize();
+      if (now >= nextTargetSearchAt.current) {
+        let targetAngle: number;
+        if (dist > 90) {
+          targetAngle = Math.atan2(toPlayer.x, toPlayer.z);
+        } else if (dist < 45) {
+          targetAngle = Math.atan2(-toPlayer.x, -toPlayer.z);
+        } else {
+          targetAngle = Math.atan2(toPlayer.x, toPlayer.z) + orbitSide.current * Math.PI * 0.5;
+        }
+        const targetRadius = dist > 90 ? 44 : 30;
+        const waterTarget = findWaterTarget(currentPos.x, currentPos.z, targetRadius, targetAngle);
+        if (waterTarget) {
+          targetRef.current.set(waterTarget[0], 0, waterTarget[1]);
+        }
+        nextTargetSearchAt.current = now + 650;
+      }
     } else {
       const dist = currentPos.distanceTo(targetRef.current);
       if (dist < 5) {
@@ -710,7 +860,13 @@ export function NPCShip({
       }
     }
 
-    const currentSpeed = isAlerted ? speed * 2.5 : speed; // flee faster when alerted
+    const currentSpeed = activePosture === 'flee'
+      ? speed * 2.5
+      : activePosture === 'evade'
+        ? speed * 1.7
+        : activePosture === 'engage' || activePosture === 'pursue'
+          ? speed * 1.25
+          : speed;
 
     const direction = _tmpVec.current.subVectors(targetRef.current, currentPos).normalize();
     const targetRotation = Math.atan2(direction.x, direction.z);

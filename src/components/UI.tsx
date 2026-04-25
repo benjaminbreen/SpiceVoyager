@@ -19,7 +19,7 @@ import { ArrivalCurtain, DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
 import { CrewPortraitSquare } from './CrewPortrait';
-import { HailPanel } from './HailPanel';
+import { HailPanel, type HailContext } from './HailPanel';
 import { Opening } from './Opening';
 import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
@@ -41,6 +41,7 @@ const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: 
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
 const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const SettingsModalV2 = lazy(() => import('./SettingsModalV2').then((module) => ({ default: module.SettingsModalV2 })));
 const WorldMap = lazy(() => import('./WorldMap').then((module) => ({ default: module.WorldMap })));
 const WorldMapModal = lazy(() => import('./WorldMapModal').then((module) => ({ default: module.WorldMapModal })));
 const WorldMapModalChart = lazy(() => import('./WorldMapModalChart').then((module) => ({ default: module.WorldMapModalChart })));
@@ -622,6 +623,7 @@ export function UI() {
   const playerMode = useGameStore((state) => state.playerMode);
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
+  const settingsV2 = useGameStore((state) => state.renderDebug.settingsV2);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
   const useWorldMapChart = useGameStore((state) => state.renderDebug.worldMapChart);
   const cityFieldOverlayEnabled = useGameStore((state) => state.renderDebug.cityFieldOverlay);
@@ -668,6 +670,12 @@ export function UI() {
       setRequestWorldMap(false);
     }
   }, [requestWorldMap, setRequestWorldMap]);
+  useEffect(() => {
+    if (!testMode.enabled) return;
+    const openWorldMapForTest = () => setShowWorldMap(true);
+    window.addEventListener('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__', openWorldMapForTest);
+    return () => window.removeEventListener('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__', openWorldMapForTest);
+  }, [testMode.enabled]);
   const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string; commodity?: string } | null>(null);
   const showDashboard = !!dashboardState;
   const setShowDashboard = (v: boolean) => setDashboardState(v ? {} : null);
@@ -680,6 +688,7 @@ export function UI() {
   const [showOverlayMenu, setShowOverlayMenu] = useState(false);
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
+  const [hailContext, setHailContext] = useState<HailContext>('normal');
   const overlayMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Mobile layout branching. `isMobile` is true on coarse-pointer viewports
@@ -967,10 +976,28 @@ export function UI() {
 
   const closeHail = useCallback(() => {
     setHailNpc(null);
+    setHailContext('normal');
     if (!hailWasPausedRef.current) {
       setPaused(false);
     }
   }, [setPaused]);
+
+  useEffect(() => {
+    const handleCollisionHail = (e: Event) => {
+      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
+      const npc = (e as CustomEvent).detail?.npc as NPCShipIdentity | undefined;
+      if (!npc) return;
+      const state = useGameStore.getState();
+      if (state.playerMode !== 'ship') return;
+      hailWasPausedRef.current = state.paused;
+      state.setPaused(true);
+      setHailContext('collision');
+      setHailNpc(npc);
+      sfxShipHail(npc.hailLanguage);
+    };
+    window.addEventListener('npc-collision-hail', handleCollisionHail);
+    return () => window.removeEventListener('npc-collision-hail', handleCollisionHail);
+  }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
 
   // Escape key closes modals
   useEffect(() => {
@@ -1029,6 +1056,7 @@ export function UI() {
       hailWasPausedRef.current = state.paused;
       state.setPaused(true);
       setHailNpc(npc);
+      setHailContext('normal');
       sfxShipHail(npc.hailLanguage);
     };
 
@@ -1095,7 +1123,7 @@ export function UI() {
 
   return (
     <div
-      className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none"
+      className="absolute inset-0 z-[60] pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none"
       style={{ transform: 'translateZ(0)', willChange: 'transform' }}
     >
       <AnimatePresence>
@@ -1658,6 +1686,7 @@ export function UI() {
         {hailNpc && (
           <HailPanel
             npc={hailNpc}
+            context={hailContext}
             onClose={() => {
               sfxClose();
               closeHail();
@@ -1848,7 +1877,10 @@ export function UI() {
       {/* Settings Modal */}
       {showSettings && (
         <Suspense fallback={null}>
-          <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+          {settingsV2
+            ? <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} />
+            : <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+          }
         </Suspense>
       )}
 

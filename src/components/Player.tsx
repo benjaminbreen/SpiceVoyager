@@ -19,6 +19,7 @@ import { touchWalkInput } from '../utils/touchInput';
 import { LAND_WEAPON_DEFS } from '../store/gameStore';
 import { derivePlayerAppearance } from '../utils/playerAppearance';
 import { Hat } from './playerParts/Hat';
+import { applyRimLightToTree, updateRimFromFog } from '../utils/rimLight';
 
 // Max upward step the player's visual Y will take per frame when the
 // ground-height query jumps (e.g. stepping from grass onto a road ribbon
@@ -116,6 +117,7 @@ export function Player() {
   const lastThud = useRef(0);
   const _camForward = useRef(new THREE.Vector3());
   const _camRight = useRef(new THREE.Vector3());
+  const rimPatchedFrames = useRef(0);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -155,6 +157,14 @@ export function Player() {
   }, [playerMode, setWalkingTransform]);
 
   useFrame((state, delta) => {
+    // Rim-light patch + uniform sync. Patch repeatedly for the first few
+    // frames so materials added by child components after mount get caught;
+    // applyRimLight is idempotent. Uniform update runs every frame.
+    if (group.current && rimPatchedFrames.current < 8) {
+      applyRimLightToTree(group.current, { intensityMul: 0.85 });
+      rimPatchedFrames.current += 1;
+    }
+    updateRimFromFog(state.scene);
     if (playerMode !== 'walking' || !group.current || paused) return;
     const store = useGameStore.getState();
     const walking = getLiveWalkingTransform();

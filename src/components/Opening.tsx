@@ -4,6 +4,8 @@ import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { useIsMobile } from '../utils/useIsMobile';
 import { SettingsModal } from './SettingsModal';
+import { SettingsModalV2 } from './SettingsModalV2';
+import { useGameStore } from '../store/gameStore';
 
 // Responsive opening splash. Keeps the ASCII charm of the original — title
 // block letters, the ship, animated waves, pennants, twinkles, SET SAIL
@@ -384,6 +386,7 @@ export function Opening({
   onStart,
 }: OpeningOverlayProps) {
   const { isMobile } = useIsMobile();
+  const settingsV2 = useGameStore((state) => state.renderDebug.settingsV2);
 
   // Wide viewport → dual side panels; narrow → single ambient background.
   // Independent of isMobile so narrow desktop windows also get the background.
@@ -996,11 +999,10 @@ export function Opening({
         </div>
       </motion.div>
 
-      <SettingsModal
-        open={showSettings}
-        onClose={() => setShowSettings(false)}
-        initialTab={settingsTab}
-      />
+      {settingsV2
+        ? <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
+        : <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
+      }
     </motion.div>
   );
 }

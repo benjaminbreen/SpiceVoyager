@@ -15,7 +15,9 @@ const zs = new Float32Array(MAX_LIVE_PEDS);
 let count = 0;
 
 // Effective ped body radius for collision (matches the visible torso footprint).
-const PED_RADIUS = 0.32;
+// Matches the 1.12× pedestrian visual scale applied in Pedestrians.tsx so the
+// player can't walk through the body silhouette and projectiles register cleanly.
+const PED_RADIUS = 0.36;
 
 // Kill queue: indices of peds hit this frame. Consumed by Pedestrians.tsx.
 const _pendingKills: number[] = [];
@@ -89,7 +91,7 @@ export function resolvePedestrianPush(x: number, z: number, radius: number): Ped
 /**
  * Test whether a point (from a projectile) hits any live pedestrian.
  * Returns the buffer index of the first hit, or -1 if none.
- * Uses XZ circle test + Y range (ped body 0 to +2 above their ground position).
+ * Uses XZ circle test + Y range (ped body 0 to ~+2.5 above their ground position).
  */
 export function pointHitsPedestrian(px: number, py: number, pz: number): number {
   const HIT_R = PED_RADIUS + 0.12;
@@ -97,7 +99,7 @@ export function pointHitsPedestrian(px: number, py: number, pz: number): number 
   for (let i = 0; i < count; i++) {
     if (xs[i] > 9000) continue; // already killed
     const dy = py - ys[i];
-    if (dy < -0.3 || dy > 2.2) continue; // outside body height range
+    if (dy < -0.3 || dy > 2.5) continue; // body+head, accounting for 1.12× ped scale
     const dx = px - xs[i];
     const dz = pz - zs[i];
     if (dx * dx + dz * dz < hitSq) return i;

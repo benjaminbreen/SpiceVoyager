@@ -707,7 +707,7 @@ export function updatePedestrians(
 
   for (let i = 0; i < activeCount; i++) {
     const p = pedestrians[i];
-    if (p.dead) { p.x = 99999; p.z = 99999; continue; }
+    if (p.dead) continue; // position preserved at death coords; live buffer handles collision exclusion
 
     // ── Gunfire scatter ────────────────────────────────────────────────
     // Any active alert within its hearing radius triggers (or extends) a
@@ -853,6 +853,9 @@ export function updatePedestrians(
       const dtz = p.wanderTargetZ - p.z;
       const distToTarget = Math.sqrt(dtx * dtx + dtz * dtz);
 
+      // Default to walking; the blocked-by-water branch flips this back on.
+      p.isDwelling = false;
+
       if (distToTarget < 1.5) {
         // Pick a new wander target — use a stable incrementing seed, not time
         p.wanderSeed += 1;
@@ -895,11 +898,13 @@ export function updatePedestrians(
           p.y = newY;
           p.angle = Math.atan2(dtx, dtz);
         } else {
-          // Hit water — immediately pick new target back toward home
+          // Hit water — immediately pick new target back toward home and
+          // hold pose this frame so arms don't swing in place.
           p.wanderSeed += 1;
           const backAngle = Math.atan2(p.homeZ - p.z, p.homeX - p.x);
           p.wanderTargetX = p.x + Math.cos(backAngle) * 12;
           p.wanderTargetZ = p.z + Math.sin(backAngle) * 12;
+          p.isDwelling = true;
         }
       }
     }
