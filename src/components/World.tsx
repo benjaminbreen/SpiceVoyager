@@ -2,58 +2,25 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { IS_SAFARI } from '../utils/platform';
 import * as THREE from 'three';
-import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { NPCShip } from './NPCShip';
-import { getTerrainData, getBackgroundHeightColor, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from '../utils/terrain';
+import { getTerrainData, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from '../utils/terrain';
 import { useFrame } from '@react-three/fiber';
 import { generateMap, focusedPortConfig, devModeConfig, findSafeSpawn } from '../utils/mapGenerator';
 import { setLandCharacterBuildings } from '../utils/landCharacter';
 import { SEA_LEVEL } from '../constants/world';
-import { resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { computeDayMood, MOOD_OVERCAST_WARM_HEX } from '../utils/dayMood';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN } from '../utils/animalTerrain';
 import { treeShakes, type TreeImpactKind, getPalmDamage, getFelledTreeState, resetVegetationDamage } from '../utils/impactShakeState';
 import { applyWindSway, updateWindUniforms } from '../utils/windSway';
-
-/** Shift a hex color's HSL to match the current climate palette.
- *  Tropical is the baseline — other climates desaturate and hue-shift. */
-function tintVegetation(baseHex: string, paletteId: WaterPaletteId): string {
-  const col = new THREE.Color(baseHex);
-  const hsl = { h: 0, s: 0, l: 0 };
-  col.getHSL(hsl);
-  switch (paletteId) {
-    case 'temperate':
-      hsl.s *= 0.60; hsl.l = hsl.l * 0.96 + 0.04; hsl.h += 0.02; break;
-    case 'arid':
-      hsl.s *= 0.70; hsl.h -= 0.03; break;
-    case 'mediterranean':
-      hsl.s *= 0.78; hsl.h -= 0.01; hsl.l *= 1.02; break;
-    case 'monsoon':
-      hsl.s *= 0.88; hsl.l *= 0.92; break;
-    case 'tropical': default: break;
-  }
-  col.setHSL(hsl.h, Math.min(1, hsl.s), Math.min(1, hsl.l));
-  return '#' + col.getHexString();
-}
-
-function mergeCompatibleGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
-  const hasIndexed = geometries.some((geometry) => geometry.index);
-  const hasNonIndexed = geometries.some((geometry) => !geometry.index);
-  if (!hasIndexed || !hasNonIndexed) {
-    return mergeGeometries(geometries);
-  }
-
-  const compatible = geometries.map((geometry) => (
-    geometry.index ? geometry.toNonIndexed() : geometry
-  ));
-  const merged = mergeGeometries(compatible);
-  compatible.forEach((geometry, index) => {
-    if (geometry !== geometries[index]) geometry.dispose();
-  });
-  return merged;
-}
+import { tintVegetation } from '../utils/vegetationTint';
+import { mergeCompatibleGeometries } from '../utils/geometryMerge';
+import { buildTerrainSurfaceGeometry, COASTLINE_CLIP_LEVEL } from '../utils/terrainClipping';
+import { buildBackgroundRingGeometry } from '../utils/backgroundRingGeometry';
+import { type PalmEntry, palmCanopyCenter } from '../utils/flora';
+import { generateNpcSpawnPositions } from '../utils/npcSpawn';
 
 import { ProceduralCity } from './ProceduralCity';
 import { Grazers, SpeciesInfo, grazerFootOffset } from './Grazers';
@@ -247,294 +214,10 @@ export function getTreeImpactTargets() { return _treeImpactTargets; }
 
 
 // Commodity list now imported from utils/commodities.ts
-type PalmEntry = { position: [number, number, number], scale: number, lean: number, rotation: number };
 
 const FISH_SWIM_DEPTH = 0.85;
 const TURTLE_SWIM_DEPTH = 0.65;
 const TREE_SHAKE_DURATION = 0.34;
-const NPC_SPAWN_TARGET_COUNT = 5;
-const NPC_SPAWN_MIN_SEPARATION = 38;
-const NPC_SPAWN_EDGE_MARGIN = 0.82;
-const NPC_SPAWN_MAX_ATTEMPTS = 900;
-const NPC_SPAWN_WATER_HEIGHT = SEA_LEVEL - 2.2;
-
-type NpcSpawnCandidate = {
-  position: [number, number, number];
-  score: number;
-};
-
-function isClearNpcSpawnWater(x: number, z: number, halfSize: number): boolean {
-  const edgeLimit = halfSize * NPC_SPAWN_EDGE_MARGIN;
-  if (Math.abs(x) > edgeLimit || Math.abs(z) > edgeLimit) return false;
-
-  const centerHeight = getTerrainData(x, z).height;
-  if (centerHeight > NPC_SPAWN_WATER_HEIGHT) return false;
-
-  for (const radius of [8, 18]) {
-    for (let i = 0; i < 8; i++) {
-      const angle = (i / 8) * Math.PI * 2;
-      const cx = x + Math.cos(angle) * radius;
-      const cz = z + Math.sin(angle) * radius;
-      if (Math.abs(cx) > edgeLimit || Math.abs(cz) > edgeLimit) return false;
-      if (getTerrainData(cx, cz).height > SEA_LEVEL - 1.0) return false;
-    }
-  }
-
-  return true;
-}
-
-function palmCanopyCenter(palm: PalmEntry, out: THREE.Vector3) {
-  out.set(0.6 * palm.scale, 4.15 * palm.scale, 0);
-  out.applyEuler(new THREE.Euler(palm.lean, palm.rotation, 0));
-  out.x += palm.position[0];
-  out.y += palm.position[1];
-  out.z += palm.position[2];
-  return out;
-}
-
-function addNpcSpawnCandidate(
-  candidates: NpcSpawnCandidate[],
-  x: number,
-  z: number,
-  halfSize: number,
-  score: number,
-) {
-  if (!isClearNpcSpawnWater(x, z, halfSize)) return;
-  candidates.push({ position: [x, SEA_LEVEL, z], score });
-}
-
-function generateNpcSpawnPositions(
-  ports: { position: [number, number, number] }[],
-  halfSize: number,
-): [number, number, number][] {
-  const candidates: NpcSpawnCandidate[] = [];
-  const anchors = ports.length ? ports.map(port => port.position) : [[0, SEA_LEVEL, 0] as [number, number, number]];
-  const maxLocalRadius = Math.min(halfSize * 0.72, 320);
-
-  for (const anchor of anchors) {
-    for (let radius = 55; radius <= maxLocalRadius; radius += 18) {
-      for (let i = 0; i < 18; i++) {
-        if (candidates.length > NPC_SPAWN_MAX_ATTEMPTS) break;
-        const angle = (i / 18) * Math.PI * 2 + (Math.random() - 0.5) * 0.24;
-        const jitteredRadius = radius + (Math.random() - 0.5) * 14;
-        const x = anchor[0] + Math.cos(angle) * jitteredRadius;
-        const z = anchor[2] + Math.sin(angle) * jitteredRadius;
-        const routeBand = 1 - Math.min(1, Math.abs(jitteredRadius - 155) / 180);
-        addNpcSpawnCandidate(candidates, x, z, halfSize, 20 + routeBand * 30 + Math.random() * 8);
-      }
-    }
-  }
-
-  // Fallback for ports whose nearby coast is too shallow or landlocked: scan the
-  // playable center, still excluding the foggy edge band.
-  for (let x = -halfSize * 0.74; x <= halfSize * 0.74 && candidates.length < NPC_SPAWN_MAX_ATTEMPTS; x += 28) {
-    for (let z = -halfSize * 0.74; z <= halfSize * 0.74 && candidates.length < NPC_SPAWN_MAX_ATTEMPTS; z += 28) {
-      addNpcSpawnCandidate(
-        candidates,
-        x + (Math.random() - 0.5) * 12,
-        z + (Math.random() - 0.5) * 12,
-        halfSize,
-        8 + Math.random() * 12,
-      );
-    }
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  const positions: [number, number, number][] = [];
-
-  for (const candidate of candidates) {
-    const tooClose = positions.some(pos => {
-      const dx = pos[0] - candidate.position[0];
-      const dz = pos[2] - candidate.position[2];
-      return dx * dx + dz * dz < NPC_SPAWN_MIN_SEPARATION * NPC_SPAWN_MIN_SEPARATION;
-    });
-    if (tooClose) continue;
-    positions.push(candidate.position);
-    if (positions.length >= NPC_SPAWN_TARGET_COUNT) break;
-  }
-
-  return positions;
-}
-
-// Clip land geometry at the water surface so no land triangles exist below
-// the water plane — this eliminates z-fighting at the coastline.
-const COASTLINE_CLIP_LEVEL = SEA_LEVEL - 0.05;
-
-type TerrainVertex = {
-  position: THREE.Vector3;
-  color: THREE.Color;
-};
-
-function cloneTerrainVertex(vertex: TerrainVertex): TerrainVertex {
-  return {
-    position: vertex.position.clone(),
-    color: vertex.color.clone(),
-  };
-}
-
-function interpolateTerrainVertex(a: TerrainVertex, b: TerrainVertex, clipLevel: number): TerrainVertex {
-  const denom = b.position.z - a.position.z;
-  const t = denom === 0 ? 0 : (clipLevel - a.position.z) / denom;
-
-  return {
-    position: a.position.clone().lerp(b.position, t),
-    color: a.color.clone().lerp(b.color, t),
-  };
-}
-
-function clipTriangleToSeaLevel(vertices: TerrainVertex[], keepAbove: boolean, clipLevel: number): TerrainVertex[] {
-  const clipped: TerrainVertex[] = [];
-
-  for (let i = 0; i < vertices.length; i++) {
-    const current = vertices[i];
-    const next = vertices[(i + 1) % vertices.length];
-    const currentInside = keepAbove
-      ? current.position.z >= clipLevel
-      : current.position.z <= clipLevel;
-    const nextInside = keepAbove
-      ? next.position.z >= clipLevel
-      : next.position.z <= clipLevel;
-
-    if (currentInside && nextInside) {
-      clipped.push(cloneTerrainVertex(next));
-    } else if (currentInside && !nextInside) {
-      clipped.push(interpolateTerrainVertex(current, next, clipLevel));
-    } else if (!currentInside && nextInside) {
-      clipped.push(interpolateTerrainVertex(current, next, clipLevel));
-      clipped.push(cloneTerrainVertex(next));
-    }
-  }
-
-  return clipped;
-}
-
-function appendClippedPolygon(
-  polygon: TerrainVertex[],
-  positionTarget: number[],
-  colorTarget: number[],
-) {
-  if (polygon.length < 3) return;
-
-  for (let i = 1; i < polygon.length - 1; i++) {
-    const triangle = [polygon[0], polygon[i], polygon[i + 1]];
-    for (const vertex of triangle) {
-      positionTarget.push(vertex.position.x, vertex.position.y, vertex.position.z);
-      colorTarget.push(vertex.color.r, vertex.color.g, vertex.color.b);
-    }
-  }
-}
-
-function buildTerrainSurfaceGeometry(
-  sourceGeometry: THREE.BufferGeometry,
-  keepAbove: boolean,
-  clipLevel: number,
-): THREE.BufferGeometry {
-  const workingGeometry = sourceGeometry.index
-    ? sourceGeometry.toNonIndexed()
-    : sourceGeometry.clone();
-  const positionAttr = workingGeometry.getAttribute('position') as THREE.BufferAttribute;
-  const colorAttr = workingGeometry.getAttribute('color') as THREE.BufferAttribute;
-  const positions: number[] = [];
-  const colors: number[] = [];
-
-  // Reuse triangle vertex objects to avoid millions of allocations
-  const triangle: TerrainVertex[] = [
-    { position: new THREE.Vector3(), color: new THREE.Color() },
-    { position: new THREE.Vector3(), color: new THREE.Color() },
-    { position: new THREE.Vector3(), color: new THREE.Color() },
-  ];
-
-  for (let i = 0; i < positionAttr.count; i += 3) {
-    for (let j = 0; j < 3; j++) {
-      const index = i + j;
-      triangle[j].position.set(
-        positionAttr.getX(index),
-        positionAttr.getY(index),
-        positionAttr.getZ(index),
-      );
-      triangle[j].color.setRGB(
-        colorAttr.getX(index),
-        colorAttr.getY(index),
-        colorAttr.getZ(index),
-      );
-    }
-
-    const clippedPolygon = clipTriangleToSeaLevel(triangle, keepAbove, clipLevel);
-    appendClippedPolygon(clippedPolygon, positions, colors);
-  }
-
-  workingGeometry.dispose();
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-  // Merge duplicate vertices so computeVertexNormals averages normals across
-  // adjacent faces — this produces smooth shading instead of flat polygon facets.
-  const merged = mergeVertices(geometry, 0.01);
-  merged.computeVertexNormals();
-
-  geometry.dispose();
-  return merged;
-}
-
-// Background terrain ring that extends visible land well beyond the playable
-// area. Matches the main mesh sampler so minimap and main view agree, but uses
-// coarse segments and skips all gameplay systems (flora, fauna, obstacles).
-// A square hole in the middle keeps it from overlapping the high-density
-// playable mesh, so the two surfaces never fight for the same pixels.
-function buildBackgroundRingGeometry(
-  outerHalf: number,
-  innerHalf: number,
-  step: number,
-): THREE.BufferGeometry {
-  const segs = Math.ceil((outerHalf * 2) / step);
-  const vertsPerSide = segs + 1;
-  const vertIndex = new Int32Array(vertsPerSide * vertsPerSide).fill(-1);
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const indices: number[] = [];
-
-  const getOrAddVert = (ix: number, iy: number) => {
-    const key = iy * vertsPerSide + ix;
-    const existing = vertIndex[key];
-    if (existing !== -1) return existing;
-    const x = -outerHalf + ix * step;
-    const y = -outerHalf + iy * step; // plane's local Y; world Z is -y after rotation
-    const worldZ = -y;
-    const t = getBackgroundHeightColor(x, worldZ);
-    const idx = positions.length / 3;
-    positions.push(x, y, t.height);
-    colors.push(t.color[0], t.color[1], t.color[2]);
-    vertIndex[key] = idx;
-    return idx;
-  };
-
-  for (let iy = 0; iy < segs; iy++) {
-    for (let ix = 0; ix < segs; ix++) {
-      const x0 = -outerHalf + ix * step;
-      const y0 = -outerHalf + iy * step;
-      const x1 = x0 + step;
-      const y1 = y0 + step;
-      // Skip quads fully inside the inner hole — the high-density mesh covers these.
-      if (
-        Math.max(Math.abs(x0), Math.abs(x1)) < innerHalf &&
-        Math.max(Math.abs(y0), Math.abs(y1)) < innerHalf
-      ) continue;
-      const i00 = getOrAddVert(ix, iy);
-      const i10 = getOrAddVert(ix + 1, iy);
-      const i01 = getOrAddVert(ix, iy + 1);
-      const i11 = getOrAddVert(ix + 1, iy + 1);
-      indices.push(i00, i10, i11, i00, i11, i01);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geo.setIndex(indices);
-  return geo;
-}
 
 export function World() {
   const initWorld = useGameStore((state) => state.initWorld);
@@ -887,8 +570,10 @@ export function World() {
         if (cypressPort && rand > 0.992 && cypresses.length < 80) {
           cypresses.push({ position: [x, height, worldZ], scale: 0.85 + Math.random() * 0.55 });
         }
-        // Orange grove — Iberian/Caribbean cultivated lowlands
-        if (orangePort && rand > 0.991 && oranges.length < 100 && height < 9) {
+        // Orange grove — Iberian/Caribbean cultivated lowlands. Forest biome
+        // sits at biomeHeight > 10, so finalHeight is rarely under 9; widen
+        // the cap to catch the lower-elevation hillside groves.
+        if (orangePort && rand > 0.985 && oranges.length < 160 && height < 14) {
           oranges.push({
             position: [x, height, worldZ],
             scale: 0.65 + Math.random() * 0.45,
@@ -961,6 +646,15 @@ export function World() {
         // Scattered baobabs on African grassland
         if (africanPort && rand > 0.998 && baobabs.length < 40) {
           baobabs.push({ position: [x, height, worldZ], scale: 0.8 + Math.random() * 0.7, rotation: Math.random() * Math.PI * 2 });
+        }
+        // Orange groves on cultivated lowland — the canonical orchard biome
+        // for Seville's Guadalquivir floodplain and Cuban / Cartagenan plains.
+        if (orangePort && rand > 0.982 && oranges.length < 160) {
+          oranges.push({
+            position: [x, height, worldZ],
+            scale: 0.65 + Math.random() * 0.45,
+            rotation: Math.random() * Math.PI * 2,
+          });
         }
       } else if (biome === 'paddy') {
         // Dense rice shoots on non-flooded bund areas only
