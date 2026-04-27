@@ -1,6 +1,6 @@
 import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion, Road, RoadTier } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
-import { getTerrainData } from './terrain';
+import { getTerrainData, getTerrainHeight } from './terrain';
 import { BRIDGE_DECK_Y } from './roadStyle';
 import { generateBuildingLabel } from './buildingLabels';
 import type { CanalLayout } from './canalLayout';
@@ -35,9 +35,9 @@ function hashStr(s: string): number {
 // The entries exist solely to keep the Record exhaustive for TypeScript.
 const SCALE_COUNTS: Record<PortScale, Record<BuildingType, number>> = {
   'Small':      { dock: 1, warehouse: 1, fort: 0, estate: 0, market: 0, plaza: 0, spiritual: 0, landmark: 0, palace: 0, house: 8,   shack: 5,  farmhouse: 3 },
-  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 1, market: 1, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 20,  shack: 8,  farmhouse: 6 },
-  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 40,  shack: 12, farmhouse: 10 },
-  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, plaza: 2, spiritual: 0, landmark: 0, palace: 0, house: 70,  shack: 20, farmhouse: 15 },
+  'Medium':     { dock: 2, warehouse: 2, fort: 0, estate: 2, market: 1, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 24,  shack: 10, farmhouse: 7 },
+  'Large':      { dock: 3, warehouse: 3, fort: 1, estate: 3, market: 2, plaza: 1, spiritual: 0, landmark: 0, palace: 0, house: 46,  shack: 14, farmhouse: 11 },
+  'Very Large': { dock: 5, warehouse: 4, fort: 1, estate: 5, market: 3, plaza: 2, spiritual: 0, landmark: 0, palace: 0, house: 80,  shack: 23, farmhouse: 17 },
   'Huge':       { dock: 6, warehouse: 5, fort: 2, estate: 7, market: 4, plaza: 2, spiritual: 0, landmark: 0, palace: 0, house: 110, shack: 25, farmhouse: 20 },
 };
 
@@ -60,9 +60,9 @@ const ROAD_COUNTS = ROAD_DENSITY;
 // of Medium to fit their building counts without bumping the edge of the box.
 const GRID_RADIUS: Record<PortScale, number> = {
   'Small':      24,
-  'Medium':     32,
-  'Large':      46,
-  'Very Large': 62,
+  'Medium':     35,
+  'Large':      50,
+  'Very Large': 66,
   'Huge':       82,
 };
 
@@ -116,6 +116,26 @@ interface Cell {
 
 // ── A* pathfinder for road generation ─────────────────────────────────────────
 
+/**
+ * Per-cell record describing the bridge that owns a water cell. Used by
+ * pathToRoad so non-bridge tiers (paths, roads, avenues) routed across the
+ * canal/river don't dive to the waterline — they get projected onto the
+ * owning bridge's authored axis and lifted to deck Y, visually riding the
+ * deck instead of disappearing under it.
+ *
+ * `axisX/axisZ` is any anchor point on the deck centerline; `dirX/dirZ` is
+ * the unit vector along the deck. Together they define the line we project
+ * cell centers onto.
+ */
+interface BridgeMeta {
+  bridgeId: string;
+  deckY: number;
+  axisX: number;
+  axisZ: number;
+  dirX: number;
+  dirZ: number;
+}
+
 interface PathOpts {
   slopePenalty: number;   // how much vertical change costs — avenues high, paths low
   occupiedPenalty: number; // cost of crossing a building footprint
@@ -127,8 +147,10 @@ interface PathOpts {
   roadCells?: Set<string>;
   roadReuseFactor?: number; // step multiplier when stepping onto a roadCell (default 0.3)
   // Water cells that are spanned by a bridge — A* is allowed to traverse these
-  // even though they are water. Used to route roads across rivers.
-  bridgeCells?: Set<string>;
+  // even though they are water. Used to route roads across rivers/canals.
+  // The map's value carries enough geometry for pathToRoad to lift the
+  // approaching road onto the deck; A* itself only needs membership.
+  bridgeCells?: Map<string, BridgeMeta>;
 }
 
 const NEIGHBORS: [number, number][] = [
@@ -193,7 +215,8 @@ function aStarPath(
       const neighbor = gridMap.get(nKey);
       if (!neighbor) continue;
       const isEndpoint = nKey === endKey || nKey === startKey;
-      const isBridgeCell = opts.bridgeCells?.has(nKey) ?? false;
+      const bridgeMeta = opts.bridgeCells?.get(nKey);
+      const isBridgeCell = bridgeMeta !== undefined;
       if (neighbor.isWater && !isEndpoint && !isBridgeCell) continue;
       if (!neighbor.isLand && !neighbor.isBeach && !isEndpoint && !isBridgeCell) continue;
 
@@ -209,6 +232,27 @@ function aStarPath(
       }
       if (opts.roadCells?.has(nKey)) {
         step *= opts.roadReuseFactor ?? 0.3;
+      }
+      // Bridge alignment penalty. Without this, A* sees `bridgeCells` as a
+      // flat membership set and is happy to enter the bridge corridor at
+      // any cell — even ones laterally off the deck axis. pathToRoad then
+      // collapses those off-axis cells onto the axis (fix #2), but A* may
+      // have already chosen a zigzag through the corridor that produces a
+      // visible kink at entry/exit. Penalising perpendicular distance from
+      // the deck centerline pushes A* to enter and traverse the bridge
+      // along the axis, so the projected polyline stays straight. The k=4
+      // multiplier with squared distance means a 1u offset adds ~4 to the
+      // step cost (cheaper than turning, expensive enough to prefer the
+      // on-axis cell when one is reachable).
+      if (bridgeMeta) {
+        const ox = neighbor.x - bridgeMeta.axisX;
+        const oz = neighbor.z - bridgeMeta.axisZ;
+        // Reject the axis component, keep only the perpendicular.
+        const along = ox * bridgeMeta.dirX + oz * bridgeMeta.dirZ;
+        const px = ox - bridgeMeta.dirX * along;
+        const pz = oz - bridgeMeta.dirZ * along;
+        const perpDist2 = px * px + pz * pz;
+        step += perpDist2 * 4;
       }
 
       const tentative = (gScore.get(currentKey) ?? Infinity) + step;
@@ -262,6 +306,42 @@ function chaikin3(
   return result;
 }
 
+// Chaikin variant for roads: smooths XZ, then picks Y as max(linearInterpY,
+// terrainY). Plain terrain resampling (the old behaviour) cannot handle
+// elevated spans — a road lifted to deck Y across a bridge would be
+// flattened back to water level at every Chaikin subdivision, killing the
+// lift. Plain linear interp (chaikin3's behaviour) drifts above terrain on
+// convex slopes, producing floating ramps. The max rule keeps elevated
+// spans aloft (linear interp between two deck-Y endpoints stays at deck Y,
+// well above water-Y terrain) while ground-level roads still snap to terrain
+// on convex crests where terrain Y exceeds the linear interp between two
+// lower endpoints.
+function chaikinXZTerrainY(
+  pts: [number, number, number][],
+  iterations: number,
+): [number, number, number][] {
+  let result = pts;
+  for (let i = 0; i < iterations; i++) {
+    if (result.length < 3) return result;
+    const next: [number, number, number][] = [result[0]];
+    for (let j = 0; j < result.length - 1; j++) {
+      const [x0, y0, z0] = result[j];
+      const [x1, y1, z1] = result[j + 1];
+      const ax = 0.75 * x0 + 0.25 * x1;
+      const az = 0.75 * z0 + 0.25 * z1;
+      const ay = 0.75 * y0 + 0.25 * y1;
+      const bx = 0.25 * x0 + 0.75 * x1;
+      const bz = 0.25 * z0 + 0.75 * z1;
+      const by = 0.25 * y0 + 0.75 * y1;
+      next.push([ax, Math.max(ay, getTerrainHeight(ax, az)), az]);
+      next.push([bx, Math.max(by, getTerrainHeight(bx, bz)), bz]);
+    }
+    next.push(result[result.length - 1]);
+    result = next;
+  }
+  return result;
+}
+
 // BRIDGE_DECK_Y is shared with the renderer via roadStyle.ts so pier
 // filtering can test points against the canonical deck plane.
 
@@ -270,30 +350,66 @@ function pathToRoad(
   tier: RoadTier,
   cellPath: Cell[],
   smoothIterations: number,
-  bridgeCells?: Set<string>,
+  bridgeCells?: Map<string, BridgeMeta>,
 ): Road {
   // Pre-compute y per input cell so bridge spans ride the deck instead of
   // floating a ribbon at sea level underneath. Land cells keep terrain height.
   //
-  // Only tier='bridge' roads get lifted to BRIDGE_DECK_Y. Other tiers (path,
-  // road, avenue) may reuse bridge cells during pathfinding (BFS allows it),
-  // but if we lifted those points too the ribbon would jump from terrain Y
-  // up to deck Y and back — rendering as a stack of near-vertical trapezoid
-  // panels cutting through the bridge. Leaving non-bridge roads at terrain
-  // Y means they duck under the water surface where they cross a bridge
-  // cell, which is invisible (the bridge's own deck covers the span).
+  // Both `bridge`-tier roads (the deck itself) and non-bridge tiers that
+  // happen to traverse a bridge cell during A* are projected onto the owning
+  // bridge's authored axis at deck Y. This guarantees the road visually
+  // shares the deck instead of running parallel to it through water — which
+  // was the failure mode when bridgeCells was a flat membership Set with no
+  // axis information: A* could route a path through a bridge cell at a
+  // slight XZ offset, the road kept terrain Y (= sea level), and the deck
+  // ribbon above failed to cover the laterally-offset road, so it dove
+  // visibly into the canal.
   const liftToDeck = tier === 'bridge';
   const raw: [number, number, number][] = cellPath.map(c => {
-    const onBridge = bridgeCells?.has(`${c.x},${c.z}`) ?? false;
-    if (onBridge && liftToDeck) return [c.x, BRIDGE_DECK_Y, c.z];
+    const meta = bridgeCells?.get(`${c.x},${c.z}`);
+    if (meta) {
+      // Project the cell center onto the bridge axis so off-axis cell snaps
+      // collapse to the deck centerline. Use deck Y for both bridge tiers
+      // and road/avenue/path tiers crossing the bridge.
+      //
+      // Non-bridge tiers ride 0.02u above the deck plane to avoid z-fighting
+      // with the deck mesh — both ribbons are flat at the same XZ when a
+      // road crosses the bridge, and equal Y produces depth-buffer flicker
+      // under camera motion. The bridge tier itself stays exactly on the
+      // deck so its own polyline anchors the rendered deck height.
+      const dx = c.x - meta.axisX;
+      const dz = c.z - meta.axisZ;
+      const t = dx * meta.dirX + dz * meta.dirZ;
+      const px = meta.axisX + meta.dirX * t;
+      const pz = meta.axisZ + meta.dirZ * t;
+      const py = liftToDeck ? meta.deckY : meta.deckY + 0.02;
+      return [px, py, pz];
+    }
     const h = getTerrainData(c.x, c.z).height;
-    return [c.x, Math.max(h, SEA_LEVEL + 0.05), c.z];
+    // Only floor at sea level when this cell is genuinely water. Land cells
+    // already have h above sea level; clamping a beach cell whose terrain
+    // dips a hair below SEA_LEVEL produces a visible brown ledge floating
+    // on the waterline.
+    const y = c.isWater ? Math.max(h, SEA_LEVEL + 0.05) : h;
+    return [c.x, y, c.z];
   });
-  const smoothed = smoothIterations > 0 ? chaikin3(raw, smoothIterations) : raw;
-  // Final clamp: never dip below terrain or water surface. This preserves the
-  // deck on bridge cells and lets Chaikin's interpolated ramp points ride up
-  // the land slope naturally at each endpoint.
+  // Any road whose polyline now contains a deck-Y point is "elevated":
+  // smoothing must preserve that height across Chaikin subdivisions or the
+  // resampled-Y path would un-lift the deck span. chaikinXZTerrainY's
+  // max(linearY, terrainY) rule handles both elevated and ground-level
+  // segments correctly — so we no longer need a separate chaikin3 branch
+  // for bridges.
+  let smoothed: [number, number, number][];
+  if (smoothIterations <= 0) {
+    smoothed = raw;
+  } else {
+    smoothed = chaikinXZTerrainY(raw, smoothIterations);
+  }
+  // Final clamp matters mostly for bridges: the deck must clear any rising
+  // terrain (cliff abutments) and the inner abutment lift sits just above
+  // the deck plane. For land roads the resample already put us on terrain.
   const points: [number, number, number][] = smoothed.map(([x, y, z]) => {
+    if (!liftToDeck) return [x, y, z];
     const h = getTerrainData(x, z).height;
     return [x, Math.max(y, h, SEA_LEVEL + 0.05), z];
   });
@@ -549,7 +665,7 @@ export function generateCity(
   const registerCells = (cells: Cell[]) => {
     for (const c of cells) roadCells.add(`${c.x},${c.z}`);
   };
-  const bridgeCells = new Set<string>();
+  const bridgeCells = new Map<string, BridgeMeta>();
   const bridgeRoads: Cell[][] = [];
 
   // Scan reach scales with port footprint — a fixed 28-cell cap was too short
@@ -579,7 +695,7 @@ export function generateCity(
 
     for (let bi = 0; bi < bridgeCount; bi++) {
       let bestScore = Infinity;
-      let best: { start: Cell; end: Cell; water: Cell[] } | null = null;
+      let best: { start: Cell; end: Cell; water: Cell[]; dx: number; dz: number } | null = null;
 
       for (const a of sample) {
         for (const [dx, dz] of NEIGHBORS) {
@@ -602,7 +718,7 @@ export function generateCity(
                 const score = water.length * 1.6 + centerDist * 0.25 + spacingPenalty;
                 if (score < bestScore) {
                   bestScore = score;
-                  best = { start: a, end: n, water: [...water] };
+                  best = { start: a, end: n, water: [...water], dx, dz };
                 }
               }
               break;
@@ -618,9 +734,22 @@ export function generateCity(
         console.warn(`[bridges] ${portName}: failed to place bridge ${bi + 1}/${bridgeCount} (no valid crossing found)`);
         break;
       }
+      // Bridge axis is the (dx, dz) direction the scan walked, normalized.
+      // The midpoint of the water span is a stable on-axis anchor; pathToRoad
+      // projects each lifted point onto axisX/axisZ + dirX/dirZ * t.
+      const bridgeMid = best.water[Math.floor(best.water.length / 2)];
+      const axisLen = Math.hypot(best.dx, best.dz) || 1;
+      const meta: BridgeMeta = {
+        bridgeId: `bridge_${bi}`,
+        deckY: BRIDGE_DECK_Y,
+        axisX: bridgeMid.x,
+        axisZ: bridgeMid.z,
+        dirX: best.dx / axisLen,
+        dirZ: best.dz / axisLen,
+      };
       for (const w of best.water) {
         const k = `${w.x},${w.z}`;
-        bridgeCells.add(k);
+        bridgeCells.set(k, meta);
         roadCells.add(k);
       }
       roadCells.add(`${best.start.x},${best.start.z}`);
@@ -709,9 +838,18 @@ export function generateCity(
       const hasWater = path.some(c => c.isWater);
       if (!hasWater) continue;
 
+      const canalBridgeId = `canal_bridge_${canalBridgeIdx}`;
+      const canalMeta: BridgeMeta = {
+        bridgeId: canalBridgeId,
+        deckY: BRIDGE_DECK_Y,
+        axisX: cb.x,
+        axisZ: cb.z,
+        dirX: cb.dirX,
+        dirZ: cb.dirZ,
+      };
       for (const cell of path) {
         const k = `${cell.x},${cell.z}`;
-        if (cell.isWater) bridgeCells.add(k);
+        if (cell.isWater) bridgeCells.set(k, canalMeta);
         roadCells.add(k);
       }
       const canalPathN = path.length;
@@ -719,13 +857,23 @@ export function generateCity(
       // ride their own terrain so there's a visible approach ramp up to the
       // deck instead of a cliff edge. Inner abutment sits just above the
       // deck plane so the pier filter won't drop columns on it.
+      //
+      // Unlike dual-bank bridges (which scan along cardinal NEIGHBORS and so
+      // are always axis-aligned), canal bridges run along arbitrary radial
+      // directions. If we used cell centers directly the deck would zigzag
+      // through the staircase of snapped cells. Project each cell onto the
+      // straight bridge axis so the rendered ribbon stays collinear.
       const points: [number, number, number][] = path.map((c, i) => {
-        if (c.isWater) return [c.x, BRIDGE_DECK_Y, c.z];
+        const t = (c.x - cb.x) * cb.dirX + (c.z - cb.z) * cb.dirZ;
+        const px = cb.x + cb.dirX * t;
+        const pz = cb.z + cb.dirZ * t;
+        if (c.isWater) return [px, BRIDGE_DECK_Y, pz];
         const outermost = i === 0 || i === canalPathN - 1;
         const y = outermost ? c.height : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
-        return [c.x, y, c.z];
+        return [px, y, pz];
       });
-      roads.push({ id: `canal_bridge_${canalBridgeIdx++}`, tier: 'bridge', points });
+      roads.push({ id: canalBridgeId, tier: 'bridge', points });
+      canalBridgeIdx++;
       bridgeRoads.push(path);
     }
   }
@@ -1435,7 +1583,7 @@ export function generateCity(
             const center = gridMap.get(`${seed.x + dx * cellSize},${seed.z + dz * cellSize}`);
             if (!center || !center.isLand) continue;
             let ok = true;
-            let sumH = 0;
+            let maxH = -Infinity;
             let nH = 0;
             for (let rr = -plazaRadiusCells; rr <= plazaRadiusCells && ok; rr++) {
               for (let cc = -plazaRadiusCells; cc <= plazaRadiusCells && ok; cc++) {
@@ -1443,7 +1591,7 @@ export function generateCity(
                 if (!ch || !ch.isLand) { ok = false; break; }
                 if (ch.occupied && !roadCells.has(`${ch.x},${ch.z}`)) { ok = false; break; }
                 if (Math.abs(ch.height - center.height) > 1.0) { ok = false; break; }
-                sumH += ch.height;
+                if (ch.height > maxH) maxH = ch.height;
                 nH++;
               }
             }
@@ -1456,7 +1604,12 @@ export function generateCity(
                 if (ch) ch.occupied = true;
               }
             }
-            return { ...center, height: sumH / nH };
+            // Anchor at the *highest* cell inside the footprint, not the
+            // average. Combined with a paving slab thick enough to bury
+            // below the lowest cell (see ProceduralCity), this keeps the
+            // visible top above every cell of terrain underneath so noise
+            // can't poke through and flicker.
+            return { ...center, height: maxH };
           }
         }
       }

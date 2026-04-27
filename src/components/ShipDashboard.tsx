@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { FactionFlag } from './FactionFlag';
 import { CrewPortrait, CrewPortraitSquare } from './CrewPortrait';
+import { VitalityHeart } from './VitalityHeart';
 
 type DashboardTab = 'overview' | 'crew' | 'cargo' | 'ship';
 
@@ -267,6 +268,7 @@ function OverviewTab() {
             <div key={c.id} className="flex items-center gap-2 py-1 text-xs">
               <span className={`font-mono text-[10px] w-7 ${ROLE_ACCENT[c.role]}`}>{ROLE_ABBR[c.role]}</span>
               <span className="text-slate-300 flex-1 truncate">{c.name}</span>
+              <VitalityHeart current={c.hearts.current} max={c.hearts.max} size={13} />
               <span className="font-mono text-[10px] text-slate-500">{c.skill}</span>
               <span className={`text-[9px] font-mono ${HEALTH_LABEL[c.health].color}`}>{HEALTH_LABEL[c.health].text}</span>
             </div>
@@ -334,6 +336,7 @@ function CrewTab() {
         <span className="w-8 text-center">Age</span>
         <span className="w-10 text-center">Skill</span>
         <span className="w-10 text-center">Moral</span>
+        <span className="w-12 text-center">Vital</span>
         <span className="w-10 text-center">Health</span>
         <span className="w-6"></span>
       </div>
@@ -397,6 +400,10 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
             <Bar value={member.morale} color={member.morale > 60 ? 'bg-green-500' : member.morale > 30 ? 'bg-yellow-500' : 'bg-red-500'} height="h-[2px]" />
           </div>
         </div>
+        {/* Vitality */}
+        <div className="w-12 flex justify-center">
+          <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={16} showLabel labelClassName="ml-1 text-[9px] font-mono tabular-nums" />
+        </div>
         {/* Health */}
         <span className={`font-mono text-[9px] w-10 text-center tracking-wider ${health.color}`}>{health.text}</span>
         {/* Expand */}
@@ -423,6 +430,7 @@ function CrewRow({ member, isCaptain, editing, onToggle, onRoleChange }: {
         <div className="flex items-center gap-3 shrink-0">
           <span className="font-mono text-xs text-slate-300">{member.skill}</span>
           <span className={`font-mono text-xs ${member.morale > 60 ? 'text-green-400' : 'text-yellow-400'}`}>{member.morale}</span>
+          <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={12} />
           <span className={`text-[9px] font-mono ${health.color}`}>{health.text}</span>
         </div>
       </div>

@@ -1,4 +1,4 @@
-export type TreeImpactKind = 'tree' | 'broadleaf' | 'palm' | 'baobab' | 'acacia' | 'mangrove' | 'cypress' | 'datePalm' | 'bamboo' | 'willow' | 'cherry' | 'orange';
+export type TreeImpactKind = 'tree' | 'broadleaf' | 'palm' | 'baobab' | 'acacia' | 'mangrove' | 'cypress' | 'datePalm' | 'bamboo' | 'willow' | 'cherry' | 'orange' | 'oak';
 
 export interface BuildingShakeEvent {
   buildingId: string;
@@ -35,6 +35,7 @@ const TREE_MAX_HP: Record<TreeImpactKind, number> = {
   willow: 9,
   cherry: 9,
   orange: 8,
+  oak: 14,
 };
 
 export const buildingShakes: BuildingShakeEvent[] = [];

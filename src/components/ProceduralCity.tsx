@@ -18,6 +18,8 @@ import {
   FARM_TRACK_OPACITY,
   BRIDGE_DECK_Y,
 } from '../utils/roadStyle';
+import { getTerrainHeight } from '../utils/terrain';
+import { SEA_LEVEL } from '../constants/world';
 
 interface Part {
   geo: 'box' | 'cylinder' | 'cone' | 'sphere' | 'dome';
@@ -28,6 +30,10 @@ interface Part {
   color?: [number, number, number];
   buildingId?: string;
   shakeCenter?: [number, number, number];
+  // Ground-hugging surfaces (dock decks, plaza paving) bucket into a parallel
+  // material with polygonOffset so they win the depth tie against terrain
+  // and water-overlay layers instead of z-fighting.
+  overlay?: boolean;
 }
 
 interface TorchSpot {
@@ -560,12 +566,15 @@ const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
       { color: [0.74, 0.44, 0.32], geo: 'cone', h: 0.9 },  // newer brighter tile
     ],
     houseVariants: [
-      // Venetian buildings run tall and narrow — every footprint is precious
-      // when the site is in a lagoon.
-      { weight: 0.45, scaleMul: [0.85, 1.40, 0.90] },
-      { weight: 0.30 },
-      { weight: 0.15, scaleMul: [1.10, 1.20, 1.10] },     // larger merchant palazzo
-      { weight: 0.10, scaleMul: [0.70, 1.65, 0.80] },     // tall jettied campo-edge house
+      // Venetian buildings run tall and narrow — every footprint on the lagoon
+      // is precious, so even modest case ran 3-4 stories and the merchant
+      // palazzi reached 4-5. House base [3,3,3] × Y=1.85 ≈ 5.5u (≈ 3.5 stories);
+      // estate base [6,5,6] × Y=1.85 ≈ 9.25u (≈ 4 stories). The narrow campo-
+      // edge variant with Y=2.30 gives the occasional house-tower silhouette.
+      { weight: 0.40, scaleMul: [0.85, 1.85, 0.90] },     // typical 3-4 story case
+      { weight: 0.25, scaleMul: [1.00, 1.55, 1.00] },     // solid 3-story merchant house
+      { weight: 0.20, scaleMul: [1.10, 1.75, 1.10] },     // wider merchant palazzo
+      { weight: 0.15, scaleMul: [0.70, 2.30, 0.80] },     // tall narrow campo-edge tower house
     ],
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
@@ -735,7 +744,7 @@ export function ProceduralCity() {
         }
 
         const shakeCenter: [number, number, number] = [x, y + Math.max(h * 0.5, 1.2), z];
-        const addPart = (geo: Part['geo'], mat: Part['mat'], lx: number, ly: number, lz: number, sw: number, sh: number, sd: number, colorOverride?: [number, number, number]) => {
+        const addPart = (geo: Part['geo'], mat: Part['mat'], lx: number, ly: number, lz: number, sw: number, sh: number, sd: number, colorOverride?: [number, number, number], overlay?: boolean) => {
           const rx = lx * Math.cos(rot) - lz * Math.sin(rot);
           const rz = lx * Math.sin(rot) + lz * Math.cos(rot);
           allParts.push({
@@ -746,16 +755,26 @@ export function ProceduralCity() {
             color: colorOverride ?? varyColor(BASE_COLORS[mat] ?? BASE_COLORS.dark, rng),
             buildingId: b.id,
             shakeCenter,
+            overlay,
           });
         };
 
-        // Helper to add a torch at a local offset from this building
+        // Helper to add a torch at a local offset from this building.
+        // Bracket spans world y = (y + ly) - 0.6 .. (y + ly); flame sits at
+        // world y = y + ly. If the building anchors near or below sea level
+        // (waterside docks, stilted houses, etc.) the bracket bottom can dip
+        // under the water plane and the flame ends up half-submerged. Lift
+        // the whole torch by whatever is needed to clear sea level + margin.
         const addTorch = (lx: number, ly: number, lz: number) => {
+          const minBracketBottom = SEA_LEVEL + 0.05;
+          const bracketBottomWorld = y + ly - 0.6;
+          const lift = Math.max(0, minBracketBottom - bracketBottomWorld);
+          const lyAdj = ly + lift;
           const rx = lx * Math.cos(rot) - lz * Math.sin(rot);
           const rz = lx * Math.sin(rot) + lz * Math.cos(rot);
-          torches.push({ pos: [x + rx, y + ly, z + rz] });
+          torches.push({ pos: [x + rx, y + lyAdj, z + rz] });
           // Torch bracket (small wood cylinder)
-          addPart('cylinder', 'wood', lx, ly - 0.3, lz, 0.08, 0.6, 0.08);
+          addPart('cylinder', 'wood', lx, lyAdj - 0.3, lz, 0.08, 0.6, 0.08);
         };
 
         // Uniform-scale a range of parts around a landmark anchor in local coords.
@@ -1517,7 +1536,9 @@ export function ProceduralCity() {
 
         if (b.type === 'dock') {
           const deckColor = varyColor(BASE_COLORS.wood, rng, 0.06);
-          addPart('box', 'wood', 0, 0, 0, w, 0.2, d, deckColor);
+          // overlay=true buckets the deck into the polygonOffset material so
+          // it doesn't z-fight the terrain mesh it sits flush against.
+          addPart('box', 'wood', 0, 0, 0, w, 0.2, d, deckColor, true);
           const pileColor = varyColor(BASE_COLORS.wood, rng, 0.1);
           addPart('cylinder', 'wood', w/2-0.2, -1, d/2-0.2, 0.2, 3, 0.2, pileColor);
           addPart('cylinder', 'wood', -w/2+0.2, -1, d/2-0.2, 0.2, 3, 0.2, pileColor);
@@ -1622,14 +1643,26 @@ export function ProceduralCity() {
             return { color: [0.66, 0.62, 0.56], mat: 'stone', geo: 'box' };
           };
           const pave = paveFor();
-          addPart(pave.geo, pave.mat, 0, 0.1, 0, w, 0.2, d, varyColor(pave.color, rng, 0.04));
-          // Subtle inset rim (stone border) for all variants except West African
+          // The slab is anchored at the *highest* terrain cell inside the
+          // footprint (see cityGenerator's tryReservePlaza) and its bottom
+          // is buried ~2m underground. Together that keeps the visible top
+          // above every cell underneath while the underside still intersects
+          // the lowest cell, so terrain can never poke through or float free.
+          // overlay=true also routes the slab through a polygonOffset
+          // material so any residual coplanarity at the slab edge wins the
+          // depth tie. Visible top stays at building.y + 0.2 (the original
+          // height), only the buried portion grew downward.
+          addPart(pave.geo, pave.mat, 0, -0.9, 0, w, 2.2, d, varyColor(pave.color, rng, 0.04), true);
+          // Subtle inset rim (stone border) for all variants except West African.
+          // Same buried-skirt trick: visible top sits at +0.25 (the original
+          // 0.05 step above paving top), but the strip extends down to -2.0
+          // so it tracks the slab and never z-fights against it at the edge.
           if (c !== 'West African') {
             const rim = varyColor([pave.color[0] * 0.82, pave.color[1] * 0.82, pave.color[2] * 0.82], rng, 0.03);
-            addPart('box', pave.mat, 0, 0.22, d/2 - 0.25, w - 0.6, 0.06, 0.5, rim);
-            addPart('box', pave.mat, 0, 0.22, -d/2 + 0.25, w - 0.6, 0.06, 0.5, rim);
-            addPart('box', pave.mat, w/2 - 0.25, 0.22, 0, 0.5, 0.06, d - 0.6, rim);
-            addPart('box', pave.mat, -w/2 + 0.25, 0.22, 0, 0.5, 0.06, d - 0.6, rim);
+            addPart('box', pave.mat, 0, -0.875, d/2 - 0.25, w - 0.6, 2.25, 0.5, rim, true);
+            addPart('box', pave.mat, 0, -0.875, -d/2 + 0.25, w - 0.6, 2.25, 0.5, rim, true);
+            addPart('box', pave.mat, w/2 - 0.25, -0.875, 0, 0.5, 2.25, d - 0.6, rim, true);
+            addPart('box', pave.mat, -w/2 + 0.25, -0.875, 0, 0.5, 2.25, d - 0.6, rim, true);
           }
 
           // ── Centrepiece ──
@@ -2135,11 +2168,13 @@ export function ProceduralCity() {
     return ruins;
   }, [ports, damageVersion]);
 
-  // Group parts by geo+mat
+  // Group parts by geo+mat (+ overlay flag). Overlay parts bucket into a
+  // parallel material with polygonOffset so flat ground-hugging surfaces
+  // (dock decks, plaza paving) don't z-fight with terrain or water layers.
   const groups = useMemo(() => {
     const map = new Map<string, Part[]>();
     parts.forEach(p => {
-      const key = `${p.geo}_${p.mat}`;
+      const key = `${p.geo}_${p.mat}${p.overlay ? '_overlay' : ''}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     });
@@ -2166,16 +2201,34 @@ export function ProceduralCity() {
     dark: darkMat,
   }), [darkMat]);
 
+  // Overlay materials for ground-hugging parts (dock decks, plaza paving).
+  // Negative polygonOffset pulls the surface toward camera so it wins the
+  // depth tie against coplanar terrain and water-overlay layers, mirroring
+  // the trick already used by roads and field overlays.
+  const overlayMats = useMemo(() => ({
+    white: new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    mud: new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    wood: new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    terracotta: new THREE.MeshStandardMaterial({ color: '#cd5c5c', roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    stone: new THREE.MeshStandardMaterial({ color: '#888888', roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    dark: darkMat,
+  }), [darkMat]);
+
   return (
     <group>
       {Array.from(groups.entries()).map(([key, groupParts]) => {
-        const [geoName, matName] = key.split('_') as [keyof typeof geos, keyof typeof mats];
+        const segments = key.split('_');
+        const geoName = segments[0] as keyof typeof geos;
+        const matName = segments[1] as keyof typeof mats;
+        const isOverlay = segments[2] === 'overlay';
+        const material = isOverlay ? overlayMats[matName] : mats[matName];
         return (
           <InstancedParts
             key={key}
             parts={groupParts}
             geometry={geos[geoName]}
-            material={mats[matName]}
+            material={material}
           />
         );
       })}
@@ -2333,6 +2386,7 @@ function buildRoadRibbon(
   yLift: number,
   taperStart: boolean = true,
   taperEnd: boolean = true,
+  sampleEdgeY?: (x: number, z: number) => number,
 ): THREE.BufferGeometry | null {
   const n = points.length;
   if (n < 2) return null;
@@ -2352,13 +2406,25 @@ function buildRoadRibbon(
   }
 
   const verts: number[] = [];
+  // When sampleEdgeY is provided, the two ribbon edges use that callback's
+  // Y instead of inheriting the centerline polyline Y. This lets a road
+  // bank with the cross-slope on a hillside instead of cutting horizontally
+  // through it (current behaviour for non-bridge tiers, which pass terrain
+  // height as the sampler). Bridges leave it undefined so the deck stays
+  // a flat plane at BRIDGE_DECK_Y across its full width.
   const pushPair = (
     px: number, py: number, pz: number,
     nx: number, nz: number, w: number,
   ): number => {
     const idx = verts.length / 3;
-    verts.push(px + nx * w, py + yLift, pz + nz * w);
-    verts.push(px - nx * w, py + yLift, pz - nz * w);
+    const lx = px + nx * w;
+    const lz = pz + nz * w;
+    const rx = px - nx * w;
+    const rz = pz - nz * w;
+    const ly = sampleEdgeY ? sampleEdgeY(lx, lz) : py;
+    const ry = sampleEdgeY ? sampleEdgeY(rx, rz) : py;
+    verts.push(lx, ly + yLift, lz);
+    verts.push(rx, ry + yLift, rz);
     return idx;
   };
 
@@ -2637,16 +2703,23 @@ function CityRoads({ ports }: { ports: PortsProp }) {
           // Farm tracks render thinner and faded so they read as footpaths
           // rather than built roads. They stay on 'path' tier in the data
           // model so pedestrian corridor-snapping treats them like any road.
+          // The terrain edge sampler keeps both flanks pinned to the slope
+          // so a track contouring a hillside banks instead of cutting a
+          // horizontal sliver through it.
           const [ts, te] = taperFor(r.id);
-          const geo = buildRoadRibbon(r.points, FARM_TRACK_WIDTH, FARM_TRACK_Y_LIFT, ts, te);
+          const geo = buildRoadRibbon(r.points, FARM_TRACK_WIDTH, FARM_TRACK_Y_LIFT, ts, te, getTerrainHeight);
           if (!geo) continue;
           const bucket = byFarmTrackVariant.get(variant);
           if (bucket) bucket.push(geo); else byFarmTrackVariant.set(variant, [geo]);
         } else {
+          // Land roads sample terrain at the lateral offset of each ribbon
+          // edge. On a slope the uphill edge rides up the hillside and the
+          // downhill edge drops with it, so the cross-section banks with
+          // the terrain instead of slicing horizontally through the slope.
           const tierKey = r.tier as TierKey;
           const style = ROAD_TIER_STYLE[tierKey];
           const [ts, te] = taperFor(r.id);
-          const geo = buildRoadRibbon(r.points, style.width, style.yLift, ts, te);
+          const geo = buildRoadRibbon(r.points, style.width, style.yLift, ts, te, getTerrainHeight);
           if (!geo) continue;
           const k = keyFor(tierKey, variant);
           const bucket = byTierVariant.get(k);
@@ -3158,7 +3231,7 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     const dummy = new THREE.Object3D();
     spots.forEach((s, i) => {
       dummy.position.set(s.pos[0], s.pos[1], s.pos[2]);
-      dummy.scale.set(0.18, 0.28, 0.18);
+      dummy.scale.set(0.225, 0.35, 0.225);
       dummy.updateMatrix();
       meshRef.current!.setMatrixAt(i, dummy.matrix);
     });
@@ -3214,7 +3287,7 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
           Math.sin(t * 3.7 + phase * 0.5) * 0.05;
         const s = spots[i].pos;
         dummy.position.set(s[0], s[1], s[2]);
-        dummy.scale.set(0.18 * f, 0.28 * f, 0.18 * f);
+        dummy.scale.set(0.225 * f, 0.35 * f, 0.225 * f);
         dummy.updateMatrix();
         meshRef.current.setMatrixAt(i, dummy.matrix);
       }

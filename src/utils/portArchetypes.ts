@@ -156,6 +156,19 @@ export interface PortDefinition {
   riverLength?: number;
   riverSinuosity?: number;
   /**
+   * Which bank to place the city on for `estuary` / `tidal_river` ports, relative
+   * to facing inland from the open direction. 'right' = clockwise (default —
+   * preserves prior behavior). 'left' = counterclockwise. For Lisbon (open W),
+   * 'left' puts the city on the north bank of the Tagus.
+   */
+  riverBank?: 'left' | 'right';
+  /**
+   * How far along the river the historical city core sits, as a fraction of
+   * `riverLength`. 0 = at the mouth (default — Belém-style), 0.5 = halfway
+   * upstream, 1 = at the far inland end. Lisbon's Baixa is ~0.35.
+   */
+  riverPortPosition?: number;
+  /**
    * Number of bridges to attempt to place across the port's river/strait.
    * Only takes effect when the city generator detects two major land components
    * (i.e. a real river bisects the map). Bridges become part of the road network
@@ -547,7 +560,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'arid',
     culture: 'Indian Ocean',
     buildingStyle: 'arab-cubic',
-    scale: 'Small',
+    scale: 'Medium',
     description: 'Yemen\'s coffee port on the Red Sea coast. The finest Arabian coffee passes through its warehouses.',
     openDirection: 'S',
     harborWidth: 0.55,           // broad semicircular roadstead
@@ -694,11 +707,19 @@ export const CORE_PORTS: PortDefinition[] = [
     enclosure: 0.2,
     riverMouthWidth: 0.4,        // Tagus is very wide at Lisbon
     riverInlandWidth: 0.26,      // Mar da Palha inner basin stays wide
-    riverLength: 0.9,            // long reach well inland
+    riverLength: 1.2,            // river continues past the east edge of the mesh
     riverSinuosity: 0.05,        // relatively straight in this stretch
     coastRuggedness: 0.9,
+    // City sits on the NORTH bank of the Tagus. With openDirection 'W',
+    // riverBank 'left' = counterclockwise from open = north.
+    riverBank: 'left',
+    // Historic Baixa/Castelo core sits upriver from the Atlantic mouth,
+    // not at Belém. Push the port marker east along the Tagus.
+    riverPortPosition: 0.22,
     headlands: [
-      { side: 'right', size: 0.35, width: 0.2 },  // southern bank headland
+      // Almada / south-bank promontory across the river from the city.
+      // For openDirection 'W', side 'right' resolves to the south bank.
+      { side: 'right', size: 0.35, width: 0.2 },
     ],
     flagColor: [0.85, 0.15, 0.15],  // Portuguese red (Habsburg crown 1580-1640, but red still flown)
     landmark: 'belem-tower',
@@ -713,7 +734,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'temperate',
     culture: 'European',
     buildingStyle: 'dutch-brick',
-    scale: 'Very Large',
+    scale: 'Huge',
     description: 'The IJ waterfront is all activity — cranes swinging bales from lighters into canal-side warehouses, VOC clerks tallying inventories, shipwrights caulking hulls in the yards. The city is flat and wet, and smells of tar and herring. The new Bourse is barely a year old but already thick with merchants trading pepper futures and Baltic grain contracts. Sephardic refugees from Iberia have settled along the canals, and their networks reach from Antwerp to Goa. Even in summer the wind off the Zuiderzee cuts through the rigging.',
     openDirection: 'N',
     harborWidth: 0.7,            // wide IJ tidal bay across the entire north edge
@@ -727,14 +748,17 @@ export const CORE_PORTS: PortDefinition[] = [
     canalLayout: {
       type: 'concentric',
       openDirection: 'N',
-      innerRadius: 22,
+      innerRadius: 26,
       rings: 2,
-      ringSpacing: 18,
+      ringSpacing: 22,
       radials: 3,
-      canalWidth: 4,
+      // Widened from 4 to 7 so canals register reliably at the world mesh
+      // resolution (~2.8 world units between vertices). At the previous width
+      // canals were thinner than a single mesh quad and rendered invisibly.
+      canalWidth: 7,
       centralInlet: true,
-      inletDepth: 32,
-      inletWidth: 6,
+      inletDepth: 38,
+      inletWidth: 10,
       bridgesPerRing: 3,
       bridgesPerRadial: 1,
       bridgesOnInlet: 2,
@@ -749,7 +773,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'mediterranean',
     culture: 'European',
     buildingStyle: 'iberian',
-    scale: 'Large',
+    scale: 'Very Large',
     description: 'The river is shallow — ocean-going ships unload downstream at Sanlúcar de Barrameda, and flat-bottomed barges ferry cargo up the Guadalquivir to the city. The Torre del Oro marks the old river quay where goods from the Americas are landed and tallied by the Casa de Contratación. Genoese bankers have offices near the cathedral, converting Potosí silver into credit. The streets smell of olive oil, tobacco smoke, and orange blossom. Merchants grumble that Cádiz would be better, but the monopoly stays.',
     openDirection: 'S',          // Guadalquivir flows north-south through the city
     // Guadalquivir at Seville was historically narrower than the Thames at
@@ -783,10 +807,33 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'mediterranean',
     culture: 'European',
     buildingStyle: 'venetian-gothic',
+    // Venice in 1612 was one of the largest cities in Europe (~140k people),
+    // but post-1575-plague decline pulls it just below London/Amsterdam in scale.
     scale: 'Very Large',
     description: 'The Republic\'s shallow-water capital sits on a hundred islands in a brackish lagoon, the Lido shielding it from the Adriatic. Galleys from Alexandria and Aleppo unload sacks of pepper, cardamom, and indigo at the Rialto, where Greek, German, and Jewish merchants haggle in half a dozen tongues. Murano glass, mirrors, and theriac — the city\'s monopoly polypharmacy compound — flow outward in return. The Cape route has been gnawing at the spice trade for a century, but Levantine pepper still arrives in volume, and the Arsenale lays new galleys at a pace no other yard can match. The air smells of canal silt, wet brick, and woodsmoke from the glass furnaces.',
     openDirection: 'E',
     coastRuggedness: 0.55,           // low alluvial coast, gentle noise
+    // Canal layout: the Grand Canal as the broad central inlet curving in from
+    // the lagoon, plus an inner ring approximating the Cannaregio/Castello arc
+    // and four radial cuts for the rii (smaller canals) that thread the sestieri.
+    // Wider than Amsterdam's because Venice is more water than land — this is
+    // the closest fit the concentric pattern offers until a true lagoon-grid
+    // canal type is added.
+    canalLayout: {
+      type: 'concentric',
+      openDirection: 'E',
+      innerRadius: 32,
+      rings: 2,
+      ringSpacing: 26,
+      radials: 4,
+      canalWidth: 8,
+      centralInlet: true,
+      inletDepth: 60,           // long Grand Canal sweep into the city
+      inletWidth: 12,           // the Grand Canal is broad
+      bridgesPerRing: 4,
+      bridgesPerRadial: 1,
+      bridgesOnInlet: 4,        // Rialto + three other crossings
+    },
     // Satellite dx/dz are UNROTATED world coords (the satellite loop does not
     // apply openDirection rotation). For openDirection='E', rotateToOpen maps
     // unrotated (lx, lz) → rotated (wrx, wrz) = (lz, -lx). We want the named

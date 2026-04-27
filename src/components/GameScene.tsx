@@ -2,14 +2,15 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO } from '@react-three/postprocessing';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
-import { World, getTreeImpactTargets } from './World';
+import { World } from './World';
+import { getTreeImpactTargets } from '../state/worldRegistries';
 import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
 import { HinterlandScenes } from './HinterlandScenes';
 import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building } from '../store/gameStore';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { ambientEngine } from '../audio/AmbientEngine';
-import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact } from '../audio/SoundEffects';
+import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact, sfxRocketWhistle } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
@@ -24,7 +25,7 @@ import {
 } from '../utils/livePlayerTransform';
 import { SplashSystem } from './SplashSystem';
 import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
-import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail } from '../utils/splashState';
+import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
 import { spawnBuildingShake, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
   mouseWorldPos,
@@ -226,7 +227,7 @@ function bowWeaponGravity(weaponType: WeaponType) {
     case 'cetbang':
       return 8;
     case 'fireRocket':
-      return 4;
+      return 12;
     default:
       return SHIP_PROJECTILE_GRAVITY;
   }
@@ -235,7 +236,7 @@ function bowWeaponGravity(weaponType: WeaponType) {
 function bowWeaponLaunchSpeed(weaponType: WeaponType) {
   switch (weaponType) {
     case 'fireRocket':
-      return WEAPON_DEFS.fireRocket.range * 2.5;
+      return WEAPON_DEFS.fireRocket.range * 0.5;
     case 'falconet':
       return WEAPON_DEFS.falconet.range * 3.5;
     default:
@@ -1308,7 +1309,7 @@ function CameraController() {
         const dx = _swivelAimTarget.x - _swivelMuzzleOrigin.x;
         const dy = _swivelAimTarget.y - _swivelMuzzleOrigin.y;
         const dz = _swivelAimTarget.z - _swivelMuzzleOrigin.z;
-        const flatDist = Math.sqrt(dx * dx + dz * dz);
+        const flatDist = Math.max(0.001, Math.sqrt(dx * dx + dz * dz) - SWIVEL_BARREL_FORWARD);
         const yaw = Math.atan2(dx, dz);
         const selected = resolveActiveBowWeapon(useGameStore.getState().stats.armament);
         const speed = bowWeaponLaunchSpeed(selected);
@@ -1411,7 +1412,9 @@ function resolveActiveBowWeapon(armament: WeaponType[]): WeaponType {
   const bowWeapons = mountedBowWeapons(armament);
   if (bowWeapons.length === 0) return 'swivelGun';
   if (bowWeapons.includes(activeBowWeapon)) return activeBowWeapon;
-  const next = bowWeapons[0];
+  // Prefer the rocket rack on first resolve — it's the signature aimable on
+  // Junk/Jong, so defaulting to the swivel feels wrong on a fresh Chinese run.
+  const next = bowWeapons.includes('fireRocket') ? 'fireRocket' : bowWeapons[0];
   setActiveBowWeapon(next);
   return next;
 }
@@ -1479,8 +1482,8 @@ function tryFireBowWeapon() {
 
   lastFireTimeGlobal.current = now;
   if (bowWeapon === 'fireRocket') {
-    const yawDrift = (Math.random() - 0.5) * (Math.PI / 30);
-    const pitchDrift = (Math.random() - 0.5) * (Math.PI / 45);
+    const yawDrift = (Math.random() - 0.5) * (Math.PI / 55);
+    const pitchDrift = (Math.random() - 0.5) * (Math.PI / 70);
     const cosY = Math.cos(yawDrift);
     const sinY = Math.sin(yawDrift);
     const dx = _swivelFireDir.x;
@@ -1494,6 +1497,8 @@ function tryFireBowWeapon() {
     });
     spawnProjectile(_swivelMuzzleOrigin, _swivelFireDir, bowWeaponLaunchSpeed(bowWeapon), bowWeapon);
     sfxRocketFire();
+    const estFlightTime = Math.min(2.3, targetDistance / (bowWeaponLaunchSpeed(bowWeapon) * 0.8));
+    sfxRocketWhistle(estFlightTime);
   } else {
     useGameStore.setState({
       cargo: { ...state.cargo, [ammoCommodity]: (state.cargo[ammoCommodity] ?? 0) - 1 },
@@ -1831,6 +1836,9 @@ function InteractionController() {
         const next = cycleActiveBowWeapon(state.stats.armament);
         if (next) {
           state.addNotification(`Mounted weapon: ${WEAPON_DEFS[next].name}.`, 'info');
+        } else {
+          const current = resolveActiveBowWeapon(state.stats.armament);
+          state.addNotification(`Only ${WEAPON_DEFS[current].name} mounted — visit a shipyard to add another bow weapon.`, 'warning');
         }
       } else if (key === 'f' && state.playerMode === 'ship') {
         // Toggle combat mode
@@ -1884,10 +1892,16 @@ function InteractionController() {
 // ── Projectile renderer + hit detection ─────────────────────────────────────
 const NPC_HIT_RADIUS = 4;
 const PROJECTILE_COUNT = 30; // increased for broadsides
+const ROCKET_COUNT = 8;
+const ROCKET_NEAR_MISS_RADIUS = 6.5;
+const _rocketBodyUp = new THREE.Vector3(0, 1, 0);
+const _rocketBodyDir = new THREE.Vector3();
 
 function ProjectileSystem() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const rocketMeshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const rocketDummy = useMemo(() => new THREE.Object3D(), []);
 
   useFrame((_, delta) => {
     if (!meshRef.current) return;
@@ -1946,7 +1960,9 @@ function ProjectileSystem() {
         p.trailClock = (p.trailClock ?? 0) + delta;
         while (p.trailClock >= 0.05) {
           p.trailClock -= 0.05;
-          spawnRocketTrail(p.pos.x, p.pos.y, p.pos.z);
+          const spd = p.vel.length();
+          const invSpd = spd > 0.01 ? 1 / spd : 0;
+          spawnRocketTrail(p.pos.x, p.pos.y, p.pos.z, p.vel.x * invSpd, p.vel.y * invSpd, p.vel.z * invSpd);
         }
       }
 
@@ -1954,10 +1970,9 @@ function ProjectileSystem() {
       // collision separately so hills and shorelines stop them correctly.
       if (!isLandWeapon && p.pos.y < 0) {
         if (isRocket) {
-          // Rockets detonate on water too — bigger splash + impact FX so a
-          // near-miss is still visually rewarding.
+          // Rockets detonate on water too — bigger splash + fire FX.
           spawnSplash(p.pos.x, p.pos.z, 1.3);
-          spawnImpactBurst(p.pos.x, 0.2, p.pos.z, 1.0);
+          spawnRocketFireBurst(p.pos.x, 0.2, p.pos.z, 1.2);
           sfxRocketImpact();
         } else {
           spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
@@ -1978,7 +1993,7 @@ function ProjectileSystem() {
           const damage = npcProjectileDamage(p.weaponType);
           if (isRocket) {
             sfxRocketImpact();
-            spawnImpactBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, 1.1);
+            spawnRocketFireBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, 1.2);
           } else {
             sfxCannonImpact();
           }
@@ -2101,30 +2116,36 @@ function ProjectileSystem() {
       if (isRocket) {
         let hitAnyone = false;
         let directHitNpc: typeof npcLivePositions extends Map<any, infer V> ? V | null : null = null as any;
+        let nearMissNpc: typeof npcLivePositions extends Map<any, infer V> ? V | null : null = null as any;
         for (const [, npc] of npcLivePositions) {
           if (npc.sunk) continue;
           const dx = p.pos.x - npc.x;
           const dz = p.pos.z - npc.z;
-          if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
+          const distSq = dx * dx + dz * dz;
+          if (distSq < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
             directHitNpc = npc;
             break;
           }
+          if (distSq < ROCKET_NEAR_MISS_RADIUS * ROCKET_NEAR_MISS_RADIUS && !nearMissNpc) {
+            nearMissNpc = npc;
+          }
         }
-        // Only explode if we have either a direct hit or would have
-        // otherwise flown off — keep the rocket travelling otherwise.
-        if (!directHitNpc) {
+        // Keep travelling unless we have a direct hit or are passing within near-miss radius.
+        if (!directHitNpc && !nearMissNpc) {
           continue;
         }
-        // Detonation: big splinter + impact burst, splash damage.
+        // Detonation: fire burst + splinters.
         sfxRocketImpact();
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, 1.35);
-        spawnImpactBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, 1.1);
+        spawnRocketFireBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, directHitNpc ? 1.4 : 0.9);
         const gState = useGameStore.getState();
         const gunner = getCrewByRole(gState, 'Gunner');
         const gunnerMod = gunner ? 1.0 + (gunner.stats.strength / 200) + (gunner.stats.perception / 400) : 1.0;
         const abilityMod = captainHasAbility(gState, 'Broadside Master') ? 1.15 : 1.0;
         const baseDamage = WEAPON_DEFS.fireRocket.damage * gunnerMod * abilityMod;
-        const ROCKET_AOE_RADIUS = 2.8;
+        // Near-miss detonations use the wider near-miss radius so the
+        // ship that triggered proximity actually takes damage.
+        const ROCKET_AOE_RADIUS = directHitNpc ? 4.5 : ROCKET_NEAR_MISS_RADIUS;
         const AOE_SQR = ROCKET_AOE_RADIUS * ROCKET_AOE_RADIUS;
         for (const [, npc] of npcLivePositions) {
           if (npc.sunk) continue;
@@ -2144,7 +2165,9 @@ function ProjectileSystem() {
             addNotification(
               npc === directHitNpc
                 ? `Rocket strike on the ${npc.shipName}! Hull: ${hullPct}%`
-                : `Rocket blast catches the ${npc.shipName}. Hull: ${hullPct}%`,
+                : npc === nearMissNpc
+                  ? `Rocket detonates near the ${npc.shipName}! Hull: ${hullPct}%`
+                  : `Rocket blast catches the ${npc.shipName}. Hull: ${hullPct}%`,
               'warning',
             );
           }
@@ -2155,8 +2178,6 @@ function ProjectileSystem() {
           projectiles.splice(i, 1);
           continue;
         }
-        // Shouldn't reach here (we only entered this branch with a direct
-        // hit), but safeguard against the rocket sticking.
         projectiles.splice(i, 1);
         continue;
       }
@@ -2262,30 +2283,59 @@ function ProjectileSystem() {
       if (hit) continue;
     }
 
-    // Update instanced mesh — musket/swivel shots stay readable but smaller
-    // than broadside cannonballs.
-    for (let i = 0; i < PROJECTILE_COUNT; i++) {
-      if (i < projectiles.length) {
-        dummy.position.copy(projectiles[i].pos);
-        const wt = projectiles[i].weaponType;
-        const s = wt === 'musket' ? 0.28
-                : wt === 'bow' ? 0.22
-                : wt === 'fireRocket' ? 0.95
-                : wt === 'falconet' ? 0.72
-                : (wt === 'swivelGun' || wt === 'lantaka' || wt === 'cetbang') ? 0.55
-                : 0.9;
-        dummy.scale.setScalar(s);
-      } else {
-        dummy.position.set(0, -1000, 0);
-        dummy.scale.setScalar(0);
+    // Sphere mesh: all non-rocket projectiles.
+    // Rocket capsule mesh: rockets only, oriented along velocity.
+    if (meshRef.current) {
+      for (let i = 0; i < PROJECTILE_COUNT; i++) {
+        const proj = i < projectiles.length ? projectiles[i] : null;
+        if (proj && proj.weaponType !== 'fireRocket') {
+          dummy.position.copy(proj.pos);
+          const wt = proj.weaponType;
+          const s = wt === 'musket' ? 0.28
+                  : wt === 'bow' ? 0.22
+                  : wt === 'falconet' ? 0.72
+                  : (wt === 'swivelGun' || wt === 'lantaka' || wt === 'cetbang') ? 0.55
+                  : 0.9;
+          dummy.scale.setScalar(s);
+          dummy.rotation.set(0, 0, 0);
+        } else {
+          dummy.position.set(0, -1000, 0);
+          dummy.scale.setScalar(0);
+        }
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
       }
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
+      meshRef.current.instanceMatrix.needsUpdate = true;
     }
-    meshRef.current.instanceMatrix.needsUpdate = true;
+
+    if (rocketMeshRef.current) {
+      let slot = 0;
+      for (let i = 0; i < projectiles.length && slot < ROCKET_COUNT; i++) {
+        const proj = projectiles[i];
+        if (proj.weaponType !== 'fireRocket') continue;
+        rocketDummy.position.copy(proj.pos);
+        const spd = proj.vel.length();
+        if (spd > 0.01) {
+          _rocketBodyDir.set(proj.vel.x / spd, proj.vel.y / spd, proj.vel.z / spd);
+          rocketDummy.quaternion.setFromUnitVectors(_rocketBodyUp, _rocketBodyDir);
+        }
+        rocketDummy.scale.setScalar(1);
+        rocketDummy.updateMatrix();
+        rocketMeshRef.current.setMatrixAt(slot, rocketDummy.matrix);
+        slot++;
+      }
+      for (; slot < ROCKET_COUNT; slot++) {
+        rocketDummy.position.set(0, -1000, 0);
+        rocketDummy.scale.setScalar(0);
+        rocketDummy.updateMatrix();
+        rocketMeshRef.current.setMatrixAt(slot, rocketDummy.matrix);
+      }
+      rocketMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
   });
 
   return (
+    <>
     <instancedMesh ref={meshRef} args={[undefined, undefined, PROJECTILE_COUNT]} frustumCulled={false}>
       <sphereGeometry args={[0.35, 8, 8]} />
       <meshStandardMaterial
@@ -2297,6 +2347,19 @@ function ProjectileSystem() {
         toneMapped={false}
       />
     </instancedMesh>
+    {/* Rocket capsule — oriented along velocity each frame */}
+    <instancedMesh ref={rocketMeshRef} args={[undefined, undefined, ROCKET_COUNT]} frustumCulled={false}>
+      <capsuleGeometry args={[0.18, 0.85, 4, 8]} />
+      <meshStandardMaterial
+        color="#cc8822"
+        emissive="#ff4400"
+        emissiveIntensity={2.5}
+        roughness={0.4}
+        metalness={0.3}
+        toneMapped={false}
+      />
+    </instancedMesh>
+    </>
   );
 }
 
@@ -2802,6 +2865,32 @@ export function GameScene() {
           gl={{ antialias: !IS_SAFARI, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
           shadows={{ type: THREE.PCFShadowMap }}
           camera={{ position: [0, 50, 50], fov: 45 }}
+          onPointerDown={(e: any) => {
+            // DIAGNOSTIC click probe — remove after identifying the orb.
+            const ints = e.intersections ?? [];
+            console.log('[ORB-PROBE] click — intersections:', ints.length);
+            for (let i = 0; i < Math.min(ints.length, 6); i++) {
+              const o = ints[i].object;
+              const chain: string[] = [];
+              let n: any = o;
+              while (n) {
+                chain.push(`${n.type}${n.name ? `[${n.name}]` : ''}`);
+                n = n.parent;
+              }
+              console.log(`  [${i}]`, {
+                geo: o.geometry?.type,
+                matColor: o.material?.color?.getHexString?.(),
+                matEmissive: o.material?.emissive?.getHexString?.(),
+                pos: ints[i].point?.toArray?.(),
+                chain: chain.join(' < '),
+              });
+            }
+          }}
+          onPointerMissed={(e: any) => {
+            // DIAGNOSTIC — fires when click hits nothing. Camera-ray raycast
+            // every visible scene object (overrides raycast={()=>null} too).
+            console.log('[ORB-PROBE] click MISSED all interactive meshes (orb likely has raycast disabled). Move camera/zoom and try again, or click a non-orb spot to confirm.');
+          }}
         >
           <Suspense fallback={null}>
             <color attach="background" args={['#87CEEB']} />

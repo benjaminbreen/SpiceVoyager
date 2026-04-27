@@ -87,7 +87,7 @@ const STARTING_KNOWLEDGE: Partial<Record<Nationality, Commodity[]>> = {
   ],
   Chinese: [
     'Chinese Porcelain', 'Tea', 'Musk', 'Rhubarb', 'China Root',
-    'Sugar', 'Camphor', 'Japanese Silver',
+    'Sugar', 'Camphor', 'Japanese Silver', 'War Rockets',
   ],
   Japanese: [
     'Tea', 'Camphor', 'Chinese Porcelain', 'Japanese Silver',
@@ -205,6 +205,7 @@ export const CREW_KNOWLEDGE_DOMAINS: Partial<Record<Nationality, CrewKnowledgePr
 export function generateStartingKnowledge(
   nationality: Nationality,
   crew: CrewMember[],
+  armament: string[] = [],
 ): Record<string, KnowledgeLevel> {
   const state: Record<string, KnowledgeLevel> = {};
 
@@ -231,6 +232,11 @@ export function generateStartingKnowledge(
     for (const c of profile.masters) {
       state[c] = Math.max(state[c] ?? 0, 2) as KnowledgeLevel;
     }
+  }
+
+  // Armament-based knowledge: if you start with a weapon, you know its trade commodity.
+  if (armament.includes('fireRocket')) {
+    state['War Rockets'] = Math.max(state['War Rockets'] ?? 0, 1) as KnowledgeLevel;
   }
 
   return state;

@@ -43,9 +43,23 @@ export interface RocketTrailEvent {
   x: number;
   y: number;
   z: number;
+  /** Normalized velocity direction at spawn — puffs stream backward from this. */
+  vx: number;
+  vy: number;
+  vz: number;
   time: number;
   /** Small random seed so each puff drifts slightly differently. */
   seed: number;
+}
+
+/** Bright fire-burst at rocket detonation — visually distinct from the grey
+ *  impactBurst used by cannon shots. */
+export interface RocketFireBurstEvent {
+  x: number;
+  y: number;
+  z: number;
+  time: number;
+  intensity: number;
 }
 
 // Ring of active splashes — oldest get overwritten
@@ -66,6 +80,9 @@ export const muzzleBursts: MuzzleBurstEvent[] = [];
 // Headroom for two simultaneous rockets.
 const MAX_ROCKET_TRAIL = 40;
 export const rocketTrails: RocketTrailEvent[] = [];
+
+const MAX_ROCKET_FIRE_BURSTS = 8;
+export const rocketFireBursts: RocketFireBurstEvent[] = [];
 
 let _nextClock = 0; // set by SplashSystem each frame
 
@@ -95,12 +112,20 @@ export function spawnImpactBurst(x: number, y: number, z: number, intensity = 1)
   impactBursts.push(ev);
 }
 
-export function spawnRocketTrail(x: number, y: number, z: number) {
-  const ev: RocketTrailEvent = { x, y, z, time: _nextClock, seed: Math.random() };
+export function spawnRocketTrail(x: number, y: number, z: number, vx = 0, vy = 0, vz = 1) {
+  const ev: RocketTrailEvent = { x, y, z, vx, vy, vz, time: _nextClock, seed: Math.random() };
   if (rocketTrails.length >= MAX_ROCKET_TRAIL) {
     rocketTrails.shift();
   }
   rocketTrails.push(ev);
+}
+
+export function spawnRocketFireBurst(x: number, y: number, z: number, intensity = 1) {
+  const ev: RocketFireBurstEvent = { x, y, z, time: _nextClock, intensity: Math.min(2, Math.max(0.1, intensity)) };
+  if (rocketFireBursts.length >= MAX_ROCKET_FIRE_BURSTS) {
+    rocketFireBursts.shift();
+  }
+  rocketFireBursts.push(ev);
 }
 
 export function spawnMuzzleBurst(

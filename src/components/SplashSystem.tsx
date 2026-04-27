@@ -1,7 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { splashes, splinters, impactBursts, muzzleBursts, rocketTrails, setSplashClock } from '../utils/splashState';
+import { splashes, splinters, impactBursts, muzzleBursts, rocketTrails, rocketFireBursts, setSplashClock } from '../utils/splashState';
 import { SEA_LEVEL } from '../constants/world';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
@@ -11,9 +11,12 @@ const SPLASH_PARTICLE_COUNT = 60;
 const SPLINTER_PARTICLE_COUNT = 64;
 const IMPACT_PARTICLE_COUNT = 72;
 const MUZZLE_PARTICLE_COUNT = 48;
-// Rocket trails: each trail-spawn event produces 1–2 puffs that live ~0.8s.
+// Rocket trails: each trail-spawn event produces 4 puffs that live ~0.8s.
 // Headroom for two simultaneous rockets drawing trails at 20 Hz.
 const ROCKET_TRAIL_PARTICLE_COUNT = 90;
+// Fire burst at detonation — two layers: hot fire core + lingering smoke cloud.
+const ROCKET_FIRE_BURST_PARTICLE_COUNT = 120;
+const ROCKET_SMOKE_BURST_PARTICLE_COUNT = 60;
 
 interface Particle {
   pos: THREE.Vector3;
@@ -34,18 +37,23 @@ export function SplashSystem() {
   const impactMeshRef = useRef<THREE.InstancedMesh>(null);
   const muzzleMeshRef = useRef<THREE.InstancedMesh>(null);
   const rocketTrailMeshRef = useRef<THREE.InstancedMesh>(null);
+  const rocketFireBurstMeshRef = useRef<THREE.InstancedMesh>(null);
+  const rocketSmokeBurstMeshRef = useRef<THREE.InstancedMesh>(null);
   const rippleRef = useRef<THREE.Mesh>(null);
   const particles = useRef<Particle[]>([]);
   const splinterParticles = useRef<Particle[]>([]);
   const impactParticles = useRef<BurstParticle[]>([]);
   const muzzleParticles = useRef<BurstParticle[]>([]);
   const rocketTrailParticles = useRef<BurstParticle[]>([]);
+  const rocketFireBurstParticles = useRef<BurstParticle[]>([]);
+  const rocketSmokeBurstParticles = useRef<BurstParticle[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const lastSplashCount = useRef(0);
   const lastSplinterCount = useRef(0);
   const lastImpactCount = useRef(0);
   const lastMuzzleCount = useRef(0);
   const lastRocketTrailCount = useRef(0);
+  const lastRocketFireBurstCount = useRef(0);
 
   // Initialize particle pools
   useEffect(() => {
@@ -81,6 +89,22 @@ export function SplashSystem() {
     }
     for (let i = 0; i < ROCKET_TRAIL_PARTICLE_COUNT; i++) {
       rocketTrailParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
+    for (let i = 0; i < ROCKET_FIRE_BURST_PARTICLE_COUNT; i++) {
+      rocketFireBurstParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
+    for (let i = 0; i < ROCKET_SMOKE_BURST_PARTICLE_COUNT; i++) {
+      rocketSmokeBurstParticles.current.push({
         pos: new THREE.Vector3(0, -1000, 0),
         vel: new THREE.Vector3(),
         life: 0,
@@ -220,30 +244,30 @@ export function SplashSystem() {
     lastMuzzleCount.current = muzzleBursts.length;
 
     // ── Spawn rocket trail puffs ──
-    // Each trail event produces 1–2 particles: one drifting up (smoke) and
-    // a short-lived hot-colored spark. Many events spawn per second, so we
-    // only draw one-to-two puffs per event to keep the pool healthy.
+    // Each trail event produces 4 puffs that stream backward along the rocket's
+    // velocity direction, so the smoke column follows the actual flight arc.
     if (rocketTrails.length > lastRocketTrailCount.current) {
       for (let si = lastRocketTrailCount.current; si < rocketTrails.length; si++) {
         const tr = rocketTrails[si];
         let spawned = 0;
-        const target = 2;
+        const target = 4;
         for (let i = 0; i < ROCKET_TRAIL_PARTICLE_COUNT && spawned < target; i++) {
           const p = rocketTrailParticles.current[i];
           if (p.life <= 0) {
-            const jitter = tr.seed * 6.283;
             p.pos.set(
-              tr.x + (Math.random() - 0.5) * 0.22,
-              tr.y + (Math.random() - 0.5) * 0.18,
-              tr.z + (Math.random() - 0.5) * 0.22,
+              tr.x + (Math.random() - 0.5) * 0.3,
+              tr.y + (Math.random() - 0.5) * 0.25,
+              tr.z + (Math.random() - 0.5) * 0.3,
             );
-            // Puffs drift slightly aft and upward; sparks move more randomly.
+            // Stream backward (opposite velocity) + gentle upward buoyancy.
+            const backSpeed = 1.0 + Math.random() * 1.4;
+            const side = 0.55;
             p.vel.set(
-              Math.cos(jitter + spawned) * 0.45,
-              0.55 + Math.random() * 0.7,
-              Math.sin(jitter + spawned) * 0.45,
+              -tr.vx * backSpeed + (Math.random() - 0.5) * side,
+              0.4 + Math.random() * 0.5,
+              -tr.vz * backSpeed + (Math.random() - 0.5) * side,
             );
-            p.maxLife = spawned === 0 ? 0.85 + Math.random() * 0.25 : 0.35 + Math.random() * 0.2;
+            p.maxLife = 0.65 + Math.random() * 0.35;
             p.life = p.maxLife;
             spawned++;
           }
@@ -251,6 +275,92 @@ export function SplashSystem() {
       }
     }
     lastRocketTrailCount.current = rocketTrails.length;
+
+    // ── Spawn rocket fire burst + smoke ──
+    // Two waves of fire: a fast "flash" core (short maxLife → treated as flash
+    // in the update) followed by a main fireball, plus a separate slow smoke cloud.
+    if (rocketFireBursts.length > lastRocketFireBurstCount.current) {
+      for (let si = lastRocketFireBurstCount.current; si < rocketFireBursts.length; si++) {
+        const burst = rocketFireBursts[si];
+        const scale = Math.min(1.8, burst.intensity);
+
+        // Wave 1 — flash core: very fast, very short lived. maxLife < 0.25 flags them as
+        // "flash" in the update loop so they get a larger scale-at-birth.
+        const flashTarget = Math.round(8 * scale);
+        let flashSpawned = 0;
+        for (let i = 0; i < ROCKET_FIRE_BURST_PARTICLE_COUNT && flashSpawned < flashTarget; i++) {
+          const p = rocketFireBurstParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const cosElev = (Math.random() - 0.3);
+            const speed = (16 + Math.random() * 12) * scale;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 0.25,
+              burst.y + (Math.random() - 0.5) * 0.25,
+              burst.z + (Math.random() - 0.5) * 0.25,
+            );
+            p.vel.set(
+              Math.cos(angle) * speed,
+              Math.abs(cosElev) * speed * 0.6 + 3,
+              Math.sin(angle) * speed,
+            );
+            p.maxLife = 0.1 + Math.random() * 0.12;
+            p.life = p.maxLife;
+            flashSpawned++;
+          }
+        }
+
+        // Wave 2 — main fireball: medium speed, medium life. maxLife ≥ 0.35 in the update.
+        const fireTarget = Math.round((40 + Math.random() * 20) * scale);
+        let fireSpawned = 0;
+        for (let i = 0; i < ROCKET_FIRE_BURST_PARTICLE_COUNT && fireSpawned < fireTarget; i++) {
+          const p = rocketFireBurstParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const elev = Math.random() * Math.PI;
+            const speed = (4 + Math.random() * 10) * scale;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 0.7,
+              burst.y + (Math.random() - 0.5) * 0.6,
+              burst.z + (Math.random() - 0.5) * 0.7,
+            );
+            p.vel.set(
+              Math.cos(angle) * Math.sin(elev) * speed,
+              Math.abs(Math.cos(elev)) * speed + 2.5,
+              Math.sin(angle) * Math.sin(elev) * speed,
+            );
+            p.maxLife = 0.35 + Math.random() * 1.1;
+            p.life = p.maxLife;
+            fireSpawned++;
+          }
+        }
+
+        // Smoke cloud: slow, rises, expands into a dark billowing mass.
+        const smokeTarget = Math.round((22 + Math.random() * 12) * scale);
+        let smokeSpawned = 0;
+        for (let i = 0; i < ROCKET_SMOKE_BURST_PARTICLE_COUNT && smokeSpawned < smokeTarget; i++) {
+          const p = rocketSmokeBurstParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const lateralSpeed = (0.8 + Math.random() * 2.5) * scale;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 2.0,
+              burst.y + 0.4 + Math.random() * 1.2,
+              burst.z + (Math.random() - 0.5) * 2.0,
+            );
+            p.vel.set(
+              Math.cos(angle) * lateralSpeed * 0.5,
+              1.8 + Math.random() * 2.5,
+              Math.sin(angle) * lateralSpeed * 0.5,
+            );
+            p.maxLife = 1.8 + Math.random() * 1.4;
+            p.life = p.maxLife;
+            smokeSpawned++;
+          }
+        }
+      }
+    }
+    lastRocketFireBurstCount.current = rocketFireBursts.length;
 
     // ── Expire old events ──
     while (splashes.length > 0 && elapsed - splashes[0].time > 4) {
@@ -272,6 +382,10 @@ export function SplashSystem() {
     while (rocketTrails.length > 0 && elapsed - rocketTrails[0].time > 1.5) {
       rocketTrails.shift();
       lastRocketTrailCount.current = Math.max(0, lastRocketTrailCount.current - 1);
+    }
+    while (rocketFireBursts.length > 0 && elapsed - rocketFireBursts[0].time > 2) {
+      rocketFireBursts.shift();
+      lastRocketFireBurstCount.current = Math.max(0, lastRocketFireBurstCount.current - 1);
     }
 
     // ── Update water splash particles ──
@@ -435,6 +549,73 @@ export function SplashSystem() {
         }
       }
       if (needsUpdate) rocketTrailMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update rocket fire burst particles ──
+    // Flash particles (maxLife < 0.25) start at scale ~3 and collapse instantly.
+    // Fire particles (maxLife ≥ 0.35) start full size and fade out.
+    if (rocketFireBurstMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < ROCKET_FIRE_BURST_PARTICLE_COUNT; i++) {
+        const p = rocketFireBurstParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 7 * delta;
+          p.vel.x *= 1 - 2.2 * delta;
+          p.vel.z *= 1 - 2.2 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const isFlash = p.maxLife < 0.25;
+          // Flash: very large at birth, collapses immediately (pure lifeFrac falloff).
+          // Fire: starts at full size, shrinks and fades as it burns out.
+          const s = isFlash ? lifeFrac * 3.2 : lifeFrac * 1.3 + 0.05;
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          rocketFireBurstMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          rocketFireBurstMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) rocketFireBurstMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update rocket smoke burst particles ──
+    if (rocketSmokeBurstMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < ROCKET_SMOKE_BURST_PARTICLE_COUNT; i++) {
+        const p = rocketSmokeBurstParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.x *= 1 - 0.5 * delta;
+          p.vel.z *= 1 - 0.5 * delta;
+          p.vel.y += 0.25 * delta; // buoyancy
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const ageFrac = 1 - lifeFrac;
+          // Expands with age, fades near the end of its life.
+          const s = (0.5 + ageFrac * 2.8) * (0.15 + lifeFrac * 0.85);
+          dummy.scale.set(s, s, s);
+          dummy.updateMatrix();
+          rocketSmokeBurstMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          rocketSmokeBurstMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) rocketSmokeBurstMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     // ── Update ripple shader uniforms ──
@@ -624,7 +805,7 @@ export function SplashSystem() {
           path. Emissive picks up the powder-burn color; opacity stays low so
           a dense column still reads as a continuous trail rather than a wall. */}
       <instancedMesh ref={rocketTrailMeshRef} args={[undefined, undefined, ROCKET_TRAIL_PARTICLE_COUNT]} frustumCulled={false}>
-        <sphereGeometry args={[0.35, 5, 5]} />
+        <sphereGeometry args={[0.6, 5, 5]} />
         <meshStandardMaterial
           color="#c9b58a"
           emissive="#ff7a2b"
@@ -632,6 +813,36 @@ export function SplashSystem() {
           roughness={1}
           transparent
           opacity={0.55}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </instancedMesh>
+
+      {/* Rocket fire burst — hot orange/yellow core particles */}
+      <instancedMesh ref={rocketFireBurstMeshRef} args={[undefined, undefined, ROCKET_FIRE_BURST_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.55, 6, 6]} />
+        <meshStandardMaterial
+          color="#ffcc44"
+          emissive="#ff4400"
+          emissiveIntensity={4.0}
+          roughness={0.5}
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </instancedMesh>
+
+      {/* Rocket explosion smoke — dark billowing cloud that lingers after detonation */}
+      <instancedMesh ref={rocketSmokeBurstMeshRef} args={[undefined, undefined, ROCKET_SMOKE_BURST_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.5, 5, 5]} />
+        <meshStandardMaterial
+          color="#1e1a16"
+          emissive="#3d2e1a"
+          emissiveIntensity={0.4}
+          roughness={1}
+          transparent
+          opacity={0.52}
           depthWrite={false}
           toneMapped={false}
         />

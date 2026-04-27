@@ -229,15 +229,24 @@ export function generateCanalLayout(
 // ── Geometry queries (consumed by cityGenerator) ─────────────────────────────
 
 /**
- * Distance from point (px, pz) to the nearest canal edge. Returns 0 if the
- * point is inside any canal water strip, otherwise the positive distance to
- * the nearest canal centerline minus halfWidth. Used by the cell carver.
+ * Signed distance from point (px, pz) to the nearest canal edge. Negative
+ * inside a canal water strip (deepest at the centerline = -halfWidth);
+ * positive outside (distance from the edge). Callers can derive the legacy
+ * fields:
+ *   insideCanal = signedDist <= 0
+ *   dist        = |signedDist|
+ *
+ * Returning the signed distance lets the terrain canal-carve apply a smooth
+ * band beyond `halfWidth` — so a narrow canal that the mesh sampling would
+ * otherwise step right over (Nyquist-aliasing) still pulls at least one
+ * nearby vertex below sea level. Without that band, canals narrower than
+ * ~3 mesh quads render invisibly.
  */
-export function distanceToNearestCanal(
+export function signedDistanceToNearestCanal(
   px: number, pz: number,
   layout: CanalLayout,
-): { dist: number; insideCanal: boolean } {
-  let bestSignedDist = Infinity;
+): number {
+  let best = Infinity;
   for (const seg of layout.canals) {
     const pts = seg.polyline;
     for (let i = 0; i < pts.length - 1; i++) {
@@ -252,8 +261,21 @@ export function distanceToNearestCanal(
       const cx = ax + dx * t;
       const cz = az + dz * t;
       const d = Math.hypot(px - cx, pz - cz) - seg.halfWidth;
-      if (d < bestSignedDist) bestSignedDist = d;
+      if (d < best) best = d;
     }
   }
-  return { dist: Math.abs(bestSignedDist), insideCanal: bestSignedDist <= 0 };
+  return best;
+}
+
+/**
+ * Legacy convenience wrapper. Returns the inside flag and the absolute
+ * distance to the nearest canal edge. Prefer `signedDistanceToNearestCanal`
+ * for new code that needs to apply a smooth carve band.
+ */
+export function distanceToNearestCanal(
+  px: number, pz: number,
+  layout: CanalLayout,
+): { dist: number; insideCanal: boolean } {
+  const signed = signedDistanceToNearestCanal(px, pz, layout);
+  return { dist: Math.abs(signed), insideCanal: signed <= 0 };
 }

@@ -19,8 +19,12 @@ import { ArrivalCurtain, DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
 import { CrewPortraitSquare } from './CrewPortrait';
+import { VitalityHeart } from './VitalityHeart';
+import { DevRestPreview } from './DevRestPreview';
+import { PORT_LATITUDES, getMusicZone } from '../utils/portCoords';
 import { HailPanel, type HailContext } from './HailPanel';
 import { Opening } from './Opening';
+import { ClaudeSplashGlobe } from './ClaudeSplashGlobe';
 import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
 import { ValueFlash } from './ValueFlash';
@@ -69,6 +73,10 @@ const LOADING_MESSAGES = [
   'Listening for monsoon shifts along the coast...',
   'Loading manifests, ledgers, and cannon stores...',
 ];
+
+const SPLASH_VARIANT = typeof window !== 'undefined'
+  ? new URLSearchParams(window.location.search).get('splash')
+  : null;
 
 function formatDate(dayCount: number): string {
   // Game starts May 1, 1612
@@ -784,6 +792,13 @@ export function UI() {
       mapPreRenderTimerRef.current = null;
     }, 600);
   }, [waterPaletteId]);
+
+  // Keep AudioManager's music zone synced to the player's current world
+  // port so zone-restricted tracks (e.g. Monsoon Ledger in East Asian
+  // ports) only enter the rotation when contextually appropriate.
+  useEffect(() => {
+    audioManager.setCurrentZone(getMusicZone(currentWorldPortId));
+  }, [currentWorldPortId]);
 
   useEffect(() => {
     return () => {
@@ -1755,6 +1770,10 @@ export function UI() {
 
       {showDevPanel && !showInstructions && <RenderTestPanel />}
 
+      {/* Dev: rest-at-inn preview, triggered from RenderTestPanel */}
+      <DevRestPreview />
+
+
       {/* Fullscreen Map Overlay */}
       <AnimatePresence>
         {showLocalMap && (
@@ -1911,18 +1930,32 @@ export function UI() {
       {/* Instructions Overlay */}
       <AnimatePresence>
         {showInstructions && (
-          <Opening
-            ready={splashComplete}
-            loadingMessage={loadingMessage}
-            loadingProgress={loadingProgress}
-            shipName={ship.name}
-            captainName={captain?.name ?? 'Captain Blackwood'}
-            crewCount={crew.length}
-            portCount={portCount}
-            dayCount={dayCount}
-            gold={gold}
-            onStart={closeOpeningOverlay}
-          />
+          SPLASH_VARIANT === 'claude' ? (
+            <ClaudeSplashGlobe
+              ready={splashComplete}
+              loadingMessage={loadingMessage}
+              loadingProgress={loadingProgress}
+              shipName={ship.name}
+              captainName={captain?.name ?? 'Captain Blackwood'}
+              crewCount={crew.length}
+              portCount={portCount}
+              gold={gold}
+              onStart={closeOpeningOverlay}
+            />
+          ) : (
+            <Opening
+              ready={splashComplete}
+              loadingMessage={loadingMessage}
+              loadingProgress={loadingProgress}
+              shipName={ship.name}
+              captainName={captain?.name ?? 'Captain Blackwood'}
+              crewCount={crew.length}
+              portCount={portCount}
+              dayCount={dayCount}
+              gold={gold}
+              onStart={closeOpeningOverlay}
+            />
+          )
 
         )}
       </AnimatePresence>
@@ -2300,6 +2333,46 @@ function RenderTestPanel() {
           ))}
         </div>
       </div>
+
+      <DevRestTester />
+    </div>
+  );
+}
+
+// Dev tool — preview the rest-at-inn flow for any port without
+// mutating game state. Useful for inspecting per-port night images,
+// constellations, and the summary modal.
+const REST_TEST_PORT_IDS = Object.keys(PORT_LATITUDES).sort();
+function DevRestTester() {
+  const setDevRestPreview = useGameStore(s => s.setDevRestPreview);
+  const [selectedId, setSelectedId] = useState<string>(REST_TEST_PORT_IDS[0] ?? '');
+
+  return (
+    <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Rest At Inn</div>
+      <div className="mt-1 text-[11px] text-slate-400">
+        Preview the sleep overlay + summary for any port. State is not modified.
+      </div>
+      <div className="mt-2.5 flex gap-2">
+        <select
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+          className="flex-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-200 outline-none transition-colors hover:bg-white/[0.06] focus:border-amber-400/30"
+        >
+          {REST_TEST_PORT_IDS.map(id => (
+            <option key={id} value={id} className="bg-slate-900">
+              {id}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => { sfxClick(); setDevRestPreview(selectedId); }}
+          onMouseEnter={() => sfxHover()}
+          className="rounded-md border border-amber-600/30 bg-amber-600/18 px-3 py-1.5 text-[11px] font-medium text-amber-300 transition-all hover:bg-amber-600/25"
+        >
+          Run
+        </button>
+      </div>
     </div>
   );
 }
@@ -2496,11 +2569,13 @@ function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; s
     return acc;
   }, {});
   const armamentLines = Object.entries(armamentSummary);
-  const munitionLines = [
-    ['Small Shot', cargo['Small Shot'] ?? 0],
-    ['Cannon Shot', cargo['Cannon Shot'] ?? 0],
-    ['War Rockets', cargo['War Rockets'] ?? 0],
-  ] as const;
+  const hasRocketRack = stats.armament.includes('fireRocket');
+  const hasFalconet = stats.armament.includes('falconet');
+  const munitionLines: ReadonlyArray<readonly [string, number, boolean]> = [
+    ['Small Shot', cargo['Small Shot'] ?? 0, true],
+    ['Cannon Shot', cargo['Cannon Shot'] ?? 0, hasFalconet || stats.armament.some(w => !WEAPON_DEFS[w].aimable)],
+    ['War Rockets', cargo['War Rockets'] ?? 0, hasRocketRack],
+  ];
 
   return (
     <div
@@ -2535,10 +2610,23 @@ function HullDetailPanel({ stats, ship, onOpenDashboard }: { stats: ShipStats; s
           <div>
             <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 mb-1.5">Munitions</div>
             <div className="space-y-1">
-              {munitionLines.map(([name, count]) => (
+              {munitionLines.map(([name, count, usable]) => (
                 <div key={name} className="flex items-center justify-between gap-3">
-                  <span className="text-[11px] text-slate-300 leading-none">{name}</span>
-                  <span className="text-[11px] font-mono text-amber-300 tabular-nums shrink-0">{count}</span>
+                  <span
+                    className="text-[11px] leading-none"
+                    style={{ color: usable ? '#cbd5e1' : '#64748b' }}
+                  >
+                    {name}
+                    {!usable && count > 0 && (
+                      <span className="ml-1 text-[9px] italic text-slate-500">no launcher</span>
+                    )}
+                  </span>
+                  <span
+                    className="text-[11px] font-mono tabular-nums shrink-0"
+                    style={{ color: usable ? '#fcd34d' : '#64748b' }}
+                  >
+                    {count}
+                  </span>
                 </div>
               ))}
             </div>
@@ -2594,11 +2682,6 @@ function MoraleDetailPanel({ crew, onSelectCrew }: { crew: CrewMember[]; onSelec
   const lowest = sorted.length > 1 ? sorted[sorted.length - 1] : null;
   const avg = crew.length > 0 ? Math.round(crew.reduce((s, c) => s + c.morale, 0) / crew.length) : 0;
 
-  const healthIcon = (h: string) =>
-    h === 'healthy' ? '♥' : h === 'sick' ? '♥' : h === 'injured' ? '♥' : h === 'scurvy' ? '♥' : '♥';
-  const healthColor = (h: string) =>
-    h === 'healthy' ? '#34d399' : h === 'sick' ? '#fbbf24' : h === 'injured' ? '#f87171' : h === 'scurvy' ? '#a78bfa' : '#f97316';
-
   const ROLE_COLORS: Record<string, string> = {
     Captain: 'text-amber-400 border-amber-400/30 bg-amber-400/10',
     Navigator: 'text-cyan-400 border-cyan-400/30 bg-cyan-400/10',
@@ -2647,9 +2730,9 @@ function MoraleDetailPanel({ crew, onSelectCrew }: { crew: CrewMember[]; onSelec
                 </div>
               </div>
               <span className="text-[10px] font-mono w-[24px] text-right shrink-0" style={{ color: moraleColor }}>{moralePct}</span>
-              {/* Health */}
-              <span className="text-[10px] shrink-0" style={{ color: healthColor(member.health) }} title={member.health}>
-                {healthIcon(member.health)}
+              {/* Vitality */}
+              <span className="shrink-0" title={member.health}>
+                <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={12} />
               </span>
             </div>
           );

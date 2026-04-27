@@ -1,4 +1,4 @@
-import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, Humours, HealthFlag, Language } from '../store/gameStore';
+import { Nationality, CrewMember, CrewRole, CrewQuality, CrewStats, Humours, HealthFlag, Language, initialHearts } from '../store/gameStore';
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -1064,6 +1064,7 @@ export function generateCrewMember(
     level: startLevel,
     xp,
     xpToNext,
+    hearts: initialHearts(startLevel),
   };
 }
 

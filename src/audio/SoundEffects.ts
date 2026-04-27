@@ -1624,35 +1624,78 @@ export function sfxRocketFire() {
   whistle.stop(t + 1.0);
 }
 
-/** War rocket impact — bigger than sfxCannonImpact: deeper thud, wider
- *  explosion noise, crackling debris tail. */
+/** In-flight rocket scream — sustained wobbly shriek for the rocket's
+ *  flight duration. Call immediately after sfxRocketFire; starts with a
+ *  brief delay so it doesn't overlap the launch boom. */
+export function sfxRocketWhistle(flightDuration = 1.8) {
+  const ac = getCtx();
+  const v = masterVolume * 0.28;
+  const t = ac.currentTime;
+  const start = t + 0.28; // let the launch boom settle first
+
+  // Main screech — descends slightly (Doppler) as the rocket moves away.
+  const scream = ac.createOscillator();
+  scream.type = 'sawtooth';
+  scream.frequency.setValueAtTime(1550, start);
+  scream.frequency.linearRampToValueAtTime(1100, start + flightDuration * 0.85);
+
+  // LFO gives the characteristic "wobbly" mid-flight scream.
+  const lfo = ac.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 7;
+  const lfoGain = ac.createGain();
+  lfoGain.gain.value = 110;
+  lfo.connect(lfoGain).connect(scream.frequency);
+
+  const screamGain = ac.createGain();
+  screamGain.gain.setValueAtTime(0, start);
+  screamGain.gain.linearRampToValueAtTime(v, start + 0.1);
+  screamGain.gain.setValueAtTime(v, start + flightDuration * 0.6);
+  screamGain.gain.exponentialRampToValueAtTime(0.001, start + flightDuration);
+
+  scream.connect(screamGain).connect(ac.destination);
+  lfo.start(start);
+  lfo.stop(start + flightDuration + 0.05);
+  scream.start(start);
+  scream.stop(start + flightDuration + 0.05);
+
+  // Hiss of burning powder charge running the full flight.
+  noise(ac, flightDuration * 0.85, v * 0.18, 3800, 0.9);
+}
+
+/** War rocket impact — deep concussive blast with crackle tail. */
 export function sfxRocketImpact() {
   const ac = getCtx();
-  const v = masterVolume * 0.55;
+  const v = masterVolume * 0.72;
   const t = ac.currentTime;
 
-  // Low blast — deeper and longer than cannon impact.
-  const blast = ac.createOscillator();
-  blast.type = 'sine';
-  blast.frequency.setValueAtTime(95, t);
-  blast.frequency.exponentialRampToValueAtTime(28, t + 0.5);
-  const blastGain = ac.createGain();
-  blastGain.gain.setValueAtTime(v, t);
-  blastGain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-  blast.connect(blastGain).connect(ac.destination);
-  blast.start(t);
-  blast.stop(t + 0.55);
+  // Sub-bass punch — the concussive shockwave felt in the chest.
+  const sub = ac.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(65, t);
+  sub.frequency.exponentialRampToValueAtTime(16, t + 0.8);
+  const subGain = ac.createGain();
+  subGain.gain.setValueAtTime(v * 0.9, t);
+  subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+  sub.connect(subGain).connect(ac.destination);
+  sub.start(t);
+  sub.stop(t + 0.85);
 
-  // Explosion body — wide bandpass noise, fatter than a cannon thud.
-  noise(ac, 0.35, v * 0.7, 900, 1.4);
+  // Explosion body: three overlapping noise layers for width and presence.
+  noise(ac, 0.55, v * 0.9, 280, 0.6);   // fat sub-body
+  noise(ac, 0.35, v * 0.65, 1100, 1.3); // midrange crack
+  noise(ac, 0.12, v * 0.5, 3200, 2.0);  // sharp initial transient
 
-  // Debris crackle — a second noise layer an octave higher, lagged slightly
-  // so it reads as fragments after the main blast.
-  setTimeout(() => noise(ac, 0.25, v * 0.35, 2800, 1.1), 40);
+  // Crackle tail — staggered high-frequency bursts read as burning splinters.
+  setTimeout(() => noise(ac, 0.22, v * 0.32, 2000, 1.5), 55);
+  setTimeout(() => noise(ac, 0.18, v * 0.22, 3200, 1.2), 120);
+  setTimeout(() => noise(ac, 0.14, v * 0.14, 4200, 1.0), 210);
 
-  // Short metallic zing — bamboo splinter + shrapnel flavor.
-  ping(ac, 1800, 0.1, v * 0.18, 'triangle');
-  ping(ac, 900,  0.16, v * 0.12, 'sine');
+  // Bamboo-splinter pings: metallic debris flutter.
+  ping(ac, 2600, 0.07, v * 0.22, 'triangle');
+  ping(ac, 1100, 0.14, v * 0.16, 'sine');
+  setTimeout(() => ping(ac, 1900, 0.07, v * 0.13, 'triangle'), 30);
+  setTimeout(() => ping(ac, 700,  0.2,  v * 0.1,  'sine'),     80);
 }
 
 /** Matchlock musket fire — sharper, drier, higher than the swivel boom. */

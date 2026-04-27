@@ -14,6 +14,7 @@ function crewMember(overrides: Partial<CrewMember>): CrewMember {
     level: 1,
     xp: 0,
     xpToNext: 10,
+    hearts: { current: 3, max: 3 },
     traits: [],
     abilities: [],
     languages: [],

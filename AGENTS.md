@@ -330,6 +330,8 @@ Three small modules share one invariant: the renderer, the ground-height resolve
 ### Audio
 `src/audio/AudioManager.ts` is the singleton. `SoundEffects.ts` exposes one-shot SFX (cannon, UI, crab collect, etc.). `AmbientEngine.ts` handles layered ambient loops keyed to biome and time of day.
 
+**Music zones** (`MusicZone` in `utils/portCoords.ts`): each historical port belongs to one zone (`east-asia` | `southeast-asia` | `south-asia` | `arabia` | `east-africa` | `europe` | `west-africa` | `americas` | `cape`). Tracks in `OVERWORLD_TRACKS` (AudioManager) can carry an optional `zones: string[]` to restrict eligibility — e.g. *Monsoon Ledger* only plays when the player's current world port is in `east-asia`. Tracks without `zones` are global. The active zone is updated via a `useEffect` in `UI.tsx` that watches `currentWorldPortId`. Rotation is random-pick (not round-robin) so zone changes feel fluid; the currently-playing track is allowed to finish before the new pool takes effect.
+
 ### Save/load, settings, debug
 - **SettingsModal.tsx**: gameplay + audio + render toggles.
 - **`RenderDebugSettings`** in gameStore: individually disable shadows, bloom, postprocessing, fog, etc. for perf debugging.
@@ -343,6 +345,40 @@ Three small modules share one invariant: the renderer, the ground-height resolve
 
 ### Opening / arrival flow
 `Opening.tsx` handles intro splash. `ArrivalCurtain.tsx` plays when the player enters a new port.
+
+### Sleep / inn rest
+RPG-style "rest at the inn" mechanic: in the Tavern tab, the player pays a port-scaled fee, time advances to 8 AM the next morning, crew morale and sometimes health restore, and every crew gets +1 XP (+2 if the port culture differs from the crew's nationality-derived home culture). After a long cozy fade-in to a per-port painted night scene with an animated starfield, a summary modal lists per-crew gains.
+
+**Code paths:**
+- `restAtInn(port)` in `gameStore.ts` — applies all state changes, returns a `RestSummary` with per-crew deltas.
+- `lodgingCost(scale)` / `lodgingLabel(culture)` (also gameStore.ts) — pricing and "sarai/inn/guesthouse/tavern lodgings" naming.
+- `nationalityToCulture(nationality)` in `utils/portCoords.ts` — used for the foreign-culture XP bonus.
+- `components/SleepOverlay.tsx` — fullscreen portal-rendered overlay, layers a deep-night gradient + `Starfield` + the painted port still + edge vignette + caption text.
+- `components/Starfield.tsx` — canvas pixel-art stars with **latitude-aware constellations** (Polaris + Big Dipper for >25°N, Southern Cross for <-10°, Orion for everyone) and **moon phase** synced to `dayCount` (29.5-day cycle). Reads latitude from `PORT_LATITUDES` in `utils/portCoords.ts`.
+- `components/RestSummaryModal.tsx` — renders the per-crew morning summary using `CrewPortraitSquare`.
+- `audioManager.startInnMusic()` / `stopInnMusic()` — crossfades to `/music/Inn Rest.mp3` (cozy chiptune that plays during the rest overlay and the summary modal).
+- `audioManager.startAfterNightMusic()` — fires automatically on PortModal close when `pendingAfterNightMusic` is set (`gameStore.ts`). Plays `/music/After the Night.mp3` once as a morning-departure theme, then hands back to the regular overworld rotation. Both tracks are also part of the random overworld rotation (`OVERWORLD_TRACKS` in `AudioManager.ts`).
+
+**Rest pacing (in `TavernTab.handleRest`):**
+The fade-in to the painted scene is intentionally long for a cozy mood. Total flow is ~10s: overlay fade-in (1.5s) + image fade-in (2.5s after 0.6s delay) + caption (1.4s after 2.6s delay) + dwell + state resolution at 5s + overlay fade-out (1.8s) at 8.5s + summary modal appears at 9.1s. Tweaking the timeouts in `handleRest` is the easiest way to retune feel.
+
+**Asset pipeline for new port night images:**
+1. Generate a 1344×768 (16:9) painted scene with a solid magenta sky region. Studio-Ghibli-with-pixel-art-influence visual style. Use this prompt template, varying the historical content per port:
+   > studio ghibli style beautiful image of [PORT] in 1612 at night, [HISTORICAL DETAIL: signature buildings, river/harbor, ships, street life]. The sky should be solid magenta (#FF00FF) with no clouds or stars to allow postprocessing. Cozy but historically accurate, the edges at left and right shading in a gradient into darkness. Nearly monochrome palette of inky midnight blues [VARY: + warmer ochre for southern Iberian, + cooler steel-blue for northern, + deep teal for Indian Ocean tropical]. A bit of a very high res pixel art vibe but lush and detailed.
+2. Drop the magenta-sky source PNG into `public/sleep/source/{portId}.png` (lowercase port ID).
+3. Run `./scripts/key-sleep-images.sh` from the repo root. The script uses a hue-based key (G < R AND G < B) rather than flat #FF00FF matching, because models paint a vignette into the magenta and the actual pixels range from near-black corners to dusty pink center.
+4. Keyed transparent-sky PNGs land in `public/sleep/{portId}.png`. The game loads them automatically; ports without an image fall back to pure starfield + dark gradient.
+5. If you also need to add a new port to the latitude table for constellation accuracy, edit `PORT_LATITUDES` in `utils/portCoords.ts`.
+
+**Currently shipped images:** london, seville, amsterdam. The other ~27 ports show fallback starfield only until images are added.
+
+**Planned: random nighttime events.** The `restAtInn` resolver and the `setTimeout` in `handleRest` both have hook comments marking where this would slot in. The vision is FF7-style: reuse the per-port painted backdrop, walk small sprites of crew (and possibly tavern NPCs the player has spoken to that day) onto the scene, and run a short dialogue tree. Triggers on the agenda:
+- Two crew with personality friction get drunk and brawl.
+- A tavern NPC the player previously bought drinks for follows up with information / an offer.
+- A theft (gold loss + relevant journal entry) when the player has unusually high gold and no Quartermaster.
+- A feverish dream (when at least one crew is `fevered`) — flavor only, ties into the LLM journal system.
+- A stranger leaves a note (rare hook for quest-like content).
+The event roll should reference `TavernTab`'s `conversationHistory` and the crew morale/health/relationship state. Architecture sketch: a `nightEvents.ts` util with `rollNightEvent(state, port) → NightEvent | null`; if non-null, `handleRest` shows a sprite-on-backdrop dialogue scene instead of (or before) the summary modal.
 
 ## Planned / in progress
 

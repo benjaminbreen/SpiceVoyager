@@ -2,21 +2,39 @@
 // Crossfades between tracks. Browsers require a user gesture before
 // audio can play, so we pre-create elements and retry .play().
 
-const OVERWORLD_TRACKS = [
-  { src: '/music/persian-dawn.mp3',        gain: 0.2  }, // mastered hot
+// Each entry can carry an optional `zones` array — a list of music-zone
+// strings (defined in utils/portCoords.ts: MusicZone). If omitted, the
+// track is in the global pool and plays anywhere. If present, the track
+// is only eligible while the player's current world port belongs to one
+// of the listed zones. Set the active zone via `audioManager.setCurrentZone()`.
+interface OverworldTrack {
+  src: string;
+  gain: number;
+  zones?: string[];
+}
+
+const OVERWORLD_TRACKS: OverworldTrack[] = [
+  { src: '/music/persian-dawn.mp3',         gain: 0.2  },
   { src: '/music/cobblestone-echoes.mp3',   gain: 0.35 },
   { src: '/music/sea-of-tiny-worlds.mp3',   gain: 0.35 },
   { src: '/music/chiptune-worldmap.mp3',    gain: 0.35 },
   { src: '/music/ocean-ambient.mp3',        gain: 0.3  },
-  { src: '/music/shiraz-sunset.mp3',       gain: 0.35 },
+  { src: '/music/shiraz-sunset.mp3',        gain: 0.35 },
+  { src: '/music/Inn%20Rest.mp3',           gain: 0.35 },
+  { src: '/music/After%20the%20Night.mp3',  gain: 0.35 },
+  { src: '/music/Pepper%20Caravan.mp3',     gain: 0.35 },
+  { src: '/music/Monsoon%20Ledger%20(Asia).mp3', gain: 0.35, zones: ['east-asia'] },
 ];
+
+const INN_REST_SRC = '/music/Inn%20Rest.mp3';
+const AFTER_NIGHT_SRC = '/music/After%20the%20Night.mp3';
 
 class AudioManager {
   private splashTrack: HTMLAudioElement | null = null;
   private overworldTrack: HTMLAudioElement | null = null;
   private overworldTimer: ReturnType<typeof setTimeout> | null = null;
   private splashPlaying = false;
-  private musicVolume = 0.15;
+  private musicVolume = 0.10;
   private trackIndex = -1;
   private transitioning = false;
   private fightTrack: HTMLAudioElement | null = null;
@@ -25,6 +43,9 @@ class AudioManager {
   private portTrack: HTMLAudioElement | null = null;
   private portTrackSrc: string | null = null;
   private portTrackGain = 0.3;
+  private innTrack: HTMLAudioElement | null = null;
+  private savedPortVolumeForInn = 0;
+  private currentZone: string | null = null;
 
   playSplash() {
     if (this.splashPlaying) return;
@@ -46,8 +67,8 @@ class AudioManager {
       this.splashPlaying = false;
     }
 
-    // Shuffle starting track
-    this.trackIndex = Math.floor(Math.random() * OVERWORLD_TRACKS.length);
+    // Shuffle starting track from the pool eligible in the current zone
+    this.trackIndex = this.pickEligibleTrackIndex();
 
     // Start first overworld track after delay
     if (this.overworldTimer) clearTimeout(this.overworldTimer);
@@ -88,14 +109,54 @@ class AudioManager {
       });
     }
 
-    // Move to next track
-    this.trackIndex = (this.trackIndex + 1) % OVERWORLD_TRACKS.length;
+    // Pick a different eligible track at random (avoids immediate repeat
+    // and respects the current music zone)
+    this.trackIndex = this.pickEligibleTrackIndex(this.trackIndex);
 
     // Brief gap, then fade in next
     setTimeout(() => {
       this.playCurrentTrack();
       this.transitioning = false;
     }, 2000);
+  }
+
+  /** Pick a random index into OVERWORLD_TRACKS from the subset eligible
+   *  in the current zone. Excludes `excludeIdx` if provided (so we don't
+   *  immediately repeat the same track). Falls back to the global pool
+   *  if zone-restricted picks become impossible. */
+  private pickEligibleTrackIndex(excludeIdx?: number): number {
+    const eligible: number[] = [];
+    for (let i = 0; i < OVERWORLD_TRACKS.length; i++) {
+      if (i === excludeIdx) continue;
+      const t = OVERWORLD_TRACKS[i];
+      if (!t.zones || (this.currentZone && t.zones.includes(this.currentZone))) {
+        eligible.push(i);
+      }
+    }
+    if (eligible.length === 0) {
+      // Fallback: ignore exclusion if it leaves us empty (e.g. only one
+      // eligible track in this zone). Then ignore zones entirely as a
+      // last resort to avoid silence.
+      const noExclude: number[] = [];
+      for (let i = 0; i < OVERWORLD_TRACKS.length; i++) {
+        const t = OVERWORLD_TRACKS[i];
+        if (!t.zones || (this.currentZone && t.zones.includes(this.currentZone))) {
+          noExclude.push(i);
+        }
+      }
+      if (noExclude.length > 0) return noExclude[Math.floor(Math.random() * noExclude.length)];
+      return Math.floor(Math.random() * OVERWORLD_TRACKS.length);
+    }
+    return eligible[Math.floor(Math.random() * eligible.length)];
+  }
+
+  /** Set the current music zone — typically called when the player's
+   *  world port changes. Tracks tagged with zones become eligible only
+   *  while their zone is active. The currently-playing track is allowed
+   *  to finish; the next pick will respect the new zone. Pass null to
+   *  return to the global pool (e.g. when no port context applies). */
+  setCurrentZone(zone: string | null) {
+    this.currentZone = zone;
   }
 
   private getCurrentOverworldTarget() {
@@ -176,6 +237,90 @@ class AudioManager {
     this.portTrackSrc = src;
     track.play().catch(() => {});
     this.fadeIn(track, this.musicVolume * gain, 1.8);
+  }
+
+  /** Crossfade to the inn / rest-for-the-night track. Ducks port music
+   *  underneath. Track file: Inn Rest.mp3. */
+  startInnMusic() {
+    // Duck port track if playing
+    if (this.portTrack) {
+      this.savedPortVolumeForInn = this.portTrack.volume;
+      this.fadeOut(this.portTrack, 1.5);
+    }
+    // Also duck overworld track in case the player triggered rest from a
+    // dev preview while at sea (no port track playing).
+    if (this.overworldTrack && !this.fightActive) {
+      this.fadeOut(this.overworldTrack, 1.5);
+    }
+    if (!this.innTrack) {
+      this.innTrack = new Audio(INN_REST_SRC);
+      this.innTrack.loop = true;
+    }
+    this.innTrack.volume = 0;
+    this.innTrack.currentTime = 0;
+    this.innTrack.play().catch(() => {});
+    this.fadeIn(this.innTrack, this.musicVolume * 0.45, 2.0);
+  }
+
+  /** Crossfade out of the inn track and bring back the port track. */
+  stopInnMusic() {
+    if (this.innTrack) {
+      const t = this.innTrack;
+      this.innTrack = null;
+      this.fadeOut(t, 2.0, () => { t.pause(); t.currentTime = 0; });
+    }
+    if (this.portTrack) {
+      this.portTrack.play().catch(() => {});
+      this.fadeIn(this.portTrack, this.savedPortVolumeForInn || (this.musicVolume * this.portTrackGain), 2.5);
+    }
+  }
+
+  /** Crossfade out of the inn track into "After the Night" — the sailing-
+   *  away theme. Used when the player closes the port modal after resting.
+   *  After this track ends, the normal overworld rotation resumes from
+   *  wherever it left off. */
+  startAfterNightMusic() {
+    // Stop inn track if still playing
+    if (this.innTrack) {
+      const t = this.innTrack;
+      this.innTrack = null;
+      this.fadeOut(t, 2.0, () => { t.pause(); t.currentTime = 0; });
+    }
+    // Stop any port track
+    if (this.portTrack) {
+      const pt = this.portTrack;
+      this.portTrack = null;
+      this.portTrackSrc = null;
+      this.fadeOut(pt, 1.5, () => { pt.pause(); pt.src = ''; });
+    }
+    // Suppress the overworld rotation timer — we want After the Night
+    // to play uninterrupted, then hand back to the rotation.
+    if (this.overworldTimer) {
+      clearTimeout(this.overworldTimer);
+      this.overworldTimer = null;
+    }
+    // If an overworld track is currently playing, fade it out first
+    if (this.overworldTrack) {
+      const old = this.overworldTrack;
+      this.overworldTrack = null;
+      this.fadeOut(old, 1.8, () => { old.pause(); old.src = ''; });
+    }
+
+    const track = new Audio(AFTER_NIGHT_SRC);
+    track.loop = false;
+    track.volume = 0;
+    this.overworldTrack = track;
+    // Pick the rotation entry that matches so subsequent volume changes work
+    this.trackIndex = OVERWORLD_TRACKS.findIndex(e => e.src === AFTER_NIGHT_SRC);
+
+    track.addEventListener('ended', () => {
+      if (this.overworldTrack === track) {
+        this.advanceTrack();
+      }
+    });
+
+    track.play().catch(() => {});
+    this.fadeIn(track, this.musicVolume * 0.35, 2.5);
   }
 
   /** Stop port music and return to the overworld track. */

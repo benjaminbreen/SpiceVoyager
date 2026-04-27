@@ -13,6 +13,7 @@ import type { OceanEncounterDef } from '../utils/oceanEncounters';
 import type { FishType } from '../utils/fishTypes';
 import type { WaterPaletteSetting } from '../utils/waterPalettes';
 import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId, MARKET_TRUST } from '../utils/worldPorts';
+import { nationalityToCulture } from '../utils/portCoords';
 import type { DistrictKey } from '../utils/cityDistricts';
 export type { DistrictKey };
 import {
@@ -301,6 +302,26 @@ export function getPortArmory(portId: string): WeaponType[] {
   return PORT_ARMORY[portId] ?? DEFAULT_PORT_ARMORY;
 }
 
+// ── Lodging (rest-for-the-night) ──
+export function lodgingCost(scale: PortScale): number {
+  switch (scale) {
+    case 'Small': return 4;
+    case 'Medium': return 6;
+    case 'Large': return 8;
+    case 'Very Large': return 12;
+    case 'Huge': return 16;
+  }
+}
+
+export function lodgingLabel(culture: Culture): string {
+  switch (culture) {
+    case 'Indian Ocean': return 'sarai';
+    case 'European': return 'inn';
+    case 'West African': return 'guesthouse';
+    case 'Atlantic': return 'tavern lodgings';
+  }
+}
+
 // ── Human-readable weapon descriptions ──
 export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabel: string; reloadLabel: string; weightLabel: string }> = {
   swivelGun:    { flavor: 'Light anti-personnel gun, aimed by hand',     rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
@@ -542,6 +563,33 @@ export interface ShipStats {
 
 export type CrewRole = 'Captain' | 'Navigator' | 'Gunner' | 'Sailor' | 'Factor' | 'Surgeon';
 export type HealthFlag = 'healthy' | 'sick' | 'injured' | 'scurvy' | 'fevered';
+
+// Per-crew outcome of a single night's rest at an inn — surfaced to the
+// post-rest summary modal. Captures only the deltas we want to show; the
+// authoritative state is the updated crew member in the store.
+export interface CrewRestDelta {
+  crewId: string;
+  name: string;
+  moraleBefore: number;
+  moraleAfter: number;
+  healthBefore: HealthFlag;
+  healthAfter: HealthFlag;
+  heartsBefore: number;
+  heartsAfter: number;
+  heartsMaxBefore: number;
+  heartsMaxAfter: number;
+  xpGained: number;
+  xpBonusReason: 'home' | 'foreign-port' | 'foreign-culture';
+  levelUp: boolean;
+  newLevel: number;
+}
+
+export interface RestSummary {
+  portId: string;
+  portName: string;
+  cost: number;
+  crewDeltas: CrewRestDelta[];
+}
 export type Nationality =
   | 'English' | 'Portuguese' | 'Dutch' | 'Spanish' | 'French' | 'Danish'
   | 'Venetian'
@@ -586,6 +634,27 @@ export interface Humours {
   curiosity: number;   // 1-10, openness, language learning, adaptability
 }
 
+// Visible vitality meter, rendered as hearts. Independent of HealthFlag —
+// flag transitions and combat/voyage/landfall hooks all push current down,
+// rest/surgeon/level-up push it back up. Death triggers still live in the
+// flag-based daily tick; hearts is advisory in stage 1.
+export interface Hearts {
+  current: number;
+  max: number;
+}
+
+export const HEARTS_BASE_MAX = 3;
+
+/** Max hearts scales linearly with level: 3 at L1, 4 at L2, ... */
+export function maxHeartsForLevel(level: number): number {
+  return HEARTS_BASE_MAX + Math.max(0, level - 1);
+}
+
+export function initialHearts(level: number): Hearts {
+  const max = maxHeartsForLevel(level);
+  return { current: max, max };
+}
+
 export interface CrewHistoryEntry {
   day: number;         // game day count
   event: string;       // short description
@@ -613,11 +682,12 @@ export interface CrewMember {
   level: number;       // 1+
   xp: number;          // current XP toward next level
   xpToNext: number;    // XP needed for next level
+  hearts: Hearts;      // visible vitality meter; max scales with level
 }
 
 export interface ShipInfo {
   name: string;
-  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Baghla' | 'Junk' | 'Jong' | 'Pinnace' | 'Fluyt' | 'Caravel';
+  type: 'Carrack' | 'Galleon' | 'Dhow' | 'Baghla' | 'Junk' | 'Jong' | 'Pinnace' | 'Fluyt' | 'Caravel' | 'Pattamar' | 'Ghurab';
   flag: Nationality;
   armed: boolean;
 }
@@ -847,12 +917,20 @@ interface GameState {
   buyCommodity: (commodity: Commodity, amount: number) => void;
   sellCommodity: (commodity: Commodity, amount: number) => void;
   advanceTime: (delta: number) => void;
+  restAtInn: (port: Port) => RestSummary | null;
   setCameraZoom: (zoom: number) => void;
   setCameraRotation: (rotation: number) => void;
   setViewMode: (mode: 'default' | 'cinematic' | 'topdown' | 'firstperson') => void;
   setWorldSeed: (seed: number) => void;
   setWorldSize: (size: number) => void;
   setDevSoloPort: (portId: string | null) => void;
+  devRestPreviewPortId: string | null;
+  setDevRestPreview: (portId: string | null) => void;
+  /** Set true when the player rests at an inn; consumed by PortModal on
+   *  close to play the "After the Night" theme as the morning departure
+   *  music. Cleared as soon as the music is triggered. */
+  pendingAfterNightMusic: boolean;
+  setPendingAfterNightMusic: (v: boolean) => void;
   setWaterPaletteSetting: (setting: WaterPaletteSetting) => void;
   updateRenderDebug: (patch: Partial<RenderDebugSettings>) => void;
   resetRenderDebug: () => void;
@@ -944,6 +1022,7 @@ export function grantCrewXp(
       const bumpStat = statKeys[Math.floor(Math.random() * statKeys.length)];
       levelledUp = c.name;
       newLevel = c.level + 1;
+      const newMaxHearts = maxHeartsForLevel(newLevel);
       return {
         ...c,
         xp: totalXp - c.xpToNext,
@@ -951,6 +1030,7 @@ export function grantCrewXp(
         xpToNext: Math.floor(c.xpToNext * 1.5),
         skill: Math.min(100, c.skill + skillBump),
         stats: { ...c.stats, [bumpStat]: Math.min(20, c.stats[bumpStat] + 1) },
+        hearts: { current: newMaxHearts, max: newMaxHearts },
       };
     }
     return { ...c, xp: totalXp };
@@ -976,6 +1056,10 @@ const PLAYABLE_FACTION_STARTS: Array<{
   { faction: 'Venetian',   humble: 'Carrack', grand: 'Galleon', homePortId: 'venice'    },
   { faction: 'Omani',      humble: 'Dhow',    grand: 'Baghla',  homePortId: 'muscat'    },
   { faction: 'Chinese',    humble: 'Junk',    grand: 'Jong',    homePortId: 'macau'     },
+  // Gujarati banias and Bohra/Memon merchant houses out of Surat — the great
+  // Mughal-era port. Pattamar = lateen coastal trader; Ghurab ("raven") =
+  // armed merchantman, the typical Surat blue-water hull.
+  { faction: 'Gujarati',   humble: 'Pattamar', grand: 'Ghurab', homePortId: 'surat'     },
 ];
 
 // Weighted spawn distributions for c. 1612. A captain usually begins in the
@@ -984,7 +1068,7 @@ const PLAYABLE_FACTION_STARTS: Array<{
 // already be seasoned in Goa, a Dutch factor in Bantam, etc. Weights are
 // historically shaped (Portuguese Estado at full stretch; VOC founded 1602;
 // EIC's Surat factory opens 1612; Spanish network anchored in the Caribbean).
-const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string; weight: number }>>> = {
+export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string; weight: number }>>> = {
   Portuguese: [
     { portId: 'lisbon',   weight: 53 },
     { portId: 'goa',      weight: 20 },
@@ -1058,6 +1142,23 @@ const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string;
     { portId: 'goa',     weight: 3  },
     { portId: 'calicut', weight: 2  },
   ],
+  // Gujarati merchant houses c. 1612 anchor at Surat (Mughal port, EIC factory
+  // founded this very year) but maintain factors across the Arabian Sea
+  // pepper/cotton/horse circuits. Diu stays low because it's a Portuguese
+  // fortress — Gujarati merchants worked through it under cartaz, but it's
+  // not their home. Calicut weight reflects shared Gujarati-Mappila dominance
+  // of the Malabar coast.
+  Gujarati: [
+    { portId: 'surat',    weight: 50 },
+    { portId: 'calicut',  weight: 10 },
+    { portId: 'mocha',    weight: 10 },
+    { portId: 'hormuz',   weight: 8  },
+    { portId: 'aden',     weight: 5  },
+    { portId: 'zanzibar', weight: 5  },
+    { portId: 'mombasa',  weight: 4  },
+    { portId: 'malacca',  weight: 3  },
+    { portId: 'diu',      weight: 5  },
+  ],
 };
 
 function pickSpawnPort(faction: Nationality, fallback: string): string {
@@ -1088,15 +1189,17 @@ const SHIP_BASE_STATS: Record<ShipInfo['type'], {
   startMin: number;
   startMax: number;
 }> = {
-  Pinnace: { speed: 24, turnSpeed: 2.6, windward: 0.55, draft: 'shallow', maxHull:  60, maxCrew:  4, startMin: 3, startMax: 4  },
-  Dhow:    { speed: 22, turnSpeed: 2.8, windward: 0.90, draft: 'shallow', maxHull:  70, maxCrew:  4, startMin: 3, startMax: 4  },
-  Caravel: { speed: 21, turnSpeed: 2.5, windward: 0.78, draft: 'shallow', maxHull:  80, maxCrew:  5, startMin: 3, startMax: 5  },
-  Baghla:  { speed: 18, turnSpeed: 2.2, windward: 0.82, draft: 'medium',  maxHull: 100, maxCrew:  8, startMin: 4, startMax: 7  },
-  Fluyt:   { speed: 18, turnSpeed: 1.8, windward: 0.48, draft: 'medium',  maxHull: 110, maxCrew:  6, startMin: 4, startMax: 6  },
-  Junk:    { speed: 17, turnSpeed: 2.0, windward: 0.65, draft: 'medium',  maxHull:  95, maxCrew:  6, startMin: 4, startMax: 6  },
-  Galleon: { speed: 16, turnSpeed: 1.3, windward: 0.35, draft: 'deep',    maxHull: 160, maxCrew: 12, startMin: 6, startMax: 10 },
-  Carrack: { speed: 20, turnSpeed: 1.8, windward: 0.50, draft: 'deep',    maxHull: 130, maxCrew:  8, startMin: 5, startMax: 8  },
-  Jong:    { speed: 15, turnSpeed: 1.4, windward: 0.60, draft: 'deep',    maxHull: 140, maxCrew: 12, startMin: 6, startMax: 10 },
+  Pinnace:  { speed: 24, turnSpeed: 2.6, windward: 0.55, draft: 'shallow', maxHull:  60, maxCrew:  4, startMin: 3, startMax: 4  },
+  Dhow:     { speed: 22, turnSpeed: 2.8, windward: 0.90, draft: 'shallow', maxHull:  70, maxCrew:  4, startMin: 3, startMax: 4  },
+  Caravel:  { speed: 21, turnSpeed: 2.5, windward: 0.78, draft: 'shallow', maxHull:  80, maxCrew:  5, startMin: 3, startMax: 5  },
+  Pattamar: { speed: 20, turnSpeed: 2.4, windward: 0.85, draft: 'shallow', maxHull:  72, maxCrew:  5, startMin: 3, startMax: 5  },
+  Baghla:   { speed: 18, turnSpeed: 2.2, windward: 0.82, draft: 'medium',  maxHull: 100, maxCrew:  8, startMin: 4, startMax: 7  },
+  Fluyt:    { speed: 18, turnSpeed: 1.8, windward: 0.48, draft: 'medium',  maxHull: 110, maxCrew:  6, startMin: 4, startMax: 6  },
+  Junk:     { speed: 17, turnSpeed: 2.0, windward: 0.65, draft: 'medium',  maxHull:  95, maxCrew:  6, startMin: 4, startMax: 6  },
+  Ghurab:   { speed: 19, turnSpeed: 2.0, windward: 0.78, draft: 'medium',  maxHull: 110, maxCrew:  8, startMin: 5, startMax: 8  },
+  Galleon:  { speed: 16, turnSpeed: 1.3, windward: 0.35, draft: 'deep',    maxHull: 160, maxCrew: 12, startMin: 6, startMax: 10 },
+  Carrack:  { speed: 20, turnSpeed: 1.8, windward: 0.50, draft: 'deep',    maxHull: 130, maxCrew:  8, startMin: 5, startMax: 8  },
+  Jong:     { speed: 15, turnSpeed: 1.4, windward: 0.60, draft: 'deep',    maxHull: 140, maxCrew: 12, startMin: 6, startMax: 10 },
 };
 
 // Starting armament by ship type. Swivels are the universal anti-personnel
@@ -1112,17 +1215,21 @@ const SHIP_STARTING_ARMAMENT: Record<ShipInfo['type'], {
   swivelMax: number;
   mounted: WeaponType[];
 }> = {
-  Pinnace: { swivelMin: 1, swivelMax: 1, mounted: [] },
-  Dhow:    { swivelMin: 0, swivelMax: 1, mounted: [] },
-  Caravel: { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'minion'] },
-  Fluyt:   { swivelMin: 1, swivelMax: 1, mounted: ['minion', 'minion'] },
+  Pinnace:  { swivelMin: 1, swivelMax: 1, mounted: [] },
+  Dhow:     { swivelMin: 0, swivelMax: 1, mounted: [] },
+  Caravel:  { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'minion'] },
+  Pattamar: { swivelMin: 1, swivelMax: 1, mounted: [] },
+  Fluyt:    { swivelMin: 1, swivelMax: 1, mounted: ['minion', 'minion'] },
   // Junk/Jong come off the dock with a rocket rack — a small one on the
   // junk, a proper launcher on the Jong. Signature ranged weapon.
-  Junk:    { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'fireRocket'] },
-  Baghla:  { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion'] },
-  Carrack: { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion', 'saker'] },
-  Jong:    { swivelMin: 2, swivelMax: 3, mounted: ['minion', 'minion', 'fireRocket'] },
-  Galleon: { swivelMin: 3, swivelMax: 3, mounted: ['minion', 'minion', 'saker', 'saker', 'demiCulverin'] },
+  Junk:     { swivelMin: 1, swivelMax: 2, mounted: ['minion', 'fireRocket'] },
+  Baghla:   { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion'] },
+  // Ghurab — typical Surat armed merchantman. Heavier than the Baghla in
+  // gunnery but no cannon ports proper; lantakas + a saker is realistic.
+  Ghurab:   { swivelMin: 2, swivelMax: 3, mounted: ['minion', 'saker'] },
+  Carrack:  { swivelMin: 2, swivelMax: 2, mounted: ['minion', 'minion', 'saker'] },
+  Jong:     { swivelMin: 2, swivelMax: 3, mounted: ['minion', 'minion', 'fireRocket'] },
+  Galleon:  { swivelMin: 3, swivelMax: 3, mounted: ['minion', 'minion', 'saker', 'saker', 'demiCulverin'] },
 };
 
 /** Pick the swivel-family weapon appropriate to the ship's faction — Omani
@@ -1132,6 +1239,10 @@ const SHIP_STARTING_ARMAMENT: Record<ShipInfo['type'], {
 function factionSwivelType(faction: Nationality): WeaponType {
   if (faction === 'Omani') return 'lantaka';
   if (faction === 'Chinese') return 'cetbang';
+  // Gujarati ships mounted swivel-class breech-loaders that the Portuguese
+  // and Dutch sources call lantaka — the Malay loanword had spread along the
+  // Indian Ocean by 1612.
+  if (faction === 'Gujarati') return 'lantaka';
   return 'swivelGun';
 }
 
@@ -1151,16 +1262,39 @@ function buildStartingArmament(type: ShipInfo['type'], faction: Nationality): We
 // fuller hold. Dhow/Baghla (Omani) and Junk/Jong (Chinese) are the
 // non-European playable tiers.
 const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold: number }> = {
-  Pinnace: { cargoCapacity: 50,  gold: 600  },
-  Caravel: { cargoCapacity: 65,  gold: 700  },
-  Fluyt:   { cargoCapacity: 120, gold: 1050 },
-  Carrack: { cargoCapacity: 140, gold: 1400 },
-  Galleon: { cargoCapacity: 130, gold: 1500 },
-  Dhow:    { cargoCapacity: 60,  gold: 600  },
-  Baghla:  { cargoCapacity: 110, gold: 1200 },
-  Junk:    { cargoCapacity: 95,  gold: 800  },
-  Jong:    { cargoCapacity: 150, gold: 1400 },
+  Pinnace:  { cargoCapacity: 50,  gold: 600  },
+  Caravel:  { cargoCapacity: 65,  gold: 700  },
+  Pattamar: { cargoCapacity: 65,  gold: 650  },
+  Fluyt:    { cargoCapacity: 120, gold: 1050 },
+  Carrack:  { cargoCapacity: 140, gold: 1400 },
+  Galleon:  { cargoCapacity: 130, gold: 1500 },
+  Dhow:     { cargoCapacity: 60,  gold: 600  },
+  Baghla:   { cargoCapacity: 110, gold: 1200 },
+  Ghurab:   { cargoCapacity: 115, gold: 1250 },
+  Junk:     { cargoCapacity: 95,  gold: 800  },
+  Jong:     { cargoCapacity: 150, gold: 1400 },
 };
+
+// Per-faction starting reputation. Most captains begin neutral with everyone;
+// non-European factions arrive with the period's actual political tilts pre-
+// loaded. Numeric scale matches getReputation: -100..+100.
+//
+// Gujarati c. 1612: Mughal subjects (warm), Sunni co-religionist trade with
+// Ottomans (mild), neutral with the upstart EIC/VOC, and a baseline penalty
+// with the Portuguese — every Gujarati captain sails under cartaz tension
+// even when there's no active hostility.
+function buildStartingReputation(faction: Nationality): Partial<Record<Nationality, number>> {
+  if (faction === 'Gujarati') {
+    return {
+      Mughal: 20,
+      Ottoman: 10,
+      Persian: 5,
+      Swahili: 5,
+      Portuguese: -15,
+    };
+  }
+  return {};
+}
 
 const _factionStart = PLAYABLE_FACTION_STARTS[Math.floor(Math.random() * PLAYABLE_FACTION_STARTS.length)];
 const _startingFaction: Nationality = _factionStart.faction;
@@ -1267,7 +1401,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   interactionPrompt: null,
   nearestHailableNpc: null,
   discoveredPorts: [],
-  reputation: {},
+  reputation: buildStartingReputation(_startingFaction),
   npcPositions: [],
   npcShips: [],
   oceanEncounters: [],
@@ -1278,11 +1412,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   dayCount: 1,
   windDirection: Math.PI * 0.75, // start SW
   windSpeed: 0.5,
-  knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew),
+  knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew, _startingArmament),
   provisions: 30, // starting food supply
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 150,
   devSoloPort: null,
+  devRestPreviewPortId: null,
+  pendingAfterNightMusic: false,
   currentWorldPortId: _startingPortId,
   waterPaletteSetting: 'auto',
   forceMobileLayout: false,
@@ -1881,6 +2017,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (deadCrewId) return c; // only one death per day
 
         let { health, morale } = c;
+        let heartsCurrent = c.hearts.current;
+        const heartsMax = c.hearts.max;
 
         // Starvation effects
         if (starving) {
@@ -1888,8 +2026,10 @@ export const useGameStore = create<GameState>((set, get) => ({
           // Healthy crew get scurvy; already-sick crew worsen
           if (health === 'healthy' && Math.random() < 0.15) {
             health = 'scurvy';
+            heartsCurrent = Math.max(0, heartsCurrent - 1);
           } else if (health === 'scurvy' && Math.random() < 0.12) {
             health = 'fevered';
+            heartsCurrent = Math.max(0, heartsCurrent - 1);
           }
         }
 
@@ -1905,9 +2045,12 @@ export const useGameStore = create<GameState>((set, get) => ({
           return c;
         }
 
-        // Surgeon heals one sick crew member per day (not starvation-related)
+        // Surgeon heals one sick crew member per day (not starvation-related).
+        // Flag flips to healthy; hearts recover by one (partial — full restore
+        // is what tavern rest gives).
         if (hasSurgeon && health !== 'healthy' && !starving && Math.random() < 0.2) {
           health = 'healthy';
+          heartsCurrent = Math.min(heartsMax, heartsCurrent + 1);
           healedBySurgeon = true;
         }
 
@@ -1923,7 +2066,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           return c;
         }
 
-        return { ...c, health, morale };
+        return { ...c, health, morale, hearts: { current: heartsCurrent, max: heartsMax } };
       });
 
       set({ provisions: newProvisions, crew: updatedCrew });
@@ -1960,6 +2103,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   setWorldSeed: (seed) => set({ worldSeed: seed, currentWorldPortId: null }),
   setWorldSize: (size) => set({ worldSize: size }),
   setDevSoloPort: (portId) => set({ devSoloPort: portId }),
+  setDevRestPreview: (portId) => set({ devRestPreviewPortId: portId }),
+  setPendingAfterNightMusic: (v) => set({ pendingAfterNightMusic: v }),
   setWaterPaletteSetting: (setting) => set({ waterPaletteSetting: setting }),
   setForceMobileLayout: (v) => set({ forceMobileLayout: v }),
   setShipSteeringMode: (mode) => set({ shipSteeringMode: mode }),
@@ -2058,6 +2203,114 @@ export const useGameStore = create<GameState>((set, get) => ({
       `After ${travelDays} days sailing, we have arrived at ${port.name}. The crew is relieved to see land again.`,
       port.name,
     );
+  },
+  restAtInn: (port) => {
+    const state = get();
+    const cost = lodgingCost(port.scale);
+    if (state.gold < cost) {
+      get().addNotification(`The innkeeper turns you away — you cannot afford ${cost} reales.`, 'warning');
+      return null;
+    }
+
+    // Snapshot pre-rest state so the summary can report deltas
+    const before = state.crew.map(c => ({
+      id: c.id, morale: c.morale, health: c.health, level: c.level,
+      hearts: c.hearts.current, heartsMax: c.hearts.max,
+    }));
+
+    // Advance to 8 AM the following morning. If currently before 8 AM, this still
+    // resolves to 8 AM the next calendar day (delta is always 8..32, wrapping once).
+    const delta = (24 - state.timeOfDay) + 8;
+    get().advanceTime(delta);
+
+    // Refresh state after time advance (provisions/health daily tick may have run)
+    const post = get();
+
+    const deltas: CrewRestDelta[] = [];
+    let workingCrew = post.crew.map(c => {
+      const prev = before.find(b => b.id === c.id);
+      const moraleBefore = prev?.morale ?? c.morale;
+      const healthBefore = prev?.health ?? c.health;
+      const heartsBefore = prev?.hearts ?? c.hearts.current;
+      const heartsMaxBefore = prev?.heartsMax ?? c.hearts.max;
+
+      const morale = Math.min(100, c.morale + 15);
+      let health = c.health;
+      if (health !== 'healthy') {
+        const chance = (health === 'sick' || health === 'injured') ? 0.4 : 0.15;
+        if (Math.random() < chance) health = 'healthy';
+      }
+      // A night's rest fully refills the vitality meter regardless of whether
+      // the underlying condition cleared. The flag may persist (still scurvy
+      // in the morning), but the crew member is rested.
+      const hearts: Hearts = { current: c.hearts.max, max: c.hearts.max };
+      return { c: { ...c, morale, health, hearts }, moraleBefore, healthBefore, heartsBefore, heartsMaxBefore };
+    });
+
+    // Grant rest XP: +1 per crew member always, +1 more if this port's
+    // culture differs from the crew member's home culture (a Dutch sailor
+    // resting in Surat learns more than one resting in Amsterdam).
+    let crewAfterXp = workingCrew.map(({ c, moraleBefore, healthBefore, heartsBefore, heartsMaxBefore }) => {
+      const homeCulture = nationalityToCulture(c.nationality);
+      const foreignCulture = homeCulture !== port.culture;
+      const xpGain = foreignCulture ? 2 : 1;
+      const xpBonusReason: CrewRestDelta['xpBonusReason'] = foreignCulture
+        ? 'foreign-culture'
+        : 'foreign-port'; // every rest is at a port, so "home" is unused for now
+      return { c, moraleBefore, healthBefore, heartsBefore, heartsMaxBefore, xpGain, xpBonusReason };
+    });
+
+    // Apply XP via the existing helper (handles level-ups). Process one
+    // crew at a time because grantCrewXp expects a single crewId per call.
+    let updatedCrew = crewAfterXp.map(e => e.c);
+    for (const entry of crewAfterXp) {
+      const result = grantCrewXp(updatedCrew, entry.c.id, entry.xpGain);
+      updatedCrew = result.crew;
+      const finalMember = updatedCrew.find(m => m.id === entry.c.id)!;
+      deltas.push({
+        crewId: entry.c.id,
+        name: entry.c.name,
+        moraleBefore: entry.moraleBefore,
+        moraleAfter: finalMember.morale,
+        healthBefore: entry.healthBefore,
+        healthAfter: finalMember.health,
+        heartsBefore: entry.heartsBefore,
+        heartsAfter: finalMember.hearts.current,
+        heartsMaxBefore: entry.heartsMaxBefore,
+        heartsMaxAfter: finalMember.hearts.max,
+        xpGained: entry.xpGain,
+        xpBonusReason: entry.xpBonusReason,
+        levelUp: result.levelledUp === entry.c.id,
+        newLevel: result.levelledUp === entry.c.id ? result.newLevel : finalMember.level,
+      });
+    }
+
+    set({ gold: post.gold - cost, crew: updatedCrew, pendingAfterNightMusic: true });
+
+    // ── Future event hook ─────────────────────────────────────────────
+    // This is where a random nighttime event would be rolled — e.g. a
+    // tavern-NPC follow-up, two unhappy crew getting drunk and fighting,
+    // a stranger leaving a note, a theft, a feverish dream. The event
+    // would build on tavern conversation history (see TavernTab's
+    // conversationHistory) and crew morale/relationship state. The plan
+    // is FF7-style: pre-rendered backdrop reuse + sprite walk-on +
+    // dialogue tree. See AGENTS.md "Sleep / inn rest" section.
+    // ─────────────────────────────────────────────────────────────────
+
+    const lodgingName = lodgingLabel(port.culture);
+    get().addJournalEntry(
+      'navigation',
+      `We took rooms at the ${lodgingName} in ${port.name} for ${cost} reales. The crew slept under a roof for the first time in weeks.`,
+      port.name,
+    );
+    get().addNotification(`Rested at the ${lodgingName}. Crew morale restored.`, 'success');
+
+    return {
+      portId: port.id,
+      portName: port.name,
+      cost,
+      crewDeltas: deltas,
+    };
   },
   setPaused: (paused) => set({ paused }),
   setAnchored: (anchored) => set({ anchored }),

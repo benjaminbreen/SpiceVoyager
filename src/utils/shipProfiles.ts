@@ -714,6 +714,140 @@ function jongProfile(): ShipProfile {
   };
 }
 
+function pattamarProfile(): ShipProfile {
+  // Konkani / Malabar coastal lateener. Long, narrow, low-freeboard hull
+  // with two heavily forward-raked masts carrying tall lateens. Smaller
+  // and lighter than the dhow; sits between Dhow and Caravel in size.
+  // Distinguishing cue is the doubled raked stempost (sharper bow rake
+  // than the Arabian dhow) and the lighter palette of Konkani teak.
+  return {
+    hull: {
+      width: 1.4,
+      height: 0.78,
+      length: 4.6,
+      bowStyle: 'tapered',
+      sternStyle: 'transom',
+      hasBowsprit: false,
+      hasStempost: true,
+      stempostStyle: 'raked_beak',
+      doubleStem: true,
+      lowTransom: true,
+      hasForecastle: false,
+      hullColor: '#7a5638',
+      deckColor: '#9a7548',
+      trimColor: '#6a3f22',
+      cabinColor: '#7a5638',
+      sailColor: '#ece2c0',
+    },
+    masts: [
+      // Main — stepped near amidships, heavily forward-raked.
+      { position: [0, 2.55, 0.45], height: 4.5, radius: 0.095, rake: 0.24 },
+      // Mizzen — small, aft.
+      { position: [0, 2.0, -1.7], height: 3.0, radius: 0.075, rake: 0.14 },
+    ],
+    sails: [
+      {
+        position: [0, 3.25, 0.7],
+        width: 1.95,
+        height: 3.9,
+        plan: 'lateen',
+        fullnessScale: 1.0,
+        flutterPhase: 0.4,
+        lowerAmount: 1.15,
+        roll: -0.52,
+        trimsWithMain: true,
+      },
+      {
+        position: [0, 2.4, -1.55],
+        width: 1.4,
+        height: 2.5,
+        plan: 'lateen',
+        fullnessScale: 0.78,
+        flutterPhase: 1.4,
+        lowerAmount: 0.75,
+        roll: 0.48,
+        trimsWithMain: false,
+      },
+    ],
+    equipment: {
+      swivel: [0, 1.05, 2.55],
+      torch: [0.45, 1.85, -1.5],
+      fishingNet: [0.8, 0.92, 0],
+      flagHoist: [0, 4.85, -1.7],
+      anchor: [0.8, 0.72, 2.1],
+    },
+    hasPennants: true,
+  };
+}
+
+function ghurabProfile(): ShipProfile {
+  // Surat-built armed merchantman ("ghurab" = raven). Hybrid hull combining
+  // a deep dhow-style raked stem with a square European-influenced transom
+  // and a heavier carrack-grade build. Two masts, both square-rigged in the
+  // Indo-Portuguese pattern (some carried lateen mizzens; using square here
+  // distinguishes the silhouette from the Baghla's double-lateen). Carved
+  // stern windows are the Surat trademark.
+  return {
+    hull: {
+      width: 2.05,
+      height: 1.12,
+      length: 5.6,
+      bowStyle: 'tapered',
+      sternStyle: 'transom',
+      hasBowsprit: true,
+      hasStempost: true,
+      stempostStyle: 'raked_beak',
+      hasCarvedTransom: true,
+      hasForecastle: false,
+      hullColor: '#5a3a22',
+      deckColor: '#8b6839',
+      trimColor: '#a05030',
+      cabinColor: '#5a3a22',
+      sailColor: '#ebe0bc',
+    },
+    masts: [
+      // Main — central, slight forward rake.
+      { position: [0, 3.3, 0.2], height: 6.0, radius: 0.13, rake: 0.08 },
+      // Fore — short, more upright.
+      { position: [0, 2.85, 2.45], height: 4.6, radius: 0.1 },
+    ],
+    sails: [
+      {
+        position: [0, 4.0, 0.3],
+        width: 3.1,
+        height: 4.0,
+        plan: 'square',
+        fullnessScale: 1.0,
+        flutterPhase: 0.3,
+        lowerAmount: 1.5,
+        segmentsX: 12,
+        segmentsY: 14,
+        trimsWithMain: true,
+      },
+      {
+        position: [0, 3.25, 2.55],
+        width: 2.4,
+        height: 3.0,
+        plan: 'square',
+        fullnessScale: 0.85,
+        flutterPhase: 1.2,
+        lowerAmount: 1.1,
+        segmentsX: 10,
+        segmentsY: 12,
+        trimsWithMain: false,
+      },
+    ],
+    equipment: {
+      swivel: [0, 1.45, 3.15],
+      torch: [0.6, 2.35, -1.85],
+      fishingNet: [1.1, 1.2, 0],
+      flagHoist: [0, 6.35, 0.2],
+      anchor: [1.15, 1.0, 2.65],
+    },
+    hasPennants: true,
+  };
+}
+
 function junkProfile(): ShipProfile {
   // Chinese junk: boxy hull, high flat transom, batten-rigged square sails.
   return {
@@ -783,6 +917,8 @@ export const SHIP_PROFILES: Record<ShipInfo['type'], ShipProfile> = {
   Caravel: caravelProfile(),
   Dhow: dhowProfile(),
   Baghla: baghlaProfile(),
+  Pattamar: pattamarProfile(),
+  Ghurab: ghurabProfile(),
   Junk: junkProfile(),
   Jong: jongProfile(),
 };

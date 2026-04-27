@@ -1,4 +1,4 @@
-import { getTerrainData, setPlacedArchetypes } from './terrain';
+import { getTerrainData, setPlacedArchetypes, setActiveCanals } from './terrain';
 import { generateCity } from './cityGenerator';
 import { generateHinterland } from './hinterland';
 import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
@@ -8,7 +8,7 @@ import {
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,
   resolveDirRadians,
 } from './portArchetypes';
-import { generateCanalLayout } from './canalLayout';
+import { generateCanalLayout, type CanalLayout } from './canalLayout';
 import { faithsForPort } from './portReligions';
 import { palaceStyleForPort } from './palaceStyles';
 import { postprocessRoads } from './roadTopology';
@@ -179,6 +179,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
   //    For archetype ports, the terrain now conforms to them, so we search within
   //    the archetype radius for a good coastline spot.
   const generatedPorts = [];
+  const canalRegistrations: { layout: CanalLayout; cx: number; cz: number }[] = [];
 
   for (const pos of positions) {
     const override = config.portOverrides.find(o => o.id === pos.id);
@@ -203,24 +204,48 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
     // Estuary geography: the river center is water along the open-direction axis.
     // Push the search center perpendicular to the river onto a bank, just past
     // the mouth half-width, so the city sits on the riverbank rather than mid-channel.
+    // riverBank 'left' flips the perpendicular direction (e.g. Lisbon → north bank).
+    // riverPortPosition pushes the marker upstream so the historic core lands at
+    // its real position along the river instead of at the mouth.
     if (pos.def?.geography === 'estuary') {
       const mouthW = pos.def.riverMouthWidth ?? 0.18;
       const openAngle = resolveDirRadians(pos.def.openDirection);
-      const perpAngle = openAngle + Math.PI / 2;
+      const bankSign = pos.def.riverBank === 'left' ? -1 : 1;
+      const perpAngle = openAngle + (Math.PI / 2) * bankSign;
       const offset = (mouthW + 0.06) * 450;
       portX += Math.sin(perpAngle) * offset;
       portZ += Math.cos(perpAngle) * offset;
+
+      const riverPos = pos.def.riverPortPosition ?? 0;
+      if (riverPos > 0) {
+        const inlandAngle = openAngle + Math.PI;
+        const riverLen = pos.def.riverLength ?? 0.5;
+        const inlandOffset = riverPos * riverLen * 450;
+        portX += Math.sin(inlandAngle) * inlandOffset;
+        portZ += Math.cos(inlandAngle) * inlandOffset;
+      }
     }
 
     // Search for a good coastal position near the distributed position.
     // For archetype ports, start within the shaped area; if nothing usable is
     // found, retry with a wider radius so wide-channel estuaries / harbors don't
     // strand the port marker in open water.
+    //
+    // When the port has an explicit positioning hint (riverPortPosition), the
+    // intent is authoritative — we tighten the search radius dramatically so
+    // the marker snaps to the *nearest* riverbank coast cell instead of letting
+    // the suitability heuristic shop the whole archetype radius for a flatter
+    // spot. Without this, a hilly port (Lisbon's seven hills) gets dragged
+    // back to the flat Atlantic mouth because the inland coast is penalized
+    // for being ringed by steep ground.
+    const hasPositionHint = !!(pos.def && pos.def.riverPortPosition && pos.def.riverPortPosition > 0);
     const baseRadius = pos.def && pos.def.geography !== 'archipelago'
-      ? ARCHETYPE_RADIUS * 0.6
+      ? (hasPositionHint ? 70 : ARCHETYPE_RADIUS * 0.6)
       : 200;
     const searchRadii = pos.def && pos.def.geography !== 'archipelago'
-      ? [baseRadius, ARCHETYPE_RADIUS * 1.5, ARCHETYPE_RADIUS * 3.0]
+      ? (hasPositionHint
+          ? [baseRadius, baseRadius * 2]
+          : [baseRadius, ARCHETYPE_RADIUS * 1.5, ARCHETYPE_RADIUS * 3.0])
       : [baseRadius];
 
     let bestScore = -Infinity;
@@ -236,15 +261,21 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
 
           // Look for coastlines
           if (terrain.height > 0 && terrain.height < 3) {
-            // Harbor suitability check
+            // Harbor suitability check + nearby elevation profile. Sampling the
+            // ring at radius 25 doubles as a "is the surrounding land flat?"
+            // probe — we reject spots ringed by steep ground so the buildable
+            // port area sits on a low plateau, not a hillside.
             let landCount = 0;
+            let maxNearbyHeight = terrain.height;
             const radius = 25;
             const samples = 8;
             for (let i = 0; i < samples; i++) {
               const angle = (i / samples) * Math.PI * 2;
               const cx = sx + Math.cos(angle) * radius;
               const cz = sz + Math.sin(angle) * radius;
-              if (getTerrainData(cx, cz).height > 0) landCount++;
+              const sampleH = getTerrainData(cx, cz).height;
+              if (sampleH > 0) landCount++;
+              if (sampleH > maxNearbyHeight) maxNearbyHeight = sampleH;
             }
 
             let score = 0;
@@ -255,10 +286,24 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
 
             score += terrain.moisture * 20;
 
-            // Prefer positions closer to the distributed center for archetype ports
+            // Prefer low coastal cells over high ones (any 0–3 height passes
+            // the gate above, but we want sea-level harbors, not bluffs).
+            score -= terrain.height * 12;
+            // Penalize spots where the surrounding ring climbs steeply — this
+            // is what catches Muscat-style mountainside placements. Skipped
+            // when the port has an explicit position hint (Lisbon's seven hills
+            // are *intentional* — we want a hilly waterfront, not a flat one).
+            if (!hasPositionHint) {
+              const ringRise = maxNearbyHeight - terrain.height;
+              if (ringRise > 4) score -= (ringRise - 4) * 8;
+            }
+
+            // Prefer positions closer to the distributed center for archetype ports.
+            // With an explicit position hint, this pull is much stronger so the
+            // marker actually lands at the intended spot.
             if (pos.def && pos.def.geography !== 'archipelago') {
               const distFromCenter = Math.sqrt(dx * dx + dz * dz);
-              score -= distFromCenter * 0.1;
+              score -= distFromCenter * (hasPositionHint ? 1.5 : 0.1);
             }
 
             if (score > bestScore) {
@@ -301,6 +346,9 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
         const canalLayout = portDef?.canalLayout
           ? generateCanalLayout(portX, portZ, portDef.canalLayout)
           : undefined;
+        if (canalLayout) {
+          canalRegistrations.push({ layout: canalLayout, cx: portX, cz: portZ });
+        }
         const city = generateCity(
           portX, portZ,
           override.scale, override.culture,
@@ -333,6 +381,11 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       })(),
     });
   }
+
+  // Register active canals so the world terrain mesh, built next in
+  // worldGeneration, will sink at canal cells and let the ocean overlay show
+  // through as visible water.
+  setActiveCanals(canalRegistrations);
 
   return generatedPorts;
 }

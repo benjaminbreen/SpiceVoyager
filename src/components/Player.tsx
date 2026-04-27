@@ -4,7 +4,7 @@ import { useGameStore } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getTerrainData } from '../utils/terrain';
 import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from '../utils/roadSurface';
-import { getCrabData, getCollectedCrabs, collectCrabAt } from './World';
+import { getCrabData, getCollectedCrabs, collectCrabAt } from '../state/worldRegistries';
 import { sfxFootstep, sfxThud } from '../audio/SoundEffects';
 import {
   getLiveWalkingTransform,

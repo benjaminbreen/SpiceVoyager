@@ -8,9 +8,27 @@ import {
 } from '../utils/commodities';
 import { audioManager } from '../audio/AudioManager';
 import { sfxTab, sfxCoin, sfxClose, sfxHover, startTabAmbient, stopTabAmbientLoop } from '../audio/SoundEffects';
-import { getPortBannerCandidates, getPortIconCandidates } from '../utils/portAssets';
+import { getPortBannerCandidates } from '../utils/portAssets';
 import { MarketTabLedger } from './MarketTabLedger';
+import { PortBannerScene } from './PortBannerScene';
 import { TavernTab } from './TavernTab';
+
+// Ports whose banner image is a magenta-keyed silhouette and should render
+// behind a live time-of-day sky scene rather than as a static `<img>`.
+// `nightTextureUrl` is optional — when present, the overlay crossfades to it
+// by sunset so windows light up etc.; without it, the day image gets a
+// cool-tone tint at night as a graceful fallback.
+const ANIMATED_BANNER_PORTS: Record<
+  string,
+  { textureUrl: string; imageAspect: number; nightTextureUrl?: string; nightImageAspect?: number }
+> = {
+  manila: {
+    textureUrl: '/ports/manila.png',
+    imageAspect: 1536 / 672,
+    nightTextureUrl: '/sleep/manila.png',
+    nightImageAspect: 1344 / 768,
+  },
+};
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 import {
   X, Coins, Shield, Anchor, ShoppingBag,
@@ -577,7 +595,18 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
     } else {
       audioManager.stopPortMusic();
     }
-    return () => { audioManager.stopPortMusic(); };
+    return () => {
+      // If the player rested at the inn during this modal session, play
+      // "After the Night" as the morning-departure theme instead of
+      // letting the normal overworld rotation resume.
+      const justRested = useGameStore.getState().pendingAfterNightMusic;
+      if (justRested) {
+        useGameStore.getState().setPendingAfterNightMusic(false);
+        audioManager.startAfterNightMusic();
+      } else {
+        audioManager.stopPortMusic();
+      }
+    };
   }, [activePort?.id]);
 
   if (!activePort) return null;
@@ -599,7 +628,6 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
 
   // Image fallback chain: prefer jpg, then png, before falling back to gradients/text.
   const bannerSrc = getPortBannerCandidates(activePort.id, activeTab).find(src => !imageError[src]) ?? null;
-  const iconSrc = getPortIconCandidates(activePort.id).find(src => !imageError[src]) ?? null;
   const markImageError = (src: string | null) => {
     if (!src) return;
     setImageError(prev => ({ ...prev, [src]: true }));
@@ -632,21 +660,11 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                   : 'border-white/[0.08] shadow-[inset_0_2px_4px_rgba(0,0,0,0.4)] hover:border-[#c9a84c]/35'
                 }`}
             >
-              {iconSrc ? (
-                <img
-                  key={iconSrc}
-                  src={iconSrc}
-                  alt=""
-                  className="w-full h-full object-cover transition-opacity group-hover:opacity-90"
-                  onError={() => markImageError(iconSrc)}
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className={`text-lg font-bold transition-colors ${activeTab === 'overview' ? 'text-[#c9a84c]' : 'text-slate-600 group-hover:text-slate-400'}`} style={{ fontFamily: '"Fraunces", serif' }}>
-                    {activePort.name[0]}
-                  </span>
-                </div>
-              )}
+              <div className="w-full h-full flex items-center justify-center">
+                <span className={`text-lg font-bold transition-colors ${activeTab === 'overview' ? 'text-[#c9a84c]' : 'text-slate-600 group-hover:text-slate-400'}`} style={{ fontFamily: '"Fraunces", serif' }}>
+                  {activePort.name[0]}
+                </span>
+              </div>
             </button>
           </div>
 
@@ -734,15 +752,28 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
           <div className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
             activeTab === 'overview' ? 'h-[20rem] md:h-[24rem] lg:h-[28rem]' : 'h-44 md:h-52 lg:h-60'
           }`}>
-            {bannerSrc ? (
-              <img
-                key={bannerSrc}
-                src={bannerSrc}
-                alt=""
-                className="absolute inset-0 w-full h-full object-cover"
-                onError={() => markImageError(bannerSrc)}
-              />
-            ) : null}
+            {(() => {
+              const animated = activeTab === 'overview' ? ANIMATED_BANNER_PORTS[activePort.id] : undefined;
+              if (animated) {
+                return (
+                  <PortBannerScene
+                    textureUrl={animated.textureUrl}
+                    imageAspect={animated.imageAspect}
+                    nightTextureUrl={animated.nightTextureUrl}
+                    nightImageAspect={animated.nightImageAspect}
+                  />
+                );
+              }
+              return bannerSrc ? (
+                <img
+                  key={bannerSrc}
+                  src={bannerSrc}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => markImageError(bannerSrc)}
+                />
+              ) : null;
+            })()}
             {/* Gradient overlays */}
             <div className={`absolute inset-0 bg-gradient-to-t ${gradient}`} />
             <div className="absolute inset-0 bg-gradient-to-t from-[#080c14]/55 via-[#080c14]/12 to-transparent" />
@@ -816,19 +847,9 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                     : 'border-white/[0.12] bg-white/[0.04] text-white/45 hover:text-white/75'
                 }`}
               >
-                {iconSrc ? (
-                  <img
-                    key={`mobile-${iconSrc}`}
-                    src={iconSrc}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    onError={() => markImageError(iconSrc)}
-                  />
-                ) : (
-                  <span className="text-[11px] font-bold" style={{ fontFamily: '"Fraunces", serif' }}>
-                    {activePort.name[0]}
-                  </span>
-                )}
+                <span className="text-[11px] font-bold" style={{ fontFamily: '"Fraunces", serif' }}>
+                  {activePort.name[0]}
+                </span>
               </button>
               {TABS.map(tab => {
                 const Icon = tab.icon;

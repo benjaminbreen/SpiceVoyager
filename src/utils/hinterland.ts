@@ -51,7 +51,7 @@ const HAMLETS_BY_SCALE: Record<PortScale, number> = {
 // Duplicated here to avoid importing cityGenerator internals; keep in sync if
 // those numbers shift.
 const GRID_RADIUS: Record<PortScale, number> = {
-  'Small': 24, 'Medium': 32, 'Large': 46, 'Very Large': 62, 'Huge': 82,
+  'Small': 24, 'Medium': 35, 'Large': 50, 'Very Large': 66, 'Huge': 82,
 };
 const CELL_SIZE = 2;
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
 import { useGameStore } from '../store/gameStore';
-import { getCrabData, getCollectedCrabs, getFishShoalData } from './World';
+import { getCrabData, getCollectedCrabs, getFishShoalData } from '../state/worldRegistries';
 
 /**
  * Shift+drag selection: draws a rectangle, then on release finds all

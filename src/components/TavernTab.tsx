@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Beer, MessageCircle, Send, Loader2 } from 'lucide-react';
-import { useGameStore, getCaptain } from '../store/gameStore';
+import { Beer, MessageCircle, Send, Loader2, Moon } from 'lucide-react';
+import { useGameStore, getCaptain, lodgingCost, lodgingLabel } from '../store/gameStore';
+import type { RestSummary } from '../store/gameStore';
+import { SleepOverlay } from './SleepOverlay';
+import { RestSummaryModal } from './RestSummaryModal';
+import { audioManager } from '../audio/AudioManager';
 import type { Port, Nationality } from '../store/gameStore';
 import type { Commodity } from '../utils/commodities';
 import { COMMODITY_DEFS } from '../utils/commodities';
@@ -45,6 +49,7 @@ export function TavernTab({ port }: TavernTabProps) {
   const learnAboutCommodity = useGameStore(s => s.learnAboutCommodity);
   const addJournalEntry = useGameStore(s => s.addJournalEntry);
   const adjustReputation = useGameStore(s => s.adjustReputation);
+  const restAtInn = useGameStore(s => s.restAtInn);
 
   const [npcs, setNpcs] = useState<TavernNpc[]>([]);
   const [roundsBought, setRoundsBought] = useState(0);
@@ -58,6 +63,8 @@ export function TavernTab({ port }: TavernTabProps) {
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
   const [playerHasIntroduced, setPlayerHasIntroduced] = useState(false);
   const [npcHasIntroduced, setNpcHasIntroduced] = useState(false);
+  const [resting, setResting] = useState(false);
+  const [restSummary, setRestSummary] = useState<RestSummary | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -75,6 +82,8 @@ export function TavernTab({ port }: TavernTabProps) {
     setPlayerHasIntroduced(false);
     setNpcHasIntroduced(false);
     setPlayerInput('');
+    setResting(false);
+    setRestSummary(null);
     resetRateLimiter();
 
     // Abort any in-flight request on unmount or port change
@@ -345,6 +354,57 @@ export function TavernTab({ port }: TavernTabProps) {
     await sendToLLM(activeNpc, text);
   };
 
+  // ── Rest for the night ──
+  const restCost = lodgingCost(port.scale);
+  const lodgingName = lodgingLabel(port.culture);
+  const handleRest = () => {
+    if (gold < restCost || resting) return;
+    sfxCoin(restCost);
+    setResting(true);
+    // Close any active conversation since the night ends it
+    abortControllerRef.current?.abort();
+    setActiveNpcId(null);
+    setSuggestedResponses([]);
+
+    // Inn music ducks the port ambient and crossfades in
+    audioManager.startInnMusic();
+
+    // Resolve game state mid-overlay so the modal that follows reflects
+    // the new morning. The overlay's fade-in to the painted scene takes
+    // ~3.1s (1.5s overlay fade + 0.6s delay + 2.5s image fade); we resolve
+    // a beat after that lands so the player has time to look at the scene.
+    //
+    // ── Future event hook ────────────────────────────────────────────
+    // This is where a random nighttime event would *interrupt* the
+    // standard rest flow — e.g. before resolving, roll for an encounter
+    // (drunk crew brawl, tavern-NPC follow-up, theft) and divert into
+    // a sprite-on-backdrop dialogue scene instead of the summary modal.
+    // See AGENTS.md "Sleep / inn rest" for the planned architecture.
+    // ─────────────────────────────────────────────────────────────────
+    setTimeout(() => {
+      const summary = restAtInn(port);
+      // Refresh tavern crowd for the new morning
+      setNpcs(generateTavernNpcs(port, 8));
+      setRoundsBought(0);
+      setRevealedGoods(new Set());
+      // Show the summary once the overlay fades out
+      setTimeout(() => {
+        setResting(false);
+        // Slight extra beat after fade so the modal arrives over a
+        // settled tavern view, not mid-fade. Inn music keeps playing
+        // through the summary — it's stopped on summary dismiss.
+        setTimeout(() => {
+          if (summary) setRestSummary(summary);
+        }, 600);
+      }, 3500);
+    }, 5000);
+  };
+
+  const handleDismissSummary = () => {
+    setRestSummary(null);
+    audioManager.stopInnMusic();
+  };
+
   // ── Buy a round ──
   const handleBuyRound = () => {
     if (gold < 5 || pendingApproach) return;
@@ -430,7 +490,22 @@ export function TavernTab({ port }: TavernTabProps) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
+      className="relative"
     >
+      <SleepOverlay
+        active={resting}
+        portId={port.id}
+        portName={port.name}
+        lodgingName={lodgingName}
+        dayCount={dayCount}
+      />
+      <RestSummaryModal
+        summary={restSummary}
+        crew={crew}
+        onDismiss={handleDismissSummary}
+      />
+
+
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.48fr)_minmax(0,1fr)]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
         {/* ── Left column: NPC list + buy round ── */}
         <div className="flex flex-col gap-3">
@@ -542,7 +617,7 @@ export function TavernTab({ port }: TavernTabProps) {
             <button
               type="button"
               onClick={handleBuyRound}
-              disabled={gold < 5 || isLoading || !!pendingApproach}
+              disabled={gold < 5 || isLoading || !!pendingApproach || resting}
               onMouseEnter={() => sfxHover()}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3 text-[13px] font-bold text-emerald-200/80 transition-all hover:border-emerald-400/35 hover:bg-emerald-400/[0.10] hover:text-emerald-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
             >
@@ -554,6 +629,23 @@ export function TavernTab({ port }: TavernTabProps) {
                 {roundsBought} {roundsBought === 1 ? 'round' : 'rounds'} bought tonight
               </div>
             )}
+          </div>
+
+          {/* Take a room for the night */}
+          <div className="rounded-lg border border-white/[0.04] bg-white/[0.015] px-4 py-4">
+            <button
+              type="button"
+              onClick={handleRest}
+              disabled={gold < restCost || isLoading || !!pendingApproach || resting}
+              onMouseEnter={() => sfxHover()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-400/20 bg-indigo-400/[0.06] px-4 py-3 text-[13px] font-bold text-indigo-200/80 transition-all hover:border-indigo-400/35 hover:bg-indigo-400/[0.10] hover:text-indigo-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
+            >
+              <Moon size={16} />
+              Take a room at the {lodgingName} — {restCost}g
+            </button>
+            <div className="mt-2.5 text-center text-[12px] leading-snug text-slate-500">
+              Sleep until morning. Restores crew morale and may help the sick recover.
+            </div>
           </div>
         </div>
 

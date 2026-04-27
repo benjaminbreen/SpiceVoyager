@@ -314,6 +314,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   const cargoCapacity = useGameStore((state) => state.stats.cargoCapacity);
   const gold = useGameStore((state) => state.gold);
   const playerFlag = useGameStore((state) => state.ship.flag);
+  const timeOfDay = useGameStore((state) => state.timeOfDay);
   const { isMobile } = useIsMobile();
 
   // Auto-close if the NPC is destroyed or leaves the active set.
@@ -337,8 +338,8 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     [canUnderstand, context, npc],
   );
   const greeting = useMemo(
-    () => rememberedCollisionGreeting ?? getHailGreeting(npc, mood),
-    [rememberedCollisionGreeting, npc, mood],
+    () => rememberedCollisionGreeting ?? getHailGreeting(npc, mood, { timeOfDay }),
+    [rememberedCollisionGreeting, npc, mood, timeOfDay],
   );
   const collisionGreeting = useMemo(() => getCollisionHail(npc, canUnderstand), [npc, canUnderstand]);
   const warningGreeting = useMemo(() => {
@@ -350,7 +351,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       `WE KNOW YOUR FLAG. KEEP OFF, OR BY GOD WE OPEN FIRE!!`,
     ], npc.id + 'warning-hail');
   }, [canUnderstand, npc]);
-  const impression = useMemo(() => buildImpression(npc, mood), [npc, mood]);
+  const impression = useMemo(() => buildImpression(npc, mood, { timeOfDay }), [npc, mood, timeOfDay]);
   const languageColor = LANGUAGE_COLOR[hailLanguage] ?? '#e2c87a';
 
   const playerHeld = useMemo(
@@ -411,7 +412,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
 
   const barterDialogue = useMemo(() => {
     if (!barterMode) return null;
-    return getBarterDialogue(mood, barterMode.yourGood, barterMode.yourQty, counterOffer);
+    return getBarterDialogue(mood, barterMode.yourGood, barterMode.yourQty, counterOffer, npc);
   }, [mood, barterMode, counterOffer]);
 
   // Award translation XP/rep exactly once per NPC per session.
@@ -849,7 +850,11 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
                 transition={{ duration: 0.5, delay: 0.5 }}
                 className="hidden md:flex items-center gap-1.5 ml-2 pl-3 border-l border-[#2a2d3a] text-[11.5px] italic text-slate-400/90 min-w-0"
                 style={{ fontFamily: '"Fraunces", serif' }}
-                title={`${impression.sense.kind} on the air`}
+                title={
+                  impression.sense.kind === 'smell' ? 'scent on the air'
+                  : impression.sense.kind === 'sound' ? 'a sound carrying across'
+                  : 'something you can see across the water'
+                }
               >
                 <span aria-hidden className="text-[12px]">
                   {impression.sense.kind === 'smell' ? '❦' : impression.sense.kind === 'sound' ? '♪' : '◉'}

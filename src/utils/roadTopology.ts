@@ -95,7 +95,16 @@ export function densifyRoads(roads: Road[]): void {
           const t = s / steps;
           const nx = a[0] + dx * t;
           const nz = a[2] + dz * t;
-          const ny = sampleTerrain(nx, nz);
+          // Pick the higher of (linear interp Y between segment endpoints,
+          // terrain Y at this XZ). Pure terrain sampling — the old
+          // behaviour — would slam an elevated span (e.g. a non-bridge tier
+          // routed across a bridge deck via pathToRoad's lift) back down to
+          // water level at every subdivision, since the underlying water
+          // cell's terrain Y sits below sea level. The max preserves the
+          // lift while still letting normal land roads track terrain on
+          // convex crests where the surface rises above the linear chord.
+          const linearY = a[1] + (b[1] - a[1]) * t;
+          const ny = Math.max(linearY, sampleTerrain(nx, nz));
           out.push([nx, ny, nz]);
         }
       }
@@ -269,7 +278,12 @@ export function weldAndJunction(roads: Road[]): WeldManifest {
       // splice it into the polyline in the right order.
       let insertedAt = findNearbyExistingVertex(target, hit.segIdx, hit.hitX, hit.hitZ);
       if (insertedAt < 0) {
-        target.points.splice(hit.segIdx + 1, 0, [hit.hitX, hit.hitY, hit.hitZ]);
+        // For bridges keep the linearly-interpolated Y because the deck and
+        // its abutment ramp aren't on terrain. For land roads sample terrain
+        // so the inserted vertex lines up with the welded approach endpoint
+        // (which we also place at terrain Y below).
+        const insertY = targetIsBridge ? hit.hitY : getTerrainHeight(hit.hitX, hit.hitZ);
+        target.points.splice(hit.segIdx + 1, 0, [hit.hitX, insertY, hit.hitZ]);
         insertedAt = hit.segIdx + 1;
       }
       // Snap our endpoint onto the target T vertex, then pull it back
@@ -279,10 +293,16 @@ export function weldAndJunction(roads: Road[]): WeldManifest {
       // trim, a road's ribbon ends stamped across half of an avenue's
       // width, producing the visible "road stub" seam where colors compete.
       const tv = target.points[insertedAt];
-      // For bridge targets, don't adopt the target's Y — use the approach's
-      // current endpoint Y, resampled to terrain for safety. Otherwise use
-      // the target vertex Y as before.
-      const weldY = targetIsBridge ? getTerrainHeight(tv[0], tv[2]) : tv[1];
+      // Always weld at terrain Y instead of adopting the target's
+      // interpolated Y (tv[1]). Snapping the approach's last segment to
+      // the target's smoothed Y used to produce a one-segment waterfall
+      // wherever an approach descended a slope into a flatter cross-street.
+      // For non-bridge targets terrain Y is correct directly. For bridge
+      // targets the approach is meant to terminate at the abutment (terrain
+      // Y at the outermost cell) or duck under the deck over water — both
+      // cases match terrain Y, with the deck above hiding any submerged
+      // sliver.
+      const weldY = getTerrainHeight(tv[0], tv[2]);
       pts[epIdx] = [tv[0], weldY, tv[2]];
       // Record the logical anchor (target centerline) before trimming so
       // the graph can still recognise this endpoint as a T-welded junction
@@ -396,16 +416,70 @@ export function buildRoadGraph(roads: Road[], manifest?: WeldManifest): RoadGrap
 // ── Public pipeline ─────────────────────────────────────────────────────────
 
 /**
+ * Smooth interior Y values of each non-bridge road with a 3-tap moving
+ * average, clamped to terrain. Welding can introduce a single segment
+ * where the approach drops abruptly to the target's terrain Y; densify
+ * fills in vertices but they still have a kink at the weld point because
+ * the immediate neighbours bracket a sharp Y change. Averaging interior
+ * Ys across one neighbour on each side spreads that kink over a few
+ * segments instead of letting it render as a fall-line cliff. The clamp
+ * to terrain prevents the smoothing from sinking the polyline into the
+ * ground on convex slopes. Endpoints stay fixed so welds remain coherent.
+ *
+ * Bridges are skipped — their authored deck/abutment ramp is already
+ * smooth and any further Y averaging would round off the deck plateau.
+ */
+function smoothRoadYs(roads: Road[]): void {
+  for (const r of roads) {
+    if (r.tier === 'bridge') continue;
+    const pts = r.points;
+    if (pts.length < 3) continue;
+    const smoothed: number[] = new Array(pts.length);
+    smoothed[0] = pts[0][1];
+    smoothed[pts.length - 1] = pts[pts.length - 1][1];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = pts[i - 1][1];
+      const b = pts[i][1];
+      const c = pts[i + 1][1];
+      const terrainY = getTerrainHeight(pts[i][0], pts[i][2]);
+      // Skip points that sit well above terrain — these are a non-bridge
+      // road's deck-shared span, lifted by pathToRoad to BRIDGE_DECK_Y.
+      // A 3-tap moving average mixes them with terrain-Y neighbours and
+      // scallops the deck plateau down at each end (visible as a dip into
+      // the canal where a road meets the bridge). Preserve them as-is.
+      // The 1.0 threshold is well above natural terrain noise but well
+      // below BRIDGE_DECK_Y above water level (which is several units).
+      if (b - terrainY > 1.0) {
+        smoothed[i] = b;
+        continue;
+      }
+      const avg = (a + 2 * b + c) * 0.25;
+      // Never push the polyline below terrain — the ribbon edge sampler
+      // handles "follow the slope sideways", but the centerline still
+      // needs to ride the surface or a road in a valley would tunnel
+      // into the ground.
+      smoothed[i] = Math.max(avg, terrainY);
+    }
+    for (let i = 0; i < pts.length; i++) {
+      pts[i] = [pts[i][0], smoothed[i], pts[i][2]];
+    }
+  }
+}
+
+/**
  * Run the full post-generation pipeline on a combined road list. Mutates
- * `roads` in place (densify + weld) and returns the built graph.
+ * `roads` in place (densify + weld + Y-smooth) and returns the built graph.
  *
  * Densification runs twice by design: the first pass ensures weld-hit Y
  * interpolation is accurate on short target segments; the second pass
- * handles any newly-long segment that a moved endpoint created.
+ * handles any newly-long segment that a moved endpoint created. The
+ * Y-smoothing pass runs after the second densify so it sees the final
+ * vertex set and only has to redistribute residual weld-induced kinks.
  */
 export function postprocessRoads(roads: Road[]): RoadGraph {
   densifyRoads(roads);
   const manifest = weldAndJunction(roads);
   densifyRoads(roads);
+  smoothRoadYs(roads);
   return buildRoadGraph(roads, manifest);
 }

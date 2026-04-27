@@ -1021,11 +1021,15 @@ export function generatePortPrices(
     candidates.push({ commodity, price, tier: def.tier });
   }
 
-  // Ammo (Small Shot / Cannon Shot) is curated via dedicated port sets and must
-  // never be culled by the tier cap — otherwise inventory can outlive price and
-  // strand unbuyable stock at the quay.
-  const ammo = candidates.filter(c => c.commodity === 'Small Shot' || c.commodity === 'Cannon Shot');
-  const rest = candidates.filter(c => c.commodity !== 'Small Shot' && c.commodity !== 'Cannon Shot');
+  // Ammo (Small Shot / Cannon Shot) and War Rockets at Macau are curated via
+  // dedicated port sets and must never be culled by the tier cap — otherwise
+  // inventory can outlive price and strand unbuyable stock at the quay.
+  const isPinned = (c: { commodity: Commodity }) =>
+    c.commodity === 'Small Shot' ||
+    c.commodity === 'Cannon Shot' ||
+    (c.commodity === 'War Rockets' && portId === 'macau');
+  const ammo = candidates.filter(isPinned);
+  const rest = candidates.filter(c => !isPinned(c));
   rest.sort((a, b) => a.tier - b.tier || prng() - 0.5);
   const selected = [...ammo, ...rest.slice(0, Math.max(0, MAX_PORT_GOODS - ammo.length))];
   const selectedSet = new Set(selected.map(s => s.commodity));

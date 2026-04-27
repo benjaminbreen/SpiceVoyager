@@ -7,6 +7,8 @@ import {
 import { SEA_LEVEL } from '../constants/world';
 import { getResolvedWaterPalette } from './waterPalettes';
 import { reseedLandCharacter } from './landCharacter';
+import type { CanalLayout } from './canalLayout';
+import { distanceToNearestCanal, signedDistanceToNearestCanal } from './canalLayout';
 
 // Seeded random number generator (Mulberry32)
 function mulberry32(a: number) {
@@ -61,6 +63,38 @@ export function setPlacedArchetypes(placed: PlacedArchetype[]) {
 
 export function getPlacedArchetypes() {
   return _placedArchetypes;
+}
+
+// ── Active urban canals (registered by mapGenerator after city generation) ────
+// Each entry pairs a canal layout with a bounding circle so getTerrainData can
+// early-out for points far from any canal city. Canal carving here lowers the
+// terrain mesh to below sea level inside canal water strips, which makes the
+// ocean overlay show through as visible water — turning the placement-grid
+// canals (Amsterdam, Venice) into actual rendered waterways.
+interface ActiveCanal {
+  layout: CanalLayout;
+  cx: number;
+  cz: number;
+  /** Furthest point of any canal segment from (cx,cz), plus halfWidth + slack. */
+  bboxRadius: number;
+}
+let _activeCanals: ActiveCanal[] = [];
+
+export function setActiveCanals(entries: { layout: CanalLayout; cx: number; cz: number }[]) {
+  _activeCanals = entries.map(({ layout, cx, cz }) => {
+    let maxR = 0;
+    for (const seg of layout.canals) {
+      for (const [px, pz] of seg.polyline) {
+        const d = Math.hypot(px - cx, pz - cz) + seg.halfWidth;
+        if (d > maxR) maxR = d;
+      }
+    }
+    return { layout, cx, cz, bboxRadius: maxR + 4 };
+  });
+}
+
+export function getActiveCanals() {
+  return _activeCanals;
 }
 
 // ── Terrain mesh extent (set by World.tsx to match actual mesh half-size) ─────
@@ -185,6 +219,33 @@ export function refreshTerrainPaletteCache() {
   _cachedWaterPalette = getResolvedWaterPalette();
 }
 
+/**
+ * Shape edge fade. Islands sink to ocean on all sides at the mesh boundary
+ * (so they read as isolated landmasses). Continental archetypes only fade on
+ * the open-water side — land must extend off the lateral and inland edges
+ * of the mesh so the map doesn't look like a square island with a wedge cut
+ * into it. Uses the archetype's openDirection to project edge distance onto
+ * the seaward axis.
+ */
+function applyEdgeFade(shape: number, dx: number, dz: number, def: PortDefinition): number {
+  const isIsolated = def.geography === 'island';
+  if (isIsolated) {
+    const edgeDist = Math.max(Math.abs(dx), Math.abs(dz));
+    if (edgeDist <= _meshHalf * 0.82) return shape;
+    const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf, edgeDist);
+    return shape * fade + (-0.5) * (1 - fade);
+  }
+  // Continental: only fade toward the open-water direction.
+  const openAngle = resolveDirRadians(def.openDirection);
+  const openX = Math.sin(openAngle);
+  const openZ = Math.cos(openAngle);
+  // Positive openDist = toward open ocean from the port center.
+  const openDist = dx * openX + dz * openZ;
+  if (openDist <= _meshHalf * 0.82) return shape;
+  const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf * 1.05, openDist);
+  return shape * fade + (-0.15) * (1 - fade);
+}
+
 /** Lightweight height-only computation for slope estimation.
  *  Mirrors getTerrainData's height path but skips biome/color/volcano/river detail. */
 function getHeightOnly(x: number, z: number): number {
@@ -206,15 +267,7 @@ function getHeightOnly(x: number, z: number): number {
     const dx = x - pa.cx;
     const dz = z - pa.cz;
     let shape = getArchetypeShape(dx, dz, pa.def);
-    const isIsolated = pa.def.geography === 'island';
-    const edgeDist = Math.max(Math.abs(dx), Math.abs(dz));
-    // Islands sink fully into ocean at the mesh edge; continentals taper more
-    // gently so their coastline meets the background horizon without a cliff.
-    if (edgeDist > _meshHalf * 0.82) {
-      const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf, edgeDist);
-      const sinkTarget = isIsolated ? -0.5 : -0.15;
-      shape = shape * fade + sinkTarget * (1 - fade);
-    }
+    shape = applyEdgeFade(shape, dx, dz, pa.def);
     h = archetypeHeightFromShape(x, z, dx, dz, shape, pa.def);
     appliedArchetype = true;
   }
@@ -222,7 +275,34 @@ function getHeightOnly(x: number, z: number): number {
   if (_placedArchetypes.length > 0 && !appliedArchetype && h > SEA_LEVEL) {
     h = SEA_LEVEL - 5;
   }
-  return h - 7;
+  let height = h - 7;
+  // Mirror getTerrainData's canal carving so slope estimation stays consistent
+  // along canal banks (otherwise the slope sampler reads natural land height on
+  // one side of the canal and water height on the other, producing a fake cliff).
+  // Must use the same smoothed dredge band, or the slope sampler would see a
+  // sharp cliff at the canal edge while the visual mesh has a gradual ramp.
+  if (_activeCanals.length > 0 && height > SEA_LEVEL - 1.0) {
+    const CANAL_TROUGH_Y = SEA_LEVEL - 1.6;
+    const CANAL_DREDGE_BAND = 3.0;
+    for (const ac of _activeCanals) {
+      const dx = x - ac.cx;
+      const dz = z - ac.cz;
+      if (dx * dx + dz * dz > ac.bboxRadius * ac.bboxRadius) continue;
+      const signed = signedDistanceToNearestCanal(x, z, ac.layout);
+      if (signed <= 0) {
+        height = CANAL_TROUGH_Y;
+        break;
+      }
+      if (signed < CANAL_DREDGE_BAND) {
+        const t = signed / CANAL_DREDGE_BAND;
+        const blend = t * t * (3 - 2 * t);
+        const carved = CANAL_TROUGH_Y + (height - CANAL_TROUGH_Y) * blend;
+        if (carved < height) height = carved;
+        break;
+      }
+    }
+  }
+  return height;
 }
 
 function climateWindStrength(climate: ClimateProfile): number {
@@ -255,6 +335,12 @@ function archetypeMountainStrength(archetype: PortDefinition): number {
     case 'strait':
       strength = 0.34;
       break;
+    case 'tidal_river':
+      // A floodplain river cutting through low alluvium — flatter than an
+      // estuary because the river is bounded by levees and low banks rather
+      // than a coastal hill rim. London and Seville both fit this profile.
+      strength = 0.22;
+      break;
     case 'lagoon':
       strength = 0.18;       // pancake-flat alluvial lagoon — no relief
       break;
@@ -267,7 +353,18 @@ function archetypeMountainStrength(archetype: PortDefinition): number {
   if (archetype.id === 'muscat' || archetype.id === 'aden' || archetype.id === 'socotra') strength += 0.55;
   if (archetype.id === 'mocha') strength += 0.65;
   if (archetype.id === 'zanzibar' || archetype.id === 'diu') strength -= 0.12;
-  return Math.max(0.18, strength);
+  // Lowland-on-flat-coast overrides. The default per-geography strengths fit
+  // the dramatic ports (Salvador on its bluff, Mombasa on a coral island) but
+  // overstate relief for cities that historically sat on flat alluvium.
+  if (archetype.id === 'calicut') strength -= 0.30;          // Malabar coastal plain
+  if (archetype.id === 'manila') strength -= 0.55;           // Pasig delta — distant hills
+  if (archetype.id === 'cartagena') strength -= 0.65;        // low limestone shelf
+  if (archetype.id === 'havana') strength -= 0.30;           // limestone, gentle relief
+  if (archetype.id === 'bantam') strength -= 0.85;           // mangrove flats
+  // Lisbon sits on the famous seven hills above the Tagus — Castelo de São Jorge,
+  // Graça, São Vicente, etc. The estuary baseline (0.34) reads pancake-flat.
+  if (archetype.id === 'lisbon') strength += 0.95;
+  return Math.max(0.15, strength);
 }
 
 function archetypeHeightFromShape(
@@ -290,11 +387,16 @@ function archetypeHeightFromShape(
   const harborSide = localX * openX + localZ * openZ;
   const inlandDistance = -harborSide;
   const inlandBias = smoothstep(-18, 95, inlandDistance);
-  const summitOffset = archetype.geography === 'island' || archetype.geography === 'coastal_island'
+  let summitOffset = archetype.geography === 'island' || archetype.geography === 'coastal_island'
     ? 35
     : archetype.geography === 'continental_coast' || archetype.geography === 'inlet' || archetype.geography === 'peninsula'
     ? 125
+    : archetype.geography === 'tidal_river' || archetype.geography === 'estuary'
+    ? 170                  // low river basin — push any inland mass well past the city
     : 85;
+  // Lisbon's seven hills rise immediately behind the Ribeira waterfront, not far
+  // inland — pull the summit close so Castelo de São Jorge sits right above the city.
+  if (archetype.id === 'lisbon') summitOffset = 55;
   const ruggedBackdrop = archetype.id === 'muscat'
     || archetype.id === 'aden'
     || archetype.id === 'socotra'
@@ -324,10 +426,21 @@ function archetypeHeightFromShape(
     ruggedBackdrop ? 320 : 270,
   ) * smoothstep(0.26, 0.62, shape);
 
+  // Harbor plateau: suppress all relief inside the buildable port zone so the
+  // city sits on flat low ground near the water. Without this, rugged-backdrop
+  // ports (Muscat, Aden, Mocha) push the escarpment band into the build radius
+  // and buildings end up clinging to a hillside. The plateau ramps up so distant
+  // hinterland still gets full mountain mass.
+  // Lisbon overrides this — the seven hills (Castelo, Graça, São Vicente) rise
+  // directly out of the Ribeira waterfront. We want a narrow flat strip right at
+  // the docks and full hills almost immediately behind.
+  const plateauNear = archetype.id === 'lisbon' ? 8 : 20;
+  const plateauFar = archetype.id === 'lisbon' ? 45 : 110;
+  const harborPlateau = smoothstep(plateauNear, plateauFar, inlandDistance);
   const ridgeUplift = ridge * (0.35 + massif * 0.65) * landDepth * inlandBias * strength * 8.5;
-  const massifUplift = massif * inlandBack * strength * 11;
-  const peakUplift = peak * massif * inlandBack * strength * 12;
-  const escarpmentUplift = escarpment * strength * (ruggedBackdrop ? 14 : 7);
+  const massifUplift = massif * inlandBack * harborPlateau * strength * 11;
+  const peakUplift = peak * massif * inlandBack * harborPlateau * strength * 12;
+  const escarpmentUplift = escarpment * harborPlateau * strength * (ruggedBackdrop ? 14 : 7);
 
   return shape * 22.5 + detail + ridgeUplift + massifUplift + peakUplift + escarpmentUplift;
 }
@@ -467,16 +580,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
     const dz = z - pa.cz;
 
     let shape = getArchetypeShape(dx, dz, pa.def); // -1 to 1
-
-    // Islands sink fully into ocean at the mesh edge; continentals taper more
-    // gently so their coastline meets the background horizon without a cliff.
-    const isIsolated = pa.def.geography === 'island';
-    const edgeDist = Math.max(Math.abs(dx), Math.abs(dz));
-    if (edgeDist > _meshHalf * 0.82) {
-      const fade = 1 - smoothstep(_meshHalf * 0.82, _meshHalf, edgeDist);
-      const sinkTarget = isIsolated ? -0.5 : -0.15;
-      shape = shape * fade + sinkTarget * (1 - fade);
-    }
+    shape = applyEdgeFade(shape, dx, dz, pa.def);
 
     // Convert shape to height, with occasional inland ridges/massifs while keeping coastlines low.
     const archetypeHeight = archetypeHeightFromShape(x, z, dx, dz, shape, pa.def);
@@ -526,6 +630,47 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
   // Shift down so the shared sea level has some depth — higher value = more ocean
   finalHeight -= 7;
+
+  // ── Urban canal carving ──────────────────────────────────────────────────────
+  // After the natural-terrain height is finalized, dip the mesh below sea level
+  // wherever an active canal water strip covers this point — and within a
+  // small `dredge` band beyond the strip's edge, smoothly ramp from the deep
+  // canal trough back up to the natural terrain height. The band is wider
+  // than one mesh quad (~2.78u at the standard 900/324 grid), so even a
+  // canal narrower than 3 quads still pulls at least one nearby vertex
+  // below sea level — without the band, narrow canals (rings, radials)
+  // were Nyquist-aliased and rendered invisibly while only the wider
+  // central inlet survived. Bounding-circle pre-check keeps the per-vertex
+  // cost negligible outside canal cities.
+  if (_activeCanals.length > 0 && finalHeight > SEA_LEVEL - 1.0) {
+    const CANAL_TROUGH_Y = SEA_LEVEL - 1.6;
+    const CANAL_DREDGE_BAND = 3.0; // world units of smooth blend beyond the canal edge
+    for (const ac of _activeCanals) {
+      const dx = x - ac.cx;
+      const dz = z - ac.cz;
+      if (dx * dx + dz * dz > ac.bboxRadius * ac.bboxRadius) continue;
+      const signed = signedDistanceToNearestCanal(x, z, ac.layout);
+      if (signed <= 0) {
+        // Inside the canal water strip — full trough depth.
+        finalHeight = CANAL_TROUGH_Y;
+        break;
+      }
+      if (signed < CANAL_DREDGE_BAND) {
+        // Just outside the edge — smoothstep from trough Y up to natural
+        // height across the dredge band. The 1 - smoothstep flips it so
+        // signed=0 returns 0 (full carve) and signed=BAND returns 1 (no
+        // carve), then we lerp finalHeight from CANAL_TROUGH_Y to itself
+        // at edge to natural at band.
+        const t = signed / CANAL_DREDGE_BAND;
+        const blend = t * t * (3 - 2 * t); // smoothstep(0..1)
+        const carved = CANAL_TROUGH_Y + (finalHeight - CANAL_TROUGH_Y) * blend;
+        // Only lower (never raise) the natural height — a canal carve
+        // should not push a riverbank up above what it would naturally be.
+        if (carved < finalHeight) finalHeight = carved;
+        break;
+      }
+    }
+  }
 
   // ── Slope estimation (central differences via lightweight height function) ──
   const SLOPE_EPS = 2.0;

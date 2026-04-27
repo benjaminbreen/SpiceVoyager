@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, WEAPON_DEFS, PORT_FACTION, type Nationality, type CrewRole, type CrewMember, type CrewQuality, type Humours } from '../store/gameStore';
+import { VitalityHeart } from './VitalityHeart';
 import { sfxTab, sfxClose, sfxHover } from '../audio/SoundEffects';
 import { FactionFlag } from './FactionFlag';
 import { CrewPortraitSquare } from './CrewPortrait';
@@ -524,6 +525,10 @@ function CrewRow({ member, delay }: {
       >
         {hs.label}
       </span>
+      {/* Vitality */}
+      <div className="shrink-0">
+        <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={14} />
+      </div>
       {/* Morale mini bar */}
       <div className="w-[42px] h-[4px] rounded-full overflow-hidden shrink-0" style={{ backgroundColor: CLR.rule + '50' }}>
         <div
@@ -2197,6 +2202,11 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
             {hs.label}
           </span>
 
+          {/* Vitality */}
+          <div className="hidden md:flex shrink-0">
+            <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={16} />
+          </div>
+
           {/* Morale bar + value */}
           <div className="flex items-center gap-1.5 w-[52px] shrink-0 justify-end">
             <div className="w-[28px] h-[4px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
@@ -2568,8 +2578,8 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
         transition={{ duration: 0.3, delay: 0.22 }}
         className="mt-4 w-full max-w-xl px-2 md:px-4"
       >
-        {/* Experience + Morale row */}
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        {/* Experience + Morale + Vitality row */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
           <div
             className="p-3 rounded-lg"
             style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
@@ -2578,8 +2588,8 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
               <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
                 Experience
               </span>
-              <span className="text-[12px] tabular-nums" style={{ color: CLR.gold, fontFamily: MONO }}>
-                {member.xp}/{member.xpToNext} XP
+              <span className="text-[11px] tabular-nums" style={{ color: CLR.gold, fontFamily: MONO }}>
+                {member.xp}/{member.xpToNext}
               </span>
             </div>
             <div className="h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
@@ -2605,6 +2615,22 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
             </div>
             <div className="h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
               <div className="h-full rounded-full" style={{ width: `${member.morale}%`, backgroundColor: moraleColor_ }} />
+            </div>
+          </div>
+          <div
+            className="p-3 rounded-lg"
+            style={{ backgroundColor: CLR.rule + '12', border: `1px solid ${CLR.rule}20` }}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
+                Vitality
+              </span>
+              <span className="text-[11px] tabular-nums" style={{ color: '#f87171', fontFamily: MONO }}>
+                {member.hearts.current}/{member.hearts.max}
+              </span>
+            </div>
+            <div className="flex items-center justify-center pt-0.5">
+              <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={22} />
             </div>
           </div>
         </div>

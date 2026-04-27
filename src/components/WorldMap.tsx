@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { X, Compass, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
-import { getAnimalMapData } from './World';
+import { getAnimalMapData } from '../state/worldRegistries';
 import {
   getTerrainMapCanvas,
   getTerrainMapWorldHalf,
