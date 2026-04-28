@@ -42,6 +42,11 @@ class AmbientEngine {
 
   private userHasInteracted = false;
 
+  // Splash-screen lock: while true, update() is a no-op so the position-driven
+  // gain logic can't override the levels we set in playSplashAmbient(). The
+  // first update() call from GameScene clears it, letting normal play take over.
+  private splashMode = false;
+
   /** Mark that the user has interacted — call from a click/key handler. */
   markInteracted() {
     this.userHasInteracted = true;
@@ -322,6 +327,26 @@ class AmbientEngine {
 
   // ── Public API ────────────────────────────────────────────────────
 
+  /** Boot the engine and lock ocean + shore layers to splash levels. Called
+   *  by ClaudeSplashGlobe on the first user gesture. The next update() call
+   *  (from GameScene once gameplay starts) automatically releases the lock. */
+  playSplashAmbient() {
+    if (!this.started) {
+      try { this.boot(); } catch { return; }
+    }
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    this.splashMode = true;
+    // Light "at sea" wash: gentle ocean rumble + rhythmic surf pulses, with
+    // the boat / port / sailing layers held silent.
+    this.ramp(this.oceanGain, 0.05);
+    this.ramp(this.shoreGain, 0.045);
+    this.ramp(this.portGain, 0.0001);
+    this.ramp(this.hullWashGain, 0.0001);
+    this.ramp(this.riggingWindGain, 0.0001);
+    this.ramp(this.sailTensionGain, 0.0001);
+  }
+
   update(state: AmbientState) {
     if (!this.started) {
       // Only boot after AudioContext is allowed (post user gesture)
@@ -331,6 +356,10 @@ class AmbientEngine {
       this.ctx?.resume();
       return;
     }
+
+    // First in-game update releases the splash lock — from here on, the
+    // position-driven gain logic below smoothly takes over.
+    if (this.splashMode) this.splashMode = false;
 
     if (state.paused) return;
 

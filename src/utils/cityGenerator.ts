@@ -1,10 +1,10 @@
 import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion, Road, RoadTier } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData, getTerrainHeight } from './terrain';
-import { BRIDGE_DECK_Y } from './roadStyle';
-import { generateBuildingLabel } from './buildingLabels';
+import { BRIDGE_DECK_Y, CANAL_BRIDGE_DECK_Y } from './roadStyle';
+import { generateBuildingLabel, pickFarmCrop } from './buildingLabels';
 import type { CanalLayout } from './canalLayout';
-import { distanceToNearestCanal } from './canalLayout';
+import { distanceToNearestCanal, signedDistanceToNearestCanal } from './canalLayout';
 import { classifyBuildingDistrict, pruneDistrictBoundaries } from './cityDistricts';
 import { assignBuildingForms } from './cityBuildings';
 import { buildingSemanticClass, SEMANTIC_STYLE, LANDMARK_CLASS } from './semanticClasses';
@@ -54,6 +54,35 @@ const PLAZA_FOOTPRINT: Record<PortScale, [number, number, number]> = {
 // Road counts now live in cityLayout.ts (ROAD_DENSITY) so tuning can happen
 // from one place alongside the path-picking helpers.
 const ROAD_COUNTS = ROAD_DENSITY;
+
+// Cells within this many world units of a canal edge are land for routing
+// purposes but reserved against building placement — the terrain dredge band
+// in terrain.ts carves them down toward water level so a building footprint
+// would clip the slope. Tuned to the dredge band width (3u) used there so
+// the buffer covers exactly the cells the carve disturbs.
+const CANAL_BANK_BUFFER = 3.0;
+
+// Minimum Y for a bridge's outermost abutment polyline vertex. The ramp from
+// the outer abutment to the deck must clear the waterline visually — without
+// this floor, beach/polder cells sitting in the canal dredge band (carved
+// down to ~SEA_LEVEL - 1.6) make the ribbon end drop BELOW the water surface,
+// producing the dark draping ribbons reported on Amsterdam. 1.4u above sea
+// level matches a typical canal-bank quay height.
+const BRIDGE_OUTER_FLOOR = SEA_LEVEL + 1.4;
+
+// Cost added when A* steps from a non-bridge cell onto a bridge cell. Roads
+// will only commit to a bridge if it saves at least this much path length.
+// Tuned so a one-cell shortcut over water is rejected (typical, since the
+// alignment penalty inside the bridge already exceeds 1u of cost) but a
+// genuine cross-canal route is still found. See aStarPath comment.
+const BRIDGE_ENTRY_PENALTY = 18;
+
+// Multiplier on ROAD_COUNTS for ports that have a canal layout. Canal cities
+// historically used the canals themselves as primary transport corridors, so
+// they need fewer street-grade roads than a comparable land-locked city of
+// the same scale. Cuts spaghetti-routing where multiple roads converge on
+// the same handful of bridges.
+const CANAL_ROAD_DENSITY_MULT = 0.7;
 
 // Generator footprint per scale. Half-width in grid cells; world size is
 // (2 * GRID_RADIUS * cellSize) units per side. Huge ports need ~4× the area
@@ -224,7 +253,16 @@ function aStarPath(
       const stepDist = diag ? 1.414 : 1;
       const dh = Math.abs(neighbor.height - current.height);
       let step = stepDist + dh * dh * opts.slopePenalty;
-      if (neighbor.occupied && !(isEndpoint && opts.allowStartEndOnOccupied)) {
+      // Cells already in roadCells are pre-built road segments (e.g. bridge
+      // abutments). They may be flagged `occupied` for the building-placement
+      // pass, but for routing they're a road — A* should reuse them freely
+      // instead of paying the building-collision penalty.
+      const isExistingRoad = opts.roadCells?.has(nKey) ?? false;
+      if (
+        neighbor.occupied
+        && !isExistingRoad
+        && !(isEndpoint && opts.allowStartEndOnOccupied)
+      ) {
         step += opts.occupiedPenalty;
       }
       if (prevDir && (prevDir[0] !== dx || prevDir[1] !== dz)) {
@@ -232,6 +270,18 @@ function aStarPath(
       }
       if (opts.roadCells?.has(nKey)) {
         step *= opts.roadReuseFactor ?? 0.3;
+      }
+      // Bridge entry penalty. Without this, the only thing stopping A* from
+      // threading a road through every bridge in the city is the alignment
+      // term below — and on canal cities with a dozen bridges, that produces
+      // the dark spaghetti of overlapping bridge ribbons reported on
+      // Amsterdam, where unrelated roads "borrowed" bridge cells just because
+      // they were a free shortcut over water. Charging a flat cost when
+      // CROSSING from non-bridge land onto a bridge cell makes A* commit to
+      // the bridge only when it genuinely shortens the path.
+      const currentIsBridge = opts.bridgeCells?.has(currentKey) ?? false;
+      if (isBridgeCell && !currentIsBridge && !isEndpoint) {
+        step += BRIDGE_ENTRY_PENALTY;
       }
       // Bridge alignment penalty. Without this, A* sees `bridgeCells` as a
       // flat membership set and is happy to enter the bridge corridor at
@@ -480,7 +530,18 @@ export function generateCity(
   const buildings: Building[] = [];
   const roads: Road[] = [];
   const counts = SCALE_COUNTS[scale];
-  const roadCounts = ROAD_COUNTS[scale];
+  const baseRoadCounts = ROAD_COUNTS[scale];
+  // Canal cities historically used canals as primary transport corridors;
+  // reduce surface-road density so the network doesn't pile every street
+  // onto the handful of bridge crossings (which produced the spaghetti of
+  // overlapping bridge ribbons seen on Amsterdam).
+  const roadCounts = canalLayout
+    ? {
+        avenues: Math.round(baseRoadCounts.avenues * CANAL_ROAD_DENSITY_MULT),
+        roads: Math.round(baseRoadCounts.roads * CANAL_ROAD_DENSITY_MULT),
+        paths: Math.round(baseRoadCounts.paths * CANAL_ROAD_DENSITY_MULT),
+      }
+    : baseRoadCounts;
 
   const cellSize = 2;
   const gridRadius = GRID_RADIUS[scale];
@@ -503,13 +564,22 @@ export function generateCity(
 
       // Canal carving: cells inside a canal water strip override to water with
       // the deck-level depth so bridges still clear comfortably overhead.
+      let carvedCanal = false;
+      let bankBuffer = false;
       if (canalLayout && canalLayout.canals.length > 0 && (isLand || isBeach)) {
-        const { insideCanal } = distanceToNearestCanal(x, z, canalLayout);
-        if (insideCanal) {
+        const signed = signedDistanceToNearestCanal(x, z, canalLayout);
+        if (signed <= 0) {
           height = SEA_LEVEL - 0.5;
           isWater = true;
           isLand = false;
           isBeach = false;
+          carvedCanal = true;
+        } else if (signed < CANAL_BANK_BUFFER) {
+          // Strip of land within ~3u of the canal edge — the dredge band in
+          // terrain.ts pulls these cells DOWN toward water level so building
+          // footprints would clip the slope. Mark `occupied` so findSpot
+          // skips them; the cells stay land for road routing.
+          bankBuffer = true;
         }
       }
 
@@ -517,7 +587,10 @@ export function generateCity(
         x, z,
         height,
         moisture: terrain.moisture,
-        occupied: false,
+        // Canal-carved cells AND their bank buffer start occupied so findSpot
+        // skips them outright instead of failing on the height-variance check
+        // after a wasted scan.
+        occupied: carvedCanal || bankBuffer,
         isWater, isBeach, isLand,
         distToCenter: Math.sqrt((x - portX) ** 2 + (z - portZ) ** 2),
         bank: -1,
@@ -557,16 +630,28 @@ export function generateCity(
     .map((size, id) => ({ id, size }))
     .sort((a, b) => b.size - a.size);
   const totalLand = bankSizes.reduce((a, b) => a + b, 0);
-  // Canal cities subdivide the land into many ring/spoke fragments. The dual-
-  // bank logic is meant for a single river bisecting the map; suppressing it
-  // here lets anchors place freely on whichever fragment happens to be largest.
+  // dualBank is the river-bisection case: exactly two big land masses
+  // separated by water. It drives bridge placement, fort-on-opposite-bank
+  // steering, and market alternation — all geometry that assumes two banks
+  // and one channel.
   const dualBank = !canalLayout
     && sortedBanks.length >= 2
     && sortedBanks[1].size >= totalLand * 0.18;
   const bankA = dualBank ? sortedBanks[0].id : -1;
   const bankB = dualBank ? sortedBanks[1].id : -1;
-  const majorBanks = new Set<number>();
-  if (dualBank) { majorBanks.add(bankA); majorBanks.add(bankB); }
+
+  // For canal cities the carve produces many ring/spoke fragments — we still
+  // want anchors distributed across them instead of clumping on whichever
+  // island happened to be largest. Collect every fragment with at least 8%
+  // of the total land and use that pool for round-robin anchor placement.
+  // Non-canal dualBank ports fall back to [bankA, bankB] which preserves the
+  // old behavior exactly.
+  const majorBankIds: number[] = dualBank
+    ? [bankA, bankB]
+    : (canalLayout
+        ? sortedBanks.filter(b => b.size >= totalLand * 0.08).map(b => b.id)
+        : []);
+  const majorBanks = new Set<number>(majorBankIds);
 
   // Helper to find a spot
   const findSpot = (
@@ -645,8 +730,12 @@ export function generateCity(
   // For dual-bank ports, alternate anchor types between the two banks so
   // neither side is starved. For single-bank ports this collapses to "-1 = any".
   const preferredBank = (i: number): number => {
-    if (!dualBank) return -1;
-    return i % 2 === 0 ? bankA : bankB;
+    // Round-robin across all major fragments so anchors spread evenly. For
+    // dualBank this is the bankA/bankB alternation; for canal cities it
+    // walks every island in the major-bank list. Returns -1 when there's
+    // no meaningful distribution to enforce (single landmass).
+    if (majorBankIds.length < 2) return -1;
+    return majorBankIds[i % majorBankIds.length];
   };
 
   const snap = (x: number, z: number) => {
@@ -754,6 +843,11 @@ export function generateCity(
       }
       roadCells.add(`${best.start.x},${best.start.z}`);
       roadCells.add(`${best.end.x},${best.end.z}`);
+      // Mark land abutments occupied — the deck rides above terrain so a
+      // building landing here would clip into the ramp. roadCells alone
+      // doesn't block findSpot; only `occupied` does.
+      best.start.occupied = true;
+      best.end.occupied = true;
       // Extend one extra land cell onto each bank so the approach ramp
       // spans two segments instead of one — keeps the slope walkable when
       // BRIDGE_DECK_Y sits well above the beach.
@@ -784,13 +878,17 @@ export function generateCity(
       const points: [number, number, number][] = path.map((c, i) => {
         if (c.isWater) return [c.x, BRIDGE_DECK_Y, c.z];
         const outermost = i === 0 || i === pathN - 1;
-        const y = outermost ? c.height : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
+        // Floor outer abutment Y so the ramp doesn't drape into the water.
+        // See canal bridge counterpart below for the full reasoning.
+        const y = outermost
+          ? Math.max(c.height, BRIDGE_OUTER_FLOOR)
+          : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
         return [c.x, y, c.z];
       });
       // Also record the extension cells into roadCells so later A* can
       // connect into them without reopening water cells on its own.
-      if (startOuter) roadCells.add(`${startOuter.x},${startOuter.z}`);
-      if (endOuter) roadCells.add(`${endOuter.x},${endOuter.z}`);
+      if (startOuter) { roadCells.add(`${startOuter.x},${startOuter.z}`); startOuter.occupied = true; }
+      if (endOuter)   { roadCells.add(`${endOuter.x},${endOuter.z}`);   endOuter.occupied = true; }
       roads.push({ id: `bridge_${bi}`, tier: 'bridge', points });
       bridgeRoads.push(path);
       const mid = best.water[Math.floor(best.water.length / 2)];
@@ -803,11 +901,26 @@ export function generateCity(
   // canal in cell steps, trim to land on each side, and emit a bridge road.
   if (canalLayout && canalLayout.bridges.length > 0) {
     let canalBridgeIdx = 0;
+    // A "real land" cell for bridge abutment purposes is one whose terrain
+    // hasn't been pulled down by the canal dredge band. Cells INSIDE the
+    // bank buffer (signedDist < CANAL_BANK_BUFFER) sit on a smooth ramp
+    // carved toward water level — landing the bridge endpoint there made
+    // the ribbon visibly sag toward the canal because the carved terrain
+    // around it dips below sea level. Skipping these in the lo/hi trim
+    // forces the bridge to span ALL the way across both the water strip
+    // and its dredge band, planting its ends on undisturbed land.
+    const isRealLandForBridge = (c: Cell): boolean => {
+      if (!(c.isLand || c.isBeach)) return false;
+      const signed = signedDistanceToNearestCanal(c.x, c.z, canalLayout);
+      return signed >= CANAL_BANK_BUFFER;
+    };
     for (const cb of canalLayout.bridges) {
-      // Sample along the deck axis at sub-cell density so the path includes
-      // every cell the deck overlaps. Reach a bit past halfLength so the
-      // trim step can find land on both sides.
-      const reach = cb.halfLength + cellSize * 2;
+      // Sample along the deck axis at sub-cell density. Reach must cover
+      // not just the canal's halfLength but ALSO the bank buffer plus a
+      // few cells of margin so the trim step has real-land cells to land
+      // on. The 3*sqrt2 cellSize pad covers the worst-case diagonal cell
+      // snap for oblique bridge axes.
+      const reach = cb.halfLength + CANAL_BANK_BUFFER + cellSize * Math.SQRT2 * 3;
       const samples = Math.max(8, Math.ceil((reach * 2) / (cellSize * 0.5)));
       const seen = new Set<string>();
       const rawPath: Cell[] = [];
@@ -824,24 +937,74 @@ export function generateCity(
         seen.add(key);
         rawPath.push(cell);
       }
-      // Trim to first land cell on each side so the deck lands on solid ground.
+      // Trim to first REAL-land cell on each side (skipping bank-buffer
+      // cells whose terrain is carved low by the dredge ramp). This is
+      // what kills the "draping ribbon" visual — endpoints now sit on
+      // undisturbed ground, not on sunken canal-side cells.
       let lo = -1, hi = -1;
       for (let i = 0; i < rawPath.length; i++) {
-        if (rawPath[i].isLand || rawPath[i].isBeach) { lo = i; break; }
+        if (isRealLandForBridge(rawPath[i])) { lo = i; break; }
       }
       for (let i = rawPath.length - 1; i >= 0; i--) {
-        if (rawPath[i].isLand || rawPath[i].isBeach) { hi = i; break; }
+        if (isRealLandForBridge(rawPath[i])) { hi = i; break; }
       }
-      if (lo < 0 || hi <= lo) continue;
+      if (lo < 0 || hi <= lo) {
+        console.warn(
+          `[cityGenerator] canal bridge ${canalBridgeIdx} at (${cb.x.toFixed(1)}, ${cb.z.toFixed(1)}) found no land on both sides — canal will be uncrossed at this spot`,
+        );
+        continue;
+      }
       const path = rawPath.slice(lo, hi + 1);
       // Need at least one water cell in the middle for this to read as a bridge.
       const hasWater = path.some(c => c.isWater);
-      if (!hasWater) continue;
+      if (!hasWater) {
+        console.warn(
+          `[cityGenerator] canal bridge ${canalBridgeIdx} at (${cb.x.toFixed(1)}, ${cb.z.toFixed(1)}) found no water cells along its axis — bridge skipped`,
+        );
+        continue;
+      }
+      // Reject too-short paths: a bridge needs at least two land cells on each
+      // side (one outer abutment + one inner abutment lifted to deck Y) plus
+      // a water span in the middle. Anything shorter renders as a triangular
+      // tent — the ribbon endpoints sit at terrain Y while the single inner
+      // vertex jumps to deck Y, producing the "draping ribbon" artefact the
+      // user reported. Five cells = land + abutment + ≥1 water + abutment +
+      // land which gives a flat-top deck with proper ramps on each side.
+      if (path.length < 5) {
+        console.warn(
+          `[cityGenerator] canal bridge ${canalBridgeIdx} at (${cb.x.toFixed(1)}, ${cb.z.toFixed(1)}) path too short (${path.length} cells) — bridge skipped`,
+        );
+        continue;
+      }
+      // Also require the projected deck length (along the axis) to be at
+      // least one cellSize × 3 — guards against an oblique bridge whose
+      // cell-snapped path collapses to a near-zero-length ribbon despite
+      // having ≥5 cells.
+      const tFirst = (path[0].x - cb.x) * cb.dirX + (path[0].z - cb.z) * cb.dirZ;
+      const tLast = (path[path.length - 1].x - cb.x) * cb.dirX + (path[path.length - 1].z - cb.z) * cb.dirZ;
+      if (Math.abs(tLast - tFirst) < cellSize * 3) {
+        console.warn(
+          `[cityGenerator] canal bridge ${canalBridgeIdx} at (${cb.x.toFixed(1)}, ${cb.z.toFixed(1)}) projected deck too short — bridge skipped`,
+        );
+        continue;
+      }
 
       const canalBridgeId = `canal_bridge_${canalBridgeIdx}`;
+      const firstWaterIdx = path.findIndex(c => c.isWater);
+      const lastWaterIdx = path.length - 1 - [...path].reverse().findIndex(c => c.isWater);
+      const leftBank = firstWaterIdx > 0 ? path[firstWaterIdx - 1] : path[0];
+      const rightBank = lastWaterIdx >= 0 && lastWaterIdx < path.length - 1
+        ? path[lastWaterIdx + 1]
+        : path[path.length - 1];
+      // Canal water is carved down after terrain generation, so a fixed
+      // waterline deck makes the road dive from street height to canal height.
+      // Author the bridge at the lower adjacent bank instead: this keeps the
+      // deck continuous with the roads while still leaving clearance over
+      // the water strip.
+      const deckY = Math.max(CANAL_BRIDGE_DECK_Y, Math.min(leftBank.height, rightBank.height) + 0.15);
       const canalMeta: BridgeMeta = {
         bridgeId: canalBridgeId,
-        deckY: BRIDGE_DECK_Y,
+        deckY,
         axisX: cb.x,
         axisZ: cb.z,
         dirX: cb.dirX,
@@ -851,25 +1014,25 @@ export function generateCity(
         const k = `${cell.x},${cell.z}`;
         if (cell.isWater) bridgeCells.set(k, canalMeta);
         roadCells.add(k);
+        // Land cells in the canal-bridge path are abutments. Same rule as
+        // dual-bank bridges: occupied so buildings don't land on the ramp.
+        if (cell.isLand || cell.isBeach) cell.occupied = true;
       }
       const canalPathN = path.length;
-      // Same abutment-ramp rule as dual-bank bridges: outermost land cells
-      // ride their own terrain so there's a visible approach ramp up to the
-      // deck instead of a cliff edge. Inner abutment sits just above the
-      // deck plane so the pier filter won't drop columns on it.
-      //
-      // Unlike dual-bank bridges (which scan along cardinal NEIGHBORS and so
-      // are always axis-aligned), canal bridges run along arbitrary radial
-      // directions. If we used cell centers directly the deck would zigzag
-      // through the staircase of snapped cells. Project each cell onto the
-      // straight bridge axis so the rendered ribbon stays collinear.
+      // Outermost cells sit on real land beyond the bank buffer (enforced
+      // by the lo/hi trim above) so c.height is undisturbed terrain — the
+      // ramp connects to the surrounding ground naturally. Inner abutments
+      // are dredge-band cells whose terrain is carved low; lift them to
+      // deck+0.1 so the deck plateau is uninterrupted.
       const points: [number, number, number][] = path.map((c, i) => {
         const t = (c.x - cb.x) * cb.dirX + (c.z - cb.z) * cb.dirZ;
         const px = cb.x + cb.dirX * t;
         const pz = cb.z + cb.dirZ * t;
-        if (c.isWater) return [px, BRIDGE_DECK_Y, pz];
+        if (c.isWater) return [px, deckY, pz];
         const outermost = i === 0 || i === canalPathN - 1;
-        const y = outermost ? c.height : Math.max(c.height, BRIDGE_DECK_Y + 0.1);
+        const y = outermost
+          ? c.height
+          : Math.max(c.height, deckY + 0.1);
         return [px, y, pz];
       });
       roads.push({ id: canalBridgeId, tier: 'bridge', points });
@@ -976,8 +1139,10 @@ export function generateCity(
         )
       : null;
     if (!spot) {
+      // When there's a major-bank pool (dualBank river or canal city), keep
+      // the fort on one of the big fragments. Otherwise any land cell will do.
       spot = findSpot(
-        c => c.isLand && (!dualBank || majorBanks.has(c.bank)),
+        c => c.isLand && (majorBanks.size === 0 || majorBanks.has(c.bank)),
         FORT_RESERVE_SIZE,
         (a, b) => fortScore(a) - fortScore(b),
       );
@@ -1355,6 +1520,46 @@ export function generateCity(
     roadCells, roadReuseFactor: 0.35, bridgeCells,
   };
 
+  const addVisibleRoadSegments = (
+    tier: RoadTier,
+    id: string,
+    cellPath: Cell[],
+    smoothIter: number,
+  ): Road[] => {
+    if (tier === 'bridge' || !bridgeCells || bridgeCells.size === 0) {
+      const road = pathToRoad(id, tier, cellPath, smoothIter, bridgeCells);
+      roads.push(road);
+      return [road];
+    }
+
+    const segments: Cell[][] = [];
+    let current: Cell[] = [];
+    for (const c of cellPath) {
+      if (bridgeCells.has(`${c.x},${c.z}`)) {
+        if (current.length >= 2) segments.push(current);
+        current = [];
+        continue;
+      }
+      current.push(c);
+    }
+    if (current.length >= 2) segments.push(current);
+
+    if (segments.length === 0) return [];
+    if (segments.length === 1) {
+      const road = pathToRoad(id, tier, segments[0], smoothIter, bridgeCells);
+      roads.push(road);
+      return [road];
+    }
+
+    const added: Road[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const road = pathToRoad(`${id}_seg${i + 1}`, tier, segments[i], smoothIter, bridgeCells);
+      roads.push(road);
+      added.push(road);
+    }
+    return added;
+  };
+
   const tryAddRoad = (
     tier: RoadTier,
     id: string,
@@ -1367,9 +1572,8 @@ export function generateCity(
     const cellPath = aStarPath(start, end, gridMap, cellSize, opts);
     if (!cellPath || cellPath.length < 2) return null;
     registerCells(cellPath);
-    const road = pathToRoad(id, tier, cellPath, smoothIter, bridgeCells);
-    roads.push(road);
-    return road;
+    const added = addVisibleRoadSegments(tier, id, cellPath, smoothIter);
+    return added[0] ?? null;
   };
 
   // Avenues (one or two for Very Large/Huge)
@@ -1390,7 +1594,7 @@ export function generateCity(
         fullCells.push(...seg);
       }
       if (fullCells.length >= 2) {
-        roads.push(pathToRoad(`avenue_0`, 'avenue', fullCells, 3, bridgeCells));
+        addVisibleRoadSegments('avenue', 'avenue_0', fullCells, 3);
       }
     }
   }
@@ -1820,17 +2024,34 @@ export function generateCity(
   }
 
   // ── 5. Farmhouses (fertile outskirts) ──────────────────────────────────────
+  // Each farmhouse reserves a ~12u square plot so the field renderer has room
+  // to draw rows of trees / rice around the hut without overlapping roads or
+  // other buildings. The hut itself still renders at BUILDING_SIZES.farmhouse;
+  // the larger reservation only widens findSpot's occupancy pad. Side-effect:
+  // farmsteads end up further apart, which is what we want — it's a holding,
+  // not a hut cluster.
+  const FARMSTEAD_PLOT_SIZE: [number, number, number] = [12, 3, 12];
+  const FARMSTEAD_PLOT_HALF = 5; // world-unit half-size for the field renderer
   for (let i = 0; i < counts.farmhouse; i++) {
     const spot = findSpot(
       c => c.isLand && c.moisture > 0.4,
-      BUILDING_SIZES.farmhouse,
+      FARMSTEAD_PLOT_SIZE,
       (a, b) => b.distToCenter - a.distToCenter,
     );
     if (spot) {
+      const farmhouseId = `farmhouse_${i}`;
+      const farmSeed = hashStr(farmhouseId) + seed;
+      const cropPick = pickFarmCrop(culture, spot.moisture, farmSeed, nationality, region);
       buildings.push({
-        id: `farmhouse_${i}`, type: 'farmhouse',
+        id: farmhouseId, type: 'farmhouse',
         position: [spot.x, spot.height, spot.z],
         rotation: prng() * Math.PI, scale: BUILDING_SIZES.farmhouse,
+        // Pre-set label so the pass-7 generator doesn't reroll a different
+        // crop name and break the label/render agreement.
+        label: cropPick.label,
+        labelSub: cropPick.sub,
+        crop: cropPick.crop,
+        cropPlot: cropPick.crop ? { halfSize: FARMSTEAD_PLOT_HALF } : undefined,
       });
     }
   }
@@ -1852,19 +2073,26 @@ export function generateCity(
 
   // ── 7. Labels ──────────────────────────────────────────────────────────────
   for (const b of buildings) {
-    const snapX = Math.round((b.position[0] - portX) / cellSize) * cellSize + portX;
-    const snapZ = Math.round((b.position[2] - portZ) / cellSize) * cellSize + portZ;
-    const cell = gridMap.get(`${snapX},${snapZ}`);
-    const moisture = cell?.moisture ?? 0.5;
-    const distToCenter = Math.sqrt((b.position[0] - portX) ** 2 + (b.position[2] - portZ) ** 2);
-    const labelSeed = hashStr(b.id) + seed;
-    const result = generateBuildingLabel(
-      b.id, b.type, culture, portName,
-      b.position[1], distToCenter, moisture, labelSeed, nationality, region,
-      { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle },
-    );
-    b.label = result.label;
-    b.labelSub = result.sub;
+    // Farmhouses already received their label in pass 5 from pickFarmCrop so
+    // the rendered field (b.crop) and the label can't drift apart. Skipping
+    // them here keeps that pairing intact.
+    if (b.label) {
+      // Still need to compute the eyebrow below.
+    } else {
+      const snapX = Math.round((b.position[0] - portX) / cellSize) * cellSize + portX;
+      const snapZ = Math.round((b.position[2] - portZ) / cellSize) * cellSize + portZ;
+      const cell = gridMap.get(`${snapX},${snapZ}`);
+      const moisture = cell?.moisture ?? 0.5;
+      const distToCenter = Math.sqrt((b.position[0] - portX) ** 2 + (b.position[2] - portZ) ** 2);
+      const labelSeed = hashStr(b.id) + seed;
+      const result = generateBuildingLabel(
+        b.id, b.type, culture, portName,
+        b.position[1], distToCenter, moisture, labelSeed, nationality, region,
+        { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle },
+      );
+      b.label = result.label;
+      b.labelSub = result.sub;
+    }
 
     // Semantic class → eyebrow + color. Shared source of truth with the
     // renderer; see src/utils/semanticClasses.ts.

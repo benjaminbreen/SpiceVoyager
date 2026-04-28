@@ -312,6 +312,177 @@ export function worldHeightForScreenPixels(
   return pixels / Math.max(1, viewportHeight);
 }
 
+/**
+ * Panel-only variant: paints the rounded-rect panel + hairline + gradient into
+ * a CanvasTexture, but leaves text unrendered. Returns the texture plus a
+ * layout descriptor so the caller can place SDF text (e.g. troika `<Text>`)
+ * on top in world space. Used for crisp building/port labels.
+ *
+ * Currently supports the 'building' variant only — the prototype path.
+ */
+export interface WorldLabelTextElement {
+  text: string;
+  /** Center X in design pixels (canvas top-left origin). */
+  cx: number;
+  /** Baseline Y in design pixels — matches canvas fillText semantics. */
+  baselineY: number;
+  fontSize: number;
+  fontWeight: number;
+  color: string;
+  outlineColor?: string;
+  /** Outline width as a fraction of fontSize (em). */
+  outlineWidth?: number;
+  /** Letter spacing as a fraction of fontSize (em). */
+  letterSpacing?: number;
+  uppercase?: boolean;
+}
+
+export interface WorldLabelPanel {
+  texture: THREE.CanvasTexture;
+  aspect: number;
+  designWidth: number;
+  designHeight: number;
+  elements: {
+    title?: WorldLabelTextElement;
+    subtitle?: WorldLabelTextElement;
+    eyebrow?: WorldLabelTextElement;
+  };
+}
+
+export function createWorldLabelPanel(options: WorldLabelTextureOptions): WorldLabelPanel {
+  const variant = options.variant ?? 'building';
+  if (variant !== 'building') {
+    // Falls back to fully-painted texture wrapped as a panel result so callers
+    // can use a single API while we migrate variants over to SDF text.
+    const tex = createWorldLabelTexture(options);
+    return {
+      texture: tex.texture,
+      aspect: tex.aspect,
+      designWidth: 286,
+      designHeight: 96,
+      elements: {},
+    };
+  }
+
+  const hasEyebrow = Boolean(options.eyebrow);
+  const hasSubtitle = Boolean(options.subtitle);
+  const width = 286;
+  const height = hasEyebrow ? 104 : 84;
+
+  // Measure text to size the panel — matches drawBuildingLabel logic exactly.
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = measureCanvas.getContext('2d')!;
+  const titleSize = fitText(measureCtx, options.title, width - 40, 780, hasSubtitle ? 22 : 24);
+  measureCtx.font = `780 ${titleSize}px ${SANS}`;
+  const titleWidth = measureTrackedText(measureCtx, options.title, 0);
+  measureCtx.font = `650 11px ${SANS}`;
+  const subtitleWidth = options.subtitle ? measureTrackedText(measureCtx, options.subtitle, 0.15) : 0;
+
+  const extraForEyebrow = hasEyebrow ? 16 : 0;
+  const panelWidth = Math.min(width - 14, Math.max(112, titleWidth + 34, subtitleWidth + 40));
+  const panelHeight = (hasSubtitle ? 64 : 46) + extraForEyebrow;
+  const panelX = (width - panelWidth) * 0.5;
+  const panelY = (height - panelHeight) * 0.5;
+  const titleBaselineY = panelY + extraForEyebrow + (hasSubtitle ? 26 : 30);
+
+  // Paint panel only — no text.
+  const canvas = document.createElement('canvas');
+  canvas.width = width * SCALE;
+  canvas.height = height * SCALE;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.scale(SCALE, SCALE);
+  ctx.clearRect(0, 0, width, height);
+
+  const accent = options.accent ?? '#c9a84c';
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.38)';
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = 4;
+  roundedRect(ctx, panelX, panelY, panelWidth, panelHeight, 7);
+  ctx.fillStyle = 'rgba(10, 14, 24, 0.72)';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  const gradient = ctx.createLinearGradient(0, panelY, 0, panelY + panelHeight);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 0.055)');
+  gradient.addColorStop(0.52, 'rgba(255, 255, 255, 0.018)');
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0.08)');
+  roundedRect(ctx, panelX, panelY, panelWidth, panelHeight, 7);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  roundedRect(ctx, panelX + 0.5, panelY + 0.5, panelWidth - 1, panelHeight - 1, 7);
+  ctx.strokeStyle = 'rgba(100, 116, 139, 0.34)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(panelX + 14, panelY + 1.5);
+  ctx.lineTo(panelX + panelWidth - 14, panelY + 1.5);
+  ctx.strokeStyle = accent;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapNearestFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 1;
+  texture.needsUpdate = true;
+
+  const eyebrowColor = options.eyebrowColor ?? '#c4a1ff';
+  const elements: WorldLabelPanel['elements'] = {
+    title: {
+      text: options.title,
+      cx: width * 0.5,
+      baselineY: titleBaselineY,
+      fontSize: titleSize,
+      fontWeight: 780,
+      color: 'rgba(248, 250, 252, 0.98)',
+      outlineColor: 'rgba(2, 6, 10, 0.65)',
+      outlineWidth: 0.16,
+    },
+  };
+
+  if (options.eyebrow) {
+    elements.eyebrow = {
+      text: options.eyebrow,
+      cx: width * 0.5,
+      baselineY: panelY + 14,
+      fontSize: 10,
+      fontWeight: 800,
+      color: eyebrowColor,
+      letterSpacing: 0.16,
+      uppercase: true,
+    };
+  }
+
+  if (options.subtitle) {
+    elements.subtitle = {
+      text: options.subtitle,
+      cx: width * 0.5,
+      baselineY: titleBaselineY + 22,
+      fontSize: 11,
+      fontWeight: 650,
+      color: 'rgba(224, 231, 241, 0.86)',
+      outlineColor: 'rgba(2, 6, 10, 0.55)',
+      outlineWidth: 0.18,
+      letterSpacing: 0.014,
+    };
+  }
+
+  return { texture, aspect: width / height, designWidth: width, designHeight: height, elements };
+}
+
 export function createWorldLabelTexture(options: WorldLabelTextureOptions): WorldLabelTexture {
   const variant = options.variant ?? (options.compact ? 'far' : options.action ? 'near' : 'building');
   const isBuilding = variant === 'building';
@@ -342,11 +513,14 @@ export function createWorldLabelTexture(options: WorldLabelTextureOptions): Worl
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  // Sprites face the camera and are mostly viewed at small-to-medium screen
+  // sizes, so the texture is almost always being minified. LinearMipmapNearest
+  // picks one mip level (no cross-level blend) and bilinear-filters within it —
+  // text edges stay sharp instead of getting smeared between two mip levels.
   texture.generateMipmaps = true;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.minFilter = THREE.LinearMipmapNearestFilter;
   texture.magFilter = THREE.LinearFilter;
-  // Three clamps to the hardware max, so 16 is safe on any GPU.
-  texture.anisotropy = 16;
+  texture.anisotropy = 1;
   texture.needsUpdate = true;
 
   return { texture, aspect: width / height };

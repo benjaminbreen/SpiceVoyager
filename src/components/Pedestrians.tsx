@@ -16,7 +16,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore, Culture } from '../store/gameStore';
+import { useGameStore, Culture, CulturalRegion, PORT_CULTURAL_REGION } from '../store/gameStore';
 import {
   PedestrianSystemState, FigureType,
   initPedestrianSystem, updatePedestrians,
@@ -26,10 +26,12 @@ import { applyRimLight, updateRimFromFog } from '../utils/rimLight';
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import {
   BodyArchetype, HeadwearType, ArmType, PropType, VisualProfile,
+  TrimArchetype,
   BODY_ARCHETYPES, HEADWEAR_TYPES, ARM_TYPES, PROP_TYPES, HEAD_TOP_Y,
-  ARCHETYPE_SHOULDER,
+  TRIM_ARCHETYPES, ARCHETYPE_SHOULDER,
   createBodyGeometry, createHeadGeometry, createHeadwearGeometry,
-  createArmGeometry, createPropGeometry,
+  createArmGeometry, createPropGeometry, createTrimGeometry,
+  isTrimArchetype,
   CLOTHING_BY_ARCHETYPE, HEADWEAR_COLORS, PROP_COLORS,
   assignVisualProfile,
 } from '../utils/pedestrianArchetypes';
@@ -91,7 +93,11 @@ function varySkin(
   return varyHSL(base, rng, 0.008, 0.06, 0.08);
 }
 
-const SKIN_TONES: Record<Culture, { color: [number, number, number]; weight: number }[]> = {
+type SkinSwatch = { color: [number, number, number]; weight: number };
+
+// Broad-bucket palettes — used as a fallback when no finer CulturalRegion is
+// known for the port (e.g. Atlantic ports, generic European ports).
+const SKIN_TONES: Record<Culture, SkinSwatch[]> = {
   'European': [
     { color: [0.82, 0.68, 0.54], weight: 2 },
     { color: [0.72, 0.56, 0.42], weight: 3 },
@@ -117,6 +123,258 @@ const SKIN_TONES: Record<Culture, { color: [number, number, number]; weight: num
     { color: [0.62, 0.44, 0.28], weight: 2 },
     { color: [0.72, 0.56, 0.42], weight: 2 },
     { color: [0.80, 0.66, 0.52], weight: 1 },
+  ],
+};
+
+// Finer-grained palettes keyed on CulturalRegion (+ a 'European' bucket for the
+// colonial garrison/factor minority found in many Indian Ocean ports). These
+// approximate dominant skin-tone distributions for each regional culture, so
+// Mombasa reads as Swahili-coast rather than generic-Indian-Ocean.
+type SkinRegion = CulturalRegion | 'European';
+
+const SKIN_TONES_BY_REGION: Record<SkinRegion, SkinSwatch[]> = {
+  // Swahili coast — Bantu/Swahili majority, dark-dominant with a lighter
+  // Arab/Persian-mixed coastal minority.
+  'Swahili': [
+    { color: [0.38, 0.27, 0.18], weight: 4 },
+    { color: [0.32, 0.22, 0.15], weight: 3 },
+    { color: [0.46, 0.33, 0.22], weight: 3 },
+    { color: [0.55, 0.40, 0.27], weight: 1 },
+  ],
+  // Arab/Omani/Persian — medium tan to olive, narrow range.
+  'Arab': [
+    { color: [0.68, 0.52, 0.36], weight: 3 },
+    { color: [0.58, 0.43, 0.30], weight: 3 },
+    { color: [0.50, 0.37, 0.26], weight: 2 },
+    { color: [0.74, 0.58, 0.42], weight: 1 },
+  ],
+  // Gujarati — medium brown, modest range.
+  'Gujarati': [
+    { color: [0.60, 0.45, 0.30], weight: 3 },
+    { color: [0.52, 0.38, 0.25], weight: 3 },
+    { color: [0.45, 0.33, 0.22], weight: 2 },
+    { color: [0.68, 0.52, 0.36], weight: 1 },
+  ],
+  // Malabari (Kerala/Konkan) — slightly darker than Gujarati on average.
+  'Malabari': [
+    { color: [0.50, 0.36, 0.24], weight: 4 },
+    { color: [0.42, 0.30, 0.20], weight: 3 },
+    { color: [0.58, 0.42, 0.28], weight: 2 },
+    { color: [0.36, 0.26, 0.17], weight: 1 },
+  ],
+  // Malay / insular SE Asia — medium tan, warm.
+  'Malay': [
+    { color: [0.62, 0.48, 0.34], weight: 3 },
+    { color: [0.55, 0.42, 0.30], weight: 3 },
+    { color: [0.48, 0.36, 0.25], weight: 2 },
+    { color: [0.70, 0.55, 0.40], weight: 1 },
+  ],
+  // Chinese — light warm tan.
+  'Chinese': [
+    { color: [0.78, 0.64, 0.50], weight: 3 },
+    { color: [0.72, 0.58, 0.44], weight: 3 },
+    { color: [0.66, 0.52, 0.38], weight: 2 },
+    { color: [0.82, 0.68, 0.54], weight: 1 },
+  ],
+  // European garrison/factor — same as broad European palette.
+  'European': [
+    { color: [0.82, 0.68, 0.54], weight: 2 },
+    { color: [0.72, 0.56, 0.42], weight: 3 },
+    { color: [0.58, 0.44, 0.32], weight: 3 },
+    { color: [0.45, 0.34, 0.25], weight: 2 },
+  ],
+};
+
+// Per-port weighted mix of regional skin pools. Reflects rough population
+// composition of each port c. 1612, mirroring PORT_TAVERN_NATIONALITIES but
+// collapsed to skin-tone-relevant buckets. Ports not listed fall back to
+// PORT_CULTURAL_REGION (single region) or the broad Culture palette.
+const PORT_SKIN_MIX: Record<string, Array<{ region: SkinRegion; weight: number }>> = {
+  // Swahili coast — Bantu/Swahili majority, Omani-Arab minority, smaller
+  // Gujarati merchant + Portuguese garrison presence.
+  mombasa:  [{ region: 'Swahili', weight: 14 }, { region: 'Arab', weight: 3 }, { region: 'Gujarati', weight: 2 }, { region: 'European', weight: 1 }],
+  zanzibar: [{ region: 'Swahili', weight: 13 }, { region: 'Arab', weight: 4 }, { region: 'Gujarati', weight: 2 }, { region: 'European', weight: 1 }],
+  kilwa:    [{ region: 'Swahili', weight: 16 }, { region: 'Arab', weight: 3 }, { region: 'European', weight: 1 }],
+  mogadishu:[{ region: 'Swahili', weight: 14 }, { region: 'Arab', weight: 5 }, { region: 'Gujarati', weight: 1 }],
+  // Red Sea / Arabia — Arab/Omani majority, Swahili + Gujarati minorities.
+  aden:     [{ region: 'Arab', weight: 14 }, { region: 'Gujarati', weight: 3 }, { region: 'Swahili', weight: 2 }, { region: 'European', weight: 1 }],
+  mocha:    [{ region: 'Arab', weight: 14 }, { region: 'Gujarati', weight: 3 }, { region: 'Swahili', weight: 2 }, { region: 'European', weight: 1 }],
+  muscat:   [{ region: 'Arab', weight: 14 }, { region: 'Gujarati', weight: 3 }, { region: 'Swahili', weight: 2 }, { region: 'European', weight: 1 }],
+  hormuz:   [{ region: 'Arab', weight: 12 }, { region: 'Gujarati', weight: 4 }, { region: 'European', weight: 4 }],
+  socotra:  [{ region: 'Arab', weight: 14 }, { region: 'Swahili', weight: 4 }, { region: 'European', weight: 2 }],
+  // Gujarati ports — Gujarati majority + Mughal/Persian (read as Arab in this
+  // skin-tone taxonomy) and a Portuguese/Dutch/English factor minority.
+  surat:    [{ region: 'Gujarati', weight: 14 }, { region: 'Arab', weight: 3 }, { region: 'European', weight: 3 }],
+  diu:      [{ region: 'Gujarati', weight: 13 }, { region: 'European', weight: 5 }, { region: 'Arab', weight: 2 }],
+  // Masulipatnam — Deccani/Telugu majority (use Malabari as nearest darker
+  // South Indian palette), Persian + Gujarati merchants, Dutch/English factors.
+  masulipatnam: [{ region: 'Malabari', weight: 12 }, { region: 'Arab', weight: 3 }, { region: 'Gujarati', weight: 3 }, { region: 'European', weight: 2 }],
+  // Malabar coast — Malabari majority, Portuguese significant in Goa/Cochin.
+  calicut:  [{ region: 'Malabari', weight: 14 }, { region: 'Gujarati', weight: 2 }, { region: 'Arab', weight: 2 }, { region: 'European', weight: 2 }],
+  cochin:   [{ region: 'Malabari', weight: 12 }, { region: 'European', weight: 5 }, { region: 'Gujarati', weight: 2 }, { region: 'Arab', weight: 1 }],
+  goa:      [{ region: 'Malabari', weight: 11 }, { region: 'European', weight: 6 }, { region: 'Gujarati', weight: 2 }, { region: 'Arab', weight: 1 }],
+  // Insular SE Asia — Malay majority + Chinese trading communities + small
+  // Gujarati and European factor presence.
+  malacca:  [{ region: 'Malay', weight: 12 }, { region: 'Chinese', weight: 4 }, { region: 'European', weight: 2 }, { region: 'Gujarati', weight: 2 }],
+  bantam:   [{ region: 'Malay', weight: 13 }, { region: 'Chinese', weight: 3 }, { region: 'European', weight: 3 }, { region: 'Gujarati', weight: 1 }],
+  aceh:     [{ region: 'Malay', weight: 14 }, { region: 'Gujarati', weight: 3 }, { region: 'Arab', weight: 2 }, { region: 'European', weight: 1 }],
+  // Macau — Chinese majority with a Portuguese enclave.
+  macau:    [{ region: 'Chinese', weight: 14 }, { region: 'European', weight: 5 }, { region: 'Malay', weight: 1 }],
+  // Manila — Sangley Chinese commercial majority + Spanish Intramuros + Malay.
+  manila:   [{ region: 'Chinese', weight: 11 }, { region: 'European', weight: 5 }, { region: 'Malay', weight: 4 }],
+  // Nagasaki — Japanese majority (use Chinese palette as nearest light-warm
+  // East Asian bucket) with a Portuguese commercial enclave.
+  nagasaki: [{ region: 'Chinese', weight: 14 }, { region: 'European', weight: 4 }, { region: 'Malay', weight: 2 }],
+};
+
+type RegionMixEntry = { region: SkinRegion; weight: number };
+
+// Returns a weighted region distribution for the port. Each pedestrian samples
+// a region from this list, then derives skin/clothing-accent/trim-accent from
+// the same region so a Swahili-coded ped wears Swahili-coded clothes.
+function getPortRegionMix(portId: string | undefined, culture: Culture): RegionMixEntry[] {
+  if (portId) {
+    const mix = PORT_SKIN_MIX[portId];
+    if (mix) return mix;
+    const region = PORT_CULTURAL_REGION[portId];
+    if (region) return [{ region, weight: 1 }];
+  }
+  // Synthesize a region mix from the broad Culture for ports we haven't tagged.
+  // 'European' and 'Atlantic' fall back to the broad palette via region='European'
+  // (close enough for European garrison towns and Atlantic crews).
+  if (culture === 'European' || culture === 'Atlantic') {
+    return [{ region: 'European', weight: 1 }];
+  }
+  // 'Indian Ocean' generic — split across the three biggest regional pools.
+  if (culture === 'Indian Ocean') {
+    return [{ region: 'Gujarati', weight: 2 }, { region: 'Arab', weight: 1 }, { region: 'Malabari', weight: 1 }];
+  }
+  // 'West African' — use Swahili palette as the closest dark-dominant region;
+  // West African ports proper would warrant their own region tag if we add one.
+  return [{ region: 'Swahili', weight: 1 }];
+}
+
+// Per-region clothing-color accent pools — period-typical dyes for each
+// cultural region. Used at sample time to bias each ped's clothing pick
+// toward colors the region was actually wearing in 1612, on top of the
+// archetype's base palette in pedestrianArchetypes.ts.
+const CLOTHING_ACCENTS_BY_REGION: Record<SkinRegion, SkinSwatch[]> = {
+  // Swahili coast — kanga predecessors, indigo cottons from Gujarat, ochre.
+  'Swahili': [
+    { color: [0.15, 0.22, 0.45], weight: 3 },  // indigo
+    { color: [0.85, 0.62, 0.15], weight: 3 },  // turmeric/ochre
+    { color: [0.62, 0.22, 0.18], weight: 2 },  // madder
+    { color: [0.92, 0.88, 0.78], weight: 2 },  // off-white
+    { color: [0.24, 0.55, 0.40], weight: 1 },  // deep green
+    { color: [0.78, 0.40, 0.18], weight: 1 },  // brick orange
+  ],
+  // Arab/Omani/Persian — heavy whites + indigo + black, deep reds for elites.
+  'Arab': [
+    { color: [0.92, 0.88, 0.78], weight: 4 },  // white cotton thawb
+    { color: [0.18, 0.15, 0.12], weight: 2 },  // black bisht
+    { color: [0.15, 0.22, 0.45], weight: 2 },  // indigo
+    { color: [0.62, 0.18, 0.20], weight: 1 },  // crimson elite
+    { color: [0.55, 0.42, 0.28], weight: 1 },  // earth tan
+    { color: [0.30, 0.22, 0.18], weight: 1 },  // dark brown
+  ],
+  // Gujarati — bandhani/leheriya bright reds and yellows, indigo workwear.
+  'Gujarati': [
+    { color: [0.78, 0.18, 0.20], weight: 3 },  // bandhani red
+    { color: [0.85, 0.62, 0.12], weight: 3 },  // turmeric
+    { color: [0.14, 0.20, 0.48], weight: 3 },  // indigo
+    { color: [0.62, 0.18, 0.35], weight: 2 },  // lac pink
+    { color: [0.80, 0.40, 0.10], weight: 2 },  // marigold
+    { color: [0.55, 0.20, 0.50], weight: 1 },  // royal purple
+    { color: [0.92, 0.86, 0.74], weight: 1 },  // off-white
+  ],
+  // Malabari (Kerala/Konkan) — saffron, white, deep maroon, palm-green.
+  'Malabari': [
+    { color: [0.88, 0.58, 0.14], weight: 3 },  // saffron
+    { color: [0.92, 0.86, 0.74], weight: 3 },  // off-white mundu
+    { color: [0.55, 0.18, 0.18], weight: 2 },  // maroon
+    { color: [0.24, 0.55, 0.40], weight: 2 },  // green
+    { color: [0.14, 0.20, 0.48], weight: 1 },  // indigo
+    { color: [0.85, 0.62, 0.12], weight: 1 },  // turmeric
+  ],
+  // Malay/Insular SE Asia — batik browns/indigos, sirih red, rich purples.
+  'Malay': [
+    { color: [0.55, 0.32, 0.18], weight: 3 },  // soga batik brown
+    { color: [0.18, 0.22, 0.40], weight: 3 },  // batik indigo
+    { color: [0.62, 0.22, 0.18], weight: 2 },  // sirih red
+    { color: [0.85, 0.62, 0.15], weight: 2 },  // turmeric
+    { color: [0.45, 0.20, 0.45], weight: 1 },  // purple
+    { color: [0.30, 0.22, 0.18], weight: 1 },  // dark brown
+    { color: [0.88, 0.82, 0.70], weight: 1 },  // undyed cotton
+  ],
+  // Chinese — blue-black common workwear, red for festive, browns for everyday.
+  'Chinese': [
+    { color: [0.18, 0.15, 0.18], weight: 4 },  // blue-black
+    { color: [0.20, 0.28, 0.42], weight: 3 },  // dark blue
+    { color: [0.72, 0.20, 0.18], weight: 2 },  // red
+    { color: [0.45, 0.35, 0.25], weight: 2 },  // brown
+    { color: [0.88, 0.82, 0.70], weight: 1 },  // undyed
+    { color: [0.30, 0.22, 0.18], weight: 1 },  // dark brown
+  ],
+  // European — handled by base archetype palette (CLOTHING_BY_ARCHETYPE
+  // already has the right earth/dark tones for euro-man/euro-woman). This
+  // pool is used for non-euro archetypes worn by European-region peds, which
+  // is rare; provide a neutral merchant-class palette as fallback.
+  'European': [
+    { color: [0.20, 0.18, 0.15], weight: 3 },  // black
+    { color: [0.42, 0.36, 0.28], weight: 2 },  // brown wool
+    { color: [0.52, 0.18, 0.22], weight: 2 },  // crimson
+    { color: [0.22, 0.30, 0.48], weight: 2 },  // woad blue
+    { color: [0.30, 0.22, 0.32], weight: 1 },  // logwood
+  ],
+};
+
+// Per-region trim/sash colors — saturated accent that contrasts against the
+// main clothing color. Sashes and pallu borders were typically richer than
+// the base garment.
+const TRIM_ACCENTS_BY_REGION: Record<SkinRegion, SkinSwatch[]> = {
+  'Swahili': [
+    { color: [0.85, 0.20, 0.18], weight: 3 },  // bold red
+    { color: [0.12, 0.18, 0.55], weight: 3 },  // deep indigo
+    { color: [0.92, 0.70, 0.15], weight: 2 },  // gold
+    { color: [0.20, 0.55, 0.40], weight: 1 },
+  ],
+  'Arab': [
+    { color: [0.85, 0.18, 0.20], weight: 3 },  // crimson sash
+    { color: [0.92, 0.78, 0.30], weight: 3 },  // gold thread
+    { color: [0.12, 0.18, 0.55], weight: 2 },  // indigo
+    { color: [0.18, 0.15, 0.12], weight: 1 },  // black
+    { color: [0.55, 0.18, 0.40], weight: 1 },  // royal magenta
+  ],
+  'Gujarati': [
+    { color: [0.92, 0.70, 0.12], weight: 3 },  // gold zari
+    { color: [0.85, 0.18, 0.20], weight: 3 },  // bandhani red
+    { color: [0.12, 0.18, 0.55], weight: 2 },  // indigo
+    { color: [0.55, 0.20, 0.50], weight: 2 },  // royal purple
+    { color: [0.20, 0.55, 0.40], weight: 1 },  // emerald
+  ],
+  'Malabari': [
+    { color: [0.92, 0.70, 0.12], weight: 3 },  // gold border (kasavu)
+    { color: [0.85, 0.18, 0.20], weight: 2 },  // red
+    { color: [0.55, 0.18, 0.18], weight: 2 },  // maroon
+    { color: [0.20, 0.55, 0.40], weight: 1 },  // green
+  ],
+  'Malay': [
+    { color: [0.92, 0.70, 0.12], weight: 3 },  // gold thread (songket)
+    { color: [0.55, 0.18, 0.40], weight: 2 },  // magenta
+    { color: [0.85, 0.18, 0.20], weight: 2 },  // red
+    { color: [0.12, 0.18, 0.55], weight: 1 },  // indigo
+    { color: [0.20, 0.55, 0.40], weight: 1 },  // jade
+  ],
+  'Chinese': [
+    { color: [0.85, 0.18, 0.20], weight: 4 },  // red sash
+    { color: [0.92, 0.70, 0.12], weight: 3 },  // gold
+    { color: [0.18, 0.15, 0.18], weight: 1 },  // black
+  ],
+  'European': [
+    { color: [0.85, 0.18, 0.20], weight: 2 },
+    { color: [0.92, 0.70, 0.12], weight: 1 },
+    { color: [0.18, 0.15, 0.12], weight: 2 },
+    { color: [0.92, 0.88, 0.78], weight: 1 },
   ],
 };
 
@@ -163,6 +421,10 @@ export function Pedestrians() {
   const propRefs = useRef<Record<Exclude<PropType, 'none'>, THREE.InstancedMesh | null>>({
     'bundle': null, 'basket': null, 'rope-coil': null, 'jar': null,
   });
+  const trimRefs = useRef<Record<TrimArchetype, THREE.InstancedMesh | null>>({
+    'robe-long': null, 'tunic-wrap': null, 'african-wrap-man': null,
+    'sari-woman': null, 'wrap-woman': null,
+  });
   const lanternRef = useRef<THREE.InstancedMesh>(null);
 
   const dummy = useRef(new THREE.Object3D());
@@ -177,6 +439,7 @@ export function Pedestrians() {
 
   const systemRef = useRef<PedestrianSystemState | null>(null);
   const profilesRef = useRef<VisualProfile[]>([]);
+  const portIdRef = useRef<string | undefined>(undefined);
   const colorsNeedInit = useRef(true);
   const animAccumRef = useRef(0);
   const livePedXs = useRef<Float32Array>(new Float32Array(256));
@@ -201,6 +464,11 @@ export function Pedestrians() {
   const armGeos = useMemo(() => {
     const m = {} as Record<ArmType, THREE.BufferGeometry>;
     for (const a of ARM_TYPES) m[a] = createArmGeometry(a);
+    return m;
+  }, []);
+  const trimGeos = useMemo(() => {
+    const m = {} as Record<TrimArchetype, THREE.BufferGeometry>;
+    for (const a of TRIM_ARCHETYPES) m[a] = createTrimGeometry(a);
     return m;
   }, []);
   const propGeos = useMemo(() => {
@@ -238,6 +506,7 @@ export function Pedestrians() {
       port.roads,
     );
     systemRef.current = system;
+    portIdRef.current = port.id;
     clearLivePedestrians();
 
     const rng = mulberry32(worldSeed * 31 + 7717);
@@ -259,11 +528,12 @@ export function Pedestrians() {
       for (const a of BODY_ARCHETYPES) if (!bodyRefs.current[a]) { allReady = false; break; }
       for (const f of FIGURE_TYPES) if (!headRefs.current[f]) { allReady = false; break; }
       for (const a of ARM_TYPES) if (!armRefs.current[a]) { allReady = false; break; }
+      for (const a of TRIM_ARCHETYPES) if (!trimRefs.current[a]) { allReady = false; break; }
       if (!allReady) return;
 
       const rng = mulberry32(worldSeed * 7 + 4231);
       const col = new THREE.Color();
-      const skinPool = SKIN_TONES[system.culture];
+      const regionMix = getPortRegionMix(portIdRef.current, system.culture);
 
       const bodyCounters: Record<BodyArchetype, number> = {
         'euro-man': 0, 'robe-long': 0, 'tunic-wrap': 0, 'african-wrap-man': 0,
@@ -280,22 +550,41 @@ export function Pedestrians() {
       const propCounters: Record<Exclude<PropType, 'none'>, number> = {
         'bundle': 0, 'basket': 0, 'rope-coil': 0, 'jar': 0,
       };
+      const trimCounters: Record<TrimArchetype, number> = {
+        'robe-long': 0, 'tunic-wrap': 0, 'african-wrap-man': 0,
+        'sari-woman': 0, 'wrap-woman': 0,
+      };
 
       for (let i = 0; i < system.pedestrians.length; i++) {
         const p = system.pedestrians[i];
         const prof = profiles[i];
         const rig = ARCHETYPE_SHOULDER[prof.body];
 
-        // Body — warm/cool tint per ped reads as sun-fade vs fresh dye.
+        // Sample a cultural region for this ped (e.g. Mombasa → mostly Swahili,
+        // some Arab/Gujarati/European). Skin, clothing accent, and trim all
+        // pull from this same region so the ped reads as one coherent person.
+        const region = pickWeighted(regionMix, rng).region;
+
+        // Body — 60% chance use the region's accent palette (period-typical
+        // dyes for that culture), 40% the archetype's base palette. Euro
+        // archetypes always use their own palette; sari-woman always uses
+        // its own (saris were always brightly dyed regardless of region).
         const huePull = (rng() - 0.5) * 0.012;
+        const useRegionAccent =
+          prof.body !== 'euro-man' && prof.body !== 'euro-woman' &&
+          prof.body !== 'sari-woman' && rng() < 0.6;
+        const clothingPool = useRegionAccent
+          ? CLOTHING_ACCENTS_BY_REGION[region]
+          : CLOTHING_BY_ARCHETYPE[prof.body];
         const clothing = varyHSL(
-          pickWeighted(CLOTHING_BY_ARCHETYPE[prof.body], rng).color,
+          pickWeighted(clothingPool, rng).color,
           rng, 0.025, 0.10, 0.13, huePull,
         );
         col.setRGB(clothing[0], clothing[1], clothing[2]);
         bodyRefs.current[prof.body]!.setColorAt(bodyCounters[prof.body]++, col);
 
         // Head (skin) — tight hue, real value range.
+        const skinPool = SKIN_TONES_BY_REGION[region];
         const skin = varySkin(pickWeighted(skinPool, rng).color, rng);
         const skinR = skin[0], skinG = skin[1], skinB = skin[2];
         col.setRGB(skinR, skinG, skinB);
@@ -309,6 +598,19 @@ export function Pedestrians() {
         const armMesh = armRefs.current[rig.armType]!;
         armMesh.setColorAt(armCounters[rig.armType]++, col);
         armMesh.setColorAt(armCounters[rig.armType]++, col);
+
+        // Trim — sash/border accent, region-keyed saturated color. Picked
+        // independently of clothing so it contrasts (e.g. red sash on
+        // indigo robe). Wider value variation reads as silk vs cotton.
+        if (isTrimArchetype(prof.body)) {
+          const tc = varyHSL(
+            pickWeighted(TRIM_ACCENTS_BY_REGION[region], rng).color,
+            rng, 0.02, 0.10, 0.14,
+          );
+          col.setRGB(tc[0], tc[1], tc[2]);
+          const trimMesh = trimRefs.current[prof.body];
+          if (trimMesh) trimMesh.setColorAt(trimCounters[prof.body]++, col);
+        }
 
         // Headwear — wider value range than clothing (hats fade unevenly in sun).
         if (prof.headwear !== 'none') {
@@ -351,6 +653,10 @@ export function Pedestrians() {
       }
       for (const p of PROP_TYPES) {
         const m = propRefs.current[p];
+        if (m?.instanceColor) m.instanceColor.needsUpdate = true;
+      }
+      for (const a of TRIM_ARCHETYPES) {
+        const m = trimRefs.current[a];
         if (m?.instanceColor) m.instanceColor.needsUpdate = true;
       }
 
@@ -415,6 +721,10 @@ export function Pedestrians() {
     const propCounts: Record<Exclude<PropType, 'none'>, number> = {
       'bundle': 0, 'basket': 0, 'rope-coil': 0, 'jar': 0,
     };
+    const trimCounts: Record<TrimArchetype, number> = {
+      'robe-long': 0, 'tunic-wrap': 0, 'african-wrap-man': 0,
+      'sari-woman': 0, 'wrap-woman': 0,
+    };
     let lanternCount = 0;
 
     const armMatW = scratchMat.current;
@@ -462,6 +772,11 @@ export function Pedestrians() {
         if (bodyMesh) bodyMesh.setMatrixAt(bodyCounts[prof.body]++, d.matrix);
         const headMesh = headRefs.current[p.figureType];
         if (headMesh) headMesh.setMatrixAt(headCounts[p.figureType]++, d.matrix);
+        // Trim falls with body — keep slot index aligned with init colors.
+        if (isTrimArchetype(prof.body)) {
+          const trimMesh = trimRefs.current[prof.body];
+          if (trimMesh) trimMesh.setMatrixAt(trimCounts[prof.body]++, d.matrix);
+        }
         continue;
       }
 
@@ -528,6 +843,12 @@ export function Pedestrians() {
       // Body
       const bodyMesh = bodyRefs.current[prof.body];
       if (bodyMesh) bodyMesh.setMatrixAt(bodyCounts[prof.body]++, d.matrix);
+
+      // Trim — same matrix as body so the sash/border tracks the wearer.
+      if (isTrimArchetype(prof.body)) {
+        const trimMesh = trimRefs.current[prof.body];
+        if (trimMesh) trimMesh.setMatrixAt(trimCounts[prof.body]++, d.matrix);
+      }
 
       // Head
       const headMesh = headRefs.current[p.figureType];
@@ -601,6 +922,10 @@ export function Pedestrians() {
       const m = propRefs.current[pp];
       if (m) { m.count = propCounts[pp]; if (propCounts[pp] > 0) m.instanceMatrix.needsUpdate = true; }
     }
+    for (const a of TRIM_ARCHETYPES) {
+      const m = trimRefs.current[a];
+      if (m) { m.count = trimCounts[a]; if (trimCounts[a] > 0) m.instanceMatrix.needsUpdate = true; }
+    }
     if (lanternRef.current) {
       lanternRef.current.count = lanternCount;
       if (lanternCount > 0) lanternRef.current.instanceMatrix.needsUpdate = true;
@@ -616,6 +941,15 @@ export function Pedestrians() {
           key={`body-${a}`}
           ref={(ref) => { bodyRefs.current[a] = ref; }}
           args={[bodyGeos[a], bodyMat, MAX_PER_MESH]}
+          frustumCulled={false}
+          castShadow
+        />
+      ))}
+      {TRIM_ARCHETYPES.map(a => (
+        <instancedMesh
+          key={`trim-${a}`}
+          ref={(ref) => { trimRefs.current[a] = ref; }}
+          args={[trimGeos[a], bodyMat, MAX_PER_MESH]}
           frustumCulled={false}
           castShadow
         />

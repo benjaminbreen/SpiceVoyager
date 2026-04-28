@@ -545,7 +545,7 @@ export function generateWorldData({
       if (rand < 0.32 * mangroveDensity && mangroves.length < 340) {
         mangroves.push({
           position: [x, height, worldZ],
-          scale: 0.75 + Math.random() * 0.7,
+          scale: 0.9 + Math.random() * 0.84,
           rotation: Math.random() * Math.PI * 2,
         });
       }

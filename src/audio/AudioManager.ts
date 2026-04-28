@@ -29,6 +29,11 @@ const OVERWORLD_TRACKS: OverworldTrack[] = [
 const INN_REST_SRC = '/music/Inn%20Rest.mp3';
 const AFTER_NIGHT_SRC = '/music/After%20the%20Night.mp3';
 
+// Splash intro track (world-map-other-sky.mp3) layers over the ambient-engine
+// waves bed during the ClaudeSplashGlobe screen, so it gets a lower multiplier
+// than the previous Opening did.
+const SPLASH_TRACK_GAIN = 0.55;
+
 class AudioManager {
   private splashTrack: HTMLAudioElement | null = null;
   private overworldTrack: HTMLAudioElement | null = null;
@@ -52,10 +57,12 @@ class AudioManager {
     if (!this.splashTrack) {
       this.splashTrack = new Audio('/music/world-map-other-sky.mp3');
       this.splashTrack.loop = true;
-      this.splashTrack.volume = this.musicVolume;
+      this.splashTrack.volume = 0;
     }
+    const target = this.musicVolume * SPLASH_TRACK_GAIN;
     this.splashTrack.play().then(() => {
       this.splashPlaying = true;
+      if (this.splashTrack) this.fadeIn(this.splashTrack, target, 1.6);
     }).catch(() => {});
   }
 
@@ -414,7 +421,7 @@ class AudioManager {
 
   setMusicVolume(v: number) {
     this.musicVolume = Math.max(0, Math.min(1, v));
-    if (this.splashTrack) this.splashTrack.volume = this.musicVolume;
+    if (this.splashTrack) this.splashTrack.volume = this.musicVolume * SPLASH_TRACK_GAIN;
     if (this.overworldTrack) {
       const entry = OVERWORLD_TRACKS[this.trackIndex];
       if (entry) this.overworldTrack.volume = this.musicVolume * entry.gain;

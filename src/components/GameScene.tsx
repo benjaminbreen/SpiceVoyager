@@ -2667,19 +2667,23 @@ function computeAtmosphere(
     || waterPaletteId === 'monsoon'
     || waterPaletteId === 'arid'
     || waterPaletteId === 'mediterranean';
-  out.fogNear = sunH > 0
-    ? clearDayPalette ? 300 : 280
-    : 100 + Math.max(0, sunH + 0.3) * 200;
-  out.fogFar = sunH > 0
-    ? clearDayPalette ? 1000 : 880
-    : 300 + Math.max(0, sunH + 0.3) * 580;
+  // Smoothly interpolate fog distances across the horizon band so there's
+  // no cliff at sunH = 0 (i.e. 6am/6pm). The old piecewise formula dropped
+  // fogFar from ~1000 to ~474 in a single tick at dusk, producing a visible
+  // fog wall when zoomed out.
+  const dayNear = clearDayPalette ? 300 : 280;
+  const dayFar = clearDayPalette ? 1000 : 880;
+  const nightNear = 260;
+  const nightFar = 900;
+  const dayT = smoothstep(-0.15, 0.25, sunH);
+  out.fogNear = THREE.MathUtils.lerp(nightNear, dayNear, dayT);
+  out.fogFar = THREE.MathUtils.lerp(nightFar, dayFar, dayT);
 
-  // Mood-driven haze on the golden-hour band. Peaks near the horizon
-  // (sunH ≈ 0.1), tapers to 0 effect at high noon and at full night, so
-  // overall day/night haze structure is preserved — just the sunset lag of
-  // haze thickens or thins per day.
-  if (sunH > -0.15 && sunH < 0.45) {
-    const bandT = 1 - Math.min(1, Math.abs(sunH - 0.1) / 0.35);
+  // Mood-driven haze on the daytime band only. Confined to sunH > 0.05 so
+  // the per-day haze multiplier never compounds with the dusk transition,
+  // which is what made hazy seeds especially walled-in at 6pm.
+  if (sunH > 0.05 && sunH < 0.5) {
+    const bandT = 1 - Math.min(1, Math.abs(sunH - 0.25) / 0.3);
     const densityMul = 1 - (1 - mood.fogDensity) * bandT;
     out.fogFar *= densityMul;
     out.fogNear *= densityMul;
@@ -2750,8 +2754,11 @@ function AtmosphereSync() {
         Math.abs(shipTransform.pos[2]),
       );
       const edgeFog = 1 - smoothstep(45, 185, edgeDistance);
-      const edgeNear = THREE.MathUtils.lerp(fogNear, 70, edgeFog);
-      const edgeFar = THREE.MathUtils.lerp(fogFar, 260, edgeFog);
+      // Edge-fog floor scales with the current fog distance so it can't pull
+      // fogFar in below ~60% of base — keeps night/zoomed-out from collapsing
+      // into a wall near the world boundary while still cueing the edge.
+      const edgeNear = THREE.MathUtils.lerp(fogNear, Math.max(70, fogNear * 0.55), edgeFog);
+      const edgeFar = THREE.MathUtils.lerp(fogFar, Math.max(260, fogFar * 0.6), edgeFog);
 
       scene.fog.color.copy(fogColor);
       scene.fog.near = edgeNear;

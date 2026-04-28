@@ -750,7 +750,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
         <div className="flex-1 flex flex-col min-w-0">
           {/* Banner */}
           <div className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
-            activeTab === 'overview' ? 'h-[20rem] md:h-[24rem] lg:h-[28rem]' : 'h-44 md:h-52 lg:h-60'
+            activeTab === 'overview' ? 'h-[20rem] md:h-[24rem] lg:h-[28rem]' : 'h-56 md:h-64 lg:h-72'
           }`}>
             {(() => {
               const animated = activeTab === 'overview' ? ANIMATED_BANNER_PORTS[activePort.id] : undefined;

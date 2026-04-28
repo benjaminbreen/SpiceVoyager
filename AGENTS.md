@@ -385,6 +385,21 @@ The event roll should reference `TavernTab`'s `conversationHistory` and the crew
 ### NPC ship hail — procedural deepening
 Full writeup: [`npcshipplan.md`](./npcshipplan.md). Transforms the existing single-response hail panel (`UI.tsx:2832-3045`, `npcShipGenerator.ts:715-762`) into a state-driven procedural dialogue system — disposition vector, captain traits, rumor ledger, language proficiency gradient with cognate matrix, tagged phrasebook, and encounter memory. Explicitly no LLM. Authored in 7 phases, each independently shippable; phase 1 is a non-visible foundation refactor.
 
+### Multiplayer presence — possible future option
+Feasible compromise: let other human players appear as human-controlled ships, and eventually walking figures in port, without making the whole simulation a PvP MMO. The useful target is **presence + hail + trade**, not fighting.
+
+Best first version:
+- Remote ships are rendered like NPC ships but driven by network snapshots instead of `NPCShip.tsx` AI.
+- Only show remote players in the same `currentWorldPortId` / compatible world seed.
+- Broadcast local transform at a modest rate (roughly 8-12 Hz): player id, mode, position, rotation, velocity, faction/flag, ship visual, ship name.
+- Interpolate remote transforms client-side; do not put remote ships directly into `npcLivePositions` unless they are meant to be shootable.
+- Hailing is the first interaction: proximity check, `Press T to Hail`, WebSocket request/accept, then a shared hail panel or short message exchange.
+- Trading is the second interaction: server owns the trade proposal and atomically validates/transfers gold + cargo. Do not trust direct client-side Zustand mutations for player-to-player trades.
+
+Explicit non-goal for the compromise version: human-vs-human fighting. Multiplayer combat would require server-authoritative hull/sail health, reload timers, projectile/hit validation, sunk state, and reconciliation with the local `GameScene.tsx` projectile system. That is a much larger redesign than ambient presence, hailing, or trade.
+
+Likely architecture: small WebSocket server + `src/utils/multiplayerClient.ts` + a `RemotePlayers` / `RemoteShips` renderer mounted near `World.tsx` or `GameScene.tsx`. Keep this separate from the local NPC AI and local pedestrian instancing until the network model is proven.
+
 ### POI System (largest unbuilt feature)
 Points of Interest — one-off, port-specific, hand-authored sites the player sails or walks to. Each POI is a location with its own modal containing a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`).
 

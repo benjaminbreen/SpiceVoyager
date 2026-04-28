@@ -2421,8 +2421,18 @@ function buildRoadRibbon(
     const lz = pz + nz * w;
     const rx = px - nx * w;
     const rz = pz - nz * w;
-    const ly = sampleEdgeY ? sampleEdgeY(lx, lz) : py;
-    const ry = sampleEdgeY ? sampleEdgeY(rx, rz) : py;
+    let ly = py;
+    let ry = py;
+    if (sampleEdgeY) {
+      const centerTerrainY = sampleEdgeY(px, pz);
+      const elevatedCenterline = py > centerTerrainY + 0.25;
+      ly = sampleEdgeY(lx, lz);
+      ry = sampleEdgeY(rx, rz);
+      if (elevatedCenterline) {
+        ly = Math.max(ly, py);
+        ry = Math.max(ry, py);
+      }
+    }
     verts.push(lx, ly + yLift, lz);
     verts.push(rx, ry + yLift, rz);
     return idx;
@@ -2695,8 +2705,16 @@ function CityRoads({ ports }: { ports: PortsProp }) {
           // points ride below the deck (terrain Y) and clifftop abutments
           // get clamped up above it, so anything meaningfully off the deck
           // plane is land and would produce a pier stuck in the ground.
+          //
+          // Bridges over canals use a lower deck (CANAL_BRIDGE_DECK_Y) than
+          // bridges over rivers; rather than tracking which is which, we
+          // infer the deck plane from the road's MIDDLE point — by the
+          // pathToRoad construction it's always a water-span vertex sitting
+          // exactly on the deck plane.
+          const midIdx = Math.floor(r.points.length / 2);
+          const inferredDeckY = r.points[midIdx]?.[1] ?? BRIDGE_DECK_Y;
           for (let i = 1; i < r.points.length - 1; i += bs.pierStep) {
-            if (Math.abs(r.points[i][1] - BRIDGE_DECK_Y) > 0.05) continue;
+            if (Math.abs(r.points[i][1] - inferredDeckY) > 0.05) continue;
             bridgeBuckets[bridgeStyle].piers.push(r.points[i]);
           }
         } else if (isFarmTrackRoad(r.id)) {

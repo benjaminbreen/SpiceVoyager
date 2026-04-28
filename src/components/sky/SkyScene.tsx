@@ -114,12 +114,12 @@ export function NightStars({ dayRef }: { dayRef: React.MutableRefObject<DayState
     <Stars
       ref={ref}
       radius={50}
-      depth={20}
-      count={1600}
-      factor={3.5}
-      saturation={0.2}
+      depth={22}
+      count={3200}
+      factor={5.2}
+      saturation={0.32}
       fade
-      speed={0.4}
+      speed={0.85}
     />
   );
 }
@@ -166,8 +166,13 @@ export function CrepuscularRays({ dayRef }: { dayRef: React.MutableRefObject<Day
 
 // ─── lights driven by day state ─────────────────────────────────────────────
 
+// Cool moonlight tint — used for the night-side fill light. Stored at module
+// scope so the per-frame loop doesn't allocate.
+const _moonColor = new THREE.Color('#7a8aa8');
+
 export function SkyLights({ dayRef }: { dayRef: React.MutableRefObject<DayState> }) {
   const sunLight = useRef<THREE.DirectionalLight>(null);
+  const moonLight = useRef<THREE.DirectionalLight>(null);
   const ambient = useRef<THREE.AmbientLight>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
   useFrame(() => {
@@ -176,6 +181,14 @@ export function SkyLights({ dayRef }: { dayRef: React.MutableRefObject<DayState>
       sunLight.current.position.copy(day.sunDir).multiplyScalar(8);
       sunLight.current.color.copy(day.sunColor);
       sunLight.current.intensity = day.sunIntensity;
+    }
+    if (moonLight.current) {
+      // Moon sits opposite the sun. Intensity peaks when the sun is fully
+      // down and fades to zero by mid-morning so it never fights the sun.
+      moonLight.current.position.copy(day.sunDir).multiplyScalar(-8);
+      const nightMix = 1 - THREE.MathUtils.smoothstep(day.sunIntensity, 0.0, 0.6);
+      moonLight.current.intensity = nightMix * 0.95;
+      moonLight.current.color.copy(_moonColor);
     }
     if (ambient.current) {
       ambient.current.color.copy(day.coolColor);
@@ -191,6 +204,7 @@ export function SkyLights({ dayRef }: { dayRef: React.MutableRefObject<DayState>
     <>
       <ambientLight ref={ambient} intensity={0.5} />
       <directionalLight ref={sunLight} position={[5, 4, 4]} intensity={1.5} />
+      <directionalLight ref={moonLight} position={[-5, -4, -4]} intensity={0} />
       <hemisphereLight ref={hemi} args={['#ffe2bd', '#3a4a5c', 0.35]} />
     </>
   );
@@ -328,6 +342,12 @@ export function DistantBirds({
   yRange = [0.6, 3.2],
   /** Depth range — closer birds are larger and faster. */
   zRange = [-22, -10],
+  /** Multiplier on each bird's computed sprite size. <1 makes the flock
+   *  read as more distant; >1 makes them feel closer/larger. */
+  sizeScale = 1,
+  /** Multiplier on lateral drift. <1 slows the flock; useful when the
+   *  bird visuals would otherwise dominate a quiet scene. */
+  speedScale = 1,
 }: {
   dayRef: React.MutableRefObject<DayState>;
   count?: number;
@@ -335,6 +355,8 @@ export function DistantBirds({
   wrap?: number;
   yRange?: [number, number];
   zRange?: [number, number];
+  sizeScale?: number;
+  speedScale?: number;
 }) {
   const texture = useMemo(() => createBirdSheet(), []);
   const specs = useMemo<BirdSpec[]>(() => {
@@ -345,8 +367,11 @@ export function DistantBirds({
       const z = THREE.MathUtils.lerp(zLo, zHi, rnd());
       // Closer birds appear larger and drift faster (parallax cue).
       const closeness = (z - zLo) / (zHi - zLo); // 0 = far, 1 = near
-      const size = THREE.MathUtils.lerp(0.32, 0.62, closeness);
-      const drift = THREE.MathUtils.lerp(0.18, 0.42, closeness) * (rnd() < 0.5 ? -1 : 1);
+      const size = THREE.MathUtils.lerp(0.32, 0.62, closeness) * sizeScale;
+      const drift =
+        THREE.MathUtils.lerp(0.18, 0.42, closeness) *
+        (rnd() < 0.5 ? -1 : 1) *
+        speedScale;
       return {
         z,
         baseY: THREE.MathUtils.lerp(yLo, yHi, rnd()),
@@ -359,7 +384,7 @@ export function DistantBirds({
         flapPhase: rnd() * 2,
       };
     });
-  }, [count, seed, wrap, yRange, zRange]);
+  }, [count, seed, wrap, yRange, zRange, sizeScale, speedScale]);
 
   return (
     <group>

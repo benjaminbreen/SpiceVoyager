@@ -741,27 +741,42 @@ export const CORE_PORTS: PortDefinition[] = [
     harborDepth: 0.18,           // shallow — the IJ was navigable but not deep
     harborShape: 'semicircle',   // broad flat-bottomed sweep, not a parabolic cove
     coastRuggedness: 0.4,        // low marshy polderland, not jagged
-    // 1612 canal grid: Singel (medieval moat, the inner ring) plus the just-begun
-    // Herengracht line (construction started 1613) as the outer ring. Three radial
-    // canals connect them to the IJ harbor, and the central inlet is the Damrak/
-    // Rokin running south from Dam square into the city core.
+    // 1612 canal layout (wedge, NOT concentric): the famous Grachtengordel was
+    // only being SURVEYED in 1612 — Herengracht digging began 1613. The city
+    // was still the medieval wedge between the Damrak/Rokin and the Singel
+    // moat, with two parallel "burgwallen" (Oudezijds and Nieuwezijds
+    // Voorburgwal) flanking the central inlet. Concentric rings would be
+    // ~50 years premature.
     canalLayout: {
-      type: 'concentric',
+      type: 'wedge',
       openDirection: 'N',
-      innerRadius: 26,
-      rings: 2,
-      ringSpacing: 22,
-      radials: 3,
-      // Widened from 4 to 7 so canals register reliably at the world mesh
-      // resolution (~2.8 world units between vertices). At the previous width
-      // canals were thinner than a single mesh quad and rendered invisibly.
-      canalWidth: 7,
-      centralInlet: true,
-      inletDepth: 38,
-      inletWidth: 10,
-      bridgesPerRing: 3,
-      bridgesPerRadial: 1,
+      // Damrak/Rokin: the broad central waterway from the IJ inland to
+      // Dam square. Wider than the side canals so the central axis
+      // dominates visually — historically the Damrak was the heart of
+      // mercantile Amsterdam (Bourse on its bank from 1611).
+      inletWidth: 14,
+      inletDepth: 76,
+      // Voorburgwallen: pair of canals flanking the central axis. Offset
+      // 40 leaves ~24u of buildable land between inlet and side canal
+      // (after the ±10/±6 bank-buffer reservations). Enough for two
+      // gable-end house rows plus a quay street on each side.
+      sideCanalWidth: 6,
+      sideCanalOffsets: [40],
+      sideCanalLength: 64,
+      // Singel: the medieval moat (1428) wrapping the city core. Radius
+      // 110 keeps it clearly outside the side canals (~46u clear strip
+      // between side canal end and moat at lat=40), and the moat extent
+      // wraps just past the harbor flanks so the city reads as enclosed.
+      moatRadius: 110,
+      moatWidth: 6,
+      moatExtent: Math.PI * 1.05,
+      // Authored bridge counts BEFORE the min-distance cull (18u in
+      // canalLayout.cullClusteredBridges). The cull eats any extras that
+      // land too close to a previously emitted bridge, so the surviving
+      // count is what actually appears in-game.
       bridgesOnInlet: 2,
+      bridgesPerSideCanal: 1,
+      bridgesOnMoat: 4,
     },
     flagColor: [0.92, 0.55, 0.10],  // Prinsenvlag orange (Dutch Republic, c. 1612)
     landmark: 'oude-kerk-spire',
@@ -822,9 +837,14 @@ export const CORE_PORTS: PortDefinition[] = [
     canalLayout: {
       type: 'concentric',
       openDirection: 'E',
-      innerRadius: 32,
+      innerRadius: 38,
       rings: 2,
-      ringSpacing: 26,
+      // Wider gap between rings: the previous 26u barely fit one row of
+      // houses (~12u including the bank buffer applied in cityGenerator),
+      // which made Venice read as a tangle of water with buildings squeezed
+      // onto threads of land. 52u leaves a proper sestiere of dense urban
+      // fabric between the inner and outer canal.
+      ringSpacing: 52,
       radials: 4,
       canalWidth: 8,
       centralInlet: true,

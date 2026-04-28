@@ -1146,6 +1146,68 @@ function spiritualLabel(
  * Generate a deterministic label for a building based on its type,
  * culture, and placement characteristics.
  */
+// ── Farmstead crop classifier ────────────────────────────────────────────────
+// Subset of the wet/dry crop pools that we have rendered field geometry for.
+// When one of these matches, cityGenerator stores it on b.crop and the field
+// renderer draws actual trees / paddies / palms around the hut. Anything not
+// listed here falls back to the plain label-only path.
+export type FarmCrop = 'orange' | 'rice' | 'date';
+
+export interface FarmCropPick {
+  crop?: FarmCrop;
+  label: string;
+  sub: string;
+}
+
+/**
+ * Decide both the crop type (if any) and the label for a farmhouse, given
+ * its environmental + cultural inputs. Centralizes the wet/dry → crop logic
+ * so the renderer and the label can never disagree.
+ *
+ * Returns crop=undefined for any farmstead whose picked label doesn't map to
+ * one of the rendered crop types — those still get a plain hut + label, just
+ * no field geometry.
+ */
+export function pickFarmCrop(
+  culture: Culture,
+  moisture: number,
+  seed: number,
+  nationality?: Nationality,
+  region?: CulturalRegion,
+): FarmCropPick {
+  const rng = mulberry32(seed);
+  rng(); rng(); rng();
+
+  const euro = asEuropean(nationality);
+  const reg = asRegion(region);
+  const atl = asAtlantic(nationality);
+  const isEuro = culture === 'European';
+  const isIO = culture === 'Indian Ocean';
+  const isAtl = culture === 'Atlantic';
+
+  const wetCrops = isEuro ? EUROPEAN_WET_CROPS[euro] : isIO ? INDIAN_OCEAN_WET_CROPS[reg] : isAtl ? ATLANTIC_WET_CROPS[atl] : WET_CROPS[culture];
+  const dryCrops = isEuro ? EUROPEAN_DRY_CROPS[euro] : isIO ? INDIAN_OCEAN_DRY_CROPS[reg] : isAtl ? ATLANTIC_DRY_CROPS[atl] : DRY_CROPS[culture];
+
+  const wet = moisture > 0.5;
+  const label = pick(wet ? wetCrops : dryCrops, rng);
+  const sub = 'farmstead';
+
+  // Map the label string back to a renderable crop. Substring match keeps
+  // this loose enough that future label additions ("Mandarin grove", etc.)
+  // light up automatically without touching this switch.
+  const lower = label.toLowerCase();
+  let crop: FarmCrop | undefined;
+  if (lower.includes('rice') || lower.includes('paddy') || lower.includes('sawah')) {
+    crop = 'rice';
+  } else if (lower.includes('date palm')) {
+    crop = 'date';
+  } else if (lower.includes('orange') || lower.includes('citrus')) {
+    crop = 'orange';
+  }
+
+  return { crop, label, sub };
+}
+
 export function generateBuildingLabel(
   buildingId: string,
   type: BuildingType,

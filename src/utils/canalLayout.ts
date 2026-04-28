@@ -2,10 +2,18 @@
 // carve water strips into the land mask, and bridge crossings become tier='bridge'
 // roads laid perpendicular to each canal.
 //
-// Phase 1 supports the 'concentric' pattern (Amsterdam: semicircular arcs around
-// a city core, opening toward the harbor, plus radial spokes and an optional
-// central inlet representing the Damrak/Rokin). Phase 2 will add 'lagoon-grid'
-// for Venice using the same output shape.
+// Two layouts:
+//
+//   - 'concentric': semicircular arcs around a city core (used for Venice's
+//     ring of major canals around the medieval sestieri). Suits cities with a
+//     ring-and-spoke historical plan.
+//
+//   - 'wedge': one inlet crossing the coastline + a single moat-style arc
+//     hugging the medieval core + a small number of parallel "burgwall"
+//     side-canals flanking the inlet. Suits 1612-era Amsterdam, where the
+//     Grachtengordel was only being SURVEYED that year (Herengracht dug 1613)
+//     so the city was still the medieval wedge between Damrak/Rokin and the
+//     Singel moat. Concentric was historically wrong for this period.
 
 import { CardinalDir, resolveDirRadians } from './portArchetypes';
 
@@ -36,6 +44,33 @@ export type CanalLayoutDef =
       bridgesPerRadial?: number;
       /** Bridges along the central inlet. */
       bridgesOnInlet?: number;
+    }
+  | {
+      type: 'wedge';
+      /** Open direction of the harbor (the inlet's mouth). */
+      openDirection: CardinalDir | number;
+      /** Width of the central inlet (Damrak/Rokin) in world units. */
+      inletWidth: number;
+      /** Distance the inlet runs INLAND past the port marker. */
+      inletDepth: number;
+      /** Width of the side-canal "burgwallen" running parallel to the inlet. */
+      sideCanalWidth: number;
+      /** Lateral offset of each side-canal pair from the inlet centerline. */
+      sideCanalOffsets: number[];
+      /** How far the side-canals extend inland from the coastline. */
+      sideCanalLength: number;
+      /** Radius of the moat arc (Singel) measured from canal center. */
+      moatRadius: number;
+      /** Width of the moat arc water strip. */
+      moatWidth: number;
+      /** Arc extent in radians, centered behind the harbor (≈ Math.PI for a 180° wrap). */
+      moatExtent: number;
+      /** Bridges over the central inlet. */
+      bridgesOnInlet?: number;
+      /** Bridges over each side-canal. */
+      bridgesPerSideCanal?: number;
+      /** Bridges along the moat. */
+      bridgesOnMoat?: number;
     };
 
 export interface CanalSegment {
@@ -93,24 +128,232 @@ function arcPoints(
   return out;
 }
 
+/**
+ * Sample N points along an arc of arbitrary extent, centered on the inland
+ * direction. extent=π reproduces arcPoints (180° wrap); 1.4π wraps further
+ * around so the "moat" reaches back toward the harbor flanks. The arc ends
+ * are `extent/2` either side of the inland direction.
+ *
+ * `jitterAmplitude` perturbs each point's radius using a deterministic
+ * three-frequency wave. The result varies organically along the arc so the
+ * moat doesn't read as a perfect Math.cos curve. Pass 0 for clean arcs.
+ */
+function partialArcPoints(
+  cx: number, cz: number,
+  radius: number,
+  inlandDirX: number, inlandDirZ: number,
+  extent: number,
+  samples: number,
+  jitterAmplitude: number = 0,
+): [number, number][] {
+  // Lateral basis (perpendicular to inland direction, in XZ plane).
+  const latX = -inlandDirZ;
+  const latZ =  inlandDirX;
+  const out: [number, number][] = [];
+  for (let i = 0; i < samples; i++) {
+    // Map i ∈ [0, samples-1] to angle ∈ [-extent/2, +extent/2] measured
+    // FROM the inland direction. cos along inland, sin along lateral.
+    const a = -extent * 0.5 + (i / (samples - 1)) * extent;
+    let r = radius;
+    if (jitterAmplitude > 0) {
+      // Three superposed waves with incommensurate frequencies — produces
+      // pseudo-noise that's deterministic, smooth, and bounded. Tapered at
+      // the arc ends so the flanks meet the harbor cleanly.
+      const w = Math.sin(a * 4.31 + 1.7) * 1.0
+              + Math.cos(a * 7.93 + 0.3) * 0.6
+              + Math.sin(a * 13.1 - 2.9) * 0.3;
+      const taper = Math.sin((i / (samples - 1)) * Math.PI); // 0 at ends, 1 at middle
+      r += jitterAmplitude * w * taper / 1.9; // /1.9 normalises the sum-of-amps
+    }
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    out.push([
+      cx + r * (c * inlandDirX + s * latX),
+      cz + r * (c * inlandDirZ + s * latZ),
+    ]);
+  }
+  return out;
+}
+
+/**
+ * Bridges within MIN_BRIDGE_DISTANCE world units of an earlier-emitted bridge
+ * are culled. Without this, the per-canal bridge counts compound visually:
+ * three inlet bridges + two side-canal bridges + four moat bridges in a Huge
+ * port footprint look like ten bridges piled on top of each other in the
+ * central wedge. A real medieval city had bridges spaced by neighbourhood,
+ * not by canal-segment count.
+ */
+const MIN_BRIDGE_DISTANCE = 18;
+function cullClusteredBridges(bridges: CanalBridge[]): CanalBridge[] {
+  const kept: CanalBridge[] = [];
+  for (const b of bridges) {
+    let tooClose = false;
+    for (const k of kept) {
+      if (Math.hypot(b.x - k.x, b.z - k.z) < MIN_BRIDGE_DISTANCE) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (!tooClose) kept.push(b);
+  }
+  return kept;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Harbor unit vector in world coords. Must match coastlineBase+carveHarbor in
+ * portArchetypes: rotateToOpen sends the local "into-land" axis to
+ * (-sin α, +cos α), so the opposite "toward-harbor" direction is
+ * (sin α, -cos α). Earlier versions of this file used +cos which agrees only
+ * for E/W; N/S were 180° off and dumped canals into the natural harbor.
+ */
+function harborDirection(openDirection: CardinalDir | number): [number, number] {
+  const dirRad = resolveDirRadians(openDirection);
+  return [Math.sin(dirRad), -Math.cos(dirRad)];
+}
+
+/**
+ * Wedge layout: medieval-Amsterdam topology.
+ *   inlet (Damrak/Rokin) crosses the coastline along the inland axis;
+ *   a small fan of parallel "burgwallen" run alongside it;
+ *   a moat arc (Singel) wraps the city on the inland side.
+ * No radials, no nested rings — those are post-1660 features.
+ */
+function generateWedge(
+  centerX: number, centerZ: number,
+  def: Extract<CanalLayoutDef, { type: 'wedge' }>,
+): CanalLayout {
+  const canals: CanalSegment[] = [];
+  const bridges: CanalBridge[] = [];
+
+  const [harborX, harborZ] = harborDirection(def.openDirection);
+  // Inland direction (opposite of harbor). The inlet runs from harbor side
+  // through the port marker into this direction.
+  const inlandX = -harborX;
+  const inlandZ = -harborZ;
+  // Lateral (perpendicular to harbor axis) — used to offset the side canals.
+  const latX = inlandZ;   // rotate inland 90° clockwise in XZ
+  const latZ = -inlandX;
+
+  const inletHalfW = def.inletWidth / 2;
+  const sideHalfW = def.sideCanalWidth / 2;
+  const moatHalfW = def.moatWidth / 2;
+
+  // Bridge half-deck length scales with canal width plus a 1.5u floor for the
+  // narrowest canals, matching the rule used in concentric.
+  const deckOverhang = (halfW: number) => halfW * 1.4 + Math.max(1.5, halfW * 0.25);
+
+  // ── Central inlet ────────────────────────────────────────────────────────
+  // Mouth a short way into the harbor, tail well inland (past the moat
+  // center) so the inlet visibly straddles the coastline.
+  const inletMouthOffset = def.inletWidth * 1.2;
+  const inletStart: [number, number] = [
+    centerX + harborX * inletMouthOffset,
+    centerZ + harborZ * inletMouthOffset,
+  ];
+  const inletEnd: [number, number] = [
+    centerX + inlandX * def.inletDepth,
+    centerZ + inlandZ * def.inletDepth,
+  ];
+  canals.push({ polyline: [inletStart, inletEnd], halfWidth: inletHalfW, primary: true });
+
+  const inletBridges = def.bridgesOnInlet ?? 2;
+  for (let b = 0; b < inletBridges; b++) {
+    // City-side half of the inlet only — the harbor mouth shouldn't have
+    // bridges. exclusive-endpoint t in (0.45, 0.9).
+    const u = (b + 1) / (inletBridges + 1);
+    const t = 0.45 + u * 0.45;
+    bridges.push({
+      x: inletStart[0] + (inletEnd[0] - inletStart[0]) * t,
+      z: inletStart[1] + (inletEnd[1] - inletStart[1]) * t,
+      // Deck axis perpendicular to the inlet (lateral direction).
+      dirX: latX, dirZ: latZ,
+      halfLength: deckOverhang(inletHalfW),
+    });
+  }
+
+  // ── Parallel side-canals (burgwallen) ───────────────────────────────────
+  // One canal on each side of the inlet, at sideCanalOffsets[i] units lateral
+  // from the inlet centerline (mirrored). Each runs roughly the full
+  // sideCanalLength inland, starting just shy of the coastline.
+  const sideMouthOffset = def.sideCanalWidth * 0.6; // tucked just inside the coast
+  const bridgesPerSide = def.bridgesPerSideCanal ?? 1;
+  for (const offset of def.sideCanalOffsets) {
+    for (const sign of [1, -1] as const) {
+      const lateralX = latX * offset * sign;
+      const lateralZ = latZ * offset * sign;
+      const start: [number, number] = [
+        centerX + harborX * -sideMouthOffset + lateralX,
+        centerZ + harborZ * -sideMouthOffset + lateralZ,
+      ];
+      const end: [number, number] = [
+        centerX + inlandX * def.sideCanalLength + lateralX,
+        centerZ + inlandZ * def.sideCanalLength + lateralZ,
+      ];
+      canals.push({ polyline: [start, end], halfWidth: sideHalfW, primary: false });
+
+      for (let b = 0; b < bridgesPerSide; b++) {
+        const u = (b + 1) / (bridgesPerSide + 1);
+        const t = 0.35 + u * 0.5; // mid-span bias, away from both ends
+        bridges.push({
+          x: start[0] + (end[0] - start[0]) * t,
+          z: start[1] + (end[1] - start[1]) * t,
+          dirX: latX, dirZ: latZ,
+          halfLength: deckOverhang(sideHalfW),
+        });
+      }
+    }
+  }
+
+  // ── Moat arc (Singel) ───────────────────────────────────────────────────
+  // Partial arc wrapping the city on the inland side. Center at the canal
+  // origin (port marker offset slightly inland so the arc has room).
+  // Jitter the radius along the arc so it reads as an organic medieval
+  // moat rather than a Math.cos curve — the Singel had bastions, kinks
+  // and slight bowing at different stretches.
+  const moatCenterOffset = def.moatRadius * 0.2;
+  const ccx = centerX + inlandX * moatCenterOffset;
+  const ccz = centerZ + inlandZ * moatCenterOffset;
+  const samples = Math.max(24, Math.round(def.moatRadius * (def.moatExtent / Math.PI)));
+  const moatPoints = partialArcPoints(
+    ccx, ccz, def.moatRadius, inlandX, inlandZ, def.moatExtent, samples,
+    def.moatRadius * 0.07,
+  );
+  canals.push({ polyline: moatPoints, halfWidth: moatHalfW, primary: false });
+
+  const moatBridges = def.bridgesOnMoat ?? 3;
+  for (let b = 0; b < moatBridges; b++) {
+    const t = (b + 1) / (moatBridges + 1);
+    const idx = Math.floor(t * (moatPoints.length - 1));
+    const [bx, bz] = moatPoints[idx];
+    // Deck radial — from arc center outward.
+    const ox = bx - ccx;
+    const oz = bz - ccz;
+    const ol = Math.hypot(ox, oz) || 1;
+    bridges.push({
+      x: bx, z: bz,
+      dirX: ox / ol, dirZ: oz / ol,
+      halfLength: deckOverhang(moatHalfW),
+    });
+  }
+
+  return { canals, bridges: cullClusteredBridges(bridges) };
+}
 
 export function generateCanalLayout(
   centerX: number,
   centerZ: number,
   def: CanalLayoutDef,
 ): CanalLayout {
+  if (def.type === 'wedge') {
+    return generateWedge(centerX, centerZ, def);
+  }
   if (def.type !== 'concentric') {
     return { canals: [], bridges: [] };
   }
 
-  // Harbor direction unit vector. Convention matches portArchetypes: 0 = N, 90 = E,
-  // measured clockwise. We map N → +Z (so harborDir for openDirection 'N' is (0, 1)).
-  // This matches the rest of the codebase's local-frame convention where the harbor
-  // sits on the +Z side of the map relative to the city.
-  const dirRad = resolveDirRadians(def.openDirection);
-  const harborX = Math.sin(dirRad);
-  const harborZ = Math.cos(dirRad);
+  const [harborX, harborZ] = harborDirection(def.openDirection);
 
   // The "canal center" — historically Dam square in Amsterdam, sitting at the
   // south edge of the IJ harbor — is offset slightly AWAY from the harbor so
@@ -124,7 +367,10 @@ export function generateCanalLayout(
   const halfW = def.canalWidth / 2;
   const bridgesPerRing = def.bridgesPerRing ?? 3;
   const bridgesPerRadial = def.bridgesPerRadial ?? 1;
-  const bridgeHalfDeck = halfW + 2.5; // a little overhang past the water edge
+  // Overhang past the water edge scales with canal width so wider canals
+  // (Venice, ~8u) get proportionally longer abutment ramps than narrow ones
+  // (Amsterdam, ~4u). The 1.5u floor keeps the smallest canals usable.
+  const bridgeHalfDeck = halfW * 1.4 + Math.max(1.5, halfW * 0.25);
 
   // ── Concentric rings ──────────────────────────────────────────────────────
   // Each ring is a 180° arc opening toward the harbor.
@@ -191,15 +437,22 @@ export function generateCanalLayout(
   if (def.centralInlet) {
     const inletDepth = def.inletDepth ?? def.innerRadius * 1.6;
     const inletHalfW = (def.inletWidth ?? def.canalWidth * 1.5) / 2;
-    // Starts at the harbor side (out past the rings) and runs to canal center.
-    const harborEdgeDist = outerR + 8;
+    // The inlet must STRADDLE the coastline: mouth a short distance into the
+    // harbor (so it visibly opens onto open water), tail well inland past the
+    // canal center (so it joins the inner ring instead of dead-ending in the
+    // city outskirts). The previous formulation placed both endpoints on the
+    // harbor side of the port marker, making the inlet a stranded strip — on
+    // Amsterdam this looked like "one short canal" because the rest of the
+    // network was masked by harbor water (see harborZ comment above).
+    const mouthOffset = def.canalWidth * 1.5;
+    const tailOffset = Math.max(inletDepth - mouthOffset, def.innerRadius * 0.5);
     const start: [number, number] = [
-      centerX + harborX * harborEdgeDist,
-      centerZ + harborZ * harborEdgeDist,
+      centerX + harborX * mouthOffset,
+      centerZ + harborZ * mouthOffset,
     ];
     const end: [number, number] = [
-      centerX + harborX * (harborEdgeDist - inletDepth),
-      centerZ + harborZ * (harborEdgeDist - inletDepth),
+      centerX - harborX * tailOffset,
+      centerZ - harborZ * tailOffset,
     ];
     canals.push({
       polyline: [start, end],
@@ -210,8 +463,11 @@ export function generateCanalLayout(
     const inletBridges = def.bridgesOnInlet ?? 2;
     for (let b = 0; b < inletBridges; b++) {
       // Bridges only along the city-side half of the inlet — the harbor end
-      // is open to the IJ and shouldn't have crossings.
-      const t = 0.45 + (b / Math.max(1, inletBridges - 1)) * 0.45;
+      // is open to the IJ and shouldn't have crossings. Use the same
+      // exclusive-endpoint pattern as the rings so a single bridge lands
+      // mid-span (t=0.7) instead of on the harbor seam.
+      const u = (b + 1) / (inletBridges + 1); // 0..1, exclusive endpoints
+      const t = 0.5 + u * 0.4;                // remapped to (0.5, 0.9)
       const bx = start[0] + (end[0] - start[0]) * t;
       const bz = start[1] + (end[1] - start[1]) * t;
       // Perpendicular to harbor direction.
@@ -223,7 +479,7 @@ export function generateCanalLayout(
     }
   }
 
-  return { canals, bridges };
+  return { canals, bridges: cullClusteredBridges(bridges) };
 }
 
 // ── Geometry queries (consumed by cityGenerator) ─────────────────────────────

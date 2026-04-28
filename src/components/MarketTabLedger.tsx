@@ -265,7 +265,7 @@ export function MarketTabLedger({
           </div>
         </div>
 
-        <div className="max-h-[50vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+        <div className="pr-1">
           <div className="sticky top-0 z-10 hidden grid-cols-[minmax(220px,1.7fr)_64px_80px_68px_68px] gap-3 rounded-t-lg border border-white/[0.05] bg-[#080c14]/95 px-3 py-2 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600 backdrop-blur md:grid" style={{ fontFamily: '"DM Sans", sans-serif' }}>
             <span>Ware</span>
             <span className="text-right">Buy</span>

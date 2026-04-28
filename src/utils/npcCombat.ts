@@ -90,7 +90,7 @@ export function chooseInitiativePosture(
   const sameFaction = context.playerFlag === identity.flag;
   const rival = relationModifier <= -25;
   const bitterRival = relationModifier <= -35;
-  const eligiblePredationTarget = !sameFaction && (relationModifier < 0 || suspicious);
+  const eligiblePredationTarget = !sameFaction && (rival || suspicious);
   const cargoTemptation = context.cargoTemptation ?? 0;
 
   if (identity.role === 'privateer' && (hostile || bitterRival || (eligiblePredationTarget && cargoTemptation >= 55) || (suspicious && rival))) {

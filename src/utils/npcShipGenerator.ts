@@ -1,5 +1,6 @@
 import { Language, Nationality } from '../store/gameStore';
 import { type Commodity } from './commodities';
+import { factionRelationModifier } from './factionRelations';
 import { TRADITION_VISITED_PORTS } from './portIntel';
 
 export type Weighted<T> = [T, number];
@@ -644,6 +645,43 @@ const PORT_TRADITIONS: Record<string, Weighted<ShipTraditionId>[]> = {
   cartagena: [['spanish_atlantic', 38], ['local_caribbean', 22], ['english_atlantic', 10], ['french_atlantic', 10], ['dutch_atlantic', 6], ['portuguese_atlantic', 6], ['portuguese_estado', 4], ['omani_dhow', 2], ['dutch_voc', 2]],
 };
 
+/**
+ * Harbor authority by port. Ports under a clear sovereign power refuse to
+ * berth foreign privateers or armed patrols whose flag is hostile (rival or
+ * worse) to that power. 1612-accurate: Anglo-Dutch are merely cool (-8), so
+ * a Dutch privateer in London is harassment of an ally and is suppressed
+ * here. Ports omitted from this map are treated as open / contested water.
+ */
+const PORT_CONTROLLING_FACTION: Partial<Record<string, Nationality>> = {
+  // European home ports
+  london: 'English',
+  amsterdam: 'Dutch',
+  lisbon: 'Portuguese',
+  seville: 'Spanish',
+  venice: 'Venetian',
+  // Atlantic / Americas
+  jamestown: 'English',
+  havana: 'Spanish',
+  cartagena: 'Spanish',
+  salvador: 'Portuguese',
+  elmina: 'Portuguese',     // Dutch capture in 1637, not yet
+  luanda: 'Portuguese',
+  // Estado da Índia outposts
+  goa: 'Portuguese',
+  malacca: 'Portuguese',
+  hormuz: 'Portuguese',     // lost to Anglo-Persian forces in 1622
+  macau: 'Portuguese',
+  diu: 'Portuguese',
+  mombasa: 'Portuguese',
+  muscat: 'Portuguese',     // Omani recapture in 1650
+  // East Asia & local sovereigns
+  manila: 'Spanish',
+  nagasaki: 'Japanese',
+  surat: 'Mughal',
+  aden: 'Ottoman',
+  mocha: 'Ottoman',
+};
+
 const DEFAULT_TRADITIONS: Weighted<ShipTraditionId>[] = [
   ['gujarati_merchant', 18],
   ['omani_dhow', 16],
@@ -661,6 +699,30 @@ const DEFAULT_TRADITIONS: Weighted<ShipTraditionId>[] = [
 function generateCaptainName(poolId: NamePoolId): string {
   const pool = NAME_POOLS[poolId];
   return `${pick(pool[0])} ${pick(pool[1])}`;
+}
+
+/**
+ * Prevent privateers and armed patrols from spawning in a harbor whose
+ * controlling power would treat their flag as hostile. Diu's guns answer
+ * to Lisbon, the Tower's guns answer to Whitehall — a foreign privateer
+ * cruising under those guns is anachronistic. Falls back to the tradition's
+ * non-warship roles, then to a generic merchant.
+ */
+function pickRoleForPort(
+  tradition: ShipTradition,
+  npcFlag: Nationality,
+  portId: string | undefined,
+): RouteRole {
+  const role = weightedPick(tradition.roles);
+  if (role !== 'privateer' && role !== 'armed patrol') return role;
+  const authority = portId ? PORT_CONTROLLING_FACTION[portId] : undefined;
+  if (!authority || authority === npcFlag) return role;
+  if (factionRelationModifier(authority, npcFlag) > -25) return role;
+  const civilianRoles = tradition.roles.filter(
+    ([r]) => r !== 'privateer' && r !== 'armed patrol',
+  );
+  if (civilianRoles.length === 0) return 'blue-water merchant';
+  return weightedPick(civilianRoles);
 }
 
 function generateCargo(profile: Weighted<Commodity>[]): Partial<Record<Commodity, number>> {
@@ -807,7 +869,7 @@ export function generateNPCShip(
   const flag = weightedPick(tradition.factions);
   const namePool = weightedPick(tradition.captainNamePools);
   const captainName = generateCaptainName(namePool);
-  const role = weightedPick(tradition.roles);
+  const role = pickRoleForPort(tradition, flag, context.portId);
   const morale = randInt(24, 96);
   const [minCrew, maxCrew] = CREW_BY_TYPE[shipType];
   const [minHull, maxHull] = HULL_BY_TYPE[shipType];

@@ -17,6 +17,7 @@ import { generateWorldData } from '../utils/worldGeneration';
 import { useFloraAssets } from './useFloraAssets';
 
 import { ProceduralCity } from './ProceduralCity';
+import { FarmsteadFields } from './FarmsteadFields';
 import { Grazers } from './Grazers';
 import { Primates } from './Primates';
 import { Reptiles } from './Reptiles';
@@ -1877,6 +1878,7 @@ export function World() {
 
       {/* Ports */}
       <ProceduralCity />
+      <FarmsteadFields />
       <PortIndicators />
       <BuildingTooltip />
 

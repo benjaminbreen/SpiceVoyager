@@ -24,6 +24,13 @@ const MOBILE_SPEED_SCALE = 0.55;
 
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
+const STORE_POS_EPSILON_SQ = 0.0001;
+const STORE_ROT_EPSILON = 0.0001;
+const STORE_VEL_EPSILON = 0.0001;
+
+function angleDelta(a: number, b: number) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
 
 /**
  * Triangular lateen sail + diagonal yard. The yard runs through the group
@@ -174,6 +181,11 @@ export function Ship() {
   const speedBoostVisible = useRef(false);
   const speedBoostRef = useRef<THREE.Group>(null);
   const storeSyncAccum = useRef(0);
+  const lastSyncedStoreTransform = useRef({
+    pos: [0, 0, 0] as [number, number, number],
+    rot: 0,
+    vel: 0,
+  });
 
   // Anchor animation state
   const anchorGroupRef = useRef<THREE.Group>(null);
@@ -528,6 +540,11 @@ export function Ship() {
       previousHeading.current = state.playerRot;
       velocity.current = state.playerVelocity;
       syncLiveShipTransform(state.playerPos, state.playerRot, state.playerVelocity);
+      lastSyncedStoreTransform.current = {
+        pos: state.playerPos,
+        rot: state.playerRot,
+        vel: state.playerVelocity,
+      };
       initialized.current = true;
     }
   }, []);
@@ -539,6 +556,11 @@ export function Ship() {
       rot: rotation.current,
       vel: velocity.current,
     });
+    lastSyncedStoreTransform.current = {
+      pos: [group.current.position.x, SHIP_ROOT_Y, group.current.position.z],
+      rot: rotation.current,
+      vel: velocity.current,
+    };
     storeSyncAccum.current = 0;
   }, [playerMode, setPlayerTransform]);
 
@@ -792,21 +814,29 @@ export function Ship() {
     if (!group.current) return;
     const store = useGameStore.getState();
 
-    // External teleports/world reloads update the store directly; snap the ship to them here.
-    const storeDx = store.playerPos[0] - group.current.position.x;
-    const storeDz = store.playerPos[2] - group.current.position.z;
-    const storeDistSq = storeDx * storeDx + storeDz * storeDz;
-    const rotDeltaToStore = Math.atan2(
-      Math.sin(store.playerRot - rotation.current),
-      Math.cos(store.playerRot - rotation.current)
-    );
-    if (!initialized.current || storeDistSq > 9 || Math.abs(rotDeltaToStore) > 0.25) {
+    // External teleports/world reloads update the store directly; snap the ship
+    // only when the store has changed since our last intentional sync. The
+    // store is throttled below, so comparing live rotation against stale store
+    // rotation during a hard turn causes visible snap-back jitter.
+    const lastSync = lastSyncedStoreTransform.current;
+    const externalStoreDx = store.playerPos[0] - lastSync.pos[0];
+    const externalStoreDz = store.playerPos[2] - lastSync.pos[2];
+    const storeChangedExternally =
+      externalStoreDx * externalStoreDx + externalStoreDz * externalStoreDz > STORE_POS_EPSILON_SQ
+      || Math.abs(angleDelta(store.playerRot, lastSync.rot)) > STORE_ROT_EPSILON
+      || Math.abs(store.playerVelocity - lastSync.vel) > STORE_VEL_EPSILON;
+    if (!initialized.current || storeChangedExternally) {
       group.current.position.set(store.playerPos[0], SHIP_ROOT_Y, store.playerPos[2]);
       rotation.current = store.playerRot;
       previousHeading.current = store.playerRot;
       velocity.current = store.playerVelocity;
       recoilVelX.current = 0;
       recoilVelZ.current = 0;
+      lastSyncedStoreTransform.current = {
+        pos: store.playerPos,
+        rot: store.playerRot,
+        vel: store.playerVelocity,
+      };
       initialized.current = true;
     }
 
@@ -1070,6 +1100,11 @@ export function Ship() {
       syncLiveShipTransform(livePos, rotation.current, velocity.current);
       storeSyncAccum.current += delta;
       if (storeSyncAccum.current >= STORE_SYNC_INTERVAL) {
+        lastSyncedStoreTransform.current = {
+          pos: livePos,
+          rot: rotation.current,
+          vel: velocity.current,
+        };
         setPlayerTransform({
           pos: livePos,
           rot: rotation.current,

@@ -99,31 +99,47 @@ function buildGeometries() {
   })();
 
   const mangroveRootGeometry = (() => {
-    const trunk = new THREE.CylinderGeometry(0.08, 0.12, 1.1, 5);
-    trunk.translate(0, 0.55, 0);
-    const roots: THREE.BufferGeometry[] = [];
-    for (let r = 0; r < 8; r++) {
-      const angle = (r / 8) * Math.PI * 2;
-      const root = new THREE.CylinderGeometry(0.018, 0.038, 1.0 + (r % 3) * 0.12, 4);
-      root.rotateZ(0.72 + (r % 2) * 0.12);
+    const trunk = new THREE.CylinderGeometry(0.10, 0.16, 1.25, 5);
+    trunk.rotateZ(-0.08);
+    trunk.translate(0.04, 0.72, 0);
+    const parts: THREE.BufferGeometry[] = [trunk];
+    for (let r = 0; r < 10; r++) {
+      const angle = (r / 10) * Math.PI * 2 + (r % 2) * 0.12;
+      const length = 1.05 + (r % 4) * 0.13;
+      const root = new THREE.CylinderGeometry(0.018, 0.052, length, 4);
+      root.rotateZ(0.82 + (r % 3) * 0.07);
       root.rotateY(angle);
-      root.translate(Math.sin(angle) * 0.34, 0.34, Math.cos(angle) * 0.34);
-      roots.push(root);
+      root.translate(Math.sin(angle) * 0.48, 0.38, Math.cos(angle) * 0.48);
+      parts.push(root);
     }
-    const merged = mergeCompatibleGeometries([trunk, ...roots]);
-    [trunk, ...roots].forEach((g) => g.dispose());
+    for (let r = 0; r < 5; r++) {
+      const angle = (r / 5) * Math.PI * 2 + 0.28;
+      const aerial = new THREE.CylinderGeometry(0.009, 0.014, 0.9 + (r % 2) * 0.18, 3);
+      aerial.rotateZ((r % 2 === 0 ? 1 : -1) * 0.12);
+      aerial.translate(Math.sin(angle) * 0.26, 0.78, Math.cos(angle) * 0.26);
+      parts.push(aerial);
+    }
+    const merged = mergeCompatibleGeometries(parts);
+    parts.forEach((g) => g.dispose());
     return merged ?? new THREE.CylinderGeometry(0.08, 0.12, 1.1, 5);
   })();
 
   const mangroveCanopyGeometry = (() => {
-    const canopyA = new THREE.IcosahedronGeometry(0.55, 0);
-    canopyA.scale(1.25, 0.62, 1.0);
-    canopyA.translate(-0.18, 1.28, 0.02);
-    const canopyB = new THREE.IcosahedronGeometry(0.48, 0);
-    canopyB.scale(1.15, 0.58, 0.95);
-    canopyB.translate(0.32, 1.2, -0.1);
-    const merged = mergeCompatibleGeometries([canopyA, canopyB]);
-    canopyA.dispose(); canopyB.dispose();
+    const lobes: THREE.BufferGeometry[] = [];
+    const specs: Array<[number, number, number, number, number, number, number]> = [
+      [-0.28, 1.38, 0.02, 0.68, 1.35, 0.62, 1.05],
+      [0.34, 1.30, -0.12, 0.58, 1.22, 0.58, 0.98],
+      [0.06, 1.52, 0.34, 0.48, 1.08, 0.54, 0.86],
+      [-0.02, 1.16, -0.36, 0.42, 1.18, 0.48, 0.78],
+    ];
+    for (const [x, y, z, radius, sx, sy, sz] of specs) {
+      const lobe = new THREE.IcosahedronGeometry(radius, 0);
+      lobe.scale(sx, sy, sz);
+      lobe.translate(x, y, z);
+      lobes.push(lobe);
+    }
+    const merged = mergeCompatibleGeometries(lobes);
+    lobes.forEach((g) => g.dispose());
     return merged ?? new THREE.IcosahedronGeometry(0.6, 0);
   })();
 
@@ -200,23 +216,23 @@ function buildGeometries() {
     return merged ?? new THREE.CylinderGeometry(0.02, 0.02, 0.5, 3);
   })();
 
-  // Cypress trunk base sits at y=0; canopy stacks cones from y=0 up to ~y=10,
-  // with subtle vertex perturbation breaking the smooth silhouette.
+  // Cypress trunk base sits at y=0; canopy stacks tapered masses from y=1.5 up
+  // to ~y=9, keeping the columnar habit without reading as a black spike.
   const cypressTrunkGeometry = (() => {
-    const geo = new THREE.CylinderGeometry(0.16, 0.24, 2.0, 6);
-    geo.translate(0, 1.0, 0);
+    const geo = new THREE.CylinderGeometry(0.18, 0.28, 2.4, 6);
+    geo.translate(0, 1.2, 0);
     return geo;
   })();
   const cypressCanopyGeometry = (() => {
     const layers = [
-      { radius: 1.10, height: 4.2, baseY: 0.4,  twist: 0.0,  noiseSeed: 1.3 },
-      { radius: 0.85, height: 5.0, baseY: 2.6,  twist: 0.45, noiseSeed: 2.7 },
-      { radius: 0.55, height: 5.0, baseY: 5.0,  twist: 0.95, noiseSeed: 4.1 },
-      { radius: 0.28, height: 3.6, baseY: 7.4,  twist: 1.55, noiseSeed: 5.9 },
+      { bottom: 0.82, top: 0.64, height: 2.6, baseY: 1.5, twist: 0.0, noiseSeed: 1.3 },
+      { bottom: 0.78, top: 0.50, height: 3.2, baseY: 3.0, twist: 0.45, noiseSeed: 2.7 },
+      { bottom: 0.56, top: 0.32, height: 2.8, baseY: 5.3, twist: 0.95, noiseSeed: 4.1 },
+      { bottom: 0.34, top: 0.12, height: 2.0, baseY: 7.2, twist: 1.55, noiseSeed: 5.9 },
     ];
-    const cones: THREE.BufferGeometry[] = [];
+    const masses: THREE.BufferGeometry[] = [];
     for (const l of layers) {
-      const c = new THREE.ConeGeometry(l.radius, l.height, 9, 2);
+      const c = new THREE.CylinderGeometry(l.top, l.bottom, l.height, 10, 2);
       const pos = c.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i), z = pos.getZ(i);
@@ -234,10 +250,14 @@ function buildGeometries() {
       pos.needsUpdate = true;
       c.rotateY(l.twist);
       c.translate(0, l.baseY + l.height / 2, 0);
-      cones.push(c);
+      masses.push(c);
     }
-    const merged = mergeCompatibleGeometries(cones);
-    cones.forEach((g) => g.dispose());
+    const crown = new THREE.IcosahedronGeometry(0.22, 0);
+    crown.scale(0.8, 1.2, 0.8);
+    crown.translate(0, 9.3, 0);
+    masses.push(crown);
+    const merged = mergeCompatibleGeometries(masses);
+    masses.forEach((g) => g.dispose());
     if (merged) merged.computeVertexNormals();
     return merged ?? new THREE.ConeGeometry(0.7, 5.5, 7);
   })();
@@ -588,13 +608,17 @@ function buildTintedMaterials(waterPaletteId: WaterPaletteId) {
     return m;
   })();
   const mangroveRootMaterial = new THREE.MeshStandardMaterial({
-    color: tintVegetation('#4a3324', waterPaletteId),
+    color: tintVegetation('#6a4a35', waterPaletteId),
     roughness: 0.95,
   });
-  const mangroveCanopyMaterial = new THREE.MeshStandardMaterial({
-    color: tintVegetation('#1f4b2b', waterPaletteId),
-    roughness: 0.95,
-  });
+  const mangroveCanopyMaterial = (() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#3f6b3a', waterPaletteId),
+      roughness: 0.95,
+    });
+    applyWindSway(m, { anchorY: 0.85, spanY: 1.0, amplitude: 0.10, flutter: 0.025 });
+    return m;
+  })();
   const reedBedMaterial = new THREE.MeshStandardMaterial({
     color: tintVegetation('#6f7d3d', waterPaletteId),
     roughness: 0.9,
@@ -619,7 +643,7 @@ function buildTintedMaterials(waterPaletteId: WaterPaletteId) {
   const cypressTrunkMaterial = new THREE.MeshStandardMaterial({ color: tintVegetation('#3e2f24', waterPaletteId) });
   const cypressCanopyMaterial = (() => {
     const m = new THREE.MeshStandardMaterial({
-      color: tintVegetation('#243f1f', waterPaletteId),
+      color: tintVegetation('#436f34', waterPaletteId),
       roughness: 0.92,
     });
     applyWindSway(m, { anchorY: 1.0, spanY: 9.0, amplitude: 0.07, flutter: 0.015 });

@@ -181,6 +181,49 @@ export function createBodyGeometry(a: BodyArchetype): THREE.BufferGeometry {
   }
 }
 
+// ── Trim bands ──────────────────────────────────────────────────────────────
+// A thin contrasting band baked at sash/hem/pallu height for archetypes where
+// 1612-period dress has an obvious accent. Renders as its own InstancedMesh
+// using the body's matrix, so each ped gets a two-tone outfit read without
+// needing per-instance textures.
+
+export type TrimArchetype = Exclude<BodyArchetype, 'euro-man' | 'euro-woman' | 'child'>;
+
+export const TRIM_ARCHETYPES: TrimArchetype[] = [
+  'robe-long', 'tunic-wrap', 'african-wrap-man', 'sari-woman', 'wrap-woman',
+];
+
+export function isTrimArchetype(a: BodyArchetype): a is TrimArchetype {
+  return a !== 'euro-man' && a !== 'euro-woman' && a !== 'child';
+}
+
+export function createTrimGeometry(a: TrimArchetype): THREE.BufferGeometry {
+  switch (a) {
+    // Sash at waist — slightly larger radius so it sits proud of the robe.
+    case 'robe-long': {
+      return cyl(0.18, 0.18, 0.07, 8, 1.10);
+    }
+    // Sash at waist for tunic+wrap.
+    case 'tunic-wrap': {
+      return cyl(0.18, 0.18, 0.06, 7, 1.00);
+    }
+    // Hem band on skirt — kente/kanga-style horizontal stripe near the bottom.
+    case 'african-wrap-man': {
+      return cyl(0.20, 0.215, 0.08, 8, 0.46);
+    }
+    // Pallu band — diagonal shoulder drape would need real geometry, so we
+    // approximate with a horizontal stripe at upper-skirt height (where the
+    // sari border falls when wrapped).
+    case 'sari-woman': {
+      return cyl(0.165, 0.155, 0.06, 8, 0.95);
+    }
+    // Hem band on the skirt for wrap-woman.
+    case 'wrap-woman': {
+      return cyl(0.205, 0.215, 0.06, 8, 0.32);
+    }
+  }
+}
+
 // ── Arm geometries (shoulder at local origin, arm hanging down -Y) ──────────
 // One mesh per arm type, used for BOTH left and right via runtime matrix.
 
@@ -370,69 +413,100 @@ export function createPropGeometry(p: Exclude<PropType, 'none'>): THREE.BufferGe
 
 type ClothingEntry = { color: [number, number, number]; weight: number };
 
+// Reweighted to push undyed cottons/linens down to ~20-25% (working/poor) and
+// give dyed colors the majority. Real port crowds in 1612 had a lot more
+// indigo, madder red, turmeric yellow, and saffron than the previous
+// pale-dominant palettes implied. Per-region accent layering happens at
+// sample time in Pedestrians.tsx (CLOTHING_ACCENTS_BY_REGION).
 export const CLOTHING_BY_ARCHETYPE: Record<BodyArchetype, ClothingEntry[]> = {
+  // European doublet+breeches — earthy browns/blacks with occasional dyes.
   'euro-man': [
-    { color: [0.42, 0.36, 0.28], weight: 3 },
-    { color: [0.50, 0.48, 0.44], weight: 2 },
-    { color: [0.18, 0.15, 0.12], weight: 2 },
-    { color: [0.30, 0.18, 0.16], weight: 1 },
-    { color: [0.20, 0.28, 0.42], weight: 1 },
-    { color: [0.62, 0.52, 0.35], weight: 1 },
+    { color: [0.42, 0.36, 0.28], weight: 3 },  // brown wool
+    { color: [0.18, 0.15, 0.12], weight: 3 },  // black
+    { color: [0.30, 0.18, 0.16], weight: 2 },  // madder red
+    { color: [0.20, 0.28, 0.42], weight: 2 },  // woad blue
+    { color: [0.55, 0.18, 0.22], weight: 1 },  // crimson
+    { color: [0.32, 0.40, 0.28], weight: 1 },  // muted green
+    { color: [0.50, 0.48, 0.44], weight: 1 },  // grey
+    { color: [0.62, 0.52, 0.35], weight: 1 },  // tan/buff
   ],
+  // Long robe — Arab thawb / Persian khalat / Indian jama. Whites still
+  // common for hot climates but no longer dominant.
   'robe-long': [
-    { color: [0.92, 0.88, 0.80], weight: 4 },
-    { color: [0.15, 0.22, 0.45], weight: 2 },
-    { color: [0.24, 0.40, 0.32], weight: 1 },
-    { color: [0.88, 0.58, 0.14], weight: 1 },
-    { color: [0.18, 0.15, 0.12], weight: 1 },
-    { color: [0.62, 0.38, 0.22], weight: 1 },
+    { color: [0.92, 0.88, 0.80], weight: 3 },  // off-white cotton
+    { color: [0.15, 0.22, 0.45], weight: 3 },  // indigo
+    { color: [0.24, 0.40, 0.32], weight: 2 },  // forest green
+    { color: [0.88, 0.58, 0.14], weight: 2 },  // saffron
+    { color: [0.62, 0.18, 0.20], weight: 2 },  // madder red
+    { color: [0.18, 0.15, 0.12], weight: 1 },  // black
+    { color: [0.62, 0.38, 0.22], weight: 1 },  // ochre
+    { color: [0.45, 0.30, 0.55], weight: 1 },  // logwood violet (rare/expensive)
   ],
+  // Tunic + wrap — workwear + traders. Drop the heavy beige weighting.
   'tunic-wrap': [
-    { color: [0.88, 0.82, 0.70], weight: 3 },
-    { color: [0.78, 0.72, 0.58], weight: 3 },
-    { color: [0.55, 0.45, 0.32], weight: 2 },
-    { color: [0.70, 0.55, 0.32], weight: 1 },
-    { color: [0.15, 0.22, 0.45], weight: 1 },
-    { color: [0.62, 0.30, 0.18], weight: 1 },
+    { color: [0.88, 0.82, 0.70], weight: 2 },  // undyed cotton
+    { color: [0.55, 0.45, 0.32], weight: 2 },  // raw earth
+    { color: [0.15, 0.22, 0.45], weight: 3 },  // indigo
+    { color: [0.62, 0.30, 0.18], weight: 3 },  // madder
+    { color: [0.85, 0.62, 0.15], weight: 2 },  // turmeric
+    { color: [0.24, 0.40, 0.32], weight: 1 },  // myrobalan green
+    { color: [0.78, 0.40, 0.18], weight: 1 },  // brick orange
+    { color: [0.30, 0.22, 0.18], weight: 1 },  // dark brown
   ],
+  // West African wrap — strong indigo + madder traditions, lots of yellow.
   'african-wrap-man': [
-    { color: [0.82, 0.76, 0.62], weight: 3 },
-    { color: [0.62, 0.30, 0.18], weight: 3 },
-    { color: [0.15, 0.22, 0.42], weight: 2 },
-    { color: [0.55, 0.42, 0.28], weight: 2 },
-    { color: [0.45, 0.38, 0.28], weight: 1 },
-    { color: [0.80, 0.55, 0.15], weight: 1 },
+    { color: [0.15, 0.22, 0.45], weight: 4 },  // indigo (Yoruba/Soninke)
+    { color: [0.62, 0.30, 0.18], weight: 3 },  // madder/camwood red
+    { color: [0.85, 0.55, 0.15], weight: 3 },  // earth yellow
+    { color: [0.82, 0.76, 0.62], weight: 2 },  // undyed
+    { color: [0.55, 0.42, 0.28], weight: 1 },  // earth brown
+    { color: [0.20, 0.55, 0.45], weight: 1 },  // teal (rare)
+    { color: [0.72, 0.20, 0.18], weight: 1 },  // bright red
   ],
+  // European bodice + skirt — dark dyes dominated for everyday, with deep
+  // colors for merchants/middle class.
   'euro-woman': [
-    { color: [0.38, 0.32, 0.26], weight: 3 },
-    { color: [0.20, 0.18, 0.15], weight: 3 },
-    { color: [0.52, 0.28, 0.25], weight: 1 },
-    { color: [0.22, 0.30, 0.48], weight: 1 },
-    { color: [0.30, 0.22, 0.32], weight: 1 },
-    { color: [0.75, 0.68, 0.55], weight: 1 },
+    { color: [0.20, 0.18, 0.15], weight: 3 },  // black
+    { color: [0.38, 0.32, 0.26], weight: 2 },  // brown wool
+    { color: [0.52, 0.18, 0.22], weight: 2 },  // crimson
+    { color: [0.22, 0.30, 0.48], weight: 2 },  // woad blue
+    { color: [0.30, 0.22, 0.32], weight: 1 },  // logwood/aubergine
+    { color: [0.32, 0.40, 0.28], weight: 1 },  // muted green
+    { color: [0.62, 0.32, 0.30], weight: 1 },  // dusty rose
+    { color: [0.75, 0.68, 0.55], weight: 1 },  // linen apron color
   ],
+  // Sari — dyed bright was normative across India. White only for widows
+  // and ascetics; bumped down hard.
   'sari-woman': [
-    { color: [0.72, 0.20, 0.18], weight: 4 },
-    { color: [0.90, 0.86, 0.76], weight: 3 },
-    { color: [0.85, 0.62, 0.12], weight: 2 },
-    { color: [0.14, 0.20, 0.48], weight: 2 },
-    { color: [0.62, 0.18, 0.35], weight: 1 },
-    { color: [0.80, 0.40, 0.10], weight: 1 },
+    { color: [0.78, 0.18, 0.20], weight: 3 },  // bright madder red
+    { color: [0.85, 0.62, 0.12], weight: 3 },  // turmeric/saffron
+    { color: [0.14, 0.20, 0.48], weight: 3 },  // indigo
+    { color: [0.62, 0.18, 0.35], weight: 2 },  // lac pink
+    { color: [0.24, 0.55, 0.40], weight: 2 },  // emerald green
+    { color: [0.80, 0.40, 0.10], weight: 2 },  // marigold
+    { color: [0.55, 0.20, 0.50], weight: 1 },  // royal purple
+    { color: [0.92, 0.86, 0.74], weight: 1 },  // off-white (widow/ascetic)
   ],
+  // Wrap-style skirt + bodice — used across Swahili/Malay/Arab women.
   'wrap-woman': [
-    { color: [0.80, 0.74, 0.60], weight: 3 },
-    { color: [0.60, 0.28, 0.16], weight: 3 },
-    { color: [0.14, 0.20, 0.40], weight: 2 },
-    { color: [0.85, 0.62, 0.15], weight: 1 },
-    { color: [0.50, 0.40, 0.25], weight: 1 },
-    { color: [0.92, 0.88, 0.76], weight: 1 },
+    { color: [0.62, 0.22, 0.18], weight: 3 },  // madder red
+    { color: [0.14, 0.20, 0.40], weight: 3 },  // indigo
+    { color: [0.85, 0.62, 0.15], weight: 2 },  // turmeric
+    { color: [0.78, 0.40, 0.18], weight: 2 },  // brick orange
+    { color: [0.24, 0.55, 0.42], weight: 1 },  // green
+    { color: [0.55, 0.20, 0.45], weight: 1 },  // purple
+    { color: [0.80, 0.74, 0.60], weight: 1 },  // undyed
+    { color: [0.45, 0.30, 0.20], weight: 1 },  // earth brown
   ],
+  // Children — simpler clothes, often hand-me-downs in muted tones, but
+  // some bright dyed pieces too.
   'child': [
-    { color: [0.86, 0.80, 0.70], weight: 4 },
-    { color: [0.78, 0.72, 0.60], weight: 3 },
-    { color: [0.55, 0.44, 0.32], weight: 2 },
-    { color: [0.72, 0.25, 0.22], weight: 1 },
-    { color: [0.30, 0.36, 0.50], weight: 1 },
+    { color: [0.78, 0.72, 0.60], weight: 2 },  // undyed
+    { color: [0.55, 0.44, 0.32], weight: 2 },  // earth brown
+    { color: [0.72, 0.25, 0.22], weight: 2 },  // madder red
+    { color: [0.30, 0.36, 0.55], weight: 2 },  // indigo
+    { color: [0.85, 0.60, 0.18], weight: 1 },  // turmeric
+    { color: [0.45, 0.35, 0.25], weight: 1 },  // wool brown
   ],
 };
 

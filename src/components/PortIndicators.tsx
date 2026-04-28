@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useMemo, useRef, useState } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { useGameStore, type Port } from '../store/gameStore';
+import { useGameStore, PORT_FACTION, type Port } from '../store/gameStore';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
-import { createWorldLabelTexture, worldHeightForScreenPixels } from '../utils/worldLabelTextures';
-import { useWaterOverlayLayer } from '../utils/waterOverlayLayer';
+import { FactionFlag } from './FactionFlag';
 
 const SCALE_RADIUS: Record<string, number> = {
   Small: 12, Medium: 18, Large: 24, 'Very Large': 30, Huge: 38,
@@ -79,12 +79,12 @@ function PortGlow() {
 }
 
 // ── Floating Labels ──
-const LABEL_SHOW = 80;
-const LABEL_FULL = 40;
-const LABEL_NEAR = 20;
-const LABEL_Y = 10.4;
-const LABEL_ACCENT = '#c9a84c';
-type LabelMode = 'far' | 'mid' | 'near';
+const LABEL_SHOW = 80;   // start fading in
+const LABEL_FULL = 40;   // fully opaque + show subtitle
+const LABEL_NEAR = 20;   // closer styling cue
+const LABEL_Y = 10.4;    // height above sea level
+
+const FONT_STACK = '"DM Sans", system-ui, -apple-system, sans-serif';
 
 function PortLabels() {
   const ports = useGameStore((s) => s.ports);
@@ -134,68 +134,113 @@ function PortLabel({
   port: Port;
   dist: number;
 }) {
-  const spriteRef = useRef<THREE.Sprite>(null);
-  useWaterOverlayLayer(spriteRef);
-  const { camera, size } = useThree();
-  const opacity = dist > LABEL_FULL ? (LABEL_SHOW - dist) / (LABEL_SHOW - LABEL_FULL) : 1;
-  const labelMode: LabelMode = dist < LABEL_NEAR ? 'near' : dist < LABEL_FULL ? 'mid' : 'far';
-  const label = useMemo(() => createWorldLabelTexture({
-    title: port.name,
-    subtitle: labelMode === 'far' ? undefined : `${port.scale} harbor`,
-    accent: LABEL_ACCENT,
-    variant: labelMode,
-  }), [labelMode, port.name, port.scale]);
-  const labelPosition = useMemo(
-    () => new THREE.Vector3(port.position[0], LABEL_Y, port.position[2]),
-    [port.position],
-  );
-  const baseWorldHeight = labelMode === 'near' ? 10.8 : labelMode === 'mid' ? 9.4 : 8.6;
-  const minReadableScreenHeight = labelMode === 'near' ? 74 : labelMode === 'mid' ? 60 : 46;
-  const maxReadableScreenHeight = labelMode === 'near' ? 170 : labelMode === 'mid' ? 135 : 105;
-  const maxWorldHeight = labelMode === 'near' ? 26 : labelMode === 'mid' ? 23 : 20;
-  const labelOpacity = labelMode === 'far' ? Math.max(0.58, opacity) : opacity;
+  const playerMode = useGameStore((s) => s.playerMode);
+  const setActivePort = useGameStore((s) => s.setActivePort);
 
-  useFrame(() => {
-    const sprite = spriteRef.current;
-    if (!sprite) return;
+  const fade = dist > LABEL_FULL ? (LABEL_SHOW - dist) / (LABEL_SHOW - LABEL_FULL) : 1;
+  const isFar = dist >= LABEL_FULL;
+  const isNear = dist < LABEL_NEAR;
+  const opacity = isFar ? Math.max(0.58, fade) : fade;
+  const showSubtitle = !isFar;
+  const faction = PORT_FACTION[port.id];
+  const clickable = playerMode === 'ship';
 
-    const minReadableWorldHeight = worldHeightForScreenPixels(
-      camera,
-      size.height,
-      labelPosition,
-      minReadableScreenHeight,
-    );
-    const maxReadableWorldHeight = worldHeightForScreenPixels(
-      camera,
-      size.height,
-      labelPosition,
-      maxReadableScreenHeight,
-    );
-    const desired = Math.max(baseWorldHeight, minReadableWorldHeight);
-    const upperBound = Math.min(maxWorldHeight, maxReadableWorldHeight);
-    const worldHeight = Math.min(desired, upperBound);
-    sprite.scale.set(worldHeight * label.aspect, worldHeight, 1);
-  });
-
-  useEffect(() => () => label.texture.dispose(), [label]);
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!clickable) return;
+    setActivePort(port);
+  };
 
   return (
-    <sprite
-      ref={spriteRef}
+    <Html
       position={[port.position[0], LABEL_Y, port.position[2]]}
-      scale={[baseWorldHeight * label.aspect, baseWorldHeight, 1]}
-      renderOrder={1000}
-      raycast={() => null}
+      center
+      zIndexRange={[15, 0]}
+      pointerEvents={clickable ? 'auto' : 'none'}
     >
-      <spriteMaterial
-        map={label.texture}
-        transparent
-        opacity={labelOpacity}
-        depthTest={false}
-        depthWrite={false}
-        toneMapped={false}
-      />
-    </sprite>
+      <div
+        style={{
+          opacity,
+          transition: 'opacity 0.28s ease-out',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          fontFamily: FONT_STACK,
+          display: 'flex',
+          justifyContent: 'center',
+          transform: 'translateY(-50%)',
+          filter: 'drop-shadow(0 6px 14px rgba(0, 0, 0, 0.42))',
+        }}
+      >
+        <div
+          onClick={clickable ? handleClick : undefined}
+          style={{
+            position: 'relative',
+            minWidth: 130,
+            padding: showSubtitle ? '8px 14px 9px' : '6px 14px 7px',
+            borderRadius: 7,
+            background: 'linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 0%, rgba(10, 14, 24, 0.74) 52%, rgba(8, 11, 18, 0.82) 100%)',
+            border: '1px solid rgba(100, 116, 139, 0.36)',
+            boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+            textAlign: 'center',
+            whiteSpace: 'nowrap',
+            pointerEvents: clickable ? 'auto' : 'none',
+            cursor: clickable ? 'pointer' : 'default',
+          }}
+        >
+          {/* Gold hairline along the top edge */}
+          <div
+            style={{
+              position: 'absolute',
+              top: 1,
+              left: 14,
+              right: 14,
+              height: 1,
+              background: '#c9a84c',
+              opacity: 0.55,
+              pointerEvents: 'none',
+            }}
+          />
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            }}
+          >
+            {faction && <FactionFlag nationality={faction} size={isNear ? 18 : 16} />}
+            <div
+              style={{
+                fontSize: isNear ? 19 : 17,
+                fontWeight: 700,
+                color: 'rgba(248, 250, 252, 0.98)',
+                lineHeight: 1.1,
+                letterSpacing: '-0.005em',
+                textShadow: '0 1px 2px rgba(2, 6, 10, 0.55)',
+              }}
+            >
+              {port.name}
+            </div>
+          </div>
+
+          {showSubtitle && (
+            <div
+              style={{
+                fontSize: 10.5,
+                fontWeight: 500,
+                color: 'rgba(224, 231, 241, 0.78)',
+                letterSpacing: '0.04em',
+                marginTop: 3,
+                lineHeight: 1,
+              }}
+            >
+              {port.scale} harbor
+            </div>
+          )}
+        </div>
+      </div>
+    </Html>
   );
 }
 

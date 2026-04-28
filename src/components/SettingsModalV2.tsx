@@ -191,7 +191,7 @@ function Toggle({
       animate={{
         color: value ? S.teal : S.dim,
         borderColor: value ? S.tealDim : S.rule,
-        backgroundColor: value ? `${S.teal}0e` : 'transparent',
+        backgroundColor: value ? `${S.teal}0e` : 'rgba(0,0,0,0)',
       }}
       transition={{ duration: 0.16 }}
       style={{
@@ -402,7 +402,7 @@ function PaletteCard({
       onMouseLeave={() => setHov(false)}
       animate={{
         borderColor: active ? `${S.gold}60` : hov ? `${S.dimGold}44` : S.border,
-        backgroundColor: active ? `${S.gold}09` : hov ? 'rgba(255,255,255,0.015)' : 'transparent',
+        backgroundColor: active ? `${S.gold}09` : hov ? 'rgba(255,255,255,0.015)' : 'rgba(0,0,0,0)',
         boxShadow: active ? `0 0 14px ${S.gold}14` : '0 0 0 transparent',
       }}
       transition={{ duration: 0.15 }}

@@ -34,7 +34,6 @@ import {
   getLiveShipTransform,
   getLiveWalkingTransform,
 } from '../utils/livePlayerTransform';
-import { getDefaultPortImageCandidates } from '../utils/portAssets';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
@@ -74,9 +73,11 @@ const LOADING_MESSAGES = [
   'Loading manifests, ledgers, and cannon stores...',
 ];
 
+// Splash variant: Claude is the default. Pass ?splash=legacy in the URL to
+// fall back to the original Opening overlay for comparison/testing.
 const SPLASH_VARIANT = typeof window !== 'undefined'
-  ? new URLSearchParams(window.location.search).get('splash')
-  : null;
+  ? (new URLSearchParams(window.location.search).get('splash') ?? 'claude')
+  : 'claude';
 
 function formatDate(dayCount: number): string {
   // Game starts May 1, 1612
@@ -618,8 +619,6 @@ export function UI() {
   const activePort = useGameStore((state) => state.activePort);
   const setActivePort = useGameStore((state) => state.setActivePort);
   const dismissedPortRef = useRef<string | null>(null);
-  const approachedPortsRef = useRef<Set<string>>(new Set());
-  const openedFromToastPortRef = useRef<string | null>(null);
   const interactionPrompt = useGameStore((state) => state.interactionPrompt);
   const timeOfDay = useGameStore((state) => state.timeOfDay);
   const crew = useGameStore((state) => state.crew);
@@ -713,6 +712,7 @@ export function UI() {
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hailWasPausedRef = useRef(false);
+  const portWasPausedRef = useRef(false);
   const previousHullRef = useRef(stats.hull);
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
@@ -866,8 +866,8 @@ export function UI() {
     setShowCommission(true);
   }, [showVoyageCurtain, worldReady]);
 
-  // Check for nearby ports — approach toast + activation
-  const PORT_APPROACH_RADIUS_SQ = 60 * 60; // grand toast at ~60 units
+  // Check for nearby ports — auto-open on approach + keep open while in label range
+  const PORT_LABEL_RADIUS_SQ = 80 * 80; // matches LABEL_SHOW in PortIndicators
   useEffect(() => {
     if (startupOverlayActive) {
       if (useGameStore.getState().activePort) setActivePort(null);
@@ -879,7 +879,6 @@ export function UI() {
         playerMode,
         ports,
         activePort: currentActivePort,
-        addNotification: notify,
       } = useGameStore.getState();
       const playerPos = getLiveShipTransform().pos;
       const walkingPos = getLiveWalkingTransform().pos;
@@ -889,47 +888,19 @@ export function UI() {
         const nearest = findNearbyPort(playerPos, ports);
 
         if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
-          openedFromToastPortRef.current = null;
           sfxPortArrival();
           setActiveBuildingToast(null);
           setActivePort(nearest);
         } else if (!nearest && currentActivePort) {
-          const openedFromToastPort = openedFromToastPortRef.current
-            ? ports.find(port => port.id === openedFromToastPortRef.current)
-            : null;
-          const keepToastPortOpen = openedFromToastPort && currentActivePort.id === openedFromToastPort.id && (() => {
-            const dx = playerPos[0] - openedFromToastPort.position[0];
-            const dz = playerPos[2] - openedFromToastPort.position[2];
-            return dx * dx + dz * dz < PORT_APPROACH_RADIUS_SQ;
-          })();
-          if (!keepToastPortOpen) {
-            openedFromToastPortRef.current = null;
+          // Keep the modal open while the player is still within label range of
+          // the active port — covers both proximity-opens and label clicks.
+          const dx = playerPos[0] - currentActivePort.position[0];
+          const dz = playerPos[2] - currentActivePort.position[2];
+          if (dx * dx + dz * dz >= PORT_LABEL_RADIUS_SQ) {
             setActivePort(null);
           }
         }
         if (!findNearbyPort(playerPos, ports)) dismissedPortRef.current = null;
-
-        // Port approach grand toast (ship mode only, wider radius)
-        for (const port of ports) {
-          const dx = playerPos[0] - port.position[0];
-          const dz = playerPos[2] - port.position[2];
-          const distSq = dx * dx + dz * dz;
-          if (distSq < PORT_APPROACH_RADIUS_SQ && !approachedPortsRef.current.has(port.id)) {
-            approachedPortsRef.current.add(port.id);
-            notify(
-              port.name,
-              'info',
-              {
-                subtitle: `${port.scale} port · ${port.culture}`,
-                imageCandidates: getDefaultPortImageCandidates(port.id),
-                openPortId: port.id,
-              },
-            );
-          }
-          if (distSq > PORT_APPROACH_RADIUS_SQ * 2.5) {
-            approachedPortsRef.current.delete(port.id);
-          }
-        }
       } else {
         // Walking mode: per-building detection
         // Market buildings open the full port modal; everything else gets a lightweight toast.
@@ -945,7 +916,6 @@ export function UI() {
           if (tabForBuilding !== undefined) {
             // Buildings that open the full port modal
             if (port.id !== currentActivePort?.id && port.id !== dismissedPortRef.current) {
-              openedFromToastPortRef.current = null;
               sfxPortArrival();
               setPortEntryTab(tabForBuilding);
               setActiveBuildingToast(null);
@@ -955,7 +925,6 @@ export function UI() {
           } else {
             // All other buildings: lightweight toast
             if (currentActivePort) {
-              openedFromToastPortRef.current = null;
               setActivePort(null);
             }
             const current = activeBuildingToastRef.current;
@@ -965,7 +934,6 @@ export function UI() {
           }
         } else {
           if (currentActivePort) {
-            openedFromToastPortRef.current = null;
             setActivePort(null);
           }
           if (activeBuildingToastRef.current) setActiveBuildingToast(null);
@@ -1030,6 +998,16 @@ export function UI() {
     window.addEventListener('npc-warning-hail', handleWarningHail);
     return () => window.removeEventListener('npc-warning-hail', handleWarningHail);
   }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
+
+  useEffect(() => {
+    if (activePort) {
+      portWasPausedRef.current = useGameStore.getState().paused;
+      setPaused(true);
+      return () => {
+        if (!portWasPausedRef.current) setPaused(false);
+      };
+    }
+  }, [activePort, setPaused]);
 
   // Escape key closes modals
   useEffect(() => {
@@ -1696,7 +1674,6 @@ export function UI() {
           <PortModal
             initialTab={portEntryTab}
             onDismiss={() => {
-              openedFromToastPortRef.current = null;
               if (activePort) dismissedPortRef.current = activePort.id;
               setPortEntryTab(undefined);
               setActivePort(null);
@@ -1738,15 +1715,6 @@ export function UI() {
             key={n.id}
             notification={n}
             onDismiss={() => removeNotification(n.id)}
-            onClick={n.openPortId ? () => {
-              const port = useGameStore.getState().ports.find(p => p.id === n.openPortId);
-              if (port) {
-                openedFromToastPortRef.current = port.id;
-                dismissedPortRef.current = null;
-                setActivePort(port);
-              }
-              removeNotification(n.id);
-            } : undefined}
           />
         );
 
@@ -1930,7 +1898,7 @@ export function UI() {
       {/* Instructions Overlay */}
       <AnimatePresence>
         {showInstructions && (
-          SPLASH_VARIANT === 'claude' ? (
+          SPLASH_VARIANT !== 'legacy' ? (
             <ClaudeSplashGlobe
               ready={splashComplete}
               loadingMessage={loadingMessage}

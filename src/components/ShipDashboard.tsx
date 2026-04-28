@@ -689,7 +689,7 @@ export function ShipDashboard({ open, onClose }: { open: boolean; onClose: () =>
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto p-3 md:p-5 scrollbar-thin">
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             {tab === 'overview' && <OverviewTab />}
             {tab === 'crew' && <CrewTab />}
             {tab === 'cargo' && <CargoTab />}

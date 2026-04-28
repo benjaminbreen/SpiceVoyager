@@ -19,8 +19,18 @@ import { SEA_LEVEL } from '../constants/world';
 // surface that the deck reads as an arched span rather than a ribbon skimming
 // the waves, and that piers have a meaningful above-water portion. Shared
 // between cityGenerator (who writes polyline Y) and the renderer (who filters
-// piers to the deck plane).
+// piers to the deck plane). Used for natural-river bridges (London Bridge,
+// etc.) where ocean-going traffic needs clearance.
 export const BRIDGE_DECK_Y = SEA_LEVEL + 2.8;
+
+// Canal bridges sit much lower. Real urban canal bridges (Amsterdam, Bruges,
+// Venice's smaller ponti) are flat or slightly arched footbridges only ~1m
+// above the waterline — barge clearance, not ocean-ship clearance. Authoring
+// canal bridges at the river deck height made the abutment ramps tower above
+// the surrounding polderland, producing the visual "drape" where the bridge
+// looked detached from the ground beneath it. Keeping the canal deck close
+// to terrain Y collapses that height gap to almost nothing.
+export const CANAL_BRIDGE_DECK_Y = SEA_LEVEL + 1.2;
 
 export interface RoadTierStyle {
   /** Full ribbon width in world units (visual). halfWidth = width / 2. */

@@ -1,35 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, Building, Port } from '../store/gameStore';
 import { mouseWorldPos, mouseRay } from '../utils/combatState';
-import { createWorldLabelTexture, worldHeightForScreenPixels } from '../utils/worldLabelTextures';
 import { useWaterOverlayLayer } from '../utils/waterOverlayLayer';
 import { getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impactShakeState';
 
 const HOVER_MIN_RADIUS = 4;
 const HOVER_BUFFER = 1.6;
 const CHECK_INTERVAL = 0.12;
-const PORT_RANGE = 80;
+const PORT_RANGE = 200;
 const FADE_IN_SEC = 0.14;
 const FADE_OUT_SEC = 0.22;
 
-const BASE_WORLD_HEIGHT = 4.1;
-const MAX_WORLD_HEIGHT = 26;
-const MIN_READABLE_SCREEN_PX = 78;
-
-// Glow overlay: additive-blended box around the hovered building
+// Glow overlay: additive-blended box around the hovered building (kept from
+// the previous implementation — the only 3D part of the tooltip).
 const GLOW_COLOR = '#ffd89a';
 const GLOW_MAX_OPACITY = 0.32;
 const GLOW_X_PAD = 1.06;
-const GLOW_Y_PAD = 1.35; // taller than building so roofs/towers stay within
+const GLOW_Y_PAD = 1.35;
 const GLOW_Z_PAD = 1.06;
-const GLOW_PULSE_RATE = 2.4;  // radians/sec
-const GLOW_PULSE_AMP = 0.12;  // fraction of max opacity
+const GLOW_PULSE_RATE = 2.4;
+const GLOW_PULSE_AMP = 0.12;
+
+const FONT_STACK = '"DM Sans", system-ui, -apple-system, sans-serif';
 
 export function BuildingTooltip() {
   const ports = useGameStore(s => s.ports);
-  const { camera, size } = useThree();
   const [displayed, setDisplayed] = useState<Building | null>(null);
   const [damageVersion, setDamageVersion] = useState(0);
   const detectedRef = useRef<Building | null>(null);
@@ -37,14 +35,10 @@ export function BuildingTooltip() {
   const opacityRef = useRef(0);
   const pulseRef = useRef(0);
   const damageVersionRef = useRef(getBuildingDamageVersion());
-  const materialRef = useRef<THREE.SpriteMaterial>(null);
-  const spriteRef = useRef<THREE.Sprite>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const glowMeshRef = useRef<THREE.Mesh>(null);
   const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const positionRef = useMemo(() => new THREE.Vector3(), []);
 
-  // Keep both sprite and glow out of water reflections
-  useWaterOverlayLayer(spriteRef);
   useWaterOverlayLayer(glowMeshRef);
 
   const damageStage = displayed ? getBuildingDamageStage(displayed.id) : 'intact';
@@ -61,18 +55,10 @@ export function BuildingTooltip() {
       ? '#9b6d46'
       : damageStage === 'damaged'
         ? '#d18b4a'
-        : displayed?.labelEyebrowColor;
+        : displayed?.labelEyebrowColor ?? '#c4a1ff';
 
-  const label = useMemo(() => createWorldLabelTexture({
-    title: displayed?.label ?? '',
-    subtitle: displayed?.labelSub,
-    eyebrow,
-    eyebrowColor,
-    accent: '#c9a84c',
-    variant: 'building',
-  }), [displayed?.label, displayed?.labelSub, eyebrow, eyebrowColor, damageVersion]);
-
-  useEffect(() => () => label.texture.dispose(), [label]);
+  // Recompute eyebrow text on damage changes via this dependency.
+  useMemo(() => damageVersion, [damageVersion]);
 
   useFrame((_, delta) => {
     const latestDamageVersion = getBuildingDamageVersion();
@@ -100,41 +86,20 @@ export function BuildingTooltip() {
       opacityRef.current = Math.max(target, opacityRef.current - step);
     }
 
-    // Once fully faded out, swap to the new detection (or unmount)
+    // Once fully faded out, swap to the new detection (or unmount).
     if (opacityRef.current <= 0.001 && active !== current) {
       setDisplayed(active);
     }
 
-    if (materialRef.current) {
-      materialRef.current.opacity = opacityRef.current;
+    // CSS opacity drives the label fade — no React re-renders needed.
+    if (wrapperRef.current) {
+      wrapperRef.current.style.opacity = String(opacityRef.current);
     }
 
     if (glowMatRef.current) {
       pulseRef.current += delta * GLOW_PULSE_RATE;
       const pulse = 1 + Math.sin(pulseRef.current) * GLOW_PULSE_AMP;
       glowMatRef.current.opacity = opacityRef.current * GLOW_MAX_OPACITY * pulse;
-    }
-
-    // Clamp world-size so the sprite stays readable when zoomed out
-    const sprite = spriteRef.current;
-    if (sprite && current) {
-      positionRef.set(
-        current.position[0],
-        current.position[1] + current.scale[1] + 2.5,
-        current.position[2],
-      );
-      const minReadable = worldHeightForScreenPixels(
-        camera,
-        size.height,
-        positionRef,
-        MIN_READABLE_SCREEN_PX,
-      );
-      const worldHeight = THREE.MathUtils.clamp(
-        Math.max(BASE_WORLD_HEIGHT, minReadable),
-        BASE_WORLD_HEIGHT,
-        MAX_WORLD_HEIGHT,
-      );
-      sprite.scale.set(worldHeight * label.aspect, worldHeight, 1);
     }
   });
 
@@ -168,23 +133,107 @@ export function BuildingTooltip() {
           toneMapped={false}
         />
       </mesh>
-      <sprite
-        ref={spriteRef}
+      <Html
         position={[displayed.position[0], tooltipY, displayed.position[2]]}
-        scale={[BASE_WORLD_HEIGHT * label.aspect, BASE_WORLD_HEIGHT, 1]}
-        renderOrder={1001}
-        raycast={() => null}
+        center
+        zIndexRange={[20, 0]}
+        pointerEvents="none"
+        // `transform={false}` (the default) projects the world position to the
+        // screen and renders fixed CSS-pixel sized HTML there. Means text uses
+        // native browser font rasterization at 1:1 pixels — pixel-perfect at
+        // any zoom level. The wrapper opacity is driven by useFrame above.
       >
-        <spriteMaterial
-          ref={materialRef}
-          map={label.texture}
-          transparent
-          opacity={0}
-          depthTest={false}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </sprite>
+        <div
+          ref={wrapperRef}
+          style={{
+            opacity: 0,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            fontFamily: FONT_STACK,
+            // Wrapping the panel in a flex container lets us anchor it via
+            // translate so its bottom edge sits at the world point — i.e. the
+            // panel grows upward from the anchor instead of straddling it.
+            display: 'flex',
+            justifyContent: 'center',
+            transform: 'translateY(-50%)',
+            filter: 'drop-shadow(0 6px 14px rgba(0, 0, 0, 0.38))',
+          }}
+        >
+          <div
+            style={{
+              position: 'relative',
+              minWidth: 112,
+              maxWidth: 264,
+              padding: eyebrow ? '8px 16px 9px' : '7px 16px 8px',
+              borderRadius: 7,
+              background: 'linear-gradient(to bottom, rgba(255, 255, 255, 0.055) 0%, rgba(10, 14, 24, 0.72) 52%, rgba(8, 11, 18, 0.78) 100%)',
+              border: '1px solid rgba(100, 116, 139, 0.34)',
+              boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {/* Gold hairline along the top edge */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 1,
+                left: 14,
+                right: 14,
+                height: 1,
+                background: '#c9a84c',
+                opacity: 0.5,
+                pointerEvents: 'none',
+              }}
+            />
+
+            {eyebrow && (
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 800,
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  color: eyebrowColor,
+                  textShadow: `0 0 8px ${eyebrowColor}80`,
+                  marginBottom: 3,
+                  lineHeight: 1,
+                }}
+              >
+                {eyebrow}
+              </div>
+            )}
+
+            <div
+              style={{
+                fontSize: displayed.labelSub ? 16 : 17,
+                fontWeight: 700,
+                color: 'rgba(248, 250, 252, 0.98)',
+                lineHeight: 1.1,
+                letterSpacing: '-0.005em',
+                textShadow: '0 1px 2px rgba(2, 6, 10, 0.55)',
+              }}
+            >
+              {displayed.label}
+            </div>
+
+            {displayed.labelSub && (
+              <div
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 500,
+                  color: 'rgba(224, 231, 241, 0.78)',
+                  letterSpacing: '0.02em',
+                  marginTop: 2,
+                  lineHeight: 1,
+                }}
+              >
+                {displayed.labelSub}
+              </div>
+            )}
+          </div>
+        </div>
+      </Html>
     </>
   );
 }
@@ -192,7 +241,6 @@ export function BuildingTooltip() {
 function detectHoveredBuilding(ports: Port[]): Building | null {
   if (!mouseWorldPos.valid || !mouseRay.valid) return null;
 
-  // Closest port via water-plane hit (ports sit near sea level — this is fine)
   const wx = mouseWorldPos.x;
   const wz = mouseWorldPos.z;
   let nearPort: Port | null = null;
@@ -208,9 +256,6 @@ function detectHoveredBuilding(ports: Port[]): Building | null {
   }
   if (!nearPort) return null;
 
-  // For buildings, project the mouse ray to each one's own mid-height so the
-  // cursor lines up with the roof the player actually sees, not the water
-  // plane behind it.
   const ox = mouseRay.origin.x;
   const oy = mouseRay.origin.y;
   const oz = mouseRay.origin.z;
@@ -235,8 +280,6 @@ function detectHoveredBuilding(ports: Port[]): Building | null {
     const effRadius = Math.max(HOVER_MIN_RADIUS, halfFootprint + HOVER_BUFFER);
     const effRadiusSq = effRadius * effRadius;
     if (distSq < effRadiusSq) {
-      // Rank by how "deep" the cursor sits inside the hover zone, so small
-      // buildings overlapping a big one still win when you point at them.
       const score = distSq / effRadiusSq;
       if (score < bestScore) {
         bestScore = score;

@@ -141,6 +141,15 @@ export interface Building {
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
   palaceStyle?: string;      // for type === 'palace'; keys render geometry (iberian-colonial, mughal, malay-istana…)
+  /** Crop type for farmhouses — drives both the label and the field renderer.
+   *  Only set when the picked label corresponds to a crop we have geometry for
+   *  (orange / rice / date). Other farmhouses fall back to plain labels with
+   *  no rendered field. */
+  crop?: 'orange' | 'rice' | 'date';
+  /** World-space bounds of the rendered farm plot around the farmhouse.
+   *  Half-size in world units (square). The hut sits roughly at the center;
+   *  crops fill the surrounding ring. */
+  cropPlot?: { halfSize: number };
 }
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
