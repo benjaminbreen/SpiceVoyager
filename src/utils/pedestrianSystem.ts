@@ -6,13 +6,14 @@
  * movement patterns driven by building layout and time of day.
  */
 
-import { Building, BuildingType, Culture, Road } from '../store/gameStore';
+import { Building, BuildingType, Culture, CulturalRegion, Nationality, Road } from '../store/gameStore';
 import { getLandCharacter } from './landCharacter';
 import { getTerrainHeight } from './terrain';
 import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from './roadSurface';
 import { SEA_LEVEL } from '../constants/world';
 import { gunfireAlerts } from './combatState';
 import { placeHinterlandScenes, getSceneLoadout, SceneInstance } from './hinterlandScenes';
+import { getGivenName } from './buildingLabels';
 
 // ── Seeded PRNG ─────────────────────────────────────────────────────────────
 function mulberry32(a: number) {
@@ -37,6 +38,11 @@ export interface Corridor {
   totalLength: number;
   weight: number;           // traffic importance (higher = more pedestrians assigned)
   type: PedestrianType;     // dominant pedestrian type for this corridor
+  /** Id of the residential building this corridor terminates at (if any).
+   *  Pedestrians walking this corridor are assumed to live there, so they
+   *  inherit the building's familyName and get a given name. Hub-to-hub
+   *  corridors leave this undefined — those walkers stay anonymous. */
+  homeBuildingId?: string;
 }
 
 export interface Pedestrian {
@@ -75,6 +81,12 @@ export interface Pedestrian {
   panicFleeZ: number;
   // Set true when the pedestrian is killed by a projectile.
   dead: boolean;
+  // Identity — set at init for peds with a home building (corridor walkers
+  // whose corridor terminates at a residence + hinterland wanderers anchored
+  // to a farmstead/shack). Wanderers and scene NPCs leave these undefined.
+  homeBuildingId?: string;
+  givenName?: string;
+  familyName?: string;
 }
 
 export interface PedestrianSystemState {
@@ -254,6 +266,7 @@ function buildCorridor(
   waypoints: [number, number][],
   weight: number,
   type: PedestrianType,
+  homeBuildingId?: string,
 ): Corridor | null {
   if (waypoints.length < 2) return null;
   const segLengths: number[] = [];
@@ -266,7 +279,16 @@ function buildCorridor(
     total += len;
   }
   if (total < 0.5) return null;
-  return { waypoints, segLengths, totalLength: total, weight, type };
+  return { waypoints, segLengths, totalLength: total, weight, type, homeBuildingId };
+}
+
+function residentialSide(a: Building, b: Building): Building | undefined {
+  const isRes = (x: Building) =>
+    x.type === 'house' || x.type === 'shack' || x.type === 'estate' || x.type === 'farmhouse';
+  if (isRes(a) && !isRes(b)) return a;
+  if (isRes(b) && !isRes(a)) return b;
+  if (isRes(a) && isRes(b)) return a;
+  return undefined;
 }
 
 // ── Corridor generation ─────────────────────────────────────────────────────
@@ -331,18 +353,20 @@ function generateCorridors(buildings: Building[], rng: () => number, roads?: Roa
     const dominant = aTraffic >= bTraffic ? a : b;
     const type = pedestrianTypeForBuilding(dominant);
 
+    const home = residentialSide(a, b)?.id;
+
     // Try a road-following path first; it gets a weight bonus because roads
     // are visually the "right" place for foot traffic.
     const roadPath = tryRoadAwarePath(ax, az, bx, bz, roads);
     if (roadPath && validateWaypoints(roadPath, roadIndex)) {
-      const c = buildCorridor(roadPath, weight * 1.3, type);
+      const c = buildCorridor(roadPath, weight * 1.3, type, home);
       if (c) { corridors.push(c); return; }
     }
 
     // Fallback: straight corridor from building edge to building edge.
     const straight: [number, number][] = [[ax, az], [bx, bz]];
     if (!validateWaypoints(straight, roadIndex)) return;
-    const c = buildCorridor(straight, weight, type);
+    const c = buildCorridor(straight, weight, type, home);
     if (c) corridors.push(c);
   };
 
@@ -465,11 +489,24 @@ export function initPedestrianSystem(
   portZ: number,
   seed: number,
   roads?: Road[],
+  nationality?: Nationality,
+  region?: CulturalRegion,
 ): PedestrianSystemState {
   const rng = mulberry32(seed * 13 + 9901);
   const roadIndex = buildRoadSurfaceIndex(roads);
   const corridors = generateCorridors(buildings, rng, roads, roadIndex);
   const maxActive = MAX_PEDESTRIANS_BY_SCALE[portScale] ?? 60;
+  // Building lookup so corridor walkers can read their home building's
+  // family name without scanning the whole array per ped.
+  const buildingById = new Map<string, Building>();
+  for (const b of buildings) buildingById.set(b.id, b);
+
+  const assignIdentity = (p: Pedestrian, building: Building | undefined) => {
+    if (!building?.familyName) return;
+    p.homeBuildingId = building.id;
+    p.familyName = building.familyName;
+    p.givenName = getGivenName(culture, p.figureType, rng, nationality, region);
+  };
 
   // Pre-compute total corridor weight for weighted selection
   const totalWeight = corridors.reduce((sum, c) => sum + c.weight, 0);
@@ -541,7 +578,9 @@ export function initPedestrianSystem(
         // Couldn't find walkable land — make a corridor walker instead
         if (corridors.length > 0) {
           const ci = Math.floor(rng() * corridors.length);
-          pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng, portX, portZ));
+          const walker = makeCorridorWalker(ci, corridors[ci], rng, portX, portZ);
+          pedestrians.push(walker);
+          assignIdentity(walker, buildingById.get(corridors[ci].homeBuildingId ?? ''));
           continue;
         }
         continue; // skip this slot entirely
@@ -590,7 +629,9 @@ export function initPedestrianSystem(
         r -= corridors[ci].weight;
         if (r <= 0) break;
       }
-      pedestrians.push(makeCorridorWalker(ci, corridors[ci], rng, portX, portZ));
+      const walker = makeCorridorWalker(ci, corridors[ci], rng, portX, portZ);
+      pedestrians.push(walker);
+      assignIdentity(walker, buildingById.get(corridors[ci].homeBuildingId ?? ''));
     }
   }
 
@@ -620,7 +661,7 @@ export function initPedestrianSystem(
       const ft = pickFigureType(rng);
       const target = findWalkableLandPoint(wx, wz, 3, 10, rng) ?? [wx, wz];
 
-      pedestrians.push({
+      const hinterlandPed: Pedestrian = {
         corridorIdx: -1,
         progress: 0,
         speed: (ft === 'child' ? 0.22 : 0.28) + rng() * 0.2, // rural pace: a touch slower
@@ -643,7 +684,9 @@ export function initPedestrianSystem(
         panicFleeX: 0,
         panicFleeZ: 0,
         dead: false,
-      });
+      };
+      pedestrians.push(hinterlandPed);
+      assignIdentity(hinterlandPed, b);
       hinterlandAdded++;
     }
   }

@@ -14,9 +14,9 @@
  */
 
 import { useRef, useMemo, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore, Culture, CulturalRegion, PORT_CULTURAL_REGION } from '../store/gameStore';
+import { useGameStore, Culture, CulturalRegion, PORT_CULTURAL_REGION, PORT_FACTION } from '../store/gameStore';
 import {
   PedestrianSystemState, FigureType,
   initPedestrianSystem, updatePedestrians,
@@ -389,6 +389,19 @@ function createLanternGeometry(): THREE.BufferGeometry {
 const MAX_PER_MESH = 160; // ample headroom; arm meshes take 2 slots per ped
 const FIGURE_TYPES: FigureType[] = ['man', 'woman', 'child'];
 
+// ── Click selection (shared across all Pedestrians instances) ──
+// Mirrors NPCShip's module-level selectedNpcId pattern: state lives outside
+// React so per-frame updates in useFrame don't trigger re-renders.
+let selectedPedIdx: number | null = null;
+
+const ROLE_LABEL: Record<string, string> = {
+  merchant: 'merchant',
+  laborer: 'laborer',
+  religious: 'devotee',
+  sailor: 'sailor',
+  farmer: 'farmer',
+};
+
 // Head-turn: peds within this radius rotate their head toward the player.
 const HEAD_TURN_RADIUS = 6;
 const HEAD_TURN_RADIUS_SQ = HEAD_TURN_RADIUS * HEAD_TURN_RADIUS;
@@ -426,6 +439,12 @@ export function Pedestrians() {
     'sari-woman': null, 'wrap-woman': null,
   });
   const lanternRef = useRef<THREE.InstancedMesh>(null);
+  // Click hitbox — invisible cylinders, one per ped, instanceId == ped index.
+  // Lets raycasting against a single mesh resolve straight back to a
+  // pedestrian without the per-archetype counter bookkeeping that the body
+  // meshes use.
+  const hitboxRef = useRef<THREE.InstancedMesh>(null);
+  const selectionRingRef = useRef<THREE.Mesh>(null);
 
   const dummy = useRef(new THREE.Object3D());
   const headDummy = useRef(new THREE.Object3D());
@@ -477,6 +496,17 @@ export function Pedestrians() {
     return m;
   }, []);
   const lanternGeo = useMemo(() => createLanternGeometry(), []);
+  // Hitbox: cylinder roughly the size of a person, centered at ped position
+  // plus a y-offset so the matrix-translate hits its midriff. CylinderGeometry
+  // is created erect along Y, so we don't need to rotate.
+  const hitboxGeo = useMemo(() => new THREE.CylinderGeometry(0.55, 0.55, 1.8, 8, 1), []);
+  const hitboxMat = useMemo(() => new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    colorWrite: false,
+    side: THREE.DoubleSide,
+  }), []);
 
   const bodyMat = useMemo(() => new THREE.MeshStandardMaterial({ roughness: 0.88, metalness: 0 }), []);
   const skinMat = useMemo(() => new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0 }), []);
@@ -504,10 +534,15 @@ export function Pedestrians() {
       port.buildings, port.culture, port.scale,
       port.position[0], port.position[2], worldSeed,
       port.roads,
+      PORT_FACTION[port.id],
+      PORT_CULTURAL_REGION[port.id],
     );
     systemRef.current = system;
     portIdRef.current = port.id;
     clearLivePedestrians();
+    // Drop any stale selection from a previous port — the index would now
+    // point at a different person in the new system.
+    selectedPedIdx = null;
 
     const rng = mulberry32(worldSeed * 31 + 7717);
     profilesRef.current = system.pedestrians.map(p =>
@@ -930,9 +965,84 @@ export function Pedestrians() {
       lanternRef.current.count = lanternCount;
       if (lanternCount > 0) lanternRef.current.instanceMatrix.needsUpdate = true;
     }
+
+    // ── Click hitboxes ──
+    // One cylinder per ped, instanceId == pedestrian array index. Dead peds
+    // get parked far below the ground so raycasts skip them; their slot
+    // remains in place so the index↔ped mapping stays stable.
+    const hitbox = hitboxRef.current;
+    if (hitbox) {
+      for (let i = 0; i < activeCount; i++) {
+        const p = system.pedestrians[i];
+        if (p.dead) {
+          d.position.set(0, -10000, 0);
+          d.scale.setScalar(0.001);
+        } else {
+          d.position.set(p.x, p.y + 0.9, p.z);
+          d.scale.setScalar(1);
+        }
+        d.rotation.set(0, 0, 0);
+        d.updateMatrix();
+        hitbox.setMatrixAt(i, d.matrix);
+      }
+      hitbox.count = activeCount;
+      hitbox.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Selection ring ──
+    const ring = selectionRingRef.current;
+    if (ring) {
+      const idx = selectedPedIdx;
+      if (idx !== null && idx < activeCount && !system.pedestrians[idx].dead) {
+        const sp = system.pedestrians[idx];
+        ring.position.set(sp.x, sp.y + 0.05, sp.z);
+        ring.rotation.z = state.clock.elapsedTime * 0.5;
+        const pulse = 0.45 + Math.sin(state.clock.elapsedTime * 3) * 0.15;
+        (ring.material as THREE.MeshBasicMaterial).opacity = pulse;
+        ring.visible = true;
+      } else {
+        // Auto-deselect when the target dies or scrolls off the active slice.
+        if (idx !== null && (idx >= activeCount || system.pedestrians[idx]?.dead)) {
+          selectedPedIdx = null;
+        }
+        ring.visible = false;
+      }
+    }
   });
 
   if (ports.length === 0) return null;
+
+  const handlePedClick = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    const idx = e.instanceId;
+    if (idx === undefined) return;
+    const system = systemRef.current;
+    if (!system) return;
+    const ped = system.pedestrians[idx];
+    if (!ped || ped.dead) return;
+
+    // Toggle: click again to deselect
+    if (selectedPedIdx === idx) {
+      selectedPedIdx = null;
+      return;
+    }
+    selectedPedIdx = idx;
+
+    const port = ports[0];
+    const home = ped.homeBuildingId
+      ? port?.buildings.find(b => b.id === ped.homeBuildingId)
+      : undefined;
+    const role = ROLE_LABEL[ped.type] ?? ped.type;
+    let phrase: string;
+    if (ped.givenName && ped.familyName) {
+      phrase = home?.label
+        ? `${ped.givenName} ${ped.familyName}, a ${role} of ${home.label}.`
+        : `${ped.givenName} ${ped.familyName}, a ${role}.`;
+    } else {
+      phrase = `a ${role} on the streets.`;
+    }
+    useGameStore.getState().addNotification(`You see ${phrase}`, 'info');
+  };
 
   return (
     <>
@@ -995,6 +1105,29 @@ export function Pedestrians() {
         args={[lanternGeo, lanternMat, MAX_PER_MESH]}
         frustumCulled={false}
       />
+      {/* Click hitboxes — invisible, but raycastable. */}
+      <instancedMesh
+        ref={hitboxRef}
+        args={[hitboxGeo, hitboxMat, MAX_PER_MESH]}
+        frustumCulled={false}
+        onClick={handlePedClick}
+      />
+      {/* Selection ring — single mesh, repositioned each frame. */}
+      <mesh
+        ref={selectionRingRef}
+        rotation={[-Math.PI / 2, 0, 0]}
+        visible={false}
+        renderOrder={2}
+      >
+        <ringGeometry args={[0.6, 0.78, 32]} />
+        <meshBasicMaterial
+          color="#ffe7a8"
+          transparent
+          opacity={0.5}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
     </>
   );
 }

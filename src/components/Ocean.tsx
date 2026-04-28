@@ -621,6 +621,7 @@ export function Ocean() {
 
   const waterNormals = useLoader(THREE.TextureLoader, WATER_NORMALS_PATH);
   waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+  waterNormals.anisotropy = 8;
 
   const water = useMemo(() => {
     const geometry = new THREE.PlaneGeometry(10000, 10000);

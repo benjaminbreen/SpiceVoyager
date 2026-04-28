@@ -336,8 +336,9 @@ export function Ship() {
     }
 
     const tex = new THREE.CanvasTexture(canvas);
-    tex.minFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
+    tex.anisotropy = 8;
     return tex;
   }, [shipFlag]);
 
@@ -431,8 +432,9 @@ export function Ship() {
       ctx.fillRect(cx - 2, cy - armLen + 4, 4, armLen * 2 - 8);
       ctx.fillRect(cx - armLen + 4, cy - 2, armLen * 2 - 8, 4);
       const tex = new THREE.CanvasTexture(canvas);
-      tex.minFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
       tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = 8;
       return tex;
     });
   }, [profile, shipFlag]);
@@ -481,8 +483,9 @@ export function Ship() {
     ctx.arc(58, 58, 3, 0, Math.PI * 2);
     ctx.fill();
     const tex = new THREE.CanvasTexture(canvas);
-    tex.minFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
+    tex.anisotropy = 8;
     return tex;
   }, [profile]);
   useEffect(() => () => oculusTexture?.dispose(), [oculusTexture]);

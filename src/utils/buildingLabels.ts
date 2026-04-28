@@ -121,7 +121,7 @@ const ATLANTIC_FAMILIES: Record<AtlanticNationality, string[]> = {
   ],
 };
 
-function getFamilyName(
+export function getFamilyName(
   culture: Culture,
   rng: () => number,
   nationality?: Nationality,
@@ -130,6 +130,135 @@ function getFamilyName(
   if (culture === 'European') return pick(EUROPEAN_FAMILIES[asEuropean(nationality)], rng);
   if (culture === 'Atlantic') return pick(ATLANTIC_FAMILIES[asAtlantic(nationality)], rng);
   return pick(INDIAN_OCEAN_FAMILIES[asRegion(region)], rng);
+}
+
+// ── Given-name pools (c. 1612) ───────────────────────────────────────────────
+// Used to give each pedestrian an individual identity that pairs with their
+// home building's family name. Pools are gendered and culture/region-keyed so
+// a Gujarati merchant's daughter doesn't end up with a Castilian name.
+
+type NamePool = { male: string[]; female: string[] };
+
+const EUROPEAN_GIVEN: Record<EuropeanNationality, NamePool> = {
+  Portuguese: {
+    male: ['João', 'Pedro', 'Francisco', 'Manuel', 'António', 'Diogo', 'Bento',
+           'Lourenço', 'Sebastião', 'Rui', 'Fernão', 'Vasco', 'Tomé',
+           'Cristóvão', 'Henrique', 'Jorge', 'Estêvão', 'Gaspar', 'Inácio'],
+    female: ['Maria', 'Catarina', 'Isabel', 'Joana', 'Beatriz', 'Leonor',
+             'Ana', 'Inês', 'Helena', 'Margarida', 'Filipa', 'Mariana',
+             'Bárbara', 'Luísa', 'Antónia', 'Brígida', 'Branca'],
+  },
+  English: {
+    male: ['William', 'Thomas', 'John', 'Robert', 'Henry', 'Edward', 'Richard',
+           'Francis', 'George', 'Walter', 'Christopher', 'James', 'Anthony',
+           'Hugh', 'Ralph', 'Nicholas', 'Lawrence', 'Roger', 'Humphrey'],
+    female: ['Mary', 'Elizabeth', 'Anne', 'Jane', 'Margaret', 'Katherine',
+             'Joan', 'Alice', 'Frances', 'Dorothy', 'Ellen', 'Barbara',
+             'Bridget', 'Susan', 'Eleanor', 'Cecily', 'Grace', 'Agnes'],
+  },
+  Dutch: {
+    male: ['Pieter', 'Jan', 'Hendrik', 'Willem', 'Adriaen', 'Cornelis',
+           'Joost', 'Maarten', 'Dirck', 'Anthonie', 'Jacob', 'Gerrit',
+           'Frederik', 'Reinier', 'Floris', 'Lucas'],
+    female: ['Anna', 'Maria', 'Margriet', 'Geertje', 'Hendrickje', 'Trijntje',
+             'Aaltje', 'Catharina', 'Geertruyd', 'Lijsbeth', 'Sara',
+             'Susanna', 'Magdalena'],
+  },
+  Spanish: {
+    male: ['Juan', 'Pedro', 'Francisco', 'Diego', 'Alonso', 'Hernán',
+           'Cristóbal', 'Antonio', 'Miguel', 'Gonzalo', 'Rodrigo', 'Fernando',
+           'Bartolomé', 'Sebastián', 'Andrés', 'Luis', 'Tomás', 'Gaspar'],
+    female: ['María', 'Isabel', 'Catalina', 'Juana', 'Ana', 'Beatriz',
+             'Inés', 'Leonor', 'Constanza', 'Mariana', 'Francisca', 'Luisa',
+             'Magdalena'],
+  },
+};
+
+const INDIAN_OCEAN_GIVEN: Record<CulturalRegion, NamePool> = {
+  Arab: {
+    male: ['Ahmad', 'Muhammad', 'Ali', 'Hassan', 'Husayn', 'Salim', 'Rashid',
+           'Khalid', 'Ibrahim', 'Yusuf', 'Sulayman', 'Saʿid', 'Hamza',
+           'ʿUmar', 'Mansur', 'Faisal', 'Hamad', 'Majid'],
+    female: ['Fatima', 'ʿAisha', 'Khadija', 'Maryam', 'Zaynab', 'Salma',
+             'Layla', 'Hafsa', 'Safiya', 'Sara', 'Amina', 'Hind', 'Ruqayya'],
+  },
+  Swahili: {
+    male: ['Bakari', 'Juma', 'Hamisi', 'Kassim', 'Othman', 'Sefu', 'Faraji',
+           'Ali', 'Saidi', 'Hamadi', 'Mwinyi', 'Salim', 'Rashidi', 'Bwana'],
+    female: ['Halima', 'Asha', 'Zakia', 'Mwana', 'Subira', 'Bibi', 'Amina',
+             'Mwanaisha', 'Khadija', 'Fatuma', 'Mwajuma', 'Salma'],
+  },
+  Gujarati: {
+    male: ['Jagjivan', 'Chandrakant', 'Ramji', 'Premji', 'Devji', 'Lakshmidas',
+           'Manilal', 'Vithaldas', 'Govind', 'Hari', 'Mohan', 'Narayan',
+           'Bhimji', 'Tribhovan', 'Damodar', 'Madhav', 'Hirji', 'Vallabhji'],
+    female: ['Lakshmi', 'Parvati', 'Sita', 'Radha', 'Gauri', 'Indu',
+             'Kamala', 'Saraswati', 'Ratan', 'Hira', 'Mukta', 'Ganga',
+             'Devi', 'Jamna'],
+  },
+  Malabari: {
+    male: ['Krishnan', 'Achuthan', 'Raman', 'Govindan', 'Narayanan',
+           'Sankaran', 'Damodaran', 'Madhavan', 'Kunhi', 'Kumaran', 'Velu',
+           'Ananthan', 'Subramanian', 'Kesavan', 'Gopalan'],
+    female: ['Lakshmi', 'Parvathi', 'Devaki', 'Yashoda', 'Bhavani', 'Janaki',
+             'Kalyani', 'Meenakshi', 'Subhadra', 'Ammini', 'Kaveri'],
+  },
+  Malay: {
+    male: ['Hassan', 'Hamzah', 'Ibrahim', 'Yusuf', 'Iskandar', 'Mansur',
+           'Daud', 'Mahmud', 'Sulaiman', 'Razak', 'Jamal', 'Zainal',
+           'Ahmad', 'Ismail', 'Hang Jebat', 'Hang Tuah'],
+    female: ['Siti', 'Aisyah', 'Fatimah', 'Khadijah', 'Mariam', 'Zainab',
+             'Salmah', 'Halimah', 'Rohana', 'Tun Teja', 'Puteri'],
+  },
+  Chinese: {
+    male: ['Chao', 'Xiu', 'Wei', 'Jin', 'Ming', 'Bao', 'Yi', 'Tian',
+           'Zhi', 'Lung', 'Cheng', 'Hao', 'Long', 'Zhong', 'Feng', 'Kai'],
+    female: ['Mei', 'Hua', 'Lan', 'Yu', 'Xiang', 'Ling', 'Yan', 'Hong',
+             'Lian', 'Qing', 'Bing', 'Cui', 'Fang'],
+  },
+};
+
+const ATLANTIC_GIVEN: Record<AtlanticNationality, NamePool> = {
+  Portuguese: EUROPEAN_GIVEN.Portuguese,
+  Spanish: EUROPEAN_GIVEN.Spanish,
+  // 1607–1614 Jamestown muster was overwhelmingly male; we still need a
+  // female pool for the ~10% of female colonists arriving on resupply ships.
+  English: {
+    male: ['William', 'John', 'Thomas', 'Henry', 'George', 'Edward',
+           'Christopher', 'Robert', 'Richard', 'Anthony', 'Bartholomew',
+           'Francis', 'James', 'Nicholas', 'Samuel', 'Walter'],
+    female: ['Anne', 'Temperance', 'Joan', 'Margaret', 'Mary', 'Elizabeth',
+             'Alice', 'Frances', 'Cicely', 'Bridget'],
+  },
+};
+
+const WEST_AFRICAN_GIVEN: NamePool = {
+  // Akan / Yoruba / Mande given-name shapes at 1612. Coast and inland mix
+  // would have varied wildly; this pool gives a usable cross-section that
+  // reads as period rather than modern Pan-African.
+  male: ['Kofi', 'Kwame', 'Yaw', 'Kwadwo', 'Kwabena', 'Kwesi', 'Akwasi',
+         'Ade', 'Olu', 'Tunde', 'Sekou', 'Ibrahima', 'Diallo', 'Bakary'],
+  female: ['Adwoa', 'Akua', 'Abena', 'Yaa', 'Esi', 'Ama', 'Afia',
+           'Ayodele', 'Folake', 'Aisha', 'Mariama', 'Fatoumata'],
+};
+
+/** Pick a culture- and gender-appropriate given name. Children fall through
+ *  to the female pool half the time and the male pool the rest. */
+export function getGivenName(
+  culture: Culture,
+  figureType: 'man' | 'woman' | 'child',
+  rng: () => number,
+  nationality?: Nationality,
+  region?: CulturalRegion,
+): string {
+  let pool: NamePool;
+  if (culture === 'European') pool = EUROPEAN_GIVEN[asEuropean(nationality)];
+  else if (culture === 'Atlantic') pool = ATLANTIC_GIVEN[asAtlantic(nationality)];
+  else if (culture === 'West African') pool = WEST_AFRICAN_GIVEN;
+  else pool = INDIAN_OCEAN_GIVEN[asRegion(region)];
+
+  const isMale = figureType === 'man' || (figureType === 'child' && rng() < 0.5);
+  return pick(isMale ? pool.male : pool.female, rng);
 }
 
 // ── Fort names ───────────────────────────────────────────────────────────────
@@ -1003,6 +1132,11 @@ const MERCHANT_GOODS: Record<Culture, string[]> = {
 export interface BuildingLabelResult {
   label: string;
   sub: string;
+  /** Surname of the household occupying this building, when residential.
+   *  Pedestrians anchored to this building inherit it as their family name. */
+  familyName?: string;
+  /** Honorific (Fidalgo, Sheikh, Seth …) for elite residences. */
+  title?: string;
 }
 
 // ── Named landmark labels ────────────────────────────────────────────────────
@@ -1147,16 +1281,75 @@ function spiritualLabel(
  * culture, and placement characteristics.
  */
 // ── Farmstead crop classifier ────────────────────────────────────────────────
-// Subset of the wet/dry crop pools that we have rendered field geometry for.
-// When one of these matches, cityGenerator stores it on b.crop and the field
-// renderer draws actual trees / paddies / palms around the hut. Anything not
-// listed here falls back to the plain label-only path.
-export type FarmCrop = 'orange' | 'rice' | 'date';
+// Maps a label string to one of the renderable crop categories. When a match
+// hits, cityGenerator stores the crop + tint on the building and the field
+// renderer (FarmsteadFields.tsx) draws the actual orchard / paddy / vineyard /
+// grain field around the hut. Unmatched farmsteads still get the plain hut
+// and label — they just won't grow geometry yet.
+export type FarmCrop = 'orange' | 'rice' | 'date' | 'palm' | 'orchard' | 'vineyard' | 'grain' | 'banana';
 
 export interface FarmCropPick {
   crop?: FarmCrop;
+  /** Optional canopy / ground tint for the renderer. Drives the visual
+   *  difference between e.g. an olive grove (silvery) and a mango orchard
+   *  (deep green) from the same shared orchard geometry. */
+  tint?: [number, number, number];
   label: string;
   sub: string;
+}
+
+/**
+ * Per-fruit canopy tints for orchards. Keys are the lowercased substring we
+ * look for in the label. First match wins, so order matters where labels
+ * overlap (e.g. "cork oak" before "oak").
+ */
+const ORCHARD_TINTS: [string, [number, number, number]][] = [
+  // Mediterranean — silvery, dusty greens
+  ['fig',         [0.62, 0.70, 0.48]],
+  ['olive',       [0.58, 0.66, 0.46]],
+  ['cork oak',    [0.55, 0.62, 0.45]],
+  ['almond',      [0.62, 0.72, 0.50]],
+  ['pomegranate', [0.50, 0.58, 0.32]],
+  ['chestnut',    [0.45, 0.58, 0.28]],
+  ['willow',      [0.55, 0.68, 0.42]],
+  ['frankincense',[0.60, 0.65, 0.45]],
+  ['henna',       [0.50, 0.62, 0.35]],
+  // Tropical / South Asian — saturated deep greens
+  ['mango',       [0.20, 0.42, 0.18]],
+  ['jackfruit',   [0.18, 0.40, 0.18]],
+  ['cashew',      [0.42, 0.55, 0.34]],
+  ['cacao',       [0.25, 0.45, 0.22]],
+  ['tea garden',  [0.30, 0.52, 0.28]],
+  ['mulberry',    [0.32, 0.50, 0.25]],
+  ['breadfruit',  [0.25, 0.46, 0.22]],
+  // Temperate fruit
+  ['pear',        [0.42, 0.62, 0.30]],
+  ['apple',       [0.42, 0.62, 0.30]],
+  ['fruit',       [0.40, 0.60, 0.30]],
+  // Catch-all for "Orchard" / "Hop garden tree" etc.
+  ['orchard',     [0.38, 0.58, 0.28]],
+];
+
+/** Grain field tints — gold for ripe cereal, paler for fallow / hay. */
+const GRAIN_TINTS: [string, [number, number, number]][] = [
+  ['wheat',     [0.78, 0.65, 0.30]],
+  ['barley',    [0.78, 0.66, 0.34]],
+  ['rye',       [0.74, 0.62, 0.32]],
+  ['oat',       [0.80, 0.70, 0.36]],
+  ['maize',     [0.72, 0.70, 0.30]],
+  ['sorghum',   [0.70, 0.55, 0.28]],
+  ['millet',    [0.74, 0.62, 0.32]],
+  ['bajri',     [0.72, 0.60, 0.30]],
+  ['buckwheat', [0.72, 0.62, 0.40]],
+  ['soybean',   [0.62, 0.68, 0.30]],
+  ['hay',       [0.78, 0.72, 0.42]],
+  ['fallow',    [0.66, 0.62, 0.42]],
+  ['grain',     [0.76, 0.64, 0.32]],
+];
+
+function matchTint(label: string, table: [string, [number, number, number]][]): [number, number, number] | undefined {
+  for (const [key, tint] of table) if (label.includes(key)) return tint;
+  return undefined;
 }
 
 /**
@@ -1192,20 +1385,42 @@ export function pickFarmCrop(
   const label = pick(wet ? wetCrops : dryCrops, rng);
   const sub = 'farmstead';
 
-  // Map the label string back to a renderable crop. Substring match keeps
-  // this loose enough that future label additions ("Mandarin grove", etc.)
-  // light up automatically without touching this switch.
+  // Specific-first matching: rice/date/orange were the v1 categories with
+  // their own dedicated geometry, so they win over the broader 'orchard'
+  // catch-all. Within each branch we hand back any tint the renderer can use.
   const lower = label.toLowerCase();
   let crop: FarmCrop | undefined;
-  if (lower.includes('rice') || lower.includes('paddy') || lower.includes('sawah')) {
+  let tint: [number, number, number] | undefined;
+
+  if (lower.includes('rice') || lower.includes('paddy') || lower.includes('sawah') || lower.includes('lotus')) {
     crop = 'rice';
   } else if (lower.includes('date palm')) {
     crop = 'date';
-  } else if (lower.includes('orange') || lower.includes('citrus')) {
+  } else if (lower.includes('coconut') || lower.includes('sago palm') || lower.includes('arecanut') || lower.includes('areca')) {
+    crop = 'palm';
+  } else if (lower.includes('orange') || lower.includes('citrus') || lower.includes('huerta') || lower.includes('citrus grove')) {
     crop = 'orange';
+  } else if (lower.includes('vineyard') || lower.includes('hop garden')) {
+    crop = 'vineyard';
+    tint = [0.40, 0.58, 0.28];
+  } else if (lower.includes('banana') || lower.includes('plantain') || lower.includes('sugarcane') || lower.includes('bamboo')) {
+    crop = 'banana';
+    tint = [0.35, 0.58, 0.24];
+  } else {
+    const orchardTint = matchTint(lower, ORCHARD_TINTS);
+    if (orchardTint) {
+      crop = 'orchard';
+      tint = orchardTint;
+    } else {
+      const grainTint = matchTint(lower, GRAIN_TINTS);
+      if (grainTint) {
+        crop = 'grain';
+        tint = grainTint;
+      }
+    }
   }
 
-  return { crop, label, sub };
+  return { crop, tint, label, sub };
 }
 
 export function generateBuildingLabel(
@@ -1257,6 +1472,18 @@ export function generateBuildingLabel(
   const isEuro = culture === 'European';
   const isIO = culture === 'Indian Ocean';
   const isAtl = culture === 'Atlantic';
+
+  // Forked RNG for household identity. Picking the family name from the main
+  // rng would shuffle every other label downstream when the residential
+  // branch is added, so we keep it on its own seed-stream. Every house /
+  // shack / estate / farmhouse gets a family even when the label string
+  // doesn't surface it — pedestrians anchored to that building inherit it.
+  const householdRng = mulberry32(seed + 7919);
+  householdRng(); householdRng(); householdRng();
+  const isResidential = type === 'house' || type === 'shack' || type === 'estate' || type === 'farmhouse';
+  const householdFamily = isResidential
+    ? getFamilyName(culture, householdRng, nationality, region)
+    : undefined;
 
   const forts = isEuro ? EUROPEAN_FORTS[euro] : isIO ? INDIAN_OCEAN_FORTS[reg] : isAtl ? ATLANTIC_FORTS[atl] : FORT_NAMES[culture];
   const markets = isEuro ? EUROPEAN_MARKETS[euro] : isIO ? INDIAN_OCEAN_MARKETS[reg] : isAtl ? ATLANTIC_MARKETS[atl] : MARKET_NAMES[culture];
@@ -1336,11 +1563,12 @@ export function generateBuildingLabel(
     }
 
     case 'estate': {
-      const family = getFamilyName(culture, rng, nationality, region);
-      const title = pick(titles, rng);
+      const title = pick(titles, householdRng);
       return {
-        label: `Residence of ${title} ${family}`,
+        label: `Residence of ${title} ${householdFamily}`,
         sub: 'estate',
+        familyName: householdFamily,
+        title,
       };
     }
 
@@ -1348,20 +1576,12 @@ export function generateBuildingLabel(
       return {
         label: pick(shacks, rng),
         sub: 'dwelling',
+        familyName: householdFamily,
       };
 
     case 'farmhouse': {
-      if (moisture > 0.5) {
-        return {
-          label: pick(wetCrops, rng),
-          sub: 'farmstead',
-        };
-      } else {
-        return {
-          label: pick(dryCrops, rng),
-          sub: 'farmstead',
-        };
-      }
+      const label = pick(moisture > 0.5 ? wetCrops : dryCrops, rng);
+      return { label, sub: 'farmstead', familyName: householdFamily };
     }
 
     case 'house': {
@@ -1376,6 +1596,7 @@ export function generateBuildingLabel(
         return {
           label: pick(TRADES_NEAR_WATER, rng),
           sub: 'workshop',
+          familyName: householdFamily,
         };
       }
 
@@ -1387,27 +1608,31 @@ export function generateBuildingLabel(
           return {
             label: `${capitalize(good)} merchant`,
             sub: 'shop',
+            familyName: householdFamily,
           };
         }
         return {
           label: pick(trades, rng),
           sub: 'shop',
+          familyName: householdFamily,
         };
       }
 
       // High elevation → upper class residence
       if (isHighElevation) {
-        const family = getFamilyName(culture, rng, nationality, region);
         if (rng() < 0.3) {
-          const title = pick(titles, rng);
+          const title = pick(titles, householdRng);
           return {
-            label: `Residence of ${title} ${family}`,
+            label: `Residence of ${title} ${householdFamily}`,
             sub: 'residence',
+            familyName: householdFamily,
+            title,
           };
         }
         return {
-          label: `Residence of the ${family} family`,
+          label: `Residence of the ${householdFamily} family`,
           sub: 'residence',
+          familyName: householdFamily,
         };
       }
 
@@ -1416,6 +1641,7 @@ export function generateBuildingLabel(
         return {
           label: pick(commoners, rng),
           sub: 'dwelling',
+          familyName: householdFamily,
         };
       }
 
@@ -1424,12 +1650,13 @@ export function generateBuildingLabel(
         return {
           label: pick(trades, rng),
           sub: 'shop',
+          familyName: householdFamily,
         };
       }
-      const family = getFamilyName(culture, rng, nationality, region);
       return {
-        label: `House of ${family}`,
+        label: `House of ${householdFamily}`,
         sub: 'residence',
+        familyName: householdFamily,
       };
     }
 

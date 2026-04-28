@@ -1,29 +1,30 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
-import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
+import { Bloom, EffectComposer, Pixelation, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import { type DayState, makeDayState, samplePortDay } from '../utils/dayPhase';
 import { DistantBirds, NightStars, SkyClouds, SkyDome, SkyLights, Sun } from './sky/SkyScene';
 
-// Banner-tuned cloud rig — pulled below the sun arc so they read as horizon clouds
-// rather than the splash's wraparound puffs.
+// Banner-tuned cloud rig — sit above the rooftop silhouette so they read as
+// cumulus over the city, not smoke columns rising from it.
 import type { CloudSpec } from './sky/SkyScene';
 // `speed: 0` locks each cloud's internal puff pattern — the lateral drift on
 // the parent group does the visible movement, so the puffs themselves don't
 // shimmer. Stable `seed` per cloud so the puff distribution survives any
 // React re-render rather than regenerating from Math.random().
 //
-// Positions span x=-9..+9 so the visible band stays populated as the group
-// drifts. Wrap (set on the SkyClouds prop) is ±28, which is well beyond the
-// horizontal frustum at z=-9 even at the banner's wide aspect ratio.
+// Authored color is near-white because the day driver in SkyClouds already
+// warms them toward the horizon hue at golden hour and dims them at night.
+// y is lifted to 2.7–4.5 so puff bases clear the rooftop silhouette band.
+// volume/bounds tightened so they read as compact cumulus, not smoke plumes.
 const BANNER_CLOUDS: CloudSpec[] = [
-  { seed:  17, position: [ 7.5,  1.6, -7.0], segments: 24, bounds: [3.2, 0.7, 1.4], volume: 4.2, color: '#fff8e8', opacity: 0.85, growth: 2, speed: 0 },
-  { seed:  29, position: [ 2.0,  2.3, -8.5], segments: 22, bounds: [3.6, 0.5, 1.2], volume: 3.0, color: '#ffeed4', opacity: 0.70, growth: 2, speed: 0 },
-  { seed:  41, position: [-3.5,  1.1, -6.5], segments: 24, bounds: [3.0, 0.6, 1.4], volume: 3.8, color: '#fff8e8', opacity: 0.80, growth: 2, speed: 0 },
-  { seed:  59, position: [-8.0,  1.8, -8.0], segments: 22, bounds: [2.8, 0.5, 1.2], volume: 2.6, color: '#ffeed4', opacity: 0.65, growth: 2, speed: 0 },
-  { seed:  73, position: [ 0.8,  0.5, -9.5], segments: 20, bounds: [2.4, 0.4, 1.0], volume: 1.8, color: '#ffe9c4', opacity: 0.55, growth: 2, speed: 0 },
-  { seed:  97, position: [-5.5,  0.3, -10.0], segments: 20, bounds: [2.4, 0.4, 1.0], volume: 1.8, color: '#ffe9c4', opacity: 0.50, growth: 2, speed: 0 },
+  { seed:  17, position: [ 7.5,  4.2, -7.5], segments: 22, bounds: [2.6, 0.5, 1.2], volume: 2.2, color: '#fdfdf6', opacity: 0.92, growth: 1.6, speed: 0 },
+  { seed:  29, position: [ 2.0,  3.4, -8.5], segments: 22, bounds: [3.0, 0.4, 1.1], volume: 1.7, color: '#fbfbf2', opacity: 0.78, growth: 1.6, speed: 0 },
+  { seed:  41, position: [-3.5,  2.9, -6.8], segments: 22, bounds: [2.4, 0.5, 1.2], volume: 2.0, color: '#fdfdf6', opacity: 0.88, growth: 1.6, speed: 0 },
+  { seed:  59, position: [-8.0,  3.8, -8.0], segments: 22, bounds: [2.4, 0.4, 1.1], volume: 1.6, color: '#f7f5ec', opacity: 0.74, growth: 1.6, speed: 0 },
+  { seed:  73, position: [ 0.8,  2.7, -9.5], segments: 20, bounds: [2.0, 0.3, 0.9], volume: 1.1, color: '#f3f1e6', opacity: 0.55, growth: 1.5, speed: 0 },
+  { seed:  97, position: [-5.5,  2.7,-10.0], segments: 20, bounds: [2.0, 0.3, 0.9], volume: 1.1, color: '#f3f1e6', opacity: 0.50, growth: 1.5, speed: 0 },
 ];
 
 // ─── silhouette overlay — magenta-keyed PNG drawn last in NDC ───────────────
@@ -277,8 +278,13 @@ function PortBannerSceneInner({
         dayRef={dayRef}
       />
       <EffectComposer multisampling={0}>
-        <Bloom intensity={0.7} luminanceThreshold={0.6} luminanceSmoothing={0.35} mipmapBlur />
-        <Vignette eskil={false} offset={0.25} darkness={0.45} />
+        <Bloom intensity={0.55} luminanceThreshold={0.7} luminanceSmoothing={0.35} mipmapBlur />
+        {/* Subtle pixel quantization — unifies the soft volumetric clouds with
+            the hard pixel-art silhouette by re-aligning everything to a shared
+            grid. Granularity 2 is the lightest setting that visibly snaps cloud
+            edges without making the whole banner look 8-bit. */}
+        <Pixelation granularity={2} />
+        <Vignette eskil={false} offset={0.3} darkness={0.28} />
       </EffectComposer>
     </Canvas>
   );

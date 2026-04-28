@@ -137,19 +137,34 @@ export interface Building {
   district?: DistrictKey;
   stories?: number;          // 1..4; renderer stacks floors on tall buildings
   housingClass?: HousingClass;
+  /** Surname of the household occupying the building (residential types
+   *  only). Set by buildingLabels.generateBuildingLabel; pedestrians
+   *  anchored to this building inherit it as their family name. */
+  familyName?: string;
   setback?: number;          // 0..1; render-time jitter multiplier
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
   palaceStyle?: string;      // for type === 'palace'; keys render geometry (iberian-colonial, mughal, malay-istana…)
   /** Crop type for farmhouses — drives both the label and the field renderer.
-   *  Only set when the picked label corresponds to a crop we have geometry for
-   *  (orange / rice / date). Other farmhouses fall back to plain labels with
-   *  no rendered field. */
-  crop?: 'orange' | 'rice' | 'date';
+   *  Only set when the picked label corresponds to a crop we have geometry
+   *  for. Other farmhouses fall back to plain labels with no rendered field.
+   *  - orange: small fruit tree with baked orange dots (citrus groves)
+   *  - rice/sawah: low shoot tufts in tight rows + translucent paddy plane
+   *  - date: short stout palm
+   *  - palm: taller slimmer palm (coconut, sago, areca)
+   *  - orchard: generic deciduous tree, canopy tint set per fruit type
+   *  - vineyard: short staked rows (vineyard, hop garden)
+   *  - grain: tinted ground patch + sparse stubble (wheat, barley, millet…)
+   *  - banana: wide-leaf clump (banana, plantain, sugarcane, bamboo) */
+  crop?: 'orange' | 'rice' | 'date' | 'palm' | 'orchard' | 'vineyard' | 'grain' | 'banana';
   /** World-space bounds of the rendered farm plot around the farmhouse.
-   *  Half-size in world units (square). The hut sits roughly at the center;
-   *  crops fill the surrounding ring. */
-  cropPlot?: { halfSize: number };
+   *  Half-width and half-depth in world units (rectangular). The hut sits
+   *  near the center; crops fill the surrounding area with edge-ring
+   *  dropouts so the boundary isn't a perfect rectangle. `tint` (when set)
+   *  drives canopy / ground / leaf color so e.g. olive orchards look
+   *  silvery and mango orchards look deep green from the same shared
+   *  geometry. */
+  cropPlot?: { halfWidth: number; halfDepth: number; tint?: [number, number, number] };
 }
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';

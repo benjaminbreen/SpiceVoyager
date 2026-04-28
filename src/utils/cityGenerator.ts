@@ -2,7 +2,7 @@ import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData, getTerrainHeight } from './terrain';
 import { BRIDGE_DECK_Y, CANAL_BRIDGE_DECK_Y } from './roadStyle';
-import { generateBuildingLabel, pickFarmCrop } from './buildingLabels';
+import { generateBuildingLabel, pickFarmCrop, getFamilyName } from './buildingLabels';
 import type { CanalLayout } from './canalLayout';
 import { distanceToNearestCanal, signedDistanceToNearestCanal } from './canalLayout';
 import { classifyBuildingDistrict, pruneDistrictBoundaries } from './cityDistricts';
@@ -2024,36 +2024,88 @@ export function generateCity(
   }
 
   // ── 5. Farmhouses (fertile outskirts) ──────────────────────────────────────
-  // Each farmhouse reserves a ~12u square plot so the field renderer has room
-  // to draw rows of trees / rice around the hut without overlapping roads or
-  // other buildings. The hut itself still renders at BUILDING_SIZES.farmhouse;
-  // the larger reservation only widens findSpot's occupancy pad. Side-effect:
-  // farmsteads end up further apart, which is what we want — it's a holding,
-  // not a hut cluster.
-  const FARMSTEAD_PLOT_SIZE: [number, number, number] = [12, 3, 12];
-  const FARMSTEAD_PLOT_HALF = 5; // world-unit half-size for the field renderer
+  // Each farmhouse picks a plot shape from a weighted set of variants so the
+  // rendered fields don't all read as identical squares — some farms get a
+  // wide rectangle, some are tall, some are bigger. The hut still renders at
+  // BUILDING_SIZES.farmhouse; the larger reservation only widens findSpot's
+  // occupancy pad so neighbors keep clear of the field area. We try the
+  // rolled variant first and fall back to smaller ones (sorted by area
+  // descending) if findSpot can't fit the plot, so a tightly-packed port
+  // doesn't lose all its bigger farms. halfWidth/halfDepth are world-unit
+  // half-extents; the reservation footprint adds +1 cell on each side.
+  type PlotVariant = { halfWidth: number; halfDepth: number; weight: number };
+  const PLOT_VARIANTS: PlotVariant[] = [
+    { halfWidth: 5, halfDepth: 5, weight: 22 }, // small square    (10×10)
+    { halfWidth: 6, halfDepth: 5, weight: 14 }, // small wide      (12×10)
+    { halfWidth: 5, halfDepth: 6, weight: 14 }, // small tall      (10×12)
+    { halfWidth: 7, halfDepth: 5, weight: 12 }, // wide rect       (14×10)
+    { halfWidth: 5, halfDepth: 7, weight: 12 }, // tall rect       (10×14)
+    { halfWidth: 7, halfDepth: 7, weight: 10 }, // medium square   (14×14)
+    { halfWidth: 8, halfDepth: 6, weight:  6 }, // larger wide     (16×12)
+    { halfWidth: 6, halfDepth: 8, weight:  6 }, // larger tall     (12×16)
+    { halfWidth: 9, halfDepth: 6, weight:  3 }, // big rect        (18×12)
+    { halfWidth: 8, halfDepth: 8, weight:  1 }, // big square      (16×16)
+  ];
+  const totalWeight = PLOT_VARIANTS.reduce((s, v) => s + v.weight, 0);
+  const reservationSize = (v: PlotVariant): [number, number, number] => [
+    v.halfWidth * 2 + 2, 3, v.halfDepth * 2 + 2,
+  ];
+  // Sort by area descending so the retry chain walks naturally from larger
+  // plots down to smaller ones when the rolled choice can't fit.
+  const variantsByAreaDesc = [...PLOT_VARIANTS].sort(
+    (a, b) => (b.halfWidth * b.halfDepth) - (a.halfWidth * a.halfDepth),
+  );
+
   for (let i = 0; i < counts.farmhouse; i++) {
-    const spot = findSpot(
-      c => c.isLand && c.moisture > 0.4,
-      FARMSTEAD_PLOT_SIZE,
-      (a, b) => b.distToCenter - a.distToCenter,
-    );
-    if (spot) {
-      const farmhouseId = `farmhouse_${i}`;
-      const farmSeed = hashStr(farmhouseId) + seed;
-      const cropPick = pickFarmCrop(culture, spot.moisture, farmSeed, nationality, region);
-      buildings.push({
-        id: farmhouseId, type: 'farmhouse',
-        position: [spot.x, spot.height, spot.z],
-        rotation: prng() * Math.PI, scale: BUILDING_SIZES.farmhouse,
-        // Pre-set label so the pass-7 generator doesn't reroll a different
-        // crop name and break the label/render agreement.
-        label: cropPick.label,
-        labelSub: cropPick.sub,
-        crop: cropPick.crop,
-        cropPlot: cropPick.crop ? { halfSize: FARMSTEAD_PLOT_HALF } : undefined,
-      });
+    const farmhouseId = `farmhouse_${i}`;
+    const farmSeed = hashStr(farmhouseId) + seed;
+    const variantRng = mulberry32(farmSeed + 13);
+    variantRng(); variantRng();
+
+    // Pick a desired variant by weight, then try it (and any smaller
+    // alternative) until findSpot returns a slot.
+    let roll = variantRng() * totalWeight;
+    let chosenIdx = 0;
+    for (let j = 0; j < PLOT_VARIANTS.length; j++) {
+      roll -= PLOT_VARIANTS[j].weight;
+      if (roll <= 0) { chosenIdx = j; break; }
     }
+    const desiredArea = PLOT_VARIANTS[chosenIdx].halfWidth * PLOT_VARIANTS[chosenIdx].halfDepth;
+
+    let spot: ReturnType<typeof findSpot> = null;
+    let chosen: PlotVariant | null = null;
+    for (const variant of variantsByAreaDesc) {
+      if (variant.halfWidth * variant.halfDepth > desiredArea) continue;
+      spot = findSpot(
+        c => c.isLand && c.moisture > 0.4,
+        reservationSize(variant),
+        (a, b) => b.distToCenter - a.distToCenter,
+      );
+      if (spot) { chosen = variant; break; }
+    }
+    if (!spot || !chosen) continue;
+
+    const cropPick = pickFarmCrop(culture, spot.moisture, farmSeed, nationality, region);
+    // Match the household-rng derivation used inside generateBuildingLabel
+    // so a farmstead's family name is consistent with how house/shack
+    // family names are seeded for the same port.
+    const familyRng = mulberry32(farmSeed + 7919);
+    familyRng(); familyRng(); familyRng();
+    const familyName = getFamilyName(culture, familyRng, nationality, region);
+    buildings.push({
+      id: farmhouseId, type: 'farmhouse',
+      position: [spot.x, spot.height, spot.z],
+      rotation: prng() * Math.PI, scale: BUILDING_SIZES.farmhouse,
+      // Pre-set label so the pass-7 generator doesn't reroll a different
+      // crop name and break the label/render agreement.
+      label: cropPick.label,
+      labelSub: cropPick.sub,
+      familyName,
+      crop: cropPick.crop,
+      cropPlot: cropPick.crop
+        ? { halfWidth: chosen.halfWidth, halfDepth: chosen.halfDepth, tint: cropPick.tint }
+        : undefined,
+    });
   }
 
   // ── 6. Shacks (beaches) ────────────────────────────────────────────────────
@@ -2092,6 +2144,7 @@ export function generateCity(
       );
       b.label = result.label;
       b.labelSub = result.sub;
+      if (result.familyName) b.familyName = result.familyName;
     }
 
     // Semantic class → eyebrow + color. Shared source of truth with the

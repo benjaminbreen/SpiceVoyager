@@ -2191,9 +2191,117 @@ function ShipSprite({
   );
 }
 
+// ─── sun + moon billboards ──────────────────────────────────────────────────
+//
+// Two camera-facing sprites positioned along ±dayRef.sunDir at a fixed
+// distance. The sun fades in with day.sunIntensity, the moon fades in as
+// it falls. Default depthTest=true so the globe occludes whichever body
+// is on the far side. Drop-in: <SunMoonBillboards dayRef={dayRef} />.
+
+function createSunDiskTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  g.addColorStop(0.00, 'rgba(255, 248, 220, 1.00)');
+  g.addColorStop(0.10, 'rgba(255, 230, 170, 0.95)');
+  g.addColorStop(0.28, 'rgba(255, 180, 100, 0.55)');
+  g.addColorStop(0.55, 'rgba(255, 130,  60, 0.18)');
+  g.addColorStop(1.00, 'rgba(255, 110,  40, 0.00)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createMoonDiskTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d')!;
+  // Soft halo behind the disk.
+  const halo = ctx.createRadialGradient(128, 128, 40, 128, 128, 128);
+  halo.addColorStop(0, 'rgba(225, 230, 240, 0.18)');
+  halo.addColorStop(1, 'rgba(225, 230, 240, 0.00)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, 256, 256);
+  // Disk itself — slightly off-white with a faint terminator on one side.
+  const disk = ctx.createRadialGradient(118, 118, 4, 128, 128, 56);
+  disk.addColorStop(0.00, 'rgba(252, 248, 238, 1.00)');
+  disk.addColorStop(0.65, 'rgba(225, 220, 210, 0.95)');
+  disk.addColorStop(1.00, 'rgba(180, 178, 170, 0.00)');
+  ctx.fillStyle = disk;
+  ctx.beginPath();
+  ctx.arc(128, 128, 56, 0, Math.PI * 2);
+  ctx.fill();
+  // A couple of faint mare blots for character. Tiny cost; reads at
+  // distance only as subtle shading rather than craters.
+  ctx.fillStyle = 'rgba(170, 170, 165, 0.18)';
+  ctx.beginPath(); ctx.arc(140, 132, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(118, 142, 7,  0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(135, 118, 5,  0, Math.PI * 2); ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function SunMoonBillboards({ dayRef }: { dayRef: React.MutableRefObject<DayState> }) {
+  const sunRef = useRef<THREE.Sprite>(null);
+  const moonRef = useRef<THREE.Sprite>(null);
+  const sunMatRef = useRef<THREE.SpriteMaterial>(null);
+  const moonMatRef = useRef<THREE.SpriteMaterial>(null);
+
+  const sunTex = useMemo(() => createSunDiskTexture(), []);
+  const moonTex = useMemo(() => createMoonDiskTexture(), []);
+
+  // Distance from origin to billboard. Camera sits at z≈6.4 (12 on mobile)
+  // and the globe radius is 1.42, so 5.0 places the disks well past the
+  // near hemisphere but close enough that perspective foreshortening
+  // doesn't shrink them to nothing.
+  const DISTANCE = 5.0;
+
+  useFrame(() => {
+    const day = dayRef.current;
+    if (sunRef.current) {
+      sunRef.current.position.copy(day.sunDir).multiplyScalar(DISTANCE);
+    }
+    if (moonRef.current) {
+      moonRef.current.position.copy(day.sunDir).multiplyScalar(-DISTANCE);
+    }
+    const sunOpacity  = THREE.MathUtils.clamp(day.sunIntensity * 1.05, 0, 1);
+    const moonOpacity = THREE.MathUtils.clamp((1 - day.sunIntensity) * 0.95, 0, 0.9);
+    if (sunMatRef.current)  sunMatRef.current.opacity  = sunOpacity;
+    if (moonMatRef.current) moonMatRef.current.opacity = moonOpacity;
+  });
+
+  return (
+    <>
+      <sprite ref={sunRef} scale={[0.85, 0.85, 1]} renderOrder={4}>
+        <spriteMaterial
+          ref={sunMatRef}
+          map={sunTex}
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          toneMapped={false}
+        />
+      </sprite>
+      <sprite ref={moonRef} scale={[0.55, 0.55, 1]} renderOrder={4}>
+        <spriteMaterial
+          ref={moonMatRef}
+          map={moonTex}
+          transparent
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </sprite>
+    </>
+  );
+}
+
 // ─── camera animation (lights now provided by SkyLights) ────────────────────
 
-function CameraDrift() {
+function CameraDrift({ isMobile }: { isMobile: boolean }) {
   const { camera, gl } = useThree();
   // Zoom = uniform scale of the camera offset from target. 1.0 = base
   // framing; smaller pulls in, larger pulls back. Smoothed toward
@@ -2201,7 +2309,15 @@ function CameraDrift() {
   const zoomRef = useRef(1.0);
   const zoomTargetRef = useRef(1.0);
   const TARGET = useMemo(() => new THREE.Vector3(0, 0.1, 0), []);
-  const BASE_OFFSET = useMemo(() => new THREE.Vector3(0, 0.40, 6.4), []);
+  // Mobile pulls the camera back so the globe doesn't dominate the screen
+  // — ~2× the Z distance halves the apparent size, leaving room for the
+  // title and the bottom button dock to breathe.
+  const BASE_OFFSET = useMemo(
+    () => isMobile
+      ? new THREE.Vector3(0, 0.40, 12.0)
+      : new THREE.Vector3(0, 0.40, 6.4),
+    [isMobile]
+  );
 
   useEffect(() => {
     camera.position.copy(BASE_OFFSET).add(TARGET);
@@ -2854,7 +2970,7 @@ export function ClaudeSplashGlobe(props: Props) {
           dpr={isMobile ? [1, 1.5] : [1, 2]}
           gl={{ antialias: true, alpha: false, toneMapping: THREE.ACESFilmicToneMapping }}
         >
-          <CameraDrift />
+          <CameraDrift isMobile={isMobile} />
           {/* Day/night-driven sky gradient + lights + stars. Sun and
               CrepuscularRays remain omitted for a cleaner read. */}
           <SkyDome dayRef={dayRef} />
@@ -2872,6 +2988,7 @@ export function ClaudeSplashGlobe(props: Props) {
           />
           <Globe rotationRef={rotationRef} dayRef={dayRef} />
           <AtmosphereShell dayRef={dayRef} />
+          <SunMoonBillboards dayRef={dayRef} />
 
           <SkyClouds dayRef={dayRef} tintNight={false} />
 
