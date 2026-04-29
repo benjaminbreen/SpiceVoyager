@@ -11,6 +11,7 @@ import {
   getSceneLabel,
   SceneInstance,
 } from '../utils/hinterlandScenes';
+import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
@@ -213,6 +214,49 @@ export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: 
             ctx.shadowColor = 'rgba(0,0,0,0.85)';
             ctx.shadowBlur = 2;
             ctx.fillText(getSceneLabel(scene.kind), mapX + 5, mapY + 3);
+            ctx.shadowBlur = 0;
+          }
+        }
+      }
+
+      // Draw POIs (current port — POIs are local-map features, gated to the
+      // hosting port being discovered). Bright cyan circle with "?" until the
+      // player has opened the modal at least once, then resolves to the name.
+      if (state.ports.length > 0) {
+        const port = state.ports[0];
+        if (state.discoveredPorts.includes(port.id)) {
+          const pois = getPOIsForPort(port);
+          for (const poi of pois) {
+            const resolved = resolvePOIPosition(poi, port);
+            if (!resolved) continue;
+            const dx = resolved.x - px;
+            const dz = resolved.z - pz;
+            if (Math.abs(dx) >= WORLD_RANGE / 2 || Math.abs(dz) >= WORLD_RANGE / 2) continue;
+            const mapX = MAP_SIZE / 2 + (dx / unitsPerPixel);
+            const mapY = MAP_SIZE / 2 + (dz / unitsPerPixel);
+            const discovered = state.discoveredPOIs.includes(poi.id);
+
+            // Glow ring
+            ctx.beginPath();
+            ctx.arc(mapX, mapY, 6, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(96, 198, 255, 0.18)';
+            ctx.fill();
+
+            // Filled circle
+            ctx.beginPath();
+            ctx.arc(mapX, mapY, 3.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#5fc8ff';
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Label — '?' for undiscovered, name for discovered
+            ctx.fillStyle = discovered ? '#cfe9ff' : '#5fc8ff';
+            ctx.font = discovered ? '9px sans-serif' : 'bold 9px sans-serif';
+            ctx.shadowColor = 'rgba(0,0,0,0.85)';
+            ctx.shadowBlur = 2;
+            ctx.fillText(discovered ? poi.name : '?', mapX + 5, mapY + 3);
             ctx.shadowBlur = 0;
           }
         }

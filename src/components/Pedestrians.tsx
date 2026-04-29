@@ -16,9 +16,9 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore, Culture, CulturalRegion, PORT_CULTURAL_REGION, PORT_FACTION } from '../store/gameStore';
+import { useGameStore, Culture, CulturalRegion, PORT_CULTURAL_REGION, PORT_FACTION, Building } from '../store/gameStore';
 import {
-  PedestrianSystemState, FigureType,
+  PedestrianSystemState, FigureType, PedestrianType,
   initPedestrianSystem, updatePedestrians,
 } from '../utils/pedestrianSystem';
 import { syncLivePedestrians, clearLivePedestrians, consumePendingKills } from '../utils/livePedestrians';
@@ -402,6 +402,129 @@ const ROLE_LABEL: Record<string, string> = {
   farmer: 'farmer',
 };
 
+// ── Pedestrian description ──────────────────────────────────────────────────
+// Click-toast text. Deterministic per (worldSeed, ped index) so re-clicking
+// the same person yields the same description. Pulls a specific occupation
+// from the home building's label when available, otherwise samples a richer
+// type-specific pool. Always includes age + adjective per the design ask.
+
+const ROLE_POOL_MEN: Record<PedestrianType, string[]> = {
+  merchant: ['merchant', 'broker', 'trader', 'factor', 'shopkeeper', 'dealer', 'money-changer', 'cloth-dealer', 'spice-dealer'],
+  laborer:  ['laborer', 'porter', 'stevedore', 'water-carrier', 'woodcutter', 'mason', 'dockhand', 'cart-driver', 'coal-heaver', 'day-laborer'],
+  sailor:   ['sailor', 'deckhand', 'mariner', 'rigger', 'caulker', 'rope-maker', 'old salt', 'bosun'],
+  farmer:   ['farmer', 'herder', 'gardener', 'smallholder', 'drover', 'planter', 'fieldhand', 'orchard-keeper'],
+  religious:['devotee', 'pilgrim', 'cleric', 'monk', 'mendicant'],
+};
+const ROLE_POOL_WOMEN: Record<PedestrianType, string[]> = {
+  merchant: ['marketwoman', 'shopkeeper', 'spice-seller', 'cloth-dealer', 'broker', 'fishwife'],
+  laborer:  ['laundress', 'water-carrier', 'porter', 'spinner', 'cook', 'marketwoman', 'midwife'],
+  sailor:   ['fishwife', 'net-mender', 'seafarer\'s wife', 'sailmaker'],
+  farmer:   ['farmwoman', 'gardener', 'milkmaid', 'orchard-keeper', 'spinner'],
+  religious:['devotee', 'pilgrim', 'nun', 'almswoman'],
+};
+const CHILD_ROLE_POOL = ['child', 'urchin', 'errand-runner', 'apprentice', 'boy', 'girl'];
+
+const ADJ_YOUNG = ['wiry', 'lean', 'lithe', 'fresh-faced', 'eager', 'broad-shouldered', 'sun-darkened', 'soft-spoken'];
+const ADJ_MID   = ['stout', 'weathered', 'sun-darkened', 'broad-backed', 'thick-armed', 'sober-looking', 'scarred', 'taciturn'];
+const ADJ_ELDER = ['grizzled', 'grey-haired', 'leathery', 'stooped', 'wizened', 'gaunt', 'silver-bearded'];
+const ADJ_INFIRM = ['infirm', 'frail', 'ailing', 'palsied'];
+const ADJ_CHILD = ['ragged', 'barefoot', 'bright-eyed', 'soot-streaked', 'clamorous', 'half-starved'];
+
+function pickFrom<T>(arr: T[], rng: () => number): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+// Building labels follow patterns like "Goldsmith's house", "Toddy-tapper's
+// dwelling", "Sailor's quarters". Pull the leading noun. Returns null for
+// non-occupational labels (e.g. "Slave quarters" — filtered per project rule
+// to keep slavery out of procgen) or labels we can't parse.
+function occupationFromBuildingLabel(label: string | undefined): string | null {
+  if (!label) return null;
+  const apos = label.indexOf('’') >= 0 ? label.indexOf('’') : label.indexOf("'");
+  if (apos < 0) return null;
+  const noun = label.slice(0, apos).trim().toLowerCase();
+  if (!noun) return null;
+  if (noun === 'slave' || noun === 'slaves') return null;
+  if (noun === 'settler' || noun === 'soldier' || noun === 'planter') return noun;
+  return noun;
+}
+
+function ageBracketPhrase(age: number, isWoman: boolean): string {
+  const pron = isWoman ? 'her' : 'his';
+  if (age < 13) return `about ${age} years old`;
+  if (age < 20) return `in ${pron} late teens`;
+  const decade = Math.floor(age / 10) * 10;
+  const within = age - decade;
+  const decadeWord = ({ 20: 'twenties', 30: 'thirties', 40: 'forties', 50: 'fifties', 60: 'sixties', 70: 'seventies' } as Record<number, string>)[decade] ?? 'years';
+  const slice = within <= 3 ? 'early' : within <= 6 ? 'mid' : 'late';
+  return `in ${pron} ${slice} ${decadeWord}`;
+}
+
+function describePed(
+  ped: { figureType: FigureType; type: PedestrianType; givenName?: string; familyName?: string },
+  idx: number,
+  worldSeed: number,
+  home: Building | undefined,
+): string {
+  const rng = mulberry32((worldSeed * 991 + idx * 17 + 7) >>> 0);
+
+  const isChild = ped.figureType === 'child';
+  const isWoman = ped.figureType === 'woman';
+
+  // Age
+  let age: number;
+  if (isChild) age = 5 + Math.floor(rng() * 8);     // 5..12
+  else age = 18 + Math.floor(rng() * 55);            // 18..72
+
+  // Role: prefer building occupation 65% of the time when available, else
+  // sample the type/gender pool. Children get their own pool regardless.
+  let role: string;
+  const homeOcc = isChild ? null : occupationFromBuildingLabel(home?.label);
+  if (isChild) {
+    role = pickFrom(CHILD_ROLE_POOL, rng);
+    if (role === 'boy' && isWoman) role = 'girl';
+    if (role === 'girl' && !isWoman) role = 'boy';
+  } else if (homeOcc && rng() < 0.65) {
+    role = homeOcc;
+  } else {
+    const pool = (isWoman ? ROLE_POOL_WOMEN : ROLE_POOL_MEN)[ped.type] ?? [ROLE_LABEL[ped.type] ?? ped.type];
+    role = pickFrom(pool, rng);
+  }
+
+  // Adjective
+  let adj: string;
+  if (isChild) {
+    adj = pickFrom(ADJ_CHILD, rng);
+  } else if (age >= 55 && rng() < 0.22) {
+    adj = pickFrom(ADJ_INFIRM, rng);
+  } else if (age < 30) {
+    adj = pickFrom(ADJ_YOUNG, rng);
+  } else if (age < 50) {
+    adj = pickFrom(ADJ_MID, rng);
+  } else {
+    const pool = isWoman ? ADJ_ELDER.filter(a => a !== 'silver-bearded') : ADJ_ELDER;
+    adj = pickFrom(pool, rng);
+  }
+
+  const article = /^[aeiou]/i.test(adj) ? 'an' : 'a';
+  const agePhrase = ageBracketPhrase(age, isWoman);
+
+  // Suffix from home (matches prior household/farmstead phrasing)
+  let suffix = '';
+  if (home && ped.familyName) {
+    if (home.labelSub === 'farmstead') {
+      suffix = ` at the ${home.label}`;
+    } else {
+      suffix = ` of the ${ped.familyName} household`;
+    }
+  }
+
+  if (ped.givenName && ped.familyName) {
+    return `${ped.givenName} ${ped.familyName}, ${article} ${adj} ${role}${suffix}, ${agePhrase}.`;
+  }
+  return `${article} ${adj} ${role}, ${agePhrase}.`;
+}
+
 // Head-turn: peds within this radius rotate their head toward the player.
 const HEAD_TURN_RADIUS = 6;
 const HEAD_TURN_RADIUS_SQ = HEAD_TURN_RADIUS * HEAD_TURN_RADIUS;
@@ -496,10 +619,12 @@ export function Pedestrians() {
     return m;
   }, []);
   const lanternGeo = useMemo(() => createLanternGeometry(), []);
-  // Hitbox: cylinder roughly the size of a person, centered at ped position
-  // plus a y-offset so the matrix-translate hits its midriff. CylinderGeometry
-  // is created erect along Y, so we don't need to rotate.
-  const hitboxGeo = useMemo(() => new THREE.CylinderGeometry(0.55, 0.55, 1.8, 8, 1), []);
+  // Hitbox: cylinder generously larger than the actual ped silhouette so
+  // clicks don't have to land on-center. Radius ~1.4 covers an outstretched
+  // arm; height 2.6 catches clicks aimed slightly above the head. Overlap
+  // between neighbors is fine — raycasting picks the nearest hit.
+  // CylinderGeometry is erect along Y, so no rotation needed.
+  const hitboxGeo = useMemo(() => new THREE.CylinderGeometry(1.4, 1.4, 2.6, 10, 1), []);
   const hitboxMat = useMemo(() => new THREE.MeshBasicMaterial({
     transparent: true,
     opacity: 0,
@@ -978,7 +1103,7 @@ export function Pedestrians() {
           d.position.set(0, -10000, 0);
           d.scale.setScalar(0.001);
         } else {
-          d.position.set(p.x, p.y + 0.9, p.z);
+          d.position.set(p.x, p.y + 1.3, p.z);
           d.scale.setScalar(1);
         }
         d.rotation.set(0, 0, 0);
@@ -1032,15 +1157,7 @@ export function Pedestrians() {
     const home = ped.homeBuildingId
       ? port?.buildings.find(b => b.id === ped.homeBuildingId)
       : undefined;
-    const role = ROLE_LABEL[ped.type] ?? ped.type;
-    let phrase: string;
-    if (ped.givenName && ped.familyName) {
-      phrase = home?.label
-        ? `${ped.givenName} ${ped.familyName}, a ${role} of ${home.label}.`
-        : `${ped.givenName} ${ped.familyName}, a ${role}.`;
-    } else {
-      phrase = `a ${role} on the streets.`;
-    }
+    const phrase = describePed(ped, idx, worldSeed, home);
     useGameStore.getState().addNotification(`You see ${phrase}`, 'info');
   };
 

@@ -124,6 +124,39 @@ src/
 | `mapGenerator.ts` | Minimap tile generation |
 | `performanceStats.ts` | FPS / draw call tracking |
 
+### Port roster (29 ports as of 2026-04)
+
+**Three registries must stay in sync** (`CORE_PORTS` in `portArchetypes.ts` for visual/geographic; `worldPorts.ts` for coords + `SEA_LANE_GRAPH` + trade weights; `PORT_FACTION` + `PORT_CULTURAL_REGION` in `gameStore.ts`). When adding a port, all three. **Always grep the codebase before claiming a port doesn't exist** — every port is wired into ~5–10 files (faith, fleet composition, NPC pools, banner, region, climate, lore notes).
+
+**Indian Ocean / Asia (17):**
+| Port | Geography | Notes |
+|---|---|---|
+| Goa | inlet | Portuguese Estado capital |
+| Calicut | continental_coast | Zamorin's port, Malabar |
+| Surat | estuary | Mughal commercial hub |
+| Diu | island | Portuguese fortress-island |
+| Hormuz | island | Falls to Anglo-Persian 1622 — currently Portuguese |
+| Muscat | bay | Omani; Portuguese-held until 1650 |
+| Aden | crater_harbor | Ottoman vassal |
+| Mocha | continental_coast | Coffee port, Ottoman/Yemeni |
+| Socotra | island | Frankincense + dragon's-blood. Already a port — Sunni faith with Nestorian remnant note in `portReligions.ts:50`. Real geography 130km × 40km (`portArchetypes.ts:658-669`). Dragon's-blood lore in `commodityHistoricalNotes.ts:259`. NPC fleet mix in `npcShipGenerator.ts:611` |
+| Masulipatnam | estuary | Coromandel, Qutb Shahi |
+| Bantam | bay | Pepper port, Sundanese |
+| Malacca | strait | Portuguese, falls to VOC 1641 |
+| Manila | bay | Spanish, recent animated banner |
+| Macau | peninsula | Portuguese; Macau–Nagasaki silver run |
+| Nagasaki | inlet | Japanese silver source |
+| Mombasa | coastal_island | Swahili, Portuguese-held |
+| Zanzibar | island | Swahili sultanate |
+
+**Europe / Mediterranean (5):** Lisbon, Amsterdam, Seville, London, Venice (lagoon archetype, recent add)
+
+**Atlantic / Africa (3):** Elmina (Portuguese gold/slave fort), Luanda (Portuguese Angola), Cape of Good Hope
+
+**Americas (4):** Salvador da Bahia (Brazil NE), Havana (Cuba), Cartagena de Indias, Jamestown (1607 founding, John Rolfe tobacco crop the year of game start)
+
+**Planned/deferred:** Veracruz + Pernambuco (per project memory — completing the 1612 Atlantic). Manila, Nagasaki, Masulipatnam queued for further work per Venice rollout pattern.
+
 ## Current systems
 
 ### Reputation
@@ -385,6 +418,9 @@ The event roll should reference `TavernTab`'s `conversationHistory` and the crew
 ### NPC ship hail — procedural deepening
 Full writeup: [`npcshipplan.md`](./npcshipplan.md). Transforms the existing single-response hail panel (`UI.tsx:2832-3045`, `npcShipGenerator.ts:715-762`) into a state-driven procedural dialogue system — disposition vector, captain traits, rumor ledger, language proficiency gradient with cognate matrix, tagged phrasebook, and encounter memory. Explicitly no LLM. Authored in 7 phases, each independently shippable; phase 1 is a non-visible foundation refactor.
 
+### Quests system — TBD, design in flux
+Full writeup: [`questplan.md`](./questplan.md). The "Quests" button in `UI.tsx` (hotkey `6`, gold Scroll icon at lines 1843 / 1882) is currently a stub. Plan is one shared `Lead` type produced by four creation surfaces (tavern, governor audience, POI, NPC ship hail) feeding one panel and one resolution check. Governor tab in `PortModal.tsx` would become an LLM roleplay surface — high-stakes audience where pitches are evaluated against real world state, and successful pitches create capitalized leads with a `debt` field. **Details still being worked out — the doc is a sketch to argue with, not a spec.** Major open questions: LLM extraction reliability, governor ledger snapshot shape, stakes-ceiling tuning, whether hail leads are worth building. Implementation order in the plan starts with the trunk type + panel + tavern source; governor and POI follow once that's playing well.
+
 ### Multiplayer presence — possible future option
 Feasible compromise: let other human players appear as human-controlled ships, and eventually walking figures in port, without making the whole simulation a PvP MMO. The useful target is **presence + hail + trade**, not fighting.
 
@@ -401,62 +437,200 @@ Explicit non-goal for the compromise version: human-vs-human fighting. Multiplay
 Likely architecture: small WebSocket server + `src/utils/multiplayerClient.ts` + a `RemotePlayers` / `RemoteShips` renderer mounted near `World.tsx` or `GameScene.tsx`. Keep this separate from the local NPC AI and local pedestrian instancing until the network model is proven.
 
 ### POI System (largest unbuilt feature)
-Points of Interest — one-off, port-specific, hand-authored sites the player sails or walks to. Each POI is a location with its own modal containing a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`).
+Points of Interest — sites the player sails or walks to that are *not* tradable ports. Each POI has its own modal with a **Learn** tab (knowledge acquisition against defined cost) and a **Converse** tab (Gemini-powered in-character conversation, extending the pattern from `TavernTab.tsx`). About 25% of POI visits also produce a `Lead` once the quest trunk lands (see [`questplan.md`](./questplan.md)).
 
-**Landmark vs POI — the split**:
+**Vocabulary** — three terms get conflated easily, so pin them down:
+- **3D world** — the single contiguous playable space (~1100×1100 units, `WORLD_HALF = 550` in `worldMapTerrainCache.ts`). All ports placed within it by `distributePortPositions` in `mapGenerator.ts`. The player physically sails/walks here.
+- **World map overlay** (`WorldMap.tsx`) — a 2D top-down UI overlay opened by the **Navigate** button (hotkey 7, `UI.tsx:2055`). Shows port-buttons (clickable, fires `fastTravel`) and POI markers (cyan dots for discovered POIs). It is UI chrome, not a gameplay surface — POIs cannot "live" on it.
+- **Port zone** — the playable region around a port: city footprint + hinterland + nearshore water, all part of the single 3D world. **Hinterland** is the part of the zone outside the city's exclusion radius. POIs always anchor to a port zone.
+
+**Bespoke vs procedural.** One axis the system actually has:
+
+| | Examples |
+|---|---|
+| **Bespoke** (one-of, hand-authored coords + geometry) | Apothecaries' Hall in London; Bom Jesus tied to Goa; Banyan merchant house in Surat. Stretch: bespoke POIs in under-served existing port zones — a Dracaena cinnabari grove on **Socotra** (already a port), Golconda mines as a **Masulipatnam**-hinterland POI, a Vijayanagara ruin in the hinterland of a southern Indian port. Cape Comorin / Kanyakumari is a true gap (no nearby southern-tip port currently exists) — would need to be added as a new pilgrimage-only port if it's authored at all |
+| **Procedural** (archetype + variant table) | Hinterland shrine, hinterland ruin, physick garden, caravanserai on the road into a city; coastal-hinterland wreck off Mozambique's beach; smuggler's cove in the offshore band of a remote port zone |
+
+(Earlier drafts of this doc treated "world map" as a parallel gameplay surface where POIs could float between ports. That model is wrong — there's no inter-port playable space. The correct framing is: every POI lives in some port zone; the world-map overlay only displays markers for them.)
+
+**Landmark vs POI — the split** (unchanged):
 
 | | Landmark | POI |
 |---|---|---|
 | Location | Inside the port's city footprint | Outside it (hinterland, pilgrimage site, ruins, sacred grove) or bound to an existing landmark |
-| Placed by | City generator (anchor system) | Hand-authored coords per port |
-| Interaction | Hover label only | Walk up / click → modal with Learn + Converse tabs |
-| Uniqueness | One per `landmarkId` | One per POI id |
+| Placed by | City generator (anchor system) | Hand-authored coords (bespoke) or templated archetype (procedural) |
+| Interaction | Hover label only | Walk up / sail up → modal with Learn + Converse tabs |
+| Uniqueness | One per `landmarkId` | One per POI id; archetypes spawn N variants per world seed |
 | Content | name + sub + semantic class | all that + `lore`, `npcName`, `knowledgeDomain`, `masteryGoods`, `cost` |
 
-The overlap case: a city landmark that's *also* a POI (Jesuit College at Goa is a landmark you see AND a POI you can enter). Model: POI references the landmark as its location via `location: { kind: 'landmark'; landmarkId: string }`. No duplicate placement.
+Overlap: a city landmark that's *also* a POI (Goa's Bom Jesus is a landmark you see AND a POI you can enter). POI references the landmark as its location via `location: { kind: 'landmark'; landmarkId: string }`. No duplicate placement.
 
-**Shared infrastructure POIs will reuse**:
-- `SemanticClass` + `SEMANTIC_STYLE` from `semanticClasses.ts` — POIs carry `class: SemanticClass` and get the same eyebrow color + marker as classified buildings. A pilgrimage shrine POI (class: religious) gets the same purple plumbob as an in-city mosque. A merchant-guild POI (class: mercantile) gets the same teal eyebrow as the English Factory landmark.
+**Shared infrastructure POIs reuse**:
+- `SemanticClass` + `SEMANTIC_STYLE` from `semanticClasses.ts` — POIs carry `class: SemanticClass` and get the same eyebrow color + marker as classified buildings. A pilgrimage shrine POI (`religious`) gets the same purple plumbob as an in-city mosque. A merchant-guild POI (`mercantile`) gets the same teal eyebrow as the English Factory landmark.
 - `buildingLabels.ts` label-texture pipeline — `createWorldLabelTexture({ eyebrow, eyebrowColor })` already accepts arbitrary classes.
-- `SacredBuildingMarkers` renderer in `ProceduralCity.tsx` — extend to iterate POI positions alongside buildings, filter by the same `marker === 'diamond'` gate. Zero new visual code for religious POIs.
+- `SacredBuildingMarkers` renderer in `ProceduralCity.tsx` — extended to iterate POI positions alongside buildings, filtered by the same `marker === 'diamond'` gate. Zero new visual code for religious POIs.
+
+#### Procedural archetypes — catalog
+
+Each archetype is a template that produces a `POIDefinition` at gen time, with a small variant table that drives geometry + label + faith/culture + reward profile. Same eyebrow/marker/SemanticClass plumbing as buildings and bespoke POIs.
+
+| Archetype | `class` | Procedural axes | Reward profile | Lead probability |
+|---|---|---|---|---|
+| **Shrine** | religious | faith (catholic / protestant / sunni / shia / ibadi / hindu / buddhist / chinese-folk / animist / jewish) × scale (wayside / village / pilgrimage) × tenant (attended / hermitage) × condition (active / decaying) | Religious-coded leads (carry a relic, find a missing pilgrim), drug knowledge for plant-based traditions (cannabis at Sufi lodges, soma-adjacent at Hindu sites, theriac at Jewish lodges), rep with co-religious factions. **Hermitage-tenant variants** are sage-Converse heavy, low gold, rare medicinal knowledge — the Christian anchorite / Sufi dervish / sannyasin / Theravada forest monk / Daoist recluse all fold in here as a tenant axis rather than a separate archetype | 30% |
+| **Ruin** | civic *or* religious *or* royal (rolled) | type (fort / monastery / palace / city) × era (ancient / medieval / recently-abandoned) × hauntedness | Charts, salvage cargo, lost-manuscript mastery upgrades, cursed-item leads, occasional hostile encounter | 40% |
+| **Wreck** | (uncoded) | ship type × age × cargo state × accessible-by (beach / reef-dive). Coastal-hinterland-native — placed in the offshore water band of a port zone | Cargo, charts, "last log" leads | 50% |
+| **Smuggler's cove** | mercantile | culture × specialty (opium / unlicensed spice / English or Dutch interloper bypassing the *cartaz* system / Japanese-silver runners). Coastal-hinterland-native — hidden inlet on the remote edge of a port zone's coastline | Off-market trades that bypass port reputation; introduces a fence NPC; rep cost if caught later | 25% |
+| **Garden** | learned | tradition (Jesuit medicinal / Mughal hakim / VOC company-naturalist / Chinese herbalist / indigenous practitioner) | Mastery upgrades on specific commodities. The drug-knowledge engine of the system. Modeled on real 1612 institutions: Garcia da Orta's Goa garden, Mughal hakim compounds, Jesuit medicinal plots — estate gardens, not field camps. Shares the `garden` kind with bespoke gardens like Oxford and Malabar | 15% |
+| **Caravanserai** | mercantile | culture × isolation (highway / oasis / mountain pass). Port-local only — sits on the road into the city, in the hinterland band | Rumor-style leads, overland trade gossip, occasional traveler-NPC quest | 35% |
+
+Shrine and ruin do most of the work — they're the high-frequency procgen. The others are 5–15 instances each globally so they feel rare without being precious.
+
+**Cut from earlier drafts:**
+- **Hermitage** as its own archetype — folded into Shrine as a `tenant: hermitage` axis. The geometry is a small shrine with a single sage NPC, not a separate building family. Keeping it separate would have duplicated the per-faith name pools and lore templates.
+- **Battlefield** — too thin mechanically (charts + lore + rep shift, all of which other archetypes already deliver) and easy to mishandle historically. Battles get told better through ruined forts (e.g. Talikota-era ruin) and named bespoke sites than through a procedural template.
+
+**Slavery exclusion.** Plantation is intentionally not in the proc table. The physick garden archetype covers the drug-economy ground (clove groves, opium poppy fields, indigo vats, aloe groves) by foregrounding the crop and the knowledge-bearer, not the labor system. Bespoke historical sites where forced labor is the point just don't get authored.
+
+#### Two big visual levers
+
+**Shrine archetype reuses existing faith geometry.** `portReligions.ts` already has bespoke per-faith spiritual geometry in `ProceduralCity.tsx` (Catholic nave+bell tower, Sunni dome+minaret, Hindu shikhara, Buddhist pagoda, etc.). A shrine POI is *that geometry rendered at smaller scales, in unusual locations, with weather/decay applied*:
+
+- Wayside shrine = single small chamber, ~25% of the equivalent in-city building's footprint
+- Village shrine = the in-city geometry at ~60% scale with a courtyard
+- Pilgrimage site = the in-city geometry at 110% scale + procedural pilgrim-camp tents (reuse pedestrian system)
+- Decayed = same geometry with a "ruin pass" applied (next bullet)
+
+Zero new bespoke geometry for shrines. Variety comes from `(faith-pool × scale × decay-pass)`. Same trick the building-style system uses on houses.
+
+**`RuinTransform(building, decayLevel)`** is one shader/material function that takes any existing building geometry and:
+- removes random roof tiles / planks (vertex deletion above a noise threshold)
+- shifts walls 0.5–2u off-axis (lean)
+- drops wall opacity in random chunks (gaps)
+- swaps material to a desaturated / moss-tinted palette
+- spawns a small `vegetation_overgrowth` instance pass on top
+
+Apply to *any* spiritual / fort / palace / market geometry to get a ruined version. A "ruined Hindu temple" in the hinterland is just `shikhara_geometry → RuinTransform(0.7)` — no new asset. Big lever for visual variety.
+
+#### POI anchoring
+
+Every POI lives somewhere in the single 3D world, anchored to a port zone. There is no "inter-port" or "open-ocean" gameplay space; the world-map overlay only renders 2D markers for discovered POIs, it doesn't host them.
+
+Three placement bands within a port zone:
+- **City** — anchored to a landmark inside the city footprint, or at explicit in-city coords. Apothecaries' Hall, Bom Jesus, Banyan merchant house.
+- **Hinterland** — outside the city exclusion radius, on land. Shipped shrines use the 110–215u band from port center (`placeHinterlandScenes`). Ruins, physick gardens, caravanserais all spawn here.
+- **Coastal hinterland / nearshore water** — in the offshore band of the same port zone. Wrecks (visible from the beach), smuggler's coves (hidden inlets at the zone's far edge). Sailed up to in ship mode, not walked to.
+
+**Standalone destination ports** are how showcase sites that don't pair with an existing trade port get into the world: Cape Comorin / Kanyakumari, possibly Mt Athos. Mechanically these would be *new ports* added to all three registries (see "Port roster" above) with their own port zones generated by the existing pipeline — no/limited trade, hand-authored bespoke POIs in the zone, clickable on the world-map overlay like any other port. That's a much cleaner integration than inventing a new "world-map POI" surface. Most "showcase" candidates can instead be authored as bespoke POIs in *existing* port zones — Socotra already exists, Masulipatnam can host Golconda, etc. Check the port roster before assuming a new port is needed.
+
+Resolution: player walks or sails up to the POI inside the current port zone, the existing proximity check fires, `POIModal` opens with Learn + Converse tabs. Same flow as the shipped Phase 1/2 POIs — no overworld modals, no scene transitions. Travelling between port zones uses `fastTravel` like always.
 
 **Planned data model** — not yet in code:
 
 ```typescript
 type SemanticClass = 'religious' | 'civic' | 'learned' | 'mercantile' | 'royal';
-type POIKind = 'temple' | 'monastery' | 'naturalist' | 'merchant_guild' | 'ruin' | 'garden' | 'court';
+type POIKind =
+  | 'naturalist' | 'merchant_guild'         // bespoke-only
+  | 'garden' | 'shrine'                      // both bespoke and procedural
+  | 'ruin' | 'wreck' | 'smugglers_cove' | 'caravanserai';  // procedural-only
+
+// Cut 2026-04-29 (no in-use bespoke POIs needed them):
+//   'temple'        — covered by 'shrine' or in-city spiritual buildings
+//   'court'         — covered by in-city palace landmarks + Governor tab
+//   'monastery'     — covered by 'shrine' (Bom Jesus reclassified)
+//   'hermitage'     — folded into 'shrine' as a tenant axis
+//   'battlefield'   — too thin mechanically; better told via 'ruin' POIs
+//   'physick_garden'— merged into 'garden' (one silhouette, one kind)
+
+type POILocation =
+  | { kind: 'landmark'; landmarkId: string }           // anchored to an in-city landmark
+  | { kind: 'coords'; position: [number, number] }     // in-city POI at explicit coords (port-local)
+  | { kind: 'hinterland'; position: [number, number] } // outside city exclusion radius, on land
+  | { kind: 'nearshore'; position: [number, number] }; // offshore water within the port zone — wrecks, coves
+// All four anchor to a port (the `port` field below). There is no free-floating
+// "world-map POI" — POIs always live in some port zone in the 3D world.
 
 interface POIDefinition {
   id: string;
   name: string;
-  kind: POIKind;                  // fine-grained type for prose / filtering
-  class: SemanticClass;           // drives eyebrow + marker (shared with buildings)
-  port: string;
-  location:
-    | { kind: 'landmark'; landmarkId: string }       // anchored to an in-city landmark
-    | { kind: 'coords'; position: [number, number] }  // in-city POI at explicit coords
-    | { kind: 'hinterland'; position: [number, number] }; // outside city exclusion radius
-  knowledgeDomain: string[];      // commodity IDs identifiable here
-  masteryGoods: string[];         // subset upgradeable to Mastered
+  kind: POIKind;
+  class: SemanticClass;
+  port: string;                   // every POI anchors to a port zone (no exceptions)
+  location: POILocation;
+  knowledgeDomain: string[];
+  masteryGoods: string[];
   cost: { type: 'gold' | 'commodity' | 'reputation'; amount?: number; commodityId?: string };
   npcName: string;
   npcRole: string;
-  lore: string;                   // LLM context
+  lore: string;
   unlocksPort?: string;
+  // procedural-only — distinguishes a procedurally-rolled garden/shrine from
+  // a bespoke one with the same kind
+  archetype?: 'shrine' | 'ruin' | 'wreck' | 'smugglers_cove'
+            | 'garden' | 'caravanserai';
+  variant?: Record<string, string | number>; // archetype-specific axis values
+  decay?: number; // 0..1 — RuinTransform input
 }
 ```
 
-**Example POIs by port** (drafted, not built): Goa → Jesuit College of St. Paul (religious, bound to jesuit-college landmark — wait, that's at Salvador; Goa needs its own LEARNED POI bound to Bom Jesus); Calicut → Tali Temple priest (religious, bound to calicut-gopuram); Malacca → Chinese merchant guild (mercantile, in-city); Mocha → Sufi lodge (religious, bound to al-shadhili-mosque); Hormuz → Persian royal factor (royal, in-city); Surat → Banyan merchant house (mercantile, in-city, distinct from english-factory landmark); Macau → Jesuit observatory (learned, bound to colegio-sao-paulo); Bantam → pepper gardens (mercantile, hinterland); Socotra → aloe groves (learned, hinterland); Lisbon → Royal Hospital of All Saints (learned, in-city); Amsterdam → VOC Spice Warehouse (mercantile, in-city); London → Apothecaries' Hall (learned, in-city); Salvador → Jesuit college apothecary (learned, bound to jesuit-college); Cartagena → Inquisition library (learned, bound to palacio-inquisicion); Cape → Khoikhoi pastoral camp (naturalist, hinterland).
+**Files** (Phase 1 creates the first three):
+- `src/utils/poiDefinitions.ts` — bespoke local POI data, plus archetype variant tables once procedural lands
+- `src/utils/poiConversation.ts` — Gemini system-prompt builder, parameterized per POI
+- `src/components/POIModal.tsx` — Learn + Converse tabs
+- (later) `src/utils/ruinTransform.ts` — the shared ruin pass
+- (later) `src/utils/proceduralPOIs.ts` — archetype generators (wreck, cove, ruin, physick garden, caravanserai)
+- (later) `src/utils/proceduralCoastal.ts` — placement helper for nearshore POIs (offshore band of a port zone)
 
-**Files to create**: `src/utils/poiDefinitions.ts`, `src/utils/poiConversation.ts`, `src/components/POIModal.tsx`, `src/components/POIMarker.tsx`.
+#### Implementation order (revised)
 
-**Implementation order** (when this kicks off):
-1. `poiDefinitions.ts` with 6-10 POIs across 3-4 ports, data-only.
-2. Marker renderer — extend `SacredBuildingMarkers` to pull POI positions + classes alongside buildings.
-3. Hover label for POIs (reuse `createWorldLabelTexture` + eyebrow system).
-4. Walk-up proximity detection (pattern from `interactionPrompt` in gameStore).
-5. `POIModal.tsx` with Learn tab wired to `knowledgeSystem.ts`.
-6. `poiConversation.ts` + Converse tab (copy the `TavernTab.tsx` / `tavernConversation.ts` pattern).
+1. **Phase 1 — Bespoke local POIs.** [SHIPPED] 8 hand-authored POIs across London, Goa, Surat, Mocha. `poiDefinitions.ts` (data) + `SacredBuildingMarkers` extended to render religious POIs + cyan POI beacon (`POIBeacons` in `ProceduralCity.tsx`) for every POI regardless of class + walk-up proximity detection in UI.tsx + `POIModal.tsx` with Learn tab wired to `learnAboutCommodity` + `poiConversation.ts` + Converse tab + minimap and expanded WorldMap markers (cyan circle, "?" → name on discovery via `discoveredPOIs` slice). Bespoke building geometry (Tudor Apothecaries' Hall, collegiate Oxford, etc.) is deferred to Phase 5+; today non-landmark POIs are visible only via the cyan beacon.
+2. **Phase 2 — Shrine archetype on local hinterlands.** [SHIPPED] `proceduralShrines.ts` rolls 0–2 shrines per port (probabilistic, capped at 2), faith picked from `PORT_FAITHS` (catholic, protestant, sunni, shia, ibadi, hindu, buddhist, chinese-folk, animist, jewish — 10 traditions, all with name pools, NPC role pools, lore templates, and per-faith herbal knowledge domains). Three scale variants (wayside / village / pilgrimage) drive both `Building.scale` (AABB) and `Building.geometryScale` (rendered geometry, applied via `scaleLandmark` at the end of the spiritual block in `ProceduralCity.tsx`). Each shrine produces a paired `POIDefinition` attached to `Port.pois`, plus a synthetic spiritual `Building` with `poiId` so the existing renderer draws the geometry and walking detection routes to `POIModal`. Hinterland placement uses the same band as `placeHinterlandScenes` (110–215u from port center) and rejects ocean / built-up cells. Pilgrimage shrines are gated to Large+ ports. Mastery is reserved for pilgrimage scale only — the keystone good per faith (Bhang for Sufi/Hindu, Camphor for Buddhist, Theriac for Jewish, etc.).
+
+   **2026-04-29 update — heightened silhouettes + procedural variation.** The original 0.25/0.6/1.1 scale tiers compressed shrines below city-building size and made them invisible from across the hinterland. Bumped to 1.0/1.4/1.8 (wayside still reads at distance; pilgrimage out-scales the in-city version because it's a standalone monument, not a city-block insert). AABB footprints (`SCALE_FOOTPRINT`) bumped to match. Added `Building.shrineVariant` with five procedurally-rolled axes applied at render time in `ProceduralCity.tsx`'s spiritual branch:
+   - `keyFeatureScale` — Y stretch on the hero feature (any part with top-Y > 4u: towers, minarets, shikharas, pagoda spires). Range 0.85–1.6.
+   - `bodyProportion` — Y stretch on the body (everything else). Range 0.85–1.25.
+   - `paletteShift` — signed warm/cool RGB nudge applied to all per-faith parts. Range ±0.10.
+   - `accents.boundaryWall` — eight-segment ring of low stone blocks with a front gap.
+   - `accents.prayerPole` — slim pole + banner (warm red or cool indigo, keyed off `paletteShift` sign).
+   - `accents.outerCourtyard` — flagstone plinth one tier wider than the body. Mostly pilgrimage scale.
+
+   Variant rolled per shrine in `rollShrineVariant` (deterministic per worldSeed). Pilgrimage shrines bias toward exaggerated hero features. The variant pass runs *before* the uniform `geometryScale` multiplier so non-uniform stretches survive the final scale.
+**2026-04-29 foundation pass.** Before procedural spawners (Phase 3) ships, the supporting plumbing was reviewed and tightened:
+
+- **POI proximity is shared.** `src/utils/proximityResolution.ts` exports `findNearestPOI` + `POI_INTERACTION_RADIUS_BY_KIND`. UI.tsx calls it from both ship and walking-mode polling, so wrecks (sailed up to) and shrines (walked up to) share one path. Per-kind radius means a 14u-wide caravanserai can fire interaction when the player stands at the gate, while a 3u shrine still wants tight 8u tolerance.
+- **POI visibility is decoupled from sacred markers.** `renderDebug.poiVisibility` (default true) controls silhouette rendering. `sacredMarkers` keeps the cyan beacons + religious plumbobs. Players who hide markers don't lose visible buildings.
+- **Variant pass extracted.** `src/utils/shrineVariant.ts` owns the per-faith-block variant logic (Y-stretch by index-tagged hero feature, palette shift, three accent toggles). The renderer's spiritual block uses an `addKey(...)` wrapper for parts that should classify as the hero feature (bell tower, minaret, shikhara, pagoda, dome, etc.) — no Y-position heuristic that mistagged church nave roofs and minaret bases.
+- **POIArchetype materials cached.** Module-level `chunkyMaterial(...)` cache keys MeshStandardMaterial by quantized RGB + flags. Static palettes hoisted to module constants. Removes the per-render allocation storm from ~750/render to ~bounded by unique colors.
+- **Determinism preserved on variant addition.** `rollShrineVariant` rolls *after* the rotation roll in `proceduralShrines.ts`, so adding new variant axes won't shift earlier shrines on the same world seed.
+
+**2026-04-29 update — POI archetype silhouettes.** [SHIPPED rendering only — spawners are Phase 3 below.] New file `src/components/POIArchetypes.tsx` defines four chunky low-poly silhouettes in the splash-globe style (flatShading, exaggerated proportions, deterministic per-POI variants):
+
+- `WreckSilhouette` — tilted hull (carrack vs dhow), 0–2 snapped masts, fallen spar, partial submersion. Anchors at sea level.
+- `SmugglersCoveSilhouette` — stepped cliff face + lean-to + crate stack + jetty + optional watchtower. Anchors at terrain Y.
+- `GardenSilhouette` — walled rectangular compound, corner gazebo with dome, optional greenhouse, herb-bed grid. Four culture palettes (Mughal red, Jesuit cream, Chinese grey, Yemeni adobe). Fires on `kind === 'garden'` — bespoke gardens (Oxford, Malabar) and procedural physick gardens both pick it up.
+- `CaravanseraiSilhouette` — fortified square with crenellated walls, 2 or 4 corner towers (round or square), arched gate with pylons, plinth.
+
+Top-level `POISilhouettes({ ports })` reads each port's POI list, dispatches by `poi.kind`, and skips kinds that already render their own geometry (shrines via the synthetic spiritual building; landmark-bound POIs that reuse the in-city landmark mesh). Mounted next to `POIBeacons` in `ProceduralCity.tsx`. Variant axes are hashed off `poi.id` so the same world seed produces the same silhouette in the same place.
+
+The `POIKind` union was reconciled: cut `temple`, `court`, `monastery`, `hermitage`, `battlefield`, `physick_garden`. Final 8-kind list (see planned data model above): `naturalist`, `merchant_guild`, `garden`, `shrine`, `ruin`, `wreck`, `smugglers_cove`, `caravanserai`. Bom Jesus reclassified from `monastery` → `shrine` since religious sites all fit under that umbrella now.
+
+3. **Phase 3 — Bespoke POIs in existing port zones + first coastal-hinterland POI.** Two parallel sub-tracks that share the same plumbing:
+   - **(a) Bespoke POIs in under-served existing ports.** Several existing ports have rich historical content but no POIs yet. **Socotra is the obvious first target** — it already exists as a fully-wired port (geography, faith, fleet, lore notes, dragon's-blood commodity link), so it just needs 2–3 hand-authored POIs in `poiDefinitions.ts`: a Dracaena cinnabari grove (physick-garden-like, hinterland), a coastal Nestorian Christian community remnant (shrine, hinterland), and possibly a frankincense distillery near the harbor. Same pattern as the existing 8 bespoke POIs — no new code, just data + a Converse persona.
+   - **(b) First coastal-hinterland POI.** Add a **named Portuguese carrack wreck** as a `nearshore` POI in **Mozambique's port zone** (Mozambique isn't currently in the port roster — *check before adding*; if not present, anchor instead to **Zanzibar** or **Mombasa**, which are). Sailed up to in ship mode; offshore water of the host port's zone. Implements the `kind: 'nearshore'` POILocation variant + the offshore-band placement helper. Validates the wreck archetype's reward profile (cargo, charts, "last log" leads) without committing to procedural generators.
+
+   *(Earlier drafts of this phase had me proposing to "add Socotra as a new port" — wrong, it's been a port for months. Always check the port roster above before claiming any place needs to be added.)*
+4. **Phase 4 — RuinTransform + ruin archetype.** Visual investment that pays off across many archetypes later. Deferred behind Phase 3 because RuinTransform is leverage on archetype variety, and that variety only matters once there are enough archetypes to transform.
+5. **Phase 5 — Physick garden archetype.** Drug-knowledge content lands here: Jesuit medicinal gardens, Mughal hakim compounds, VOC company-naturalist plots, Chinese herbalist gardens. Mostly Converse-tab content work plus a small estate-garden geometry kit. The shrine archetype's `tenant: hermitage` variant covers the sage-figure ground that the old Hermitage archetype would have.
+6. **Phase 6 — Remaining procedural archetypes** (smuggler's cove, caravanserai, procedural wrecks) as fill, only if the system is carrying its weight.
+
+#### Open questions (still in flux)
+
+- **Procgen seeding** — same world-seed-driven generation as ports, so a player's Goa always has the same hinterland shrine. (Lean yes — POIs need to feel like *places*, not respawns.)
+- **POI density per port hinterland** — start at 2.
+- **Pooled vs. per-archetype Converse prompt** — lean shared with parameterized prompt (same trick as the governor persona in questplan).
+- **Hostile encounters at ruins** — 15% chance of a small skirmish on haunted/bandit-occupied ruins? Adds stakes but raises scope.
+- **World-map POI visibility** — bespoke always visible, procedural gated by chart unlocks (so charts found at other POIs become meaningfully valuable)?
+
+The single biggest design lever in the whole sketch is **the RuinTransform function + the shared-faith-geometry-at-variable-scale trick**. Together they let one shrine archetype + one ruin archetype produce dozens of visually distinct sites with no new bespoke art. Everything else is variant tables and lead-roll percentages.
 
 ### Fraud detection surface
 Fraud rolls on Unknown-level purchases are specced in `knowledgeSystem.ts` design but the reveal-on-sale moment + Gujarati factor warning on purchase are not yet wired into `MarketTabLedger.tsx` / `PortModal.tsx`.
@@ -466,6 +640,35 @@ Deferred until the dashboard redesign.
 
 ### Manila + Lima / Callao
 Planned when Pacific expansion ships. Two new building styles: `spanish-andean` (adobe, max 2 stories, deep eaves, arcaded plaza) and `manila-hybrid` (weighted mix: 30% `luso-colonial` stone, 40% `malay-stilted` bahay kubo, 20% Chinese shophouse with `upturnedEave`, 10% thatch). Only one new feature primitive needed: `upturnedEave`.
+
+### Animated port banner — Manila as test case
+Manila's PortModal banner is the prototype for replacing static GenAI banner plates with a live, time-of-day-aware scene built around a magenta-keyed transparent silhouette PNG. If it lands well, the same pipeline rolls out to the other major ports.
+
+**Architecture** (`src/components/PortBannerScene.tsx`, wired in `PortModal.tsx:21-31` via the `ANIMATED_BANNER_PORTS` registry):
+- Day silhouette (`/ports/manila.png`) and optional night silhouette (`/sleep/manila.png`) are pixel-art PNGs with a magenta sky cutout.
+- A dedicated R3F `Canvas` renders, back-to-front: `SkyDome` gradient → `NightStars` → `Sun` → `SkyClouds` (banner-tuned `BANNER_CLOUDS` rig, lifted above the rooftop band so puffs read as cumulus, not smoke) → `DistantBirds` → magenta-keyed silhouette overlay shader.
+- The overlay shader (`SilhouetteOverlay`) crossfades day↔night silhouettes by `dayRef.sunIntensity`, so the same building re-lights at dusk instead of just being tinted cool.
+- Post chain: `Bloom` → `Pixelation` (granularity 2, the lightest setting that visibly snaps cloud edges to a shared grid with the silhouette) → `Vignette`.
+- All driven by the same `useGameStore` `timeOfDay`, so the banner is in sync with the world map and any ship scene.
+
+**Animated effects layered on the static silhouette**:
+- **Sky gradient + clouds**: live, time-of-day-tinted via `dayRef.skyHorizon`. Clouds drift laterally on a wrapping group; per-cloud puff seeds are stable so React re-renders don't reshuffle them.
+- **Day↔night silhouette crossfade**: `uMix` ramps with sun intensity (smoothstep 0.4–1.4), straddling golden hour.
+- **Ember glow on warm pixels**: at night, the shader detects warm-bright pixels in the night PNG (lit windows, torches, ship lanterns) by combining a brightness floor with a red-over-blue chroma threshold. A per-region hashed flicker (two octaves, ~1.5 Hz + ~4 Hz) modulates them, and an additive warm glow pushes lit pixels above 1.0 luminance so the Bloom pass picks them up as soft halos rather than flat shimmer. Effect scales with `uMix` so it's invisible during daytime by design.
+
+**Tuning knobs** (all in `PortBannerScene.tsx`):
+- `BANNER_CLOUDS` — cloud y-positions, volume, color, opacity. Authored colors should be near-white at noon; the day driver in `SkyClouds` warms them at golden hour.
+- Ember mask thresholds: `smoothstep(0.30, 0.55, bright) * smoothstep(0.04, 0.18, warmth)` — raise the brightness floor if too many roof tiles register as lit.
+- Ember amplitude: `pulse = 1.0 + ember * (0.30 + 0.20 * flick)` and `glow = vec3(1.40, 0.70, 0.18) * ember * (...)` — the additive `glow` magnitude does most of the visible work; halve it if the city looks on fire.
+- `Bloom` `luminanceThreshold` (0.55) — must stay below the post-glow luminance of lit pixels or the halo doesn't fire.
+
+**Open questions before rolling out to other ports**:
+- Authoring cost: each port needs both a magenta-keyed day PNG *and* a night version with hand-painted lit windows. Is that worth it vs. a single day PNG with shader-only nighttime tinting?
+- The night PNG aspect ratio currently differs from the day PNG (1344×768 vs 1536×672); the shader handles this with separate `uDayUvScale` / `uNightUvScale`, but the parallax breaks down if they're wildly different. Standardize aspect for future ports.
+- Per-port cloud rigs vs. one shared archetype-driven rig (tropical / temperate / arid). Lean toward archetype-driven once a second port is wired.
+- Performance: the banner mounts a second R3F Canvas alongside the world Canvas. Cheap on desktop, untested on Safari/iOS — see "Safari perf investigation" below before assuming this scales to all 30+ ports.
+
+**Status (2026-04)**: Manila wired and visually tuned. Next step is letting it bake for a few days of playtesting before committing to authoring night PNGs for the rest of the port roster.
 
 ### Playable factions / randomized start
 Currently the game always starts as English captain of "The Dorada". Plan: 7 playable factions (English, Portuguese, Dutch, Spanish, Gujarati, Omani, Chinese), randomized on new game. All faction-keyed infrastructure (crew, cargo, starting knowledge, ship name pools, hull/sail palettes) already exists in `npcShipGenerator.ts` + `crewGenerator.ts` + `commodities.ts` + `knowledgeSystem.ts`.

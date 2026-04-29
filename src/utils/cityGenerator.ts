@@ -2033,18 +2033,27 @@ export function generateCity(
   // descending) if findSpot can't fit the plot, so a tightly-packed port
   // doesn't lose all its bigger farms. halfWidth/halfDepth are world-unit
   // half-extents; the reservation footprint adds +1 cell on each side.
+  // Heavily skewed toward elongated strips, matching historical open-field
+  // strip-farming practice across early modern Europe / Middle East / South
+  // Asia. Squares are rare; long narrow rectangles dominate. Plots are also
+  // larger overall (max ~32×16) so a single farm reads as a cultivated
+  // landscape rather than a tile. The variant retry chain in the loop below
+  // walks down by area, so a too-tight cell still receives a smaller plot.
   type PlotVariant = { halfWidth: number; halfDepth: number; weight: number };
   const PLOT_VARIANTS: PlotVariant[] = [
-    { halfWidth: 5, halfDepth: 5, weight: 22 }, // small square    (10×10)
-    { halfWidth: 6, halfDepth: 5, weight: 14 }, // small wide      (12×10)
-    { halfWidth: 5, halfDepth: 6, weight: 14 }, // small tall      (10×12)
-    { halfWidth: 7, halfDepth: 5, weight: 12 }, // wide rect       (14×10)
-    { halfWidth: 5, halfDepth: 7, weight: 12 }, // tall rect       (10×14)
-    { halfWidth: 7, halfDepth: 7, weight: 10 }, // medium square   (14×14)
-    { halfWidth: 8, halfDepth: 6, weight:  6 }, // larger wide     (16×12)
-    { halfWidth: 6, halfDepth: 8, weight:  6 }, // larger tall     (12×16)
-    { halfWidth: 9, halfDepth: 6, weight:  3 }, // big rect        (18×12)
-    { halfWidth: 8, halfDepth: 8, weight:  1 }, // big square      (16×16)
+    // Compact plots — smaller homesteads / cell-constrained cases.
+    { halfWidth:  6, halfDepth:  6, weight: 10 }, // 12×12
+    { halfWidth:  8, halfDepth:  6, weight: 10 }, // 16×12
+    { halfWidth:  6, halfDepth:  8, weight: 10 }, // 12×16
+    // Elongated strips — the dominant historical shape.
+    { halfWidth: 11, halfDepth:  6, weight: 16 }, // 22×12
+    { halfWidth:  6, halfDepth: 11, weight: 16 }, // 12×22
+    { halfWidth: 13, halfDepth:  7, weight: 12 }, // 26×14
+    { halfWidth:  7, halfDepth: 13, weight: 12 }, // 14×26
+    // Bigger fields.
+    { halfWidth: 10, halfDepth: 10, weight:  6 }, // 20×20
+    { halfWidth: 16, halfDepth:  8, weight:  4 }, // 32×16
+    { halfWidth:  8, halfDepth: 16, weight:  4 }, // 16×32
   ];
   const totalWeight = PLOT_VARIANTS.reduce((s, v) => s + v.weight, 0);
   const reservationSize = (v: PlotVariant): [number, number, number] => [

@@ -101,11 +101,15 @@ type Continent = {
     | { kind: 'mountain'; u: number; v: number; h: number }
     | { kind: 'volcano'; u: number; v: number; h: number }
     | { kind: 'tree'; u: number; v: number }
+    | { kind: 'palm'; u: number; v: number }
+    | { kind: 'temple'; u: number; v: number }
+    | { kind: 'oasis'; u: number; v: number }
   >;
 };
 
 const LAND = '#5e9f4a';
 const LAND_DARK = '#487a36';
+const LAND_DESERT = '#e0a957';
 
 const CONTINENTS: Continent[] = [
   // small "India-tip" island — mid-front
@@ -131,6 +135,16 @@ const CONTINENTS: Continent[] = [
     features: [{ kind: 'tree', u: 0.05, v: -0.1 }] },
   // far-side sliver to keep the back of the globe interesting
   { lat: -30, lon: 160, rx: 0.18, rz: 0.10, elevation: 0.018, color: LAND_DARK, rotation: 0.0 },
+  // desert island — front-lower hemisphere. Larger and very flat, with a
+  // ruined temple and an oasis with two leaning palms. Sits clear of the
+  // india-tip patch above and well off the ship spawn.
+  { lat: -14, lon: -2, rx: 0.20, rz: 0.22, elevation: 0.008, color: LAND_DESERT, rotation: 0.25,
+    features: [
+      { kind: 'temple', u: -0.10, v: -0.18 },
+      { kind: 'oasis', u: 0.18, v: 0.20 },
+      { kind: 'palm', u: 0.28, v: 0.08 },
+      { kind: 'palm', u: 0.08, v: 0.30 },
+    ] },
 ];
 
 // ─── collision: bounding circle for each continent in globe-local frame ─────
@@ -274,7 +288,32 @@ const OCEAN_FRAG = /* glsl */`
     vec3 nA = texture2D(uNormalMap, vUvA).rgb * 2.0 - 1.0;
     vec3 nB = texture2D(uNormalMap, vUvB).rgb * 2.0 - 1.0;
     vec3 nC = texture2D(uNormalMap, vUvC).rgb * 2.0 - 1.0;
-    vec3 perturb = normalize(vWorldNormal + (nA * 0.22 + nB * 0.14 + nC * 0.08));
+
+    // Wave-activity field — modulates whitecap density, wavetop sparkle,
+    // and normal-map perturbation strength so the ocean isn't a uniform
+    // blanket of identical whitecaps. Peaks in the trade-wind belt
+    // (~25° lat, latAbs≈0.42) and the westerlies (~50° lat, latAbs≈0.77);
+    // quietest in the equatorial doldrums and at the poles. A low-
+    // frequency longitudinal term breaks up the horizontal banding so
+    // adjacent oceans at the same latitude don't read as identical.
+    float latAbs = abs(vLocalNormal.y);
+    float oceanLon = atan(vLocalNormal.z, vLocalNormal.x);
+    float trade     = exp(-pow((latAbs - 0.42) * 4.0, 2.0));
+    float westerly  = exp(-pow((latAbs - 0.77) * 4.0, 2.0));
+    float doldrum   = 1.0 - smoothstep(0.0, 0.15, latAbs);
+    float polarCalm = smoothstep(0.92, 1.0, latAbs);
+    float lonNoise =
+      0.5 +
+      0.5 * sin(oceanLon * 2.3 + latAbs * 5.0) *
+            cos(oceanLon * 1.7 - latAbs * 3.1);
+    float waveActivity = 0.35 + trade * 0.9 + westerly * 1.0
+                              - doldrum * 0.35 - polarCalm * 0.6;
+    waveActivity *= 0.65 + 0.45 * lonNoise;
+    waveActivity = clamp(waveActivity, 0.15, 1.5);
+
+    vec3 perturb = normalize(
+      vWorldNormal + (nA * 0.22 + nB * 0.14 + nC * 0.08) * waveActivity
+    );
 
     // Day/night water palette — interpolate the fixed deep/shallow blues
     // toward darker night equivalents so the cyan only shows in daylight.
@@ -282,22 +321,51 @@ const OCEAN_FRAG = /* glsl */`
     vec3 shallowCol = mix(uShallowColor, uNightShallowColor, uNightMix);
     vec3 foamCol = mix(uFoamColor, uNightFoamColor, uNightMix);
 
-    // Latitude-based palette nudge. The current uDeepColor/uShallowColor
-    // values are the temperate baseline; tropical waters get a subtle warm
-    // cyan shift and polar waters a slight cool desaturation. Both are
-    // restrained — visible in side-by-side comparison but not cartoonish —
-    // and faded at night since moonlight greys everything regardless.
-    // vLocalNormal.y = sin(lat), so abs() = 0 at equator, ~0.45 at 27°,
-    // ~0.87 at 60°, 1 at the poles.
-    float latAbs = abs(vLocalNormal.y);
+    // Latitude-based palette nudge. uDeepColor/uShallowColor are the
+    // temperate baseline; tropical waters get a strong warm cyan shift,
+    // polar waters a cool slate desaturation. Faded at night since
+    // moonlight greys everything regardless. vLocalNormal.y = sin(lat),
+    // so abs() = 0 at equator, ~0.45 at 27°, ~0.87 at 60°, 1 at the
+    // poles. (latAbs is computed near the top of main() for the wave-
+    // activity field; reused here.)
     float dayGate = 1.0 - uNightMix * 0.5;
     float tropic = (1.0 - smoothstep(0.0, 0.55, latAbs)) * dayGate;
     float polar  = smoothstep(0.55, 0.92, latAbs) * dayGate;
 
-    shallowCol = mix(shallowCol, vec3(0.38, 0.86, 0.86), tropic * 0.55);
-    deepCol    = mix(deepCol,    vec3(0.05, 0.28, 0.52), tropic * 0.45);
-    shallowCol = mix(shallowCol, vec3(0.30, 0.42, 0.48), polar * 0.32);
-    deepCol    = mix(deepCol,    vec3(0.08, 0.18, 0.28), polar * 0.24);
+    shallowCol = mix(shallowCol, vec3(0.38, 0.82, 0.84), tropic * 0.65);
+    deepCol    = mix(deepCol,    vec3(0.06, 0.36, 0.56), tropic * 0.55);
+    shallowCol = mix(shallowCol, vec3(0.28, 0.40, 0.46), polar * 0.55);
+    deepCol    = mix(deepCol,    vec3(0.06, 0.14, 0.22), polar * 0.45);
+
+    // Tint the whitecap foam itself by latitude. Without this, every
+    // whitecap reads as the same neutral cream — which is what was
+    // washing out the tropical zone, since that's exactly where the
+    // wave-activity field puts the most foam. Tropical foam picks up a
+    // turquoise cast from the warm shallow water beneath; polar foam
+    // goes cooler/grey-blue.
+    foamCol = mix(foamCol, vec3(0.82, 0.95, 0.93), tropic * 0.40);
+    foamCol = mix(foamCol, vec3(0.72, 0.78, 0.86), polar  * 0.40);
+
+    // Open-ocean satellite variation — bathymetry, plankton blooms,
+    // sediment plumes. Cheap sum-of-sines on the globe-local normal,
+    // computed here but APPLIED at the end of main() as a finishing
+    // multiplier so the white sun-glint, lambert lift, and whitecap
+    // noise can't neutralize it (which is what was hiding it before).
+    vec3 N = vLocalNormal;
+    float bathy =
+      sin(N.x * 3.7 + N.y * 1.9) * cos(N.z * 2.8 - N.y * 1.3) * 0.55 +
+      sin(N.x * 1.4 - N.z * 2.1) * cos(N.y * 2.4 + N.x * 0.9) * 0.35 +
+      sin(N.x * 6.3 + N.z * 4.7) * cos(N.y * 5.1)            * 0.18;
+    float bloom =
+      sin(N.x * 2.3 - N.y * 3.1 + 1.7) * cos(N.z * 1.8 + 0.9) * 0.6 +
+      sin(N.z * 4.4 + N.y * 2.0)       * cos(N.x * 3.3)       * 0.3 +
+      sin(N.x * 5.7 + N.z * 1.1)       * cos(N.y * 4.2 - 0.4) * 0.25;
+    // Sediment / coastal-stream field — a third independent pattern
+    // with higher frequency and asymmetric range, used to bias certain
+    // patches toward greenish-brown (river plumes, upwelling silt).
+    float sediment =
+      sin(N.x * 8.1 - N.z * 3.4) * cos(N.y * 6.2 + N.x * 1.1) * 0.5 +
+      sin(N.z * 2.9 + N.y * 5.3) * cos(N.x * 4.7)             * 0.3;
 
     float fres = pow(1.0 - max(dot(vWorldNormal, vViewDir), 0.0), 2.6);
     vec3 col = mix(deepCol, shallowCol, 0.20 + fres * 0.55);
@@ -391,13 +459,13 @@ const OCEAN_FRAG = /* glsl */`
     col += uMoonColor * moonSpec * uNightMix * 0.7 * (0.3 + moonLam);
 
     float crest = smoothstep(0.55, 0.85, (nA.x + nB.x) * 0.5 + 0.5);
-    col = mix(col, foamCol, crest * 0.30 * (0.4 + lam * 0.6));
+    col = mix(col, foamCol, crest * 0.30 * (0.4 + lam * 0.6) * waveActivity);
 
     // Fine-scale wavetop sparkle from the high-frequency layer — narrow
     // smoothstep so only the crests of the small ripples pop, gated by
     // lambert and limb so it reads as sun glitter, not allover speckle.
     float sparkle = smoothstep(0.78, 0.96, nC.x * 0.5 + 0.5);
-    col += uSunColor * sparkle * lam * rim * 0.25 * (1.0 - uNightMix);
+    col += uSunColor * sparkle * lam * rim * 0.25 * (1.0 - uNightMix) * waveActivity;
 
     // Shore foam: bleach a wave-modulated band right at the water/land edge.
     // Applied post-lambert because foam reads as bright surf regardless of
@@ -411,6 +479,42 @@ const OCEAN_FRAG = /* glsl */`
     col = mix(col, foamCol, foamBand * (0.5 + lam * 0.5) * (1.0 - uNightMix * 0.4));
 
     col += shallowCol * fres * 0.16;
+
+    // ─── Finishing tints — applied AFTER all the white additions
+    // (sun glint, streak, sparkle, whitecaps) so those can't neutralize
+    // the hue/value variations. Multiplicative so they act like colored
+    // filters on the whole composited ocean rather than overwriting it.
+    // Day-only: fades to neutral at night so moonlit ocean reads grey.
+
+    // 1. Bathymetry / depth lightness — gyres brighter, abyssal darker.
+    //    ±22% lightness swing is firmly visible without looking patchy.
+    float bathyMul = 1.0 + bathy * 0.22;
+    col *= mix(1.0, bathyMul, 1.0 - uNightMix);
+
+    // 2. Plankton-bloom / clear-water hue. Strong saturated targets:
+    //    negative bloom → clear deep blue; positive bloom → greenish
+    //    plankton water. The smoothstep widens the transition so the
+    //    boundary between "blue patch" and "green patch" is soft.
+    vec3 bloomBlue  = vec3(0.82, 0.90, 1.15);   // clear deep blue
+    vec3 bloomGreen = vec3(1.05, 1.18, 0.85);   // plankton-rich teal-green
+    vec3 bloomTint  = mix(bloomBlue, bloomGreen, smoothstep(-0.6, 0.6, bloom));
+    col *= mix(vec3(1.0), bloomTint, (1.0 - uNightMix) * 0.55);
+
+    // 3. Sediment / upwelling — desaturated greenish-brown bias on
+    //    high-positive sediment patches only (one-sided, since clean
+    //    water is the default and only specific patches go silty).
+    float sedAmt = smoothstep(0.15, 0.55, sediment);
+    vec3 sedTint = vec3(1.04, 1.05, 0.85);
+    col *= mix(vec3(1.0), sedTint, sedAmt * (1.0 - uNightMix) * 0.45);
+
+    // 4. Latitude tint — last so it has the final say on tropical vs
+    //    polar mood. Toned modestly since the bloom field already
+    //    provides a lot of variation in the same color space.
+    vec3 tropicTint = vec3(0.95, 1.03, 1.02);   // warm cyan lift
+    vec3 polarTint  = vec3(0.88, 0.95, 1.02);   // cool slate
+    vec3 latTint = mix(vec3(1.0), tropicTint, tropic * 0.55);
+    latTint      = mix(latTint, polarTint,  polar  * 0.65);
+    col *= mix(vec3(1.0), latTint, 1.0 - uNightMix);
 
     gl_FragColor = vec4(col, 1.0);
   }
@@ -734,6 +838,24 @@ function ContinentPatch({ continent: c }: { continent: Continent }) {
               <Tree />
             </FeatureMount>
           );
+        if (f.kind === 'palm')
+          return (
+            <FeatureMount key={i} u={u} v={v} c={c}>
+              <PalmTree seed={i} />
+            </FeatureMount>
+          );
+        if (f.kind === 'temple')
+          return (
+            <FeatureMount key={i} u={u} v={v} c={c}>
+              <Temple />
+            </FeatureMount>
+          );
+        if (f.kind === 'oasis')
+          return (
+            <FeatureMount key={i} u={u} v={v} c={c}>
+              <Oasis />
+            </FeatureMount>
+          );
         return null;
       })}
     </group>
@@ -879,6 +1001,348 @@ function Tree() {
         <coneGeometry args={[0.05, 0.12, 6]} />
         <meshStandardMaterial color="#3e6a2c" roughness={1} flatShading />
       </mesh>
+    </group>
+  );
+}
+
+// Palm: small drooping coconut palm with a curved trunk. Trunk is built
+// from three nested segments whose cumulative tilt sweeps the apex out
+// over the base — a proper leaning silhouette, not a straight pole. The
+// crown carries five fronds; each frond is two hinged cone segments where
+// the proximal angles outward from the crown's local horizontal and the
+// distal bends past π/2 so the tip droops below the crown. `seed` varies
+// trunk lean direction and frond phase so paired palms don't twin.
+function PalmTree({ seed = 0 }: { seed?: number }) {
+  // Cumulative trunk tilts from world vertical. Each child group rotates
+  // by the DELTA from its parent, so the segments compose a smooth arc.
+  const lean1 = 0.10 + (seed % 2 === 0 ? 0.03 : -0.02);
+  const lean2 = 0.30 + Math.sin(seed * 1.7) * 0.04;
+  const lean3 = 0.55 + Math.cos(seed * 2.3) * 0.05;
+  // Azimuth that the trunk leans toward — different per palm.
+  const faceA = seed * 1.91;
+
+  const h1 = 0.034;
+  const h2 = 0.028;
+  const h3 = 0.022;
+
+  const FROND_COUNT = 5;
+  const fronds = useMemo(() => {
+    return Array.from({ length: FROND_COUNT }, (_, i) => {
+      const a = (i / FROND_COUNT) * Math.PI * 2 + seed * 0.81;
+      // Proximal tilt from crown's local up axis. ~81° starts the frond
+      // nearly horizontal — slightly above for the upper-side of the
+      // crown, slightly below on the lean-side once the trunk's tilt is
+      // composed in.
+      const tilt1 = 1.42 + Math.sin(i * 1.9 + seed) * 0.07;
+      // Strong distal bend so the frond's tip arcs well below horizontal.
+      // Combined with tilt1, distal tip sits ~140° from crown +Y.
+      const droop = 1.05 + Math.cos(i * 2.7 + seed * 1.3) * 0.10;
+      const len1 = 0.024 + (i % 2 === 0 ? 0.003 : 0);
+      const len2 = 0.020 + (i % 3 === 0 ? -0.002 : 0.002);
+      return { a, tilt1, droop, len1, len2 };
+    });
+  }, [seed]);
+
+  const TRUNK_COL = '#8a6a45';
+  const FROND_COL = '#7a9a3e';
+  const FROND_DARK = '#5e7a2c';
+
+  return (
+    <group rotation={[0, faceA, 0]}>
+      {/* Segment 1 (base) — tilts the whole tree by lean1 */}
+      <group rotation={[lean1, 0, 0]}>
+        <mesh position={[0, h1 / 2, 0]}>
+          <cylinderGeometry args={[0.0080, 0.0095, h1, 7]} />
+          <meshStandardMaterial color={TRUNK_COL} roughness={1} flatShading />
+        </mesh>
+        {/* Segment 2 — hinged at top of seg 1, adds (lean2 - lean1) */}
+        <group position={[0, h1, 0]} rotation={[lean2 - lean1, 0, 0]}>
+          <mesh position={[0, h2 / 2, 0]}>
+            <cylinderGeometry args={[0.0070, 0.0080, h2, 7]} />
+            <meshStandardMaterial color={TRUNK_COL} roughness={1} flatShading />
+          </mesh>
+          {/* Segment 3 — hinged at top of seg 2, adds (lean3 - lean2) */}
+          <group position={[0, h2, 0]} rotation={[lean3 - lean2, 0, 0]}>
+            <mesh position={[0, h3 / 2, 0]}>
+              <cylinderGeometry args={[0.0060, 0.0070, h3, 7]} />
+              <meshStandardMaterial color={TRUNK_COL} roughness={1} flatShading />
+            </mesh>
+            {/* Crown at the trunk apex — its local +Y is the trunk-tip
+                direction (tilted ~31° from world up), so fronds spread in
+                the crown's plane and droop relative to it. The lean-side
+                fronds end up pointing well below world horizontal. */}
+            <group position={[0, h3, 0]}>
+              {/* Coconut cluster nestled at the crown */}
+              <mesh position={[0, 0, 0]}>
+                <sphereGeometry args={[0.0085, 7, 6]} />
+                <meshStandardMaterial color="#3e2a18" roughness={1} flatShading />
+              </mesh>
+              {fronds.map((f, i) => (
+                // Outer Y-rotation spins the frond around the crown
+                // (azimuth); inner X-rotation tilts the frond out from
+                // crown +Y so its long axis lies near the crown's
+                // horizontal plane.
+                <group key={i} rotation={[0, f.a, 0]}>
+                  <group rotation={[f.tilt1, 0, 0]}>
+                    {/* Proximal segment */}
+                    <mesh position={[0, f.len1 / 2, 0]}>
+                      <coneGeometry args={[0.0075, f.len1, 4]} />
+                      <meshStandardMaterial color={FROND_COL} roughness={1} flatShading />
+                    </mesh>
+                    {/* Distal segment hinged at proximal apex with an
+                        additional X-rotation so the tip arcs further down. */}
+                    <group position={[0, f.len1, 0]} rotation={[f.droop, 0, 0]}>
+                      <mesh position={[0, f.len2 / 2, 0]}>
+                        <coneGeometry args={[0.0045, f.len2, 4]} />
+                        <meshStandardMaterial color={FROND_DARK} roughness={1} flatShading />
+                      </mesh>
+                    </group>
+                  </group>
+                </group>
+              ))}
+            </group>
+          </group>
+        </group>
+      </group>
+    </group>
+  );
+}
+
+// Oasis: a small water pool with a darker rim, a few reed tufts at the
+// edge, and a slow shimmer driven by emissiveIntensity so it reads as
+// catching the sun even at low light. Sits flat on the cap surface.
+function Oasis() {
+  const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  useFrame((s) => {
+    if (!matRef.current) return;
+    const t = s.clock.elapsedTime;
+    // Layered slow ripples — feels like wind drawing across the surface.
+    matRef.current.emissiveIntensity =
+      0.22 + Math.sin(t * 1.3) * 0.06 + Math.sin(t * 2.7 + 1.1) * 0.04;
+  });
+
+  const reeds = useMemo(
+    () =>
+      [0.4, 1.3, 2.5, 3.6, 4.8, 5.9].map((a, i) => ({
+        a,
+        h: 0.018 + (i % 2 === 0 ? 0.006 : -0.003),
+        r: 0.054 + (i % 3 === 0 ? 0.004 : 0),
+      })),
+    [],
+  );
+
+  return (
+    <group>
+      {/* Damp sand rim */}
+      <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.044, 0.060, 28]} />
+        <meshStandardMaterial color="#9a7d4e" roughness={1} flatShading />
+      </mesh>
+      {/* Water surface — dark teal, faintly emissive so it pops against sand */}
+      <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.046, 28]} />
+        <meshStandardMaterial
+          ref={matRef}
+          color="#2d6e88"
+          emissive="#1c4a64"
+          emissiveIntensity={0.22}
+          roughness={0.25}
+          metalness={0.30}
+        />
+      </mesh>
+      {/* Reed tufts around the edge */}
+      {reeds.map((r, i) => (
+        <mesh
+          key={i}
+          position={[Math.cos(r.a) * r.r, r.h / 2, Math.sin(r.a) * r.r]}
+          rotation={[0, r.a, 0]}
+        >
+          <coneGeometry args={[0.005, r.h, 4]} />
+          <meshStandardMaterial color="#5a7a32" roughness={1} flatShading />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// Brazier torch: short post + bowl + an emissive flame that flickers via
+// scale + emissiveIntensity modulation. Phase offset per torch keeps two
+// adjacent torches from breathing in lockstep. The outer halo sphere is
+// additive-friendly (transparent, depthWrite off) so bloom picks it up.
+function Torch({
+  x,
+  z,
+  baseY,
+  seed = 0,
+}: {
+  x: number;
+  z: number;
+  baseY: number;
+  seed?: number;
+}) {
+  const flameRef = useRef<THREE.Mesh>(null);
+  const flameMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const phase = useMemo(() => seed * 1.37, [seed]);
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime + phase;
+    // Layered flicker: high-freq jitter + a slower bob, summed and clamped.
+    const f =
+      0.85 +
+      Math.sin(t * 23.0) * 0.10 +
+      Math.sin(t * 9.3 + 0.7) * 0.08 +
+      Math.sin(t * 47.0) * 0.04;
+    if (flameRef.current) flameRef.current.scale.set(f, f * 1.06, f);
+    if (flameMatRef.current) flameMatRef.current.emissiveIntensity = 1.6 * f;
+    if (haloMatRef.current) haloMatRef.current.opacity = 0.20 * f;
+  });
+
+  return (
+    <group position={[x, baseY, z]}>
+      {/* Wooden post */}
+      <mesh position={[0, 0.025, 0]}>
+        <cylinderGeometry args={[0.0035, 0.0045, 0.050, 6]} />
+        <meshStandardMaterial color="#3a2415" roughness={1} flatShading />
+      </mesh>
+      {/* Iron brazier */}
+      <mesh position={[0, 0.054, 0]}>
+        <cylinderGeometry args={[0.0110, 0.0060, 0.011, 8]} />
+        <meshStandardMaterial color="#1a1108" roughness={0.9} flatShading />
+      </mesh>
+      {/* Flame */}
+      <mesh ref={flameRef} position={[0, 0.072, 0]}>
+        <coneGeometry args={[0.007, 0.022, 6]} />
+        <meshStandardMaterial
+          ref={flameMatRef}
+          color="#ffc070"
+          emissive="#ff7820"
+          emissiveIntensity={1.6}
+          toneMapped={false}
+          transparent
+          opacity={0.95}
+        />
+      </mesh>
+      {/* Soft glow halo — picked up by the bloom pass */}
+      <mesh position={[0, 0.072, 0]} renderOrder={6}>
+        <sphereGeometry args={[0.020, 10, 8]} />
+        <meshBasicMaterial
+          ref={haloMatRef}
+          color="#ff8a30"
+          transparent
+          opacity={0.20}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Ruined temple: stepped sandstone base, a few standing/broken columns,
+// a tilted lintel that's slipped from its perch, fallen column drums, an
+// inner altar, and two flanking torches that flicker. Local +z is "front"
+// — front columns sit at z=-0.030 and the entrance stair faces -z.
+function Temple() {
+  const COLUMNS: Array<[number, number, number]> = [
+    // [x, z, height] — heights vary so some columns read as snapped off
+    [-0.045, -0.030, 0.085],
+    [ 0.045, -0.030, 0.058],
+    [-0.045,  0.030, 0.034],
+    [ 0.045,  0.030, 0.072],
+  ];
+  // Rubble pebbles strewn around the base — small randomized chunks.
+  const RUBBLE: Array<[number, number, number, number, number]> = [
+    // [x, y, z, scale, rot]
+    [-0.058, 0.005, -0.034, 0.7, 0.4],
+    [ 0.062, 0.005,  0.018, 0.9, 1.2],
+    [-0.052, 0.005,  0.045, 0.8, 2.0],
+    [ 0.040, 0.005, -0.058, 0.6, 0.7],
+    [-0.038, 0.005, -0.062, 1.0, 1.6],
+  ];
+
+  return (
+    <group>
+      {/* Front stair step — single low slab leading up to the base */}
+      <mesh position={[0, 0.006, -0.061]}>
+        <boxGeometry args={[0.092, 0.012, 0.020]} />
+        <meshStandardMaterial color="#b09a78" roughness={0.95} flatShading />
+      </mesh>
+      {/* Lower stepped base */}
+      <mesh position={[0, 0.013, 0]}>
+        <boxGeometry args={[0.135, 0.026, 0.105]} />
+        <meshStandardMaterial color="#a89a82" roughness={0.95} flatShading />
+      </mesh>
+      {/* Upper plinth */}
+      <mesh position={[0, 0.034, 0]}>
+        <boxGeometry args={[0.108, 0.016, 0.082]} />
+        <meshStandardMaterial color="#bdae93" roughness={0.95} flatShading />
+      </mesh>
+      {/* Cracked threshold tile, slightly off-color — reads as the entrance */}
+      <mesh position={[0, 0.043, -0.030]}>
+        <boxGeometry args={[0.040, 0.002, 0.018]} />
+        <meshStandardMaterial color="#9c8a6a" roughness={0.95} flatShading />
+      </mesh>
+      {/* Standing / broken columns */}
+      {COLUMNS.map(([x, z, h], i) => (
+        <group key={i}>
+          <mesh position={[x, 0.042 + h / 2, z]}>
+            <cylinderGeometry args={[0.0085, 0.0105, h, 8]} />
+            <meshStandardMaterial color="#c4b59e" roughness={0.95} flatShading />
+          </mesh>
+          {/* Capital block on top of taller columns */}
+          {h > 0.05 && (
+            <mesh position={[x, 0.042 + h + 0.005, z]}>
+              <boxGeometry args={[0.022, 0.010, 0.022]} />
+              <meshStandardMaterial color="#b5a78f" roughness={0.95} flatShading />
+            </mesh>
+          )}
+          {/* Jagged broken cap on shorter columns — a tilted thin slab where
+              the column was sheared off, sells the "ruin" silhouette. */}
+          {h <= 0.05 && (
+            <mesh position={[x, 0.042 + h + 0.002, z]} rotation={[0.18, i * 0.7, -0.15]}>
+              <cylinderGeometry args={[0.0095, 0.0085, 0.005, 8]} />
+              <meshStandardMaterial color="#9a8a72" roughness={1} flatShading />
+            </mesh>
+          )}
+        </group>
+      ))}
+      {/* Inner altar — small pedestal block toward the back of the plinth */}
+      <mesh position={[0, 0.050, 0.022]}>
+        <boxGeometry args={[0.034, 0.018, 0.024]} />
+        <meshStandardMaterial color="#9c8b6e" roughness={0.95} flatShading />
+      </mesh>
+      {/* Worn idol on the altar — dark stone */}
+      <mesh position={[0, 0.066, 0.022]}>
+        <coneGeometry args={[0.008, 0.018, 6]} />
+        <meshStandardMaterial color="#3e3022" roughness={0.9} flatShading />
+      </mesh>
+      {/* Tilted lintel — slipped half off its supports */}
+      <mesh position={[0.012, 0.048, -0.007]} rotation={[0.06, 0.38, 0.34]}>
+        <boxGeometry args={[0.090, 0.011, 0.018]} />
+        <meshStandardMaterial color="#a89978" roughness={0.95} flatShading />
+      </mesh>
+      {/* Fallen column drum lying on the plinth */}
+      <mesh position={[-0.028, 0.052, 0.026]} rotation={[1.45, 0.25, 0]}>
+        <cylinderGeometry args={[0.0085, 0.0085, 0.020, 7]} />
+        <meshStandardMaterial color="#b3a48c" roughness={0.95} flatShading />
+      </mesh>
+      {/* Second fallen drum tumbled off the base */}
+      <mesh position={[0.040, 0.030, 0.044]} rotation={[1.4, -0.6, 0.2]}>
+        <cylinderGeometry args={[0.0080, 0.0080, 0.017, 7]} />
+        <meshStandardMaterial color="#a89878" roughness={0.95} flatShading />
+      </mesh>
+      {/* Scattered rubble pebbles around the base */}
+      {RUBBLE.map(([x, y, z, s, r], i) => (
+        <mesh key={i} position={[x, y, z]} rotation={[r * 0.5, r, r * 0.3]} scale={s}>
+          <boxGeometry args={[0.012, 0.008, 0.010]} />
+          <meshStandardMaterial color="#a89786" roughness={1} flatShading />
+        </mesh>
+      ))}
+      {/* Flanking torches at the entrance — sit on the lower base step in
+          front of the front columns. */}
+      <Torch x={-0.045} z={-0.048} baseY={0.026} seed={1} />
+      <Torch x={0.045} z={-0.048} baseY={0.026} seed={2} />
     </group>
   );
 }
@@ -2137,9 +2601,12 @@ function ShipSprite({
       .multiply(_headingScratch);
 
     // Inner: small idle sway + tactile shake on collision (deck roll).
+    // Pitch.x rears the bow up on impact; envelope (c² rather than c) so the
+    // pitch lift only registers on hard hits and decays faster than the roll.
     const sway = Math.sin(t * 1.3) * 0.025;
-    const collisionShake = collisionRef.current * Math.sin(t * 28) * 0.18;
-    innerRef.current.rotation.x = 0;
+    const c = collisionRef.current;
+    const collisionShake = c * Math.sin(t * 28) * 0.18;
+    innerRef.current.rotation.x = c * c * 0.18;
     innerRef.current.rotation.z = sway + collisionShake;
 
     if (matRef.current) {
@@ -2400,6 +2867,10 @@ function GlobeDriver({
   keys: React.MutableRefObject<{ w: boolean; a: boolean; s: boolean; d: boolean; shift: boolean }>;
 }) {
   const dayPhase = useRef(0.20);
+  // Forward velocity along the bow tangent. Carries inertia so the ship
+  // accelerates / coasts / recoils instead of moving as a binary key state.
+  // Reflected to negative on coast strikes; see the collision branch below.
+  const fwdVelRef = useRef(0);
   // Reusable scratch quats/vecs so the per-frame loop allocates nothing.
   const _bow = useMemo(() => new THREE.Vector3(), []);
   const _axis = useMemo(() => new THREE.Vector3(), []);
@@ -2421,16 +2892,29 @@ function GlobeDriver({
     if (k.a) heelRef.current += TURN_RATE * dt * boost;
     if (k.d) heelRef.current -= TURN_RATE * dt * boost;
 
+    // Velocity-based forward motion. Target follows W/S input; velocity
+    // smooths toward it (accel when input, damp when idle). While the ship
+    // is recoiling from a coast strike — collisionRef still high — forward
+    // input is suppressed so the player can't mash W back into land. S and
+    // turn keys still respond.
+    const ACCEL = 3.0;
+    const DAMP  = 1.6;
+    const recoilLockout = collisionRef.current > 0.15;
+    let target = (k.w ? 1 : 0) + (k.s ? -0.55 : 0);
+    if (recoilLockout && target > 0) target = 0;
+    const blendRate = target !== 0 ? ACCEL : DAMP;
+    fwdVelRef.current += (target - fwdVelRef.current) * Math.min(1, dt * blendRate);
+
+    const forward = fwdVelRef.current;
     const anyKey = k.a || k.d || k.w || k.s;
     const SPEED = 0.7;
-    const forward = (k.w ? 1 : 0) + (k.s ? -0.55 : 0);
 
     // Forward step: bow tangent in world space, rotated by heelRef around
     // the surface normal. Rotation axis = bow × normal so positive forward
     // pulls the world-point ahead of the ship onto SHIP_ANCHOR (i.e. the
     // ship "moves" along the bow direction over the spherical surface).
     _forwardQ.identity();
-    if (forward !== 0) {
+    if (Math.abs(forward) > 1e-4) {
       _bow.copy(SHIP_TANGENT_NORTH).applyAxisAngle(SHIP_NORMAL, heelRef.current);
       _axis.copy(_bow).cross(SHIP_NORMAL).normalize();
       _forwardQ.setFromAxisAngle(_axis, forward * SPEED * dt * boost);
@@ -2449,14 +2933,24 @@ function GlobeDriver({
     if (isClearForQuat(_candidate)) {
       rotationRef.current.copy(_candidate);
     } else {
-      // Forward blocked by a continent: try drift alone so the view doesn't
-      // lock up entirely. If even that fails, register a hard collision.
+      // Forward blocked by a continent. Try drift-only so the view doesn't
+      // lock up entirely.
       _candidate.multiplyQuaternions(_driftQ, rotationRef.current);
-      if (isClearForQuat(_candidate)) {
-        rotationRef.current.copy(_candidate);
-        collisionRef.current = Math.min(1, collisionRef.current + 0.5);
-      } else {
+      if (isClearForQuat(_candidate)) rotationRef.current.copy(_candidate);
+
+      // Bounce: reflect any forward-going velocity into a backward kick so
+      // the ship visibly recoils off the coast instead of dead-stopping.
+      // Skip if velocity is already negative — we're mid-recoil and the
+      // bounce should decay naturally rather than re-firing each frame.
+      if (fwdVelRef.current > 0) {
+        const ELASTICITY = 0.55;
+        const MIN_KICK = 0.18;
+        fwdVelRef.current = -Math.max(fwdVelRef.current * ELASTICITY, MIN_KICK);
+        // Lateral heel impulse so the bow visibly veers off the obstacle.
+        heelRef.current += (Math.random() < 0.5 ? -1 : 1) * 0.22;
         collisionRef.current = 1;
+      } else {
+        collisionRef.current = Math.min(1, collisionRef.current + 0.5);
       }
     }
 

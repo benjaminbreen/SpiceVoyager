@@ -9,6 +9,7 @@ import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorW
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
+import { addCameraShake, addCameraFovPulse } from '../utils/cameraShakeState';
 import { swivelAimAngle, swivelAimPitch, broadsideReload, getCurrentElevationCharge } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
@@ -218,6 +219,8 @@ export function Ship() {
   // Sailing sound triggers (cooldown-gated one-shots)
   const sailsCaughtRef = useRef(false); // true once we pass 40% speed, resets when below 20%
   const lastCreakTime = useRef(0);
+  // Edge-trigger Shift transitions for sprint-engage camera punctuation.
+  const prevShiftRef = useRef(false);
 
   // Hard-turn spray — arcade feel when banking at speed.
   // Two particle kinds share the pool: 'arc' (high spray plume) and
@@ -622,6 +625,11 @@ export function Ship() {
       if (source === 'shore') sfxShoreCollision(); else sfxShipCollision();
       setShowExclamation(true);
 
+      // Camera punctuation — random shake + a negative FOV kick reads as
+      // "the ship just slammed into something." Both decay quickly.
+      addCameraShake(source === 'shore' ? 0.45 : 0.35);
+      addCameraFovPulse(-3.5);
+
       // Hide exclamation after 2 seconds
       if (exclamationTimer.current) clearTimeout(exclamationTimer.current);
       exclamationTimer.current = setTimeout(() => setShowExclamation(false), 2000);
@@ -778,9 +786,22 @@ export function Ship() {
   }, []);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const movementKeyFor = (e: KeyboardEvent): keyof typeof keys.current | null => {
       const key = e.key.toLowerCase();
-      if (key in keys.current) keys.current[key as keyof typeof keys.current] = true;
+      if (key === 'arrowup') return 'w';
+      if (key === 'arrowdown') return 's';
+      if (key === 'arrowleft') return 'a';
+      if (key === 'arrowright') return 'd';
+      return key in keys.current ? key as keyof typeof keys.current : null;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const rawKey = e.key.toLowerCase();
+      const key = movementKeyFor(e);
+      if (key) {
+        keys.current[key] = true;
+        if (key === 'w' || key === 'a' || key === 's' || key === 'd') e.preventDefault();
+      }
       // Auto-weigh anchor when pressing movement keys
       if ((key === 'w' || key === 's') && playerMode === 'ship' && !paused && !useGameStore.getState().activePort) {
         const store = useGameStore.getState();
@@ -790,7 +811,7 @@ export function Ship() {
           store.addNotification('Weighing anchor.', 'info');
         }
       }
-      if (key === 'c' && playerMode === 'ship' && !paused && !useGameStore.getState().activePort) {
+      if (rawKey === 'c' && playerMode === 'ship' && !paused && !useGameStore.getState().activePort) {
         if (netState.current === 'idle' && netCooldown.current <= 0) {
           // Manual cast in open water
           pendingManualCast.current = true;
@@ -803,7 +824,11 @@ export function Ship() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = false;
+      const key = movementKeyFor(e);
+      if (key) {
+        keys.current[key] = false;
+        if (key === 'w' || key === 'a' || key === 's' || key === 'd') e.preventDefault();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
@@ -875,6 +900,20 @@ export function Ship() {
     const inD = keys.current.d || touchD;
     const inShift = keys.current.shift;
 
+    // Sprint engage: edge-trigger when Shift presses while the ship is
+    // making real way. Adds a forward FOV lurch + tiny shake so the boost
+    // *feels* like leaning into the sails, not just a number going up.
+    if (playerMode === 'ship' && !paused && !store.activePort) {
+      const sprinting = inShift && !store.anchored && Math.abs(velocity.current) > 0.3;
+      if (sprinting && !prevShiftRef.current) {
+        addCameraFovPulse(4);
+        addCameraShake(0.08);
+      }
+      prevShiftRef.current = sprinting;
+    } else {
+      prevShiftRef.current = false;
+    }
+
     if (playerMode === 'ship' && !paused && !store.activePort) {
       // Acceleration and Inertia
       const navBonus = getRoleBonus(store, 'Navigator', 'perception');
@@ -882,10 +921,10 @@ export function Ship() {
       const mobileScale = isMobile ? MOBILE_SPEED_SCALE : 1;
       const baseMaxSpeed = stats.speed * navBonus * seaLegsBonus * mobileScale;
       const windTrim = getWindTrimInfo(store.windDirection, rotation.current, stats.windward);
-      // Wind trim requires going straight — Shift while turning is drift, not boost.
-      const wantsWindTrim = inShift && inW && velocity.current > 0.5
-        && !inA && !inD;
-      const windTrimActive = wantsWindTrim && windTrim.score > 0;
+      // Wind trim only fires when the player commits to a sprint (Shift held).
+      // Aligning the bow with the wind while sprinting stacks an extra speed
+      // bonus on top of the base sprint multiplier. Reversing cancels it.
+      const windTrimActive = inShift && velocity.current > 0.5 && !inS && windTrim.score > 0;
       const windTrimLerp = 1 - Math.exp(-delta * (windTrimActive ? 2.4 : 4.2));
       windTrimCharge.current = THREE.MathUtils.lerp(
         windTrimCharge.current,
@@ -901,9 +940,12 @@ export function Ship() {
       // zones, the penalty is 1.0 and current behavior is unchanged.
       const ironsFactor = windTrim.score > 0
         ? 1.0
-        : 0.15 + stats.windward * 0.45;
-      const maxSpeed = baseMaxSpeed * windTrimMultiplier * ironsFactor;
-      const accel = 7.5 * delta;
+        : 0.30 + stats.windward * 0.40;
+      // Sprint: Shift is a flat top-speed multiplier that always works. The
+      // wind-trim bonus stacks on top, so Shift in good wind is the fastest
+      // the ship can go; Shift off the wind is still a modest boost.
+      const sprintMultiplier = inShift && !store.anchored ? 1.15 : 1.0;
+      const maxSpeed = baseMaxSpeed * windTrimMultiplier * ironsFactor * sprintMultiplier;
       const drag = 2.4 * delta;
 
       if (windTrimActive && windTrimCharge.current > 0.35 && !windTrimWasActive.current) {
@@ -920,20 +962,19 @@ export function Ship() {
         } else {
           velocity.current = 0;
         }
-      } else if (inW) {
-        const trimAcceleration = windTrimActive ? 1 + windTrim.score * 0.6 : 1;
-        // Only accelerate up to maxSpeed — don't snap velocity down if we're
-        // already overspeed (e.g. boost just ended). The overspeed handler
-        // below ramps that case smoothly via drag.
-        if (velocity.current < maxSpeed) {
-          velocity.current = Math.min(velocity.current + accel * trimAcceleration, maxSpeed);
-        }
-      } else if (inS) {
-        velocity.current = Math.max(velocity.current - accel, -baseMaxSpeed / 2);
       } else {
-        // Apply drag
-        if (velocity.current > 0) velocity.current = Math.max(0, velocity.current - drag);
-        if (velocity.current < 0) velocity.current = Math.min(0, velocity.current + drag);
+        // Exponential lerp toward target velocity — steep at the start, eases
+        // into the ceiling. Feels snappier than linear accel because the
+        // initial response curve is much sharper. Overspeed (e.g. boost just
+        // ended) is preserved as the target so the lerp doesn't snap it
+        // down; the overspeed handler below bleeds it via drag.
+        let target: number;
+        if (inW) target = velocity.current > maxSpeed ? velocity.current : maxSpeed;
+        else if (inS) target = -baseMaxSpeed / 2;
+        else target = 0;
+        const trimAccel = (inW && windTrimActive) ? 1 + windTrim.score * 0.6 : 1;
+        const rate = (inW || inS) ? 3.5 * trimAccel : 1.8;
+        velocity.current += (target - velocity.current) * (1 - Math.exp(-delta * rate));
       }
 
       if (velocity.current > maxSpeed) {
@@ -950,7 +991,7 @@ export function Ship() {
       // Drift: Shift+A/D gives a tighter turn radius — no speed penalty,
       // just a sharper response for expressive piloting.
       const isDrifting = inShift && (inA || inD);
-      const turnFactor = Math.abs(velocity.current) > 0.1 ? 1 : 0.2;
+      const turnFactor = Math.abs(velocity.current) > 0.1 ? 1 : 0.55;
       const driftTurnMult = isDrifting ? 1.3 : 1;
       const turnSpeed = stats.turnSpeed * delta * turnFactor * driftTurnMult;
 
@@ -983,7 +1024,7 @@ export function Ship() {
         const terrainHeight = getTerrainHeight(worldX, worldZ);
 
         // Stop the ship when the seabed rises into the hull's draft.
-        if (terrainHeight > -0.8) {
+        if (terrainHeight > -0.15) {
           hitLand = true;
           // Approximate terrain normal from gradient
           const sampleDist = 1.5;

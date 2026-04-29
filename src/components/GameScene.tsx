@@ -1,7 +1,9 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO, LUT } from '@react-three/postprocessing';
+import { buildLUT, lutParamsKey, lerpLUTParams, LUT_PRESETS, LUT_NEUTRAL, computeMoodDelta, addLUTParams, lutDiffersFromNeutral } from '../utils/proceduralLUT';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
+import { RainOverlay } from './RainOverlay';
 import { World } from './World';
 import { getTreeImpactTargets } from '../state/worldRegistries';
 import { Player } from './Player';
@@ -66,7 +68,7 @@ import {
   reportAtmosphereMs,
   perfSignals,
 } from '../utils/performanceStats';
-import { sampleCameraShake } from '../utils/cameraShakeState';
+import { sampleCameraShake, sampleCameraFovPulse } from '../utils/cameraShakeState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
@@ -1248,6 +1250,16 @@ function CameraController() {
     camera.position.x += shake.x;
     camera.position.y += shake.y;
     camera.position.z += shake.z;
+
+    // FOV pulse — sprint engages a forward lurch (+deg), collisions a stop hit (-deg).
+    // Lerp toward the pulse target each frame so the swing has shape, not snap.
+    if (camera instanceof THREE.PerspectiveCamera) {
+      const baseFov = 45;
+      const pulseTarget = baseFov + sampleCameraFovPulse(delta);
+      const fovLerp = 1 - Math.exp(-delta * 12);
+      camera.fov += (pulseTarget - camera.fov) * fovLerp;
+      camera.updateProjectionMatrix();
+    }
 
     // Raycast mouse onto a horizontal plane — always active so aiming is ready when combat starts.
     // In ship mode, use the y=0 water plane. In walking mode, use a plane at the walker's
@@ -2857,6 +2869,12 @@ export function GameScene() {
   const aoEnabled = useGameStore((state) => state.renderDebug.ao);
   const brightnessContrastEnabled = useGameStore((state) => state.renderDebug.brightnessContrast);
   const hueSaturationEnabled = useGameStore((state) => state.renderDebug.hueSaturation);
+  const rainEnabled = useGameStore((state) => state.renderDebug.rain);
+  const weatherIntensity = useGameStore((state) => state.weather.intensity);
+  // Dev toggle forces full-strength rain regardless of weather state; otherwise
+  // intensity comes from the climate-driven roll (eased in advanceTime).
+  const effectiveRainIntensity = rainEnabled ? Math.max(weatherIntensity, 1) : weatherIntensity;
+  const showRain = effectiveRainIntensity > 0.01;
   const [canvasReadyToMount, setCanvasReadyToMount] = useState(false);
 
   useEffect(() => {
@@ -2923,6 +2941,8 @@ export function GameScene() {
             <PerformanceSampler />
             <ShiftSelectOverlay />
 
+            {showRain && <RainOverlay intensity={effectiveRainIntensity} />}
+
             {postprocessingEnabled && (
               <PostProcessing
                 bloomEnabled={bloomEnabled}
@@ -2963,6 +2983,49 @@ function PostProcessing({
   const vignetteOffset = THREE.MathUtils.lerp(0.18, 0.12, nightFactor);
   const vignetteDarkness = THREE.MathUtils.lerp(0.85, 1.12, nightFactor);
 
+  // Procedural color-grading LUT.
+  //
+  // Two modes:
+  //   - 'manual' — exactly the legacy behavior: LUT is on iff lutEnabled, params
+  //     come from the dev-panel sliders. This is what the artist tunes with.
+  //   - 'auto'   — climate + weather drive the look. Today's sunny default is
+  //     untouched (no LUT when intensity is 0); rain lerps toward the monsoon
+  //     preset so the world desaturates and goes overcast as the rain fades in.
+  // Texture rebuilds when the lerped params change; the fixed-precision key
+  // debounces sub-1e-3 jitter from intensity easing, so a 3-second fade
+  // rebuilds the LUT a couple dozen times — well under a millisecond total.
+  const lutEnabled = useGameStore((state) => state.renderDebug.lutEnabled);
+  const lutParamsManual = useGameStore((state) => state.renderDebug.lutParams);
+  const lutMode = useGameStore((state) => state.renderDebug.lutMode);
+  const weatherIntensityForLut = useGameStore((state) => state.weather.intensity);
+
+  const lutAuto = lutMode === 'auto';
+  // Auto mode: layer two signals onto the neutral base —
+  //   1. Mood delta — subtle time-of-day grade (sunny noon, golden dusk,
+  //      cool night). All clear-sky signals are scaled by (1 - rain) inside
+  //      computeMoodDelta, so weather suppresses them.
+  //   2. Rain shift — full lerp toward the monsoon preset by intensity.
+  // Quantized hour drives the mood so the LUT only rebuilds at ~0.25h steps,
+  // not every frame; weather intensity changes slowly anyway.
+  const moodDelta = lutAuto
+    ? computeMoodDelta(quantizedTime, weatherIntensityForLut)
+    : LUT_NEUTRAL;
+  const lutParams = lutAuto
+    ? lerpLUTParams(addLUTParams(LUT_NEUTRAL, moodDelta), LUT_PRESETS.monsoon, weatherIntensityForLut)
+    : lutParamsManual;
+  const lutEffectiveOn = lutAuto
+    ? lutDiffersFromNeutral(lutParams)
+    : lutEnabled;
+
+  const lutKey = lutParamsKey(lutParams);
+  const lutTex = useMemo(
+    () => (lutEffectiveOn ? buildLUT(lutParams) : null),
+    // lutKey already covers the params; explicit dep keeps lint happy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lutKey, lutEffectiveOn],
+  );
+  useEffect(() => () => { lutTex?.dispose(); }, [lutTex]);
+
   // EffectComposer builds its pass chain once at mount and does not cleanly
   // rebuild when effect children are added/removed. Force a remount whenever
   // the set of enabled effects changes so toggles in the dev panel don't
@@ -2972,7 +3035,8 @@ function PostProcessing({
     (bloomEnabled ? 'b' : '-') +
     (brightnessContrastEnabled ? 'c' : '-') +
     (hueSaturationEnabled ? 'h' : '-') +
-    (vignetteEnabled ? 'v' : '-');
+    (vignetteEnabled ? 'v' : '-') +
+    (lutEffectiveOn ? 'l' : '-');
 
   return (
     <EffectComposer key={composerKey}>
@@ -2992,6 +3056,7 @@ function PostProcessing({
       {brightnessContrastEnabled ? <BrightnessContrast brightness={brightness} contrast={contrast} /> : <></>}
       {hueSaturationEnabled ? <HueSaturation hue={hue} saturation={saturation} /> : <></>}
       {vignetteEnabled ? <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} /> : <></>}
+      {lutEffectiveOn && lutTex ? <LUT lut={lutTex} tetrahedralInterpolation /> : <></>}
     </EffectComposer>
   );
 }

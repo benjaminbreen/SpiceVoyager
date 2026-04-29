@@ -54,6 +54,7 @@ const OVERLAY_FRAG = /* glsl */`
   uniform float uKeyHigh;
   uniform vec3 uTint;
   uniform float uTintAmount;
+  uniform float uTime;
 
   // Brightness-normalized magenta detector: pixels read as magenta when both
   // red and blue exceed green relative to the pixel's own brightness. Catches
@@ -80,7 +81,35 @@ const OVERLAY_FRAG = /* glsl */`
       vec4 nightC = texture2D(uNight, nightUv);
       float nightA = magentaAlpha(nightC);
 
-      vec3 col = mix(dayRgb, nightC.rgb, uMix);
+      // Ember mask: detect warm-bright pixels (lit windows, torches,
+      // ship lanterns) by combining a brightness floor with a red-over-blue
+      // chroma threshold. Thresholds are loose so weakly-lit windows still
+      // register; the additive glow magnitude does the heavy lifting.
+      float warmth = max(0.0, nightC.r - nightC.b);
+      float bright = max(max(nightC.r, nightC.g), nightC.b);
+      float ember = smoothstep(0.30, 0.55, bright) * smoothstep(0.04, 0.18, warmth);
+
+      // Quantize UVs so adjacent pixels share a flicker phase — each window
+      // pulses as a unit instead of degenerating into RGB noise. The grid
+      // resolution (420 x 240) gives roughly one phase per ~3 source pixels
+      // at the night PNG's native size.
+      vec2 q = floor(nightUv * vec2(420.0, 240.0));
+      float h = fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453);
+      // Two hashed octaves: a slow ~1.5 Hz body + a faster ~4 Hz wobble.
+      float f1 = sin(uTime * 1.6 + h * 6.2831);
+      float f2 = sin(uTime * 4.3 + h * 12.566);
+      float flick = f1 * 0.5 + f2 * 0.3;
+
+      // Multiplicative pulse on the source color + additive warm glow that
+      // pushes lit pixels above 1.0 so the post Bloom pass picks them up
+      // as a soft halo rather than a flat shimmer. Boosted from earlier
+      // pass — values tuned so quiescent state is ~+30% luminance and
+      // peak flicker is ~+55% on lit pixels.
+      float pulse = 1.0 + ember * (0.30 + 0.20 * flick);
+      vec3 glow = vec3(1.40, 0.70, 0.18) * ember * (0.70 + 0.30 * flick);
+      vec3 nightLit = nightC.rgb * pulse + glow;
+
+      vec3 col = mix(dayRgb, nightLit, uMix);
       float a = mix(dayA, nightA, uMix);
       if (a < 0.02) discard;
       gl_FragColor = vec4(col, a);
@@ -149,13 +178,15 @@ function SilhouetteOverlay({
       uKeyHigh: { value: 0.35 },
       uTint: { value: new THREE.Color(1, 1, 1) },
       uTintAmount: { value: 0 },
+      uTime: { value: 0 },
     }),
     [dayTex, nightTex],
   );
 
   const { size } = useThree();
 
-  useFrame(() => {
+  useFrame((state) => {
+    uniforms.uTime.value = state.clock.elapsedTime;
     const canvasAspect = size.width / Math.max(1, size.height);
     coverUvScale(canvasAspect, imageAspect, uniforms.uDayUvScale.value);
     if (nightTex) {
@@ -278,7 +309,7 @@ function PortBannerSceneInner({
         dayRef={dayRef}
       />
       <EffectComposer multisampling={0}>
-        <Bloom intensity={0.55} luminanceThreshold={0.7} luminanceSmoothing={0.35} mipmapBlur />
+        <Bloom intensity={0.85} luminanceThreshold={0.55} luminanceSmoothing={0.4} mipmapBlur />
         {/* Subtle pixel quantization — unifies the soft volumetric clouds with
             the hard pixel-art silhouette by re-aligning everything to a shared
             grid. Granularity 2 is the lightest setting that visibly snaps cloud

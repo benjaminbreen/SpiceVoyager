@@ -12,6 +12,7 @@ import { generateCanalLayout, type CanalLayout } from './canalLayout';
 import { faithsForPort } from './portReligions';
 import { palaceStyleForPort } from './palaceStyles';
 import { postprocessRoads } from './roadTopology';
+import { generateShrinesForPort } from './proceduralShrines';
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
@@ -368,15 +369,32 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           city.buildings,
           city.roads,
         );
+        // Procedural shrines (Phase 2 of the POI system). One archetype
+        // produces variable-scale spiritual buildings out in the hinterland,
+        // each paired with a POI so the marker/modal pipeline picks them up.
+        // Pass the city + hinterland buildings together so the placer
+        // respects both for clearance.
+        const buildingsForShrineClearance = [...city.buildings, ...hinterland.buildings];
+        const shrines = generateShrinesForPort(
+          {
+            id: override.id,
+            name: override.name,
+            scale: override.scale,
+            position: [portX, 0.5, portZ],
+            buildings: buildingsForShrineClearance,
+          },
+          config.seed,
+        );
         // Densify + weld + graph the combined network so hinterland tracks
         // connect to city roads cleanly and the ribbon renderer has short
         // segments that hug terrain. Mutates `roads` in place.
         const roads = [...city.roads, ...hinterland.roads];
         const roadGraph = postprocessRoads(roads);
         return {
-          buildings: [...city.buildings, ...hinterland.buildings],
+          buildings: [...city.buildings, ...hinterland.buildings, ...shrines.buildings],
           roads,
           roadGraph,
+          pois: shrines.pois,
         };
       })(),
     });

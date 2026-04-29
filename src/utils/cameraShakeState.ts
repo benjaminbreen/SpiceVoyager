@@ -10,6 +10,7 @@ const state = {
   impulseX: 0,      // world-space directional offset (meters)
   impulseY: 0,
   impulseZ: 0,
+  fovPulse: 0,      // additive degrees on camera.fov; positive = lurch forward, negative = stop hit
 };
 
 /** Add random shake trauma. Typical values: 0.2 light bump, 0.5 ram, 0.8 broadside. */
@@ -22,6 +23,19 @@ export function addCameraImpulse(dirX: number, dirZ: number, magnitude: number, 
   state.impulseX += dirX * magnitude;
   state.impulseZ += dirZ * magnitude;
   state.impulseY += vertical * magnitude;
+}
+
+/** Add an additive FOV offset in degrees. Positive = lurch forward (sprint), negative = stop hit. */
+export function addCameraFovPulse(degrees: number) {
+  state.fovPulse += degrees;
+}
+
+/** Sample current FOV offset and decay. Call once per frame from the camera controller. */
+export function sampleCameraFovPulse(delta: number): number {
+  const v = state.fovPulse;
+  state.fovPulse *= Math.exp(-delta * 6);
+  if (Math.abs(state.fovPulse) < 0.01) state.fovPulse = 0;
+  return v;
 }
 
 const _offset = new THREE.Vector3();

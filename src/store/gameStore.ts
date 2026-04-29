@@ -34,6 +34,41 @@ import {
   rollPurchaseOutcome,
 } from '../utils/knowledgeSystem';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
+import { LUT_PRESETS, type LUTParams, type LUTPresetId } from '../utils/proceduralLUT';
+import type { ClimateProfile } from '../utils/portArchetypes';
+
+export type WeatherKind = 'clear' | 'rain';
+
+export interface WeatherState {
+  kind: WeatherKind;
+  /** Currently rendered intensity, eased toward targetIntensity. 0..1. */
+  intensity: number;
+  /** Target the easing converges on. Set on port arrival; intensity follows. */
+  targetIntensity: number;
+}
+
+// Per-climate odds of arriving to rain. Monsoon climates roll high because
+// every port flagged 'monsoon' (Surat in Aug, Cochin Jun-Sep, Masulipatnam) is
+// already location/season-coded for wet weather; arid coasts almost never.
+const RAIN_CHANCE_BY_CLIMATE: Record<ClimateProfile, number> = {
+  monsoon: 0.65,
+  tropical: 0.30,
+  temperate: 0.25,
+  mediterranean: 0.15,
+  arid: 0.05,
+};
+
+function rollWeatherForPortId(portId: string | null): WeatherState {
+  const port = getWorldPortById(portId);
+  const climate: ClimateProfile = port?.climate ?? 'temperate';
+  const chance = RAIN_CHANCE_BY_CLIMATE[climate] ?? 0.2;
+  if (Math.random() < chance) {
+    // Drizzle (0.3) to downpour (1.0). Skews lighter so heavy rain is rarer.
+    const target = 0.3 + Math.pow(Math.random(), 1.5) * 0.7;
+    return { kind: 'rain', intensity: 0, targetIntensity: target };
+  }
+  return { kind: 'clear', intensity: 0, targetIntensity: 0 };
+}
 
 export type { Commodity } from '../utils/commodities';
 export type { KnowledgeLevel } from '../utils/knowledgeSystem';
@@ -165,6 +200,33 @@ export interface Building {
    *  silvery and mango orchards look deep green from the same shared
    *  geometry. */
   cropPlot?: { halfWidth: number; halfDepth: number; tint?: [number, number, number] };
+  /** When set, this building IS the geometry of a Point of Interest. The
+   *  walking-detection pipeline uses this to dispatch to POIModal instead of
+   *  the generic BuildingToast. Procedural shrines (Phase 2) inject these
+   *  alongside their POI definition. Bespoke POIs that bind to existing
+   *  landmarks do NOT get this — they reuse the landmark's building as-is. */
+  poiId?: string;
+  /** Uniform scale applied to the building's rendered geometry around its
+   *  origin. Procedural shrines use this to render existing faith geometry
+   *  (cathedral, mosque, shikhara, pagoda…) at heightened wayside (1.0),
+   *  village (1.4), or pilgrimage (1.8) silhouettes. The Building.scale field
+   *  is bumped to match so the AABB walking footprint stays consistent. */
+  geometryScale?: number;
+  /** Set on procedural shrines (Phase 2 of the POI system). The spiritual
+   *  branch in ProceduralCity.tsx reads this to vary the silhouette per
+   *  shrine: hero-feature scale, body proportion, palette drift, and accent
+   *  toggles (boundary wall, prayer pole, outer courtyard). Absent on
+   *  in-city spiritual buildings. */
+  shrineVariant?: {
+    keyFeatureScale: number;
+    bodyProportion: number;
+    paletteShift: number;
+    accents: {
+      boundaryWall: boolean;
+      prayerPole: boolean;
+      outerCourtyard: boolean;
+    };
+  };
 }
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
@@ -227,6 +289,11 @@ export interface Port {
   /** Generation-time topology: welded endpoints + incidence. Optional so
    *  older save-state loads that predate the graph still boot. */
   roadGraph?: RoadGraph;
+  /** Procedurally generated POIs for this port (shrines / ruins / etc).
+   *  Populated at port-gen time by `proceduralShrines.ts` and similar.
+   *  `getPOIsForPort` merges these with the hand-authored bespoke POIs in
+   *  `POI_DEFINITIONS`. Type imported lazily to avoid utils → store cycles. */
+  pois?: import('../utils/poiDefinitions').POIDefinition[];
 }
 
 // ── Armament system ──
@@ -795,8 +862,15 @@ export interface RenderDebugSettings {
   ao: boolean;
   brightnessContrast: boolean;
   hueSaturation: boolean;
+  lutEnabled: boolean;
+  lutPreset: LUTPresetId | 'custom';
+  lutParams: LUTParams;
+  /** 'auto' = derive from climate + weather (rain → monsoon look).
+   *  'manual' = use lutEnabled / lutPreset / lutParams as set by the dev panel. */
+  lutMode: 'auto' | 'manual';
   advancedWater: boolean;
   shipWake: boolean;
+  rain: boolean;
   algae: boolean;
   coralReefs: boolean;
   wildlifeMotion: boolean;
@@ -807,6 +881,13 @@ export interface RenderDebugSettings {
   cityFieldOverlay: boolean;
   cityFieldMode: CityFieldKey | 'district';
   sacredMarkers: boolean;
+  /** Render the chunky POI silhouettes (wreck/cove/garden/caravanserai) and
+   *  the bespoke shrine geometry that backs procedural shrines. POIs are
+   *  *world content* (the structures exist in fiction), not optional UI
+   *  affordances, so default true. Separate from `sacredMarkers` (which
+   *  controls religious-site plumbobs and POI cyan beacons) so a player
+   *  who turns markers off doesn't lose visible buildings. */
+  poiVisibility: boolean;
   settingsV2: boolean;
 }
 
@@ -837,6 +918,14 @@ interface GameState {
   nearestHailableNpc: NPCShipIdentity | null;
   discoveredPorts: string[];
 
+  // POI modal — null when closed. Opened from walk-up toast in UI.tsx.
+  // Type imported lazily via dynamic import in the modal itself to avoid
+  // a circular ref through utils → store → components.
+  activePOI: import('../utils/poiDefinitions').POIDefinition | null;
+  // POI ids the player has opened the modal for at least once. Drives the
+  // "?" → real-name reveal on Minimap + WorldMap.
+  discoveredPOIs: string[];
+
   // Reputation per nationality (-100 to +100, starts at 0)
   reputation: Partial<Record<Nationality, number>>;
   npcPositions: [number, number, number][];
@@ -852,6 +941,13 @@ interface GameState {
   // Wind
   windDirection: number; // radians, 0 = north, PI/2 = east
   windSpeed: number;     // 0-1 normalized
+
+  // Weather — rolled per port arrival, climate-driven. Drives RainOverlay
+  // visibility and (later) LUT lerp toward the monsoon preset.
+  weather: WeatherState;
+  setWeather: (patch: Partial<WeatherState>) => void;
+  /** Re-roll weather for the current port using its climate odds. Dev-only. */
+  rerollWeather: () => void;
 
   // Knowledge system — tracks what the player knows about trade goods
   knowledgeState: Record<string, KnowledgeLevel>;
@@ -919,6 +1015,8 @@ interface GameState {
   }) => void;
   setInteractionPrompt: (prompt: string | null) => void;
   setNearestHailableNpc: (npc: NPCShipIdentity | null) => void;
+  setActivePOI: (poi: import('../utils/poiDefinitions').POIDefinition | null) => void;
+  markPOIDiscovered: (id: string) => void;
   adjustReputation: (nationality: Nationality, delta: number) => void;
   getReputation: (nationality: Nationality) => number;
   discoverPort: (id: string) => void;
@@ -984,8 +1082,13 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   ao: true,
   brightnessContrast: true,
   hueSaturation: true,
+  lutEnabled: false,
+  lutPreset: 'tropical',
+  lutParams: { ...LUT_PRESETS.tropical },
+  lutMode: 'auto',
   advancedWater: true,
   shipWake: true,
+  rain: false,
   algae: true,
   coralReefs: false,
   wildlifeMotion: true,
@@ -996,6 +1099,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   cityFieldOverlay: false,
   cityFieldMode: 'prestige',
   sacredMarkers: true,
+  poiVisibility: true,
   settingsV2: true,
 };
 
@@ -1425,6 +1529,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   interactionPrompt: null,
   nearestHailableNpc: null,
   discoveredPorts: [],
+  activePOI: null,
+  discoveredPOIs: [],
   reputation: buildStartingReputation(_startingFaction),
   npcPositions: [],
   npcShips: [],
@@ -1436,6 +1542,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   dayCount: 1,
   windDirection: Math.PI * 0.75, // start SW
   windSpeed: 0.5,
+  // Roll initial weather for the starting port. Snap intensity to target so
+  // the opening scene doesn't fade in mid-conversation.
+  weather: (() => {
+    const w = rollWeatherForPortId(_startingPortId);
+    return { ...w, intensity: w.targetIntensity };
+  })(),
   knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew, _startingArmament),
   provisions: 30, // starting food supply
   worldSeed: Math.floor(Math.random() * 100000),
@@ -1518,6 +1630,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   setInteractionPrompt: (prompt) => set({ interactionPrompt: prompt }),
   setNearestHailableNpc: (npc) => set({ nearestHailableNpc: npc }),
+  setActivePOI: (poi) => set({ activePOI: poi }),
+  markPOIDiscovered: (id) => set((state) => (
+    state.discoveredPOIs.includes(id)
+      ? state
+      : { discoveredPOIs: [...state.discoveredPOIs, id] }
+  )),
   adjustReputation: (nationality, delta) => {
     const state = get();
     const current = state.reputation[nationality] ?? 0;
@@ -1980,13 +2098,22 @@ export const useGameStore = create<GameState>((set, get) => ({
     const dirDrift = Math.sin(t * 0.7) * 0.3 + Math.sin(t * 1.9) * 0.15 + Math.sin(t * 4.3) * 0.05;
     const newWindDir = (state.windDirection + dirDrift * delta * 0.02) % (Math.PI * 2);
     const speedBase = 0.55 + Math.sin(t * 0.5) * 0.25 + Math.sin(t * 1.7) * 0.1 + Math.sin(t * 3.1) * 0.05;
-    const newWindSpeed = Math.max(0.1, Math.min(1, speedBase));
+    // Heavy rain bumps the wind so streaks slant harder and trees thrash.
+    const stormBoost = state.weather.intensity * 0.35;
+    const newWindSpeed = Math.max(0.1, Math.min(1, speedBase + stormBoost));
+
+    // Ease weather intensity toward its target. Frame-rate-independent;
+    // closes ~half the gap per game-hour, so visible fades take a few seconds.
+    const weather = state.weather;
+    const k = 1 - Math.exp(-delta * 0.6);
+    const newWeatherIntensity = weather.intensity + (weather.targetIntensity - weather.intensity) * k;
 
     set({
       timeOfDay: newTime % 24,
       dayCount: wrapped ? state.dayCount + 1 : state.dayCount,
       windDirection: newWindDir < 0 ? newWindDir + Math.PI * 2 : newWindDir,
       windSpeed: newWindSpeed,
+      weather: { ...weather, intensity: newWeatherIntensity },
     });
 
     // ── Daily tick: port restock (goods drift back toward baseline) ──
@@ -2137,6 +2264,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     renderDebug: { ...state.renderDebug, ...patch }
   })),
   resetRenderDebug: () => set({ renderDebug: DEFAULT_RENDER_DEBUG }),
+  setWeather: (patch) => set((state) => ({ weather: { ...state.weather, ...patch } })),
+  rerollWeather: () => {
+    const state = get();
+    set({ weather: rollWeatherForPortId(state.currentWorldPortId) });
+  },
   learnAboutCommodity: (commodityId, newLevel, source) => {
     const state = get();
     const current = state.knowledgeState[commodityId] ?? 0;
@@ -2209,15 +2341,21 @@ export const useGameStore = create<GameState>((set, get) => ({
     const dailyConsumption = Math.ceil(state.crew.length * 0.5);
     const travelProvisions = dailyConsumption * travelDays;
     const newProvisions = Math.max(0, state.provisions - travelProvisions);
+    // Roll fresh weather for the new harbor based on its climate. Leave
+    // intensity at 0 so the rain (if any) fades in over a few seconds rather
+    // than snapping on the moment the arrival curtain lifts.
+    const arrivalWeather = rollWeatherForPortId(portId);
     set({
       currentWorldPortId: portId,
       playerVelocity: 0,
       playerMode: 'ship',
       activePort: null,
       interactionPrompt: null,
+      activePOI: null,
       dayCount: state.dayCount + travelDays,
       timeOfDay: 8,
       provisions: newProvisions,
+      weather: arrivalWeather,
     });
     syncLiveShipTransform(state.playerPos, state.playerRot, 0);
     const provWarn = newProvisions === 0 ? ' Provisions exhausted!' : newProvisions <= state.crew.length * 2 ? ` Provisions low (${newProvisions}).` : '';

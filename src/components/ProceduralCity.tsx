@@ -10,6 +10,9 @@ import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { DISTRICT_COLORS, classifyDistrict } from '../utils/cityDistricts';
 import type { DistrictKey } from '../utils/cityDistricts';
 import { buildingSemanticClass, SEMANTIC_STYLE } from '../utils/semanticClasses';
+import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
+import { POISilhouettes } from './POIArchetypes';
+import { applyShrineVariant } from '../utils/shrineVariant';
 import {
   ROAD_TIER_STYLE,
   ROAD_POLYGON_OFFSET_UNITS,
@@ -1276,23 +1279,35 @@ export function ProceduralCity() {
         // ── Spiritual buildings (churches, mosques, temples, pagodas) ───
         // Dispatched by faith. Geometry stays within the 8×8 reserved
         // footprint so the building sits in its clearing cleanly.
+        //
+        // Procedural-shrine variant axes (keyFeatureScale, bodyProportion,
+        // palette shift, accent toggles) are applied by `applyShrineVariant`
+        // in src/utils/shrineVariant.ts. To classify a part as the hero
+        // feature (bell tower / minaret / shikhara / pagoda spire / dome
+        // etc.), per-faith blocks emit it via `addKey(...)` instead of
+        // `addPart(...)`. Index-based; no Y-position guess.
         if (b.type === 'spiritual') {
           const faith = b.faith ?? 'catholic';
+          const _spiStart = allParts.length;
+          const _keyIndices = new Set<number>();
+          const addKey: typeof addPart = (...args) => {
+            _keyIndices.add(allParts.length);
+            addPart(...args);
+          };
 
           if (faith === 'catholic') {
             // Single-nave whitewashed church with tile roof and bell tower.
             const wash = varyColor([0.94, 0.92, 0.86], rng, 0.04);
             const tile: [number, number, number] = [0.60, 0.30, 0.24];
+            // Body: nave + roof + door
             addPart('box', 'white', 0, 2.0, 0, 4, 4, 6, wash);
             addPart('cone', 'terracotta', 0, 5.0, 0, 2.4, 1.6, 3.4, tile);
-            // Bell tower on the rear
-            addPart('box', 'white', 0, 3.5, -3.2, 1.8, 7, 1.8, wash);
-            addPart('cone', 'terracotta', 0, 7.6, -3.2, 1.2, 1.4, 1.2, tile);
-            // Cross finial
-            addPart('box', 'stone', 0, 9.0, -3.2, 0.10, 0.8, 0.10);
-            addPart('box', 'stone', 0, 9.1, -3.2, 0.5, 0.10, 0.10);
-            // Arched central doorway
             addPart('box', 'dark', 0, 1.6, 3.05, 1.0, 2.4, 0.15);
+            // Hero feature: bell tower + cross
+            addKey('box', 'white', 0, 3.5, -3.2, 1.8, 7, 1.8, wash);
+            addKey('cone', 'terracotta', 0, 7.6, -3.2, 1.2, 1.4, 1.2, tile);
+            addKey('box', 'stone', 0, 9.0, -3.2, 0.10, 0.8, 0.10);
+            addKey('box', 'stone', 0, 9.1, -3.2, 0.5, 0.10, 0.10);
           }
 
           else if (faith === 'protestant') {
@@ -1300,14 +1315,14 @@ export function ProceduralCity() {
             // timber trim, simpler spire. Dutch brick or English stone.
             const wall = varyColor([0.74, 0.58, 0.42], rng, 0.05);
             const roof: [number, number, number] = [0.42, 0.34, 0.28];
+            // Body: nave + roof + door
             addPart('box', 'mud', 0, 2.0, 0, 4, 4, 6, wall);
             addPart('cone', 'stone', 0, 5.0, 0, 2.4, 1.6, 3.4, roof);
-            // Square tower with pyramid roof (no cross)
-            addPart('box', 'mud', 0, 4.0, -3.0, 2.0, 8, 2.0, wall);
-            addPart('cone', 'wood', 0, 9.0, -3.0, 1.3, 2.0, 1.3, roof);
-            // Slim wooden weathervane
-            addPart('cylinder', 'wood', 0, 10.4, -3.0, 0.06, 1.0, 0.06);
             addPart('box', 'dark', 0, 1.6, 3.05, 0.9, 2.2, 0.15);
+            // Hero feature: square tower with pyramid roof + weathervane
+            addKey('box', 'mud', 0, 4.0, -3.0, 2.0, 8, 2.0, wall);
+            addKey('cone', 'wood', 0, 9.0, -3.0, 1.3, 2.0, 1.3, roof);
+            addKey('cylinder', 'wood', 0, 10.4, -3.0, 0.06, 1.0, 0.06);
           }
 
           else if (faith === 'sunni' || faith === 'shia') {
@@ -1316,26 +1331,28 @@ export function ProceduralCity() {
             const dome: [number, number, number] = faith === 'shia'
               ? [0.72, 0.80, 0.86]   // Safavid tile-blue
               : [0.90, 0.88, 0.80];  // plain lime
+            // Body: hall + door
             addPart('box', 'white', 0, 2.0, 0, 5, 4, 5, wash);
-            addPart('dome', 'white', 0, 4.5, 0, 2.5, 2.5, 2.5, dome);
-            // Minaret — offset to front-right of the hall
-            addPart('box', 'white', 3.0, 1.5, 2.5, 1.2, 3, 1.2, wash);
-            addPart('cylinder', 'white', 3.0, 6.5, 2.5, 0.45, 7, 0.45, wash);
-            addPart('cylinder', 'white', 3.0, 10.2, 2.5, 0.65, 0.35, 0.65, wash);
-            addPart('sphere', 'white', 3.0, 11.0, 2.5, 0.45, 0.7, 0.45, dome);
-            addPart('cone', 'straw', 3.0, 11.7, 2.5, 0.10, 0.5, 0.10, [0.85, 0.75, 0.2]);
-            // Entrance
             addPart('box', 'dark', 0, 1.4, 2.55, 1.0, 2.0, 0.15);
+            // Hero feature: dome + minaret stack
+            addKey('dome', 'white', 0, 4.5, 0, 2.5, 2.5, 2.5, dome);
+            addKey('box', 'white', 3.0, 1.5, 2.5, 1.2, 3, 1.2, wash);
+            addKey('cylinder', 'white', 3.0, 6.5, 2.5, 0.45, 7, 0.45, wash);
+            addKey('cylinder', 'white', 3.0, 10.2, 2.5, 0.65, 0.35, 0.65, wash);
+            addKey('sphere', 'white', 3.0, 11.0, 2.5, 0.45, 0.7, 0.45, dome);
+            addKey('cone', 'straw', 3.0, 11.7, 2.5, 0.10, 0.5, 0.10, [0.85, 0.75, 0.2]);
           }
 
           else if (faith === 'ibadi') {
             // Plainer Omani mosque — whitewashed cube, short square minaret,
             // no large dome. Distinctive for Muscat / Oman.
             const wash = varyColor([0.92, 0.90, 0.82], rng, 0.04);
+            // Body: hall + door
             addPart('box', 'white', 0, 2.0, 0, 5, 4, 5, wash);
-            addPart('box', 'white', 2.5, 4.5, -2.5, 1.6, 5, 1.6, wash);
-            addPart('box', 'white', 2.5, 7.3, -2.5, 1.2, 0.4, 1.2, [0.80, 0.78, 0.70]);
             addPart('box', 'dark', 0, 1.4, 2.55, 1.0, 2.0, 0.15);
+            // Hero feature: minaret tower + cap
+            addKey('box', 'white', 2.5, 4.5, -2.5, 1.6, 5, 1.6, wash);
+            addKey('box', 'white', 2.5, 7.3, -2.5, 1.2, 0.4, 1.2, [0.80, 0.78, 0.70]);
           }
 
           else if (faith === 'hindu') {
@@ -1345,19 +1362,16 @@ export function ProceduralCity() {
             const stone = varyColor([0.78, 0.55, 0.38], rng, 0.04);
             const copper: [number, number, number] = [0.32, 0.58, 0.52];
             const brass: [number, number, number] = [0.82, 0.68, 0.28];
-            // Plinth
+            // Body: plinth
             addPart('box', 'mud', 0, 0.5, 0, 5, 1, 5, stone);
-            // Sanctum
-            addPart('box', 'wood', 0, 2.2, 0, 3.6, 2.4, 3.6, teak);
-            addPart('cone', 'wood', 0, 4.2, 0, 2.8, 1.6, 2.8, copper);
-            // Upper tier
-            addPart('box', 'wood', 0, 5.4, 0, 2.0, 0.6, 2.0, teak);
-            addPart('cone', 'wood', 0, 6.3, 0, 1.5, 1.0, 1.5, copper);
-            // Brass finial
-            addPart('cylinder', 'wood', 0, 7.1, 0, 0.15, 0.6, 0.15, brass);
-            addPart('cone', 'wood', 0, 7.7, 0, 0.3, 0.5, 0.3, brass);
-            // Flag mast
-            addPart('cylinder', 'wood', 3.0, 3.5, 0, 0.10, 7, 0.10, brass);
+            // Hero feature: shikhara stack + finial + flag mast
+            addKey('box', 'wood', 0, 2.2, 0, 3.6, 2.4, 3.6, teak);
+            addKey('cone', 'wood', 0, 4.2, 0, 2.8, 1.6, 2.8, copper);
+            addKey('box', 'wood', 0, 5.4, 0, 2.0, 0.6, 2.0, teak);
+            addKey('cone', 'wood', 0, 6.3, 0, 1.5, 1.0, 1.5, copper);
+            addKey('cylinder', 'wood', 0, 7.1, 0, 0.15, 0.6, 0.15, brass);
+            addKey('cone', 'wood', 0, 7.7, 0, 0.3, 0.5, 0.3, brass);
+            addKey('cylinder', 'wood', 3.0, 3.5, 0, 0.10, 7, 0.10, brass);
           }
 
           else if (faith === 'buddhist') {
@@ -1365,16 +1379,17 @@ export function ProceduralCity() {
             const red = varyColor([0.72, 0.28, 0.22], rng, 0.04);
             const gold: [number, number, number] = [0.82, 0.68, 0.28];
             const wood = varyColor([0.38, 0.25, 0.18], rng, 0.04);
+            // Body: plinth
             addPart('box', 'mud', 0, 0.5, 0, 4.6, 1, 4.6, [0.72, 0.66, 0.52]);
-            addPart('box', 'wood', 0, 2.0, 0, 3.4, 2, 3.4, red);
-            addPart('cone', 'wood', 0, 3.4, 0, 2.8, 0.8, 2.8, wood);
-            addPart('box', 'wood', 0, 4.3, 0, 2.4, 1.4, 2.4, red);
-            addPart('cone', 'wood', 0, 5.4, 0, 2.0, 0.7, 2.0, wood);
-            addPart('box', 'wood', 0, 6.2, 0, 1.6, 1.0, 1.6, red);
-            addPart('cone', 'wood', 0, 7.1, 0, 1.2, 0.6, 1.2, wood);
-            // Gold spire finial
-            addPart('cone', 'wood', 0, 8.0, 0, 0.4, 1.4, 0.4, gold);
-            addPart('sphere', 'wood', 0, 8.9, 0, 0.22, 0.4, 0.22, gold);
+            // Hero feature: tiered pagoda + spire
+            addKey('box', 'wood', 0, 2.0, 0, 3.4, 2, 3.4, red);
+            addKey('cone', 'wood', 0, 3.4, 0, 2.8, 0.8, 2.8, wood);
+            addKey('box', 'wood', 0, 4.3, 0, 2.4, 1.4, 2.4, red);
+            addKey('cone', 'wood', 0, 5.4, 0, 2.0, 0.7, 2.0, wood);
+            addKey('box', 'wood', 0, 6.2, 0, 1.6, 1.0, 1.6, red);
+            addKey('cone', 'wood', 0, 7.1, 0, 1.2, 0.6, 1.2, wood);
+            addKey('cone', 'wood', 0, 8.0, 0, 0.4, 1.4, 0.4, gold);
+            addKey('sphere', 'wood', 0, 8.9, 0, 0.22, 0.4, 0.22, gold);
           }
 
           else if (faith === 'chinese-folk') {
@@ -1382,18 +1397,16 @@ export function ProceduralCity() {
             const red = varyColor([0.72, 0.22, 0.18], rng, 0.05);
             const green: [number, number, number] = [0.30, 0.50, 0.34];
             const wood = varyColor([0.34, 0.22, 0.15], rng, 0.04);
+            // Body: plinth + four pillars + main hall
             addPart('box', 'mud', 0, 0.4, 0, 5, 0.8, 5, [0.68, 0.62, 0.50]);
-            // Four red pillars at corners
             for (const [cx, cz] of [[1.8, 1.8], [-1.8, 1.8], [1.8, -1.8], [-1.8, -1.8]] as [number, number][]) {
               addPart('cylinder', 'wood', cx, 2.0, cz, 0.25, 3.2, 0.25, red);
             }
-            // Main hall body
             addPart('box', 'wood', 0, 2.4, 0, 4.2, 2.8, 4.2, red);
-            // Sweeping green tile roof (use cone for the sweep effect)
-            addPart('cone', 'wood', 0, 4.6, 0, 3.8, 1.4, 3.8, green);
-            addPart('cone', 'wood', 0, 5.8, 0, 2.0, 0.8, 2.0, green);
-            // Ridge ornament
-            addPart('cylinder', 'wood', 0, 6.4, 0, 0.12, 0.6, 0.12, wood);
+            // Hero feature: sweeping tile roof + ridge ornament
+            addKey('cone', 'wood', 0, 4.6, 0, 3.8, 1.4, 3.8, green);
+            addKey('cone', 'wood', 0, 5.8, 0, 2.0, 0.8, 2.0, green);
+            addKey('cylinder', 'wood', 0, 6.4, 0, 0.12, 0.6, 0.12, wood);
           }
 
           else if (faith === 'animist') {
@@ -1402,21 +1415,18 @@ export function ProceduralCity() {
             // Khoikhoi sacred sites.
             const post = varyColor([0.35, 0.25, 0.18], rng, 0.06);
             const thatch = varyColor([0.78, 0.68, 0.42], rng, 0.06);
-            // Four corner posts
+            // Body: corner posts + platform + altars
             for (const [cx, cz] of [[1.2, 1.2], [-1.2, 1.2], [1.2, -1.2], [-1.2, -1.2]] as [number, number][]) {
               addPart('cylinder', 'wood', cx, 1.4, cz, 0.15, 2.8, 0.15, post);
             }
-            // Raised plank platform
             addPart('box', 'wood', 0, 0.4, 0, 3.0, 0.2, 3.0, post);
-            // Conical thatch canopy
-            addPart('cone', 'straw', 0, 3.6, 0, 2.2, 1.8, 2.2, thatch);
-            // Central fetish pole with wrappings
-            addPart('cylinder', 'wood', 0, 2.0, 0, 0.18, 4.0, 0.18, [0.28, 0.18, 0.12]);
-            addPart('box', 'straw', 0, 3.4, 0, 0.9, 0.25, 0.05, [0.82, 0.22, 0.14]);
-            // Stone altars at the cardinal posts
             for (const [cx, cz] of [[0, 2.2], [0, -2.2]] as [number, number][]) {
               addPart('box', 'stone', cx, 0.2, cz, 0.6, 0.3, 0.6, [0.58, 0.54, 0.48]);
             }
+            // Hero feature: thatch canopy + fetish pole + saffron banner
+            addKey('cone', 'straw', 0, 3.6, 0, 2.2, 1.8, 2.2, thatch);
+            addKey('cylinder', 'wood', 0, 2.0, 0, 0.18, 4.0, 0.18, [0.28, 0.18, 0.12]);
+            addKey('box', 'straw', 0, 3.4, 0, 0.9, 0.25, 0.05, [0.82, 0.22, 0.14]);
           }
 
           else if (faith === 'jewish') {
@@ -1424,18 +1434,36 @@ export function ProceduralCity() {
             // or lantern, arched windows. No exterior cross or minaret.
             const stone = varyColor([0.84, 0.78, 0.66], rng, 0.04);
             const leadDome: [number, number, number] = [0.48, 0.50, 0.52];
+            // Body: hall + windows + door
             addPart('box', 'white', 0, 2.5, 0, 5, 5, 5, stone);
-            // Central small dome
-            addPart('dome', 'white', 0, 5.4, 0, 1.6, 1.4, 1.6, leadDome);
-            // Four-arched window suggestion via thin dark boxes on the facade
             for (const wx of [-1.8, -0.6, 0.6, 1.8]) {
               addPart('box', 'dark', wx, 3.0, 2.55, 0.45, 1.4, 0.08);
             }
-            // Star of David (three thin bars forming a star outline)
-            addPart('box', 'stone', 0, 6.5, 0, 0.6, 0.08, 0.08, [0.82, 0.68, 0.28]);
-            addPart('box', 'stone', 0, 6.5, 0, 0.08, 0.08, 0.6, [0.82, 0.68, 0.28]);
             addPart('box', 'dark', 0, 1.6, 2.55, 0.9, 2.0, 0.15);
+            // Hero feature: dome + Star of David crossbars
+            addKey('dome', 'white', 0, 5.4, 0, 1.6, 1.4, 1.6, leadDome);
+            addKey('box', 'stone', 0, 6.5, 0, 0.6, 0.08, 0.08, [0.82, 0.68, 0.28]);
+            addKey('box', 'stone', 0, 6.5, 0, 0.08, 0.08, 0.6, [0.82, 0.68, 0.28]);
           }
+
+          // Procedural-shrine variant pass + accents. In-city spirituals
+          // leave shrineVariant undefined and skip this entirely.
+          if (b.shrineVariant) {
+            applyShrineVariant(
+              allParts,
+              _spiStart,
+              _keyIndices,
+              b.shrineVariant,
+              { x, y, z },
+              addPart,
+            );
+          }
+
+          // Uniform scale tier (wayside 1.0× / village 1.4× / pilgrimage 1.8×).
+          // Applied last so the variant-stretched body and the accents both
+          // scale together. In-city spirituals leave geometryScale undefined.
+          const spiScale = b.geometryScale ?? 1;
+          if (spiScale !== 1) scaleLandmark(_spiStart, 0, 0, spiScale);
 
           return; // skip generic per-type render
         }
@@ -2235,6 +2263,8 @@ export function ProceduralCity() {
       <CityRoads ports={ports} />
       <CityFieldOverlay ports={ports} />
       <SacredBuildingMarkers ports={ports} />
+      <POIBeacons ports={ports} />
+      <POISilhouettes ports={ports} />
       <CityTorches spots={torchSpots} />
       <ChimneySmoke spots={smokeSpots} />
       <BuildingDamageSmoke spots={damageSmokeSpots} />
@@ -3094,6 +3124,19 @@ function SacredBuildingMarkers({ ports }: { ports: PortsProp }) {
         const topY = b.position[1] + Math.max(b.scale[1] * 2.5, 13);
         out.push([b.position[0], topY, b.position[2]]);
       }
+      // POIs share the same marker pipeline. Religious POIs (shrines,
+      // monasteries, sufi lodges) get the same purple plumbob as in-city
+      // spirituals. Landmark-bound POIs reuse the bound building's marker
+      // implicitly — we skip them here to avoid double-stacking.
+      for (const poi of getPOIsForPort(port)) {
+        if (SEMANTIC_STYLE[poi.class].marker !== 'diamond') continue;
+        if (poi.location.kind === 'landmark') continue;
+        const resolved = resolvePOIPosition(poi, port);
+        if (!resolved) continue;
+        const terrainY = getTerrainHeight(resolved.x, resolved.z);
+        const topY = Math.max(terrainY, SEA_LEVEL) + 14;
+        out.push([resolved.x, topY, resolved.z]);
+      }
     }
     return out;
   }, [devSoloPort, ports, visible]);
@@ -3184,6 +3227,195 @@ function SacredBuildingMarkers({ ports }: { ports: PortsProp }) {
       <instancedMesh
         ref={diamondRef}
         args={[diamondGeo, diamondMat, positions.length]}
+        frustumCulled={false}
+        renderOrder={9}
+      />
+    </group>
+  );
+}
+
+// ── POI Beacons ──────────────────────────────────────────────────────────────
+// One cyan light pillar per Point of Interest. Shares no geometry with the
+// religious plumbob system — these are *gameplay affordance* markers ("you
+// can walk up and enter this"), not semantic-class markers. A religious POI
+// bound to a landmark gets both: purple plumbob = religious site, cyan
+// pillar = enterable POI.
+//
+// The pillar lifts from terrain (or landmark roofline for landmark-bound
+// POIs) into a billboarded halo + small octahedron at the top. Undiscovered
+// POIs pulse faster to read as "go check this out"; discovered ones settle
+// into a slower shimmer. Same color as the minimap dot for cross-system
+// recognition.
+
+function POIBeacons({ ports }: { ports: PortsProp }) {
+  const visible = useGameStore((state) => state.renderDebug.sacredMarkers);
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const discoveredPOIs = useGameStore((state) => state.discoveredPOIs);
+
+  // Resolve { position, discovered } per POI. Hinterland and coords POIs use
+  // terrain Y at their (x, z); landmark POIs lift off the bound building's
+  // roofline so the pillar clears spires.
+  const beacons = useMemo(() => {
+    if (!visible) return [] as { pos: [number, number, number]; topY: number; discovered: boolean }[];
+    const visiblePorts = devSoloPort
+      ? ports.filter((p) => p.id === devSoloPort)
+      : ports;
+    const out: { pos: [number, number, number]; topY: number; discovered: boolean }[] = [];
+    for (const port of visiblePorts) {
+      for (const poi of getPOIsForPort(port)) {
+        const resolved = resolvePOIPosition(poi, port);
+        if (!resolved) continue;
+        let baseY: number;
+        if (poi.location.kind === 'landmark' && resolved.building) {
+          // Lift to roofline of the bound landmark so the pillar reads above
+          // it instead of clipping through. Buildings carry a [w, h, d] scale
+          // and the y-component is height.
+          const b = resolved.building as { position: [number, number, number]; scale?: [number, number, number] };
+          baseY = b.position[1] + (b.scale ? b.scale[1] * 2 : 8);
+        } else {
+          baseY = Math.max(getTerrainHeight(resolved.x, resolved.z), SEA_LEVEL);
+        }
+        const topY = baseY + 12;
+        out.push({
+          pos: [resolved.x, baseY, resolved.z],
+          topY,
+          discovered: discoveredPOIs.includes(poi.id),
+        });
+      }
+    }
+    return out;
+  }, [devSoloPort, ports, visible, discoveredPOIs]);
+
+  // Vertical cylinder for the light pillar. Tapered (top narrower) so it reads
+  // as a beam, not a column. Additive cyan — kept thin so it doesn't visually
+  // dominate the city.
+  const pillarGeo = useMemo(() => {
+    const g = new THREE.CylinderGeometry(0.05, 0.55, 12, 12, 1, true);
+    // Origin to base of cylinder so we can place by base Y and grow upward
+    g.translate(0, 6, 0);
+    return g;
+  }, []);
+  const pillarMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: '#5fc8ff',
+    transparent: true,
+    opacity: 0.55,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  }), []);
+
+  // Halo billboard at the top of the pillar — same texture pattern as
+  // SacredBuildingMarkers but cyan-keyed.
+  const haloTex = useMemo(() => {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0.0, 'rgba(180, 230, 255, 1.0)');
+    grad.addColorStop(0.45, 'rgba(95, 200, 255, 0.5)');
+    grad.addColorStop(1.0, 'rgba(60, 140, 220, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+  const haloGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  const haloMat = useMemo(() => new THREE.MeshBasicMaterial({
+    map: haloTex,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    opacity: 0.9,
+  }), [haloTex]);
+
+  // Tiny octahedron at the top, same shape as the plumbob but cyan, so the
+  // pillar terminates in a recognizable shape rather than a soft halo alone.
+  const tipGeo = useMemo(() => new THREE.OctahedronGeometry(0.55, 0), []);
+  const tipMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#9be0ff',
+    emissive: '#5fc8ff',
+    emissiveIntensity: 2.2,
+    metalness: 0.1,
+    roughness: 0.25,
+    transparent: true,
+    opacity: 0.95,
+    toneMapped: false,
+  }), []);
+
+  const pillarRef = useRef<THREE.InstancedMesh>(null);
+  const haloRef = useRef<THREE.InstancedMesh>(null);
+  const tipRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useRef(new THREE.Object3D());
+
+  useFrame(({ clock, camera }) => {
+    if (!visible) return;
+    if (!pillarRef.current || !haloRef.current || !tipRef.current) return;
+    const t = clock.elapsedTime;
+    for (let i = 0; i < beacons.length; i++) {
+      const b = beacons[i];
+      // Undiscovered POIs pulse faster + brighter; discovered settle into a
+      // slower shimmer so the map doesn't feel busy after exploration.
+      const pulseFreq = b.discovered ? 1.4 : 2.4;
+      const pulseAmp = b.discovered ? 0.10 : 0.22;
+      const pulse = 1 + Math.sin(t * pulseFreq + i * 0.9) * pulseAmp;
+
+      const obj = dummy.current;
+      // Pillar — at base, scale Y by pulse so it shimmers vertically
+      obj.position.set(b.pos[0], b.pos[1], b.pos[2]);
+      obj.rotation.set(0, 0, 0);
+      obj.scale.set(1, pulse, 1);
+      obj.updateMatrix();
+      pillarRef.current.setMatrixAt(i, obj.matrix);
+
+      // Halo — billboard at top of pillar
+      obj.position.set(b.pos[0], b.topY, b.pos[2]);
+      obj.quaternion.copy(camera.quaternion);
+      const haloPulse = 3.6 + Math.sin(t * pulseFreq + i) * 0.6;
+      obj.scale.set(haloPulse, haloPulse, haloPulse);
+      obj.updateMatrix();
+      haloRef.current.setMatrixAt(i, obj.matrix);
+
+      // Tip octahedron — at top, gentle bob and rotate
+      const bob = Math.sin(t * 1.4 + i * 0.7) * 0.25;
+      obj.position.set(b.pos[0], b.topY + bob, b.pos[2]);
+      obj.rotation.set(0, t * 0.9 + i, 0);
+      const tipScale = 1 + Math.sin(t * pulseFreq + i) * 0.15;
+      obj.scale.set(tipScale, tipScale, tipScale);
+      obj.updateMatrix();
+      tipRef.current.setMatrixAt(i, obj.matrix);
+    }
+    pillarRef.current.instanceMatrix.needsUpdate = true;
+    haloRef.current.instanceMatrix.needsUpdate = true;
+    tipRef.current.instanceMatrix.needsUpdate = true;
+
+    // Tip emissive flicker so it reads as a live light source under bloom.
+    tipMat.emissiveIntensity = 1.9 + Math.sin(t * 3.2) * 0.4;
+    pillarMat.opacity = 0.45 + Math.sin(t * 1.8) * 0.10;
+  });
+
+  if (!visible || beacons.length === 0) return null;
+
+  return (
+    <group>
+      <instancedMesh
+        ref={pillarRef}
+        args={[pillarGeo, pillarMat, beacons.length]}
+        frustumCulled={false}
+        renderOrder={7}
+      />
+      <instancedMesh
+        ref={haloRef}
+        args={[haloGeo, haloMat, beacons.length]}
+        frustumCulled={false}
+        renderOrder={8}
+      />
+      <instancedMesh
+        ref={tipRef}
+        args={[tipGeo, tipMat, beacons.length]}
         frustumCulled={false}
         renderOrder={9}
       />

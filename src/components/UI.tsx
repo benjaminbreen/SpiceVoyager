@@ -37,10 +37,15 @@ import {
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { stat as statColors, shadow as shadowTokens } from '../theme/tokens';
 import { CITY_FIELD_DESCRIPTIONS, CITY_FIELD_KEYS, CITY_FIELD_LABELS } from '../utils/cityFieldTypes';
+import { LUT_PRESETS, LUT_NEUTRAL, type LUTParams, type LUTPresetId } from '../utils/proceduralLUT';
 import { DISTRICT_LABELS } from '../utils/cityDistricts';
 import { getTestModeConfig } from '../test/testMode';
+import { getPOIById, type POIDefinition } from '../utils/poiDefinitions';
+import { findNearestPOI } from '../utils/proximityResolution';
+import { SEMANTIC_STYLE } from '../utils/semanticClasses';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
+const POIModal = lazy(() => import('./POIModal').then((module) => ({ default: module.POIModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
 const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
@@ -52,7 +57,6 @@ const WorldMapModalChart = lazy(() => import('./WorldMapModalChart').then((modul
 const PORT_RADIUS_SQ = 20 * 20;
 const WALKING_PORT_SEARCH_RADIUS_SQ = 120 * 120;
 const BUILDING_INTERACTION_PADDING = 1.75;
-
 function formatTime(timeOfDay: number): string {
   const hours = Math.floor(timeOfDay) % 24;
   const period = hours >= 12 ? 'PM' : 'AM';
@@ -161,6 +165,13 @@ function findBuildingAtPoint(
   return null;
 }
 
+/**
+ * Find the nearest POI to the player's walking position within the given
+ * port's hand-authored set, using a circular radius around each POI's
+ * resolved (x, z). Landmark-bound POIs resolve through their bound building.
+ *
+ * Returns null if no POI is in range, or if the port has no POIs authored.
+ */
 function findNearbyPortWalking(
   walkingPos: [number, number, number],
   ports: Port[]
@@ -279,6 +290,68 @@ function BuildingToast({
           {building.labelSub && (
             <div className="text-[11px] text-slate-400/70 truncate mt-0.5 leading-snug">
               {building.labelSub}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onEnter}
+          className="shrink-0 px-3 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] active:scale-95
+            border border-white/10 text-[11px] font-semibold text-white/60 hover:text-white/85
+            transition-all duration-150 cursor-pointer"
+        >
+          Enter
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/**
+ * Walk-up toast for POIs. Mirrors BuildingToast but reads from POIDefinition
+ * (semantic class drives the eyebrow color, kind drives the subtitle, lore is
+ * truncated for the card). Enter button opens the POI modal via setActivePOI.
+ */
+function POIToast({
+  poi,
+  isMobile,
+  onEnter,
+}: {
+  poi: POIDefinition;
+  isMobile: boolean;
+  onEnter: () => void;
+}) {
+  const style = SEMANTIC_STYLE[poi.class];
+  const tagColor = style.color;
+  const glowColor = `${tagColor}55`;
+
+  return (
+    <motion.div
+      data-testid="poi-toast"
+      key={poi.id}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
+      transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+      className={`absolute left-1/2 -translate-x-1/2 ${isMobile ? 'bottom-32' : 'bottom-40'} z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5`}
+    >
+      <div className="absolute top-0 left-2 flex items-center gap-1.5 pointer-events-none select-none">
+        <span
+          className="text-[9px] font-bold tracking-[0.2em] uppercase"
+          style={{ color: tagColor, textShadow: `0 0 6px ${glowColor}` }}
+        >
+          {style.eyebrow}
+        </span>
+      </div>
+
+      <div className="bg-[#070c14]/90 backdrop-blur-md border border-white/[0.07] rounded-xl
+        shadow-[0_8px_32px_rgba(0,0,0,0.7)] flex items-center gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-white/90 truncate leading-snug">
+            {poi.name}
+          </div>
+          {poi.sub && (
+            <div className="text-[11px] text-slate-400/70 truncate mt-0.5 leading-snug">
+              {poi.sub}
             </div>
           )}
         </div>
@@ -616,6 +689,7 @@ export function UI() {
   const stats = useGameStore((state) => state.stats);
   const notifications = useGameStore((state) => state.notifications);
   const removeNotification = useGameStore((state) => state.removeNotification);
+  const addNotification = useGameStore((state) => state.addNotification);
   const activePort = useGameStore((state) => state.activePort);
   const setActivePort = useGameStore((state) => state.setActivePort);
   const dismissedPortRef = useRef<string | null>(null);
@@ -640,6 +714,7 @@ export function UI() {
   const captainExpression = useGameStore((state) => state.captainExpression);
   const reputation = useGameStore((state) => state.reputation);
   const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+  const voyageBegun = useGameStore((state) => state.voyageBegun);
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -718,6 +793,32 @@ export function UI() {
   const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission || showVoyageCurtain;
 
+  useEffect(() => {
+    if (!voyageBegun || startupOverlayActive) return;
+    if (typeof window === 'undefined') return;
+
+    const key = 'spice-voyager-control-hint-ship';
+    if (window.sessionStorage.getItem(key)) return;
+    window.sessionStorage.setItem(key, '1');
+    addNotification('WASD or arrow keys move the ship. Space drops anchor near shore. E goes ashore when prompted.', 'info', {
+      tier: 'ticker',
+      subtitle: 'SHIP CONTROLS',
+    });
+  }, [addNotification, startupOverlayActive, voyageBegun]);
+
+  useEffect(() => {
+    if (!voyageBegun || startupOverlayActive || playerMode !== 'walking') return;
+    if (typeof window === 'undefined') return;
+
+    const key = 'spice-voyager-control-hint-walking';
+    if (window.sessionStorage.getItem(key)) return;
+    window.sessionStorage.setItem(key, '1');
+    addNotification('WASD or arrow keys walk ashore. E enters marked places. Space harvests when prompted.', 'info', {
+      tier: 'ticker',
+      subtitle: 'ASHORE',
+    });
+  }, [addNotification, playerMode, startupOverlayActive, voyageBegun]);
+
   // Building entry toast (walking mode, non-market buildings)
   const [portEntryTab, setPortEntryTab] = useState<PlaceTab | undefined>(undefined);
   const [activeBuildingToast, setActiveBuildingToastState] = useState<{ building: Building; port: Port } | null>(null);
@@ -726,6 +827,18 @@ export function UI() {
     activeBuildingToastRef.current = val;
     setActiveBuildingToastState(val);
   }, []);
+
+  // POI walk-up toast (parallel to building toast). The toast is local UI;
+  // the modal-open state lives on gameStore as `activePOI` so any system can
+  // open it.
+  const [activePOIToast, setActivePOIToastState] = useState<{ poi: POIDefinition; port: Port } | null>(null);
+  const activePOIToastRef = useRef<{ poi: POIDefinition; port: Port } | null>(null);
+  const setActivePOIToast = useCallback((val: { poi: POIDefinition; port: Port } | null) => {
+    activePOIToastRef.current = val;
+    setActivePOIToastState(val);
+  }, []);
+  const setActivePOI = useGameStore((state) => state.setActivePOI);
+  const activePOI = useGameStore((state) => state.activePOI);
 
   // Collision warning banner state
   const [collisionShipDesc, setCollisionShipDesc] = useState<string | null>(null);
@@ -901,10 +1014,44 @@ export function UI() {
           }
         }
         if (!findNearbyPort(playerPos, ports)) dismissedPortRef.current = null;
+
+        // Ship-accessible POIs (wrecks, smuggler's coves) toast in ship mode.
+        // findNearestPOI's per-kind radius means hinterland POIs naturally
+        // can't fire here — the player would never be within ~12u of an
+        // inland garden while sailing, so no need to filter by kind here.
+        const shipPoiHit = findNearestPOI(playerPos, ports);
+        if (shipPoiHit) {
+          const current = activePOIToastRef.current;
+          if (!current || current.poi.id !== shipPoiHit.poi.id) {
+            setActivePOIToast({ poi: shipPoiHit.poi, port: shipPoiHit.port });
+          }
+        } else if (activePOIToastRef.current) {
+          setActivePOIToast(null);
+        }
       } else {
         // Walking mode: per-building detection
         // Market buildings open the full port modal; everything else gets a lightweight toast.
         const result = findNearbyPortWalking(walkingPos, ports);
+
+        // POI proximity (no-building case) uses the shared per-kind radius
+        // resolver. Hinterland POIs at 200u from port center are picked up
+        // here even though that exceeds WALKING_PORT_SEARCH_RADIUS_SQ —
+        // findNearestPOI scans all ports' POIs by world position, not by
+        // port-distance gate. A building hit on the same step wins (handled
+        // in the `if (result)` branch below).
+        if (!result) {
+          const walkingPoiHit = findNearestPOI(walkingPos, ports);
+          if (walkingPoiHit) {
+            const current = activePOIToastRef.current;
+            if (!current || current.poi.id !== walkingPoiHit.poi.id) {
+              setActivePOIToast({ poi: walkingPoiHit.poi, port: walkingPoiHit.port });
+            }
+          } else if (activePOIToastRef.current) {
+            setActivePOIToast(null);
+          }
+        } else if (activePOIToastRef.current) {
+          setActivePOIToast(null);
+        }
 
         if (result) {
           const { port, building } = result;
@@ -922,6 +1069,19 @@ export function UI() {
               setActivePort(port);
             }
             if (activeBuildingToastRef.current) setActiveBuildingToast(null);
+          } else if (building.poiId) {
+            // POI-tagged buildings (procedural shrines, future ruins, etc.)
+            // surface the same POI walk-up toast as bespoke POIs do, so the
+            // player gets one consistent "Enter" affordance for any POI.
+            const poi = getPOIById(building.poiId, port);
+            if (poi) {
+              if (currentActivePort) setActivePort(null);
+              if (activeBuildingToastRef.current) setActiveBuildingToast(null);
+              const current = activePOIToastRef.current;
+              if (!current || current.poi.id !== poi.id) {
+                setActivePOIToast({ poi, port });
+              }
+            }
           } else {
             // All other buildings: lightweight toast
             if (currentActivePort) {
@@ -1084,6 +1244,21 @@ export function UI() {
   const toggleLocalMap = useCallback(() => { sfxOpen(); setShowLocalMap(prev => !prev); }, []);
   const toggleWorldMap = useCallback(() => { sfxOpen(); setShowWorldMap(prev => !prev); }, []);
   const cycleViewMode = useGameStore((state) => state.cycleViewMode);
+
+  // SHIFT + ` toggles the dev render panel. Bypasses the modal guard so it
+  // can be opened on top of any UI; still ignored while typing in inputs.
+  useEffect(() => {
+    const handleDevToggle = (e: KeyboardEvent) => {
+      if (!e.shiftKey) return;
+      if (e.key !== '`' && e.key !== '~') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      const cur = useGameStore.getState().renderDebug.showDevPanel;
+      updateRenderDebug({ showDevPanel: !cur });
+    };
+    window.addEventListener('keydown', handleDevToggle);
+    return () => window.removeEventListener('keydown', handleDevToggle);
+  }, [updateRenderDebug]);
 
   // Number key hotkeys for bottom action bar
   useEffect(() => {
@@ -1668,6 +1843,25 @@ export function UI() {
         )}
       </AnimatePresence>
 
+      {/* POI Walk-up Toast — walking mode, hand-authored sites */}
+      <AnimatePresence>
+        {activePOIToast && playerMode === 'walking' && !activePort && !activePOI && (
+          <POIToast
+            key={activePOIToast.poi.id}
+            poi={activePOIToast.poi}
+            isMobile={isMobile}
+            onEnter={() => setActivePOI(activePOIToast.poi)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* POI Modal — opened from POIToast, closed via setActivePOI(null) */}
+      {!startupOverlayActive && activePOI && (
+        <Suspense fallback={null}>
+          <POIModal poi={activePOI} onDismiss={() => setActivePOI(null)} />
+        </Suspense>
+      )}
+
       {/* Port Trading Modal */}
       {!startupOverlayActive && activePort && (
         <Suspense fallback={null}>
@@ -2139,7 +2333,7 @@ function RenderTestPanel() {
   const resetRenderDebug = useGameStore((state) => state.resetRenderDebug);
 
   return (
-    <div className="absolute left-4 top-24 z-40 w-[280px] rounded-2xl border border-white/[0.08] bg-[#08101a]/88 p-4 shadow-[0_18px_42px_rgba(0,0,0,0.45)] backdrop-blur-md pointer-events-auto">
+    <div className="absolute left-4 top-24 z-40 flex max-h-[calc(100vh-7rem)] w-[280px] flex-col overflow-y-auto overscroll-contain rounded-2xl border border-white/[0.08] bg-[#08101a]/88 p-4 shadow-[0_18px_42px_rgba(0,0,0,0.45)] backdrop-blur-md pointer-events-auto [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.18)_transparent]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Dev Panel</div>
@@ -2163,6 +2357,7 @@ function RenderTestPanel() {
             vignette: false,
             advancedWater: false,
             shipWake: false,
+            rain: false,
             algae: false,
             wildlifeMotion: false,
             cloudShadows: false,
@@ -2236,6 +2431,11 @@ function RenderTestPanel() {
           onToggle={() => updateRenderDebug({ shipWake: !renderDebug.shipWake })}
         />
         <RenderToggleRow
+          label="Rain"
+          enabled={renderDebug.rain}
+          onToggle={() => updateRenderDebug({ rain: !renderDebug.rain })}
+        />
+        <RenderToggleRow
           label="Algae"
           enabled={renderDebug.algae}
           onToggle={() => updateRenderDebug({ algae: !renderDebug.algae })}
@@ -2302,7 +2502,229 @@ function RenderTestPanel() {
         </div>
       </div>
 
+      <WeatherPanel />
+      <ColorGradingPanel />
       <DevRestTester />
+    </div>
+  );
+}
+
+// Weather panel — dev-only override of the climate-rolled weather state. The
+// store's RainOverlay + (auto-mode) LUT both read `weather.intensity` and ease
+// toward `targetIntensity` in advanceTime, so dragging the target slider gives
+// you a live fade. "Snap" skips the easing for instant comparisons; "Re-roll"
+// runs the climate dice for the current port.
+function WeatherPanel() {
+  const weather = useGameStore((s) => s.weather);
+  const setWeather = useGameStore((s) => s.setWeather);
+  const rerollWeather = useGameStore((s) => s.rerollWeather);
+  const currentWorldPortId = useGameStore((s) => s.currentWorldPortId);
+  const port = getWorldPortById(currentWorldPortId);
+  const climate = port?.climate ?? 'temperate';
+
+  const setKind = (kind: 'clear' | 'rain') => {
+    if (kind === 'clear') {
+      setWeather({ kind: 'clear', targetIntensity: 0 });
+    } else {
+      // Default to a moderate downpour when forcing rain on; user can dial in.
+      const target = weather.targetIntensity > 0 ? weather.targetIntensity : 0.7;
+      setWeather({ kind: 'rain', targetIntensity: target });
+    }
+  };
+
+  const snap = () => setWeather({ intensity: weather.targetIntensity });
+
+  return (
+    <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Weather</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            <span className="text-slate-200">{port?.name ?? 'open sea'}</span>
+            {' · '}
+            <span className="text-slate-300">{climate}</span>
+            {' · live '}
+            <span className="font-mono text-slate-200">{weather.intensity.toFixed(2)}</span>
+          </div>
+        </div>
+        <button
+          onClick={rerollWeather}
+          className="rounded-full bg-sky-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-sky-300 hover:bg-sky-500/25"
+        >
+          Re-roll
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
+        {(['clear', 'rain'] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setKind(k)}
+            className={`rounded-md border px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] transition-all ${
+              weather.kind === k
+                ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+            }`}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <span className="w-[112px] shrink-0 text-[10px] text-slate-400">Target intensity</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={weather.targetIntensity}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            // Slider implicitly chooses kind: anything > 0 means rain.
+            setWeather({ kind: v > 0 ? 'rain' : 'clear', targetIntensity: v });
+          }}
+          className="flex-1 accent-amber-500"
+        />
+        <span className="w-[40px] text-right font-mono text-[10px] text-slate-500">
+          {weather.targetIntensity.toFixed(2)}
+        </span>
+      </div>
+
+      <div className="mt-2 flex justify-end">
+        <button
+          onClick={snap}
+          className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"
+        >
+          Snap to target
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Procedural LUT panel — opt-in color grading. Off by default so the shipped
+// look is unchanged. Presets are tuned for Indian Ocean / Atlantic seasons;
+// each slider is a direct parameter into buildLUT().
+const LUT_SLIDERS: { key: keyof LUTParams; label: string; min: number; max: number; step: number }[] = [
+  { key: 'temperature',     label: 'Temperature',      min: -1,   max: 1,   step: 0.01 },
+  { key: 'tint',            label: 'Tint (mag↔grn)',   min: -1,   max: 1,   step: 0.01 },
+  { key: 'saturation',      label: 'Saturation',       min:  0,   max: 2,   step: 0.01 },
+  { key: 'contrast',        label: 'Contrast',         min:  0,   max: 2,   step: 0.01 },
+  { key: 'shadowWarmth',    label: 'Shadow Warmth',    min: -1,   max: 1,   step: 0.01 },
+  { key: 'highlightWarmth', label: 'Highlight Warmth', min: -1,   max: 1,   step: 0.01 },
+  { key: 'shadowLift',      label: 'Shadow Lift',      min: -0.5, max: 0.5, step: 0.005 },
+  { key: 'highlightRoll',   label: 'Highlight Roll',   min: -0.5, max: 0.5, step: 0.005 },
+];
+
+function ColorGradingPanel() {
+  const lutEnabled = useGameStore((s) => s.renderDebug.lutEnabled);
+  const lutPreset = useGameStore((s) => s.renderDebug.lutPreset);
+  const lutParams = useGameStore((s) => s.renderDebug.lutParams);
+  const lutMode = useGameStore((s) => s.renderDebug.lutMode);
+  const weatherIntensity = useGameStore((s) => s.weather.intensity);
+  const weatherKind = useGameStore((s) => s.weather.kind);
+  const updateRenderDebug = useGameStore((s) => s.updateRenderDebug);
+  const isAuto = lutMode === 'auto';
+
+  const applyPreset = (id: LUTPresetId) => {
+    updateRenderDebug({
+      lutEnabled: true,
+      lutPreset: id,
+      lutParams: { ...LUT_PRESETS[id] },
+    });
+  };
+
+  const setParam = (key: keyof LUTParams, value: number) => {
+    updateRenderDebug({
+      lutPreset: 'custom',
+      lutParams: { ...lutParams, [key]: value },
+    });
+  };
+
+  return (
+    <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Color Grading (LUT)</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            {isAuto ? (
+              <>Auto: weather drives the grade. <span className="text-slate-200">{weatherKind}</span> · intensity <span className="font-mono text-slate-200">{weatherIntensity.toFixed(2)}</span></>
+            ) : (
+              <>Manual: Preset <span className="text-slate-200">{lutPreset}</span></>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => updateRenderDebug({ lutMode: isAuto ? 'manual' : 'auto' })}
+            aria-pressed={isAuto}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
+              isAuto ? 'bg-sky-500/15 text-sky-300' : 'bg-slate-700/40 text-slate-400'
+            }`}
+          >
+            {isAuto ? 'Auto' : 'Manual'}
+          </button>
+          <button
+            onClick={() => updateRenderDebug({ lutEnabled: !lutEnabled })}
+            aria-pressed={lutEnabled}
+            disabled={isAuto}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
+              lutEnabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700/40 text-slate-400'
+            } disabled:opacity-40`}
+          >
+            {lutEnabled ? 'On' : 'Off'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
+        {(['tropical', 'temperate', 'monsoon'] as LUTPresetId[]).map((id) => (
+          <button
+            key={id}
+            onClick={() => applyPreset(id)}
+            disabled={isAuto}
+            className={`rounded-md border px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] transition-all disabled:opacity-40 ${
+              lutPreset === id && lutEnabled
+                ? 'border-amber-600/30 bg-amber-600/18 text-amber-300'
+                : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-slate-200'
+            }`}
+          >
+            {id}
+          </button>
+        ))}
+        <button
+          onClick={() => updateRenderDebug({
+            lutPreset: 'custom',
+            lutParams: { ...LUT_NEUTRAL },
+          })}
+          disabled={isAuto}
+          className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400 transition-all hover:bg-white/[0.06] hover:text-slate-200 disabled:opacity-40"
+        >
+          neutral
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1.5" aria-disabled={!lutEnabled || isAuto}>
+        {LUT_SLIDERS.map((s) => (
+          <div key={s.key} className="flex items-center gap-2">
+            <span className="w-[112px] shrink-0 text-[10px] text-slate-400">{s.label}</span>
+            <input
+              type="range"
+              min={s.min}
+              max={s.max}
+              step={s.step}
+              value={lutParams[s.key]}
+              onChange={(e) => setParam(s.key, Number(e.target.value))}
+              disabled={!lutEnabled || isAuto}
+              className="flex-1 accent-amber-500 disabled:opacity-40"
+            />
+            <span className="w-[40px] text-right font-mono text-[10px] text-slate-500">
+              {lutParams[s.key].toFixed(2)}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

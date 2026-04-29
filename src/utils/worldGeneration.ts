@@ -336,7 +336,7 @@ export function generateWorldData({
         if (!treePlaced && rand > (biome === 'jungle' ? 0.88 : 0.95) && palms.length < 500) {
           palms.push({
             position: [x, height, worldZ],
-            scale: 0.7 + Math.random() * 1.0,
+            scale: 1.008 + Math.random() * 1.44,
             lean: 0.03 + Math.random() * 0.15,
             rotation: Math.random() * Math.PI * 2,
           });
@@ -392,7 +392,7 @@ export function generateWorldData({
       }
       // Cypress in Mediterranean + Persian Gulf forest — sparse, on slopes
       if (!treePlaced && cypressPort && rand > 0.992 && cypresses.length < 80) {
-        cypresses.push({ position: [x, height, worldZ], scale: 0.85 + Math.random() * 0.55 });
+        cypresses.push({ position: [x, height, worldZ], scale: 1.02 + Math.random() * 0.66 });
         treePlaced = true;
       }
       // Orange grove — Iberian/Caribbean cultivated lowlands. Forest biome
@@ -457,7 +457,7 @@ export function generateWorldData({
       }
       // Cypress dotting Mediterranean + Persian scrubland
       if (!treePlaced && cypressPort && rand > 0.994 && cypresses.length < 80) {
-        cypresses.push({ position: [x, height, worldZ], scale: 0.8 + Math.random() * 0.55 });
+        cypresses.push({ position: [x, height, worldZ], scale: 0.96 + Math.random() * 0.66 });
         treePlaced = true;
       }
       // Orange grove edge — Iberian/Caribbean dry-lowland
@@ -478,7 +478,7 @@ export function generateWorldData({
       if (!treePlaced && datePalmPort && rand > 0.996 && datePalms.length < 200 && moisture > 0.25) {
         datePalms.push({
           position: [x, height, worldZ],
-          scale: 0.75 + Math.random() * 0.6,
+          scale: 1.08 + Math.random() * 0.864,
           lean: (Math.random() - 0.5) * 0.04, // nearly upright
           rotation: Math.random() * Math.PI * 2,
         });
@@ -545,7 +545,7 @@ export function generateWorldData({
       if (rand < 0.32 * mangroveDensity && mangroves.length < 340) {
         mangroves.push({
           position: [x, height, worldZ],
-          scale: 0.9 + Math.random() * 0.84,
+          scale: 1.512 + Math.random() * 1.4112,
           rotation: Math.random() * Math.PI * 2,
         });
       }
@@ -628,14 +628,14 @@ export function generateWorldData({
         if (datePalmPort && datePalms.length < 200) {
           datePalms.push({
             position: [x, height, worldZ],
-            scale: 0.8 + Math.random() * 0.7,
+            scale: 1.152 + Math.random() * 1.008,
             lean: (Math.random() - 0.5) * 0.06,
             rotation: Math.random() * Math.PI * 2,
           });
         } else if (!datePalmPort && palms.length < 500) {
           palms.push({
             position: [x, height, worldZ],
-            scale: 0.7 + Math.random() * 0.8,
+            scale: 1.008 + Math.random() * 1.152,
             lean: 0.1 + Math.random() * 0.25,
             rotation: Math.random() * Math.PI * 2,
           });
@@ -693,7 +693,7 @@ export function generateWorldData({
         if (dpx * dpx + dpz * dpz > CITY_EXCLUSION_SQ) {
           const cv = 0.88 + Math.random() * 0.22;
           // Reptiles scaled up ~1.6x — at the game's zoomed-out view, realistic iguana/croc sizes read as specks.
-          const rInstanceScale = variant.scale * (0.9 + Math.random() * 0.3) * 2.0;
+          const rInstanceScale = variant.scale * (0.9 + Math.random() * 0.3) * 2.4;
           reptiles.push({
             position: [x, height + REPTILE_FOOT_OFFSET * rInstanceScale, worldZ],
             rotation: Math.random() * Math.PI * 2,
@@ -729,7 +729,7 @@ export function generateWorldData({
               rotation: Math.random() * Math.PI * 2,
               color: [variant.color[0] * cv, variant.color[1] * cv, variant.color[2] * cv],
               // Birds scaled up ~1.5x to match the game's zoomed-out silhouette language.
-              scale: variant.scale * (0.9 + Math.random() * 0.2) * 1.875,
+              scale: variant.scale * (0.9 + Math.random() * 0.2) * 2.25,
               speedMult: 0.85 + Math.random() * 0.3,
               circleCenter: [x, worldZ],
               circleRadius: flockRadius * (0.85 + Math.random() * 0.3),
@@ -763,7 +763,7 @@ export function generateWorldData({
             // Slight color variation within herd
             const cv = 0.92 + Math.random() * 0.16;
             // Grazers scaled up ~1.6x — at this camera pitch realistic antelope/sheep sizes disappear.
-            const instanceScale = variant.scale * (0.85 + Math.random() * 0.3) * 2.0;
+            const instanceScale = variant.scale * (0.85 + Math.random() * 0.3) * 2.4;
             // Foot offset depends on kind — camels have long legs, capybaras are nearly on the ground.
             const foot = grazerFootOffset(variant.kind);
             grazers.push({
@@ -848,7 +848,7 @@ export function generateWorldData({
         const jz = refugeTree.z + (Math.random() - 0.5) * 6;
         const cv = 0.92 + Math.random() * 0.16;
         // Primates scaled up ~1.5x to match the game's zoomed-out silhouette language.
-        const pInstanceScale = variant.scale * (0.85 + Math.random() * 0.3) * 1.875;
+        const pInstanceScale = variant.scale * (0.85 + Math.random() * 0.3) * 2.25;
         primates.push({
           position: [jx, refugeTree.y + PRIMATE_FOOT_OFFSET * pInstanceScale, jz],
           rotation: Math.random() * Math.PI * 2,

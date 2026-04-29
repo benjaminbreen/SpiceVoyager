@@ -19,6 +19,7 @@ import {
   getSceneLabel,
   SceneInstance,
 } from '../utils/hinterlandScenes';
+import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
 
 const WORLD_HALF = 550;
 
@@ -80,6 +81,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const playerRot = useGameStore(s => s.playerRot);
   const playerMode = useGameStore(s => s.playerMode);
   const worldSeed = useGameStore(s => s.worldSeed);
+  const discoveredPOIs = useGameStore(s => s.discoveredPOIs);
 
   // Wait for the module-level pre-render (usually already done by the time modal opens)
   useEffect(() => {
@@ -299,6 +301,62 @@ export function WorldMap({ onClose }: WorldMapProps) {
       ctx.globalAlpha = 1;
     }
 
+    // Draw POIs — bright cyan circles for hand-authored sites attached to
+    // discovered ports. Undiscovered POIs show "?" until the player has
+    // opened the modal at least once. Always-visible (no zoom fade) since
+    // there are far fewer POIs than hinterland scenes.
+    for (const port of ports) {
+      if (!discoveredPorts.includes(port.id)) continue;
+      const pois = getPOIsForPort(port);
+      for (const poi of pois) {
+        const resolved = resolvePOIPosition(poi, port);
+        if (!resolved) continue;
+        const p = worldToCanvas(resolved.x, resolved.z);
+        const r = 4 / zoom;
+        const discovered = discoveredPOIs.includes(poi.id);
+
+        // Soft halo
+        const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 3.5);
+        grad.addColorStop(0, 'rgba(95, 200, 255, 0.45)');
+        grad.addColorStop(1, 'rgba(95, 200, 255, 0)');
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // Filled disc
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#5fc8ff';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1.2 / zoom;
+        ctx.stroke();
+
+        // Label
+        const showLabels = zoom > 0.9;
+        if (showLabels) {
+          const fs = Math.max(9, 11 / zoom);
+          ctx.font = discovered
+            ? `500 ${fs}px "Inter", system-ui, sans-serif`
+            : `700 ${fs}px "Inter", system-ui, sans-serif`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          const label = discovered ? poi.name : '?';
+          const lw = ctx.measureText(label).width;
+          const lx = p.x + r + 5 / zoom;
+          const ly = p.y;
+          const pad = 2.5 / zoom;
+          ctx.fillStyle = 'rgba(10, 14, 24, 0.6)';
+          ctx.beginPath();
+          ctx.roundRect(lx - pad, ly - fs / 2 - pad, lw + pad * 2, fs + pad * 2, 2 / zoom);
+          ctx.fill();
+          ctx.fillStyle = discovered ? '#cfe9ff' : '#5fc8ff';
+          ctx.fillText(label, lx, ly);
+        }
+      }
+    }
+
     // Draw ports
     ports.forEach(port => {
       const isDiscovered = discoveredPorts.includes(port.id);
@@ -449,7 +507,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
     ctx.stroke();
 
     ctx.restore();
-  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, mapWorldHalf, worldSeed]);
+  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, discoveredPOIs, mapWorldHalf, worldSeed]);
 
   useEffect(() => {
     if (isRendering) return;

@@ -120,8 +120,21 @@ export function Player() {
   const rimPatchedFrames = useRef(0);
 
   useEffect(() => {
+    const movementKeyFor = (e: KeyboardEvent): keyof typeof keys.current | null => {
+      const key = e.key.toLowerCase();
+      if (key === 'arrowup') return 'w';
+      if (key === 'arrowdown') return 's';
+      if (key === 'arrowleft') return 'a';
+      if (key === 'arrowright') return 'd';
+      return key in keys.current ? key as keyof typeof keys.current : null;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = true;
+      const movementKey = movementKeyFor(e);
+      if (movementKey) {
+        keys.current[movementKey] = true;
+        e.preventDefault();
+      }
       if (e.key === ' ' && playerMode === 'walking' && !isJumping.current && !paused) {
         e.preventDefault();
         isJumping.current = true;
@@ -130,7 +143,11 @@ export function Player() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() in keys.current) keys.current[e.key.toLowerCase() as keyof typeof keys.current] = false;
+      const movementKey = movementKeyFor(e);
+      if (movementKey) {
+        keys.current[movementKey] = false;
+        e.preventDefault();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
