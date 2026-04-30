@@ -167,6 +167,15 @@ export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
 export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 'farmhouse' | 'shack' | 'market' | 'plaza' | 'spiritual' | 'landmark' | 'palace';
 
 export type HousingClass = 'poor' | 'common' | 'merchant' | 'elite';
+export type HouseholdKind = 'residence' | 'shop' | 'workshop' | 'farmstead' | 'laboring' | 'elite';
+
+export interface BuildingHousehold {
+  kind: HouseholdKind;
+  profession?: string;
+  good?: string;
+  crop?: Building['crop'];
+  title?: string;
+}
 
 export interface Building {
   id: string;
@@ -185,6 +194,11 @@ export interface Building {
    *  only). Set by buildingLabels.generateBuildingLabel; pedestrians
    *  anchored to this building inherit it as their family name. */
   familyName?: string;
+  /** Structured version of the household/trade hint that often appears in
+   *  the building label ("goldsmith", "pepper merchant", "fishers' huts").
+   *  Used by pedestrian roles and building descriptions so they do not have
+   *  to parse label text. */
+  household?: BuildingHousehold;
   setback?: number;          // 0..1; render-time jitter multiplier
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
@@ -946,6 +960,8 @@ interface GameState {
   // POI ids the player has opened the modal for at least once. Drives the
   // "?" → real-name reveal on Minimap + WorldMap.
   discoveredPOIs: string[];
+  // POI ids whose one-time generated reward has been claimed.
+  claimedPOIRewards: string[];
 
   // Reputation per nationality (-100 to +100, starts at 0)
   reputation: Partial<Record<Nationality, number>>;
@@ -1038,6 +1054,7 @@ interface GameState {
   setNearestHailableNpc: (npc: NPCShipIdentity | null) => void;
   setActivePOI: (poi: import('../utils/poiDefinitions').POIDefinition | null) => void;
   markPOIDiscovered: (id: string) => void;
+  claimPOIReward: (poi: import('../utils/poiDefinitions').POIDefinition) => void;
   adjustReputation: (nationality: Nationality, delta: number) => void;
   getReputation: (nationality: Nationality) => number;
   discoverPort: (id: string) => void;
@@ -1100,6 +1117,15 @@ interface GameState {
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
+
+function deterministicRewardRoll(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 0xffffffff;
+}
 
 const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   showDevPanel: false,
@@ -1717,6 +1743,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   discoveredPorts: [],
   activePOI: null,
   discoveredPOIs: [],
+  claimedPOIRewards: [],
   reputation: buildStartingReputation(_startingFaction),
   npcPositions: [],
   npcShips: [],
@@ -1829,6 +1856,66 @@ export const useGameStore = create<GameState>((set, get) => ({
       ? state
       : { discoveredPOIs: [...state.discoveredPOIs, id] }
   )),
+  claimPOIReward: (poi) => {
+    const reward = poi.reward;
+    const state = get();
+    if (!reward || reward.type === 'none' || state.claimedPOIRewards.includes(poi.id)) return;
+
+    const markClaimed = () => set((s) => ({ claimedPOIRewards: [...s.claimedPOIRewards, poi.id] }));
+
+    if (reward.type === 'journal') {
+      markClaimed();
+      get().addJournalEntry('encounter', `${poi.name}: ${poi.lore}`);
+      get().addNotification(`Recorded ${poi.name}.`, 'success', { subtitle: 'SITE RECORDED' });
+      return;
+    }
+
+    if (reward.type === 'knowledge') {
+      const current = (state.knowledgeState[reward.commodityId] as 0 | 1 | 2 | undefined) ?? 0;
+      markClaimed();
+      if (reward.level > current) {
+        get().learnAboutCommodity(reward.commodityId, reward.level, poi.name);
+      } else {
+        get().addJournalEntry('encounter', `${poi.name}: the signs confirmed what we already knew of ${reward.commodityId}.`);
+      }
+      get().addNotification(`Recorded signs of ${reward.commodityId}.`, 'success', { subtitle: 'FIELD OBSERVATION' });
+      return;
+    }
+
+    const roll = deterministicRewardRoll(poi.id);
+    markClaimed();
+    if (roll > reward.chance) {
+      get().addJournalEntry('encounter', `${poi.name}: ${poi.lore}`);
+      get().addNotification(`Inspected ${poi.name}.`, 'info', { subtitle: 'NO SALVAGE FOUND' });
+      return;
+    }
+
+    const amount = reward.min + Math.floor(deterministicRewardRoll(`${poi.id}:amount`) * (reward.max - reward.min + 1));
+    const currentCargo = Object.values(state.cargo).reduce((sum, qty) => sum + qty, 0);
+    const taken = Math.max(0, Math.min(amount, state.stats.cargoCapacity - currentCargo));
+    if (taken <= 0) {
+      get().addNotification(`No cargo space for ${reward.commodityId}.`, 'warning', { subtitle: 'HOLD FULL' });
+      return;
+    }
+
+    const stack: CargoStack = {
+      id: `poi:${poi.id}:${state.dayCount}`,
+      commodity: reward.commodityId,
+      actualCommodity: reward.commodityId,
+      amount: taken,
+      acquiredPort: `poi:${poi.id}`,
+      acquiredPortName: poi.name,
+      acquiredDay: state.dayCount,
+      purchasePrice: 0,
+      knowledgeAtPurchase: 1,
+    };
+    set((s) => ({
+      cargo: { ...s.cargo, [reward.commodityId]: (s.cargo[reward.commodityId] ?? 0) + taken },
+      cargoProvenance: [...s.cargoProvenance, stack],
+    }));
+    get().addJournalEntry('encounter', `${poi.name}: recovered ${taken} ${reward.commodityId}.`);
+    get().addNotification(`Recovered ${taken} ${reward.commodityId}.`, 'success', { subtitle: 'FIELD FIND' });
+  },
   adjustReputation: (nationality, delta) => {
     const state = get();
     const current = state.reputation[nationality] ?? 0;
@@ -2545,6 +2632,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       discoveredPorts: [],
       activePOI: null,
       discoveredPOIs: [],
+      claimedPOIRewards: [],
       reputation: start.reputation,
       npcPositions: [],
       npcShips: [],

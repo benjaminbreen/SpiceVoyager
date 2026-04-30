@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { useGameStore, Port, Building, WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
+import { useGameStore, Port, Building, WEAPON_DEFS, LAND_WEAPON_DEFS, PORT_FACTION } from '../store/gameStore';
 import { getWorldPortById } from '../utils/worldPorts';
 import type { CrewMember, ShipStats, ShipInfo } from '../store/gameStore';
 import type { PlaceTab } from './PortModal';
@@ -8,11 +8,11 @@ import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
-  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond
+  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond, Crosshair, Swords, X
 } from 'lucide-react';
 import { useIsMobile } from '../utils/useIsMobile';
 import { audioManager } from '../audio/AudioManager';
-import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
+import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail, sfxBattleStations } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
 import { startIntroCinematic } from '../utils/cinematicIntroState';
@@ -33,7 +33,7 @@ import { QuestsPanel } from './QuestsPanel';
 import { QuestToast } from './QuestToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
-import { activeBowWeapon, getCurrentElevationCharge } from '../utils/combatState';
+import { activeBowWeapon, broadsideReload, getCurrentElevationCharge, landWeaponReload } from '../utils/combatState';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
@@ -87,6 +87,25 @@ const LOADING_MESSAGES = [
 const SPLASH_VARIANT = typeof window !== 'undefined'
   ? (new URLSearchParams(window.location.search).get('splash') ?? 'claude')
   : 'claude';
+const SEEN_NUDGES_KEY = 'spice-voyager-seen-nudges';
+
+type NudgeId = 'open-commissions' | 'hostile-fight';
+
+function readSeenNudges(): Set<NudgeId> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(SEEN_NUDGES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeSeenNudges(seen: Set<NudgeId>) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(SEEN_NUDGES_KEY, JSON.stringify([...seen]));
+}
 
 function formatDate(dayCount: number): string {
   // Game starts May 1, 1612
@@ -600,6 +619,237 @@ function HuntingModeBanner() {
   );
 }
 
+type CombatTone = 'ship' | 'hunt';
+
+function CombatChip({ children, tone = 'ship', strong = false }: { children: ReactNode; tone?: CombatTone; strong?: boolean }) {
+  const border = strong
+    ? tone === 'ship' ? 'border-red-200/28' : 'border-amber-200/30'
+    : 'border-[#d7c08a]/16';
+  const text = strong
+    ? tone === 'ship' ? 'text-red-50' : 'text-amber-50'
+    : 'text-[#c6cbd6]';
+  const bg = strong
+    ? tone === 'ship' ? 'bg-red-950/32' : 'bg-amber-950/28'
+    : 'bg-[#090d15]/42';
+
+  return (
+    <span className={`inline-flex h-7 items-center rounded-md border ${border} ${bg} px-2.5 font-mono text-[10px] font-semibold tracking-[0.08em] ${text}`}>
+      {children}
+    </span>
+  );
+}
+
+function CombatKey({ value, label }: { value: string; label: string }) {
+  return (
+    <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[#d7c08a]/16 bg-[#090d15]/42 px-2.5 font-mono text-[10px] font-semibold tracking-[0.08em] text-[#c6cbd6]">
+      <span className="rounded-[4px] border border-[#d7c08a]/22 bg-[#e8c872]/9 px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-[0.12em] text-[#f3d78a]">{value}</span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function ReadinessPip({ state }: { state: 'ready' | 'empty' | 'reload' }) {
+  const color = state === 'ready' ? 'bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.55)]'
+    : state === 'reload' ? 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.45)]'
+    : 'bg-red-300 shadow-[0_0_10px_rgba(252,165,165,0.55)]';
+  return <span className={`h-2 w-2 rounded-full ${color}`} />;
+}
+
+function CombatStationRow({
+  label,
+  primary,
+  secondary,
+  actions,
+  muted = false,
+}: {
+  label: string;
+  primary: string;
+  secondary?: string;
+  actions?: ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <div className={`grid items-center gap-2 border-t border-[#d7c08a]/10 py-2 first:border-t-0 first:pt-0 last:pb-0 ${muted ? 'opacity-60' : ''} ${actions ? 'grid-cols-[5.75rem_minmax(0,1fr)_auto]' : 'grid-cols-[5.75rem_minmax(0,1fr)]'}`}>
+      <div className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#d7c08a]/68">{label}</div>
+      <div className="min-w-0">
+        <div className="truncate text-[13px] font-semibold text-[#f8ead0]">{primary}</div>
+        {secondary && <div className="mt-0.5 truncate font-mono text-[9px] font-semibold tracking-[0.08em] text-slate-400/85">{secondary}</div>}
+      </div>
+      {actions && <div className="flex shrink-0 flex-wrap justify-end gap-1.5">{actions}</div>}
+    </div>
+  );
+}
+
+function CombatHud() {
+  const combatMode = useGameStore((s) => s.combatMode);
+  const playerMode = useGameStore((s) => s.playerMode);
+  const cargo = useGameStore((s) => s.cargo);
+  const armament = useGameStore((s) => s.stats.armament);
+  const activeLandWeapon = useGameStore((s) => s.activeLandWeapon);
+  const landWeapons = useGameStore((s) => s.landWeapons);
+  const { isMobile } = useIsMobile();
+  const [now, setNow] = useState(() => Date.now());
+  const [elevCharge, setElevCharge] = useState(0);
+
+  useEffect(() => {
+    if (!combatMode) return;
+    const id = setInterval(() => setNow(Date.now()), 120);
+    return () => clearInterval(id);
+  }, [combatMode]);
+
+  useEffect(() => {
+    if (!combatMode || playerMode !== 'ship') return;
+    let raf: number;
+    const tick = () => {
+      setElevCharge(getCurrentElevationCharge());
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [combatMode, playerMode]);
+
+  if (!combatMode) return null;
+
+  if (playerMode === 'walking') {
+    const def = LAND_WEAPON_DEFS[activeLandWeapon];
+    const ammoName = def.ammoCommodity;
+    const ammoCount = ammoName ? cargo[ammoName] ?? 0 : null;
+    const readyAt = landWeaponReload[activeLandWeapon] ?? 0;
+    const reloadLeft = Math.max(0, readyAt - now);
+    const empty = ammoName !== null && ammoCount !== null && ammoCount < def.ammoPerShot;
+    const readiness: 'ready' | 'empty' | 'reload' = empty ? 'empty' : reloadLeft > 0 ? 'reload' : 'ready';
+    const readinessLabel = empty ? 'EMPTY' : reloadLeft > 0 ? `${(reloadLeft / 1000).toFixed(1)}s` : 'READY';
+    const ammoLabel = ammoName ? `${ammoName} ${ammoCount}` : 'No ammunition';
+    const actionLabel = activeLandWeapon === 'bow' ? 'Loose' : 'Fire';
+    const tone: CombatTone = 'hunt';
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.97 }}
+        transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+        className="absolute left-1/2 z-40 -translate-x-1/2 pointer-events-none"
+        style={{ bottom: isMobile ? 'calc(6.1rem + var(--sai-bottom))' : 'calc(6.15rem + var(--sai-bottom))', width: isMobile ? 'min(23rem, calc(100vw - 1.5rem))' : 'min(37rem, calc(100vw - 2rem))' }}
+      >
+        <div className="relative overflow-hidden rounded-[10px] border border-[#d7c08a]/20 bg-[#111722]/86 shadow-[0_16px_36px_rgba(0,0,0,0.46),inset_0_1px_0_rgba(255,255,255,0.075)] backdrop-blur-xl">
+          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-200/70 to-transparent" />
+          <div className={`${isMobile ? 'px-3.5 py-3' : 'px-[18px] py-3.5'}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <ReadinessPip state={readiness} />
+                <span className="font-serif text-[12px] font-bold uppercase tracking-[0.2em] text-amber-100">Hunting</span>
+                <span className="h-4 w-px bg-[#d7c08a]/20" />
+                <span className="truncate text-[15px] font-semibold text-[#f8ead0]">{def.name}</span>
+              </div>
+              <span className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.16em] ${readiness === 'ready' ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200' : readiness === 'reload' ? 'border-amber-300/25 bg-amber-400/10 text-amber-200' : 'border-red-300/30 bg-red-500/12 text-red-200'}`}>
+                {readinessLabel}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <CombatChip tone={tone} strong>{ammoLabel}</CombatChip>
+              <CombatChip tone={tone}>{def.range}m range</CombatChip>
+              {!isMobile && <CombatKey value="Click" label={actionLabel.toLowerCase()} />}
+              {!isMobile && landWeapons.length > 1 && <CombatKey value="Tab" label="change weapon" />}
+              {!isMobile && <CombatKey value="F" label="holster" />}
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  const bowWeapons = armament.filter((w) => WEAPON_DEFS[w].aimable);
+  const mountedWeapon = bowWeapons.includes(activeBowWeapon) ? activeBowWeapon : (bowWeapons[0] ?? 'swivelGun');
+  const mountedDef = WEAPON_DEFS[mountedWeapon];
+  const broadsideWeapons = armament.filter((w) => !WEAPON_DEFS[w].aimable);
+  const ammoName = mountedWeapon === 'fireRocket' ? 'War Rockets' : mountedWeapon === 'falconet' ? 'Cannon Shot' : 'Small Shot';
+  const ammoCount = cargo[ammoName] ?? 0;
+  const cannonShot = cargo['Cannon Shot'] ?? 0;
+  const empty = ammoCount <= 0;
+  const portLeft = Math.max(0, broadsideReload.port - now);
+  const starboardLeft = Math.max(0, broadsideReload.starboard - now);
+  const readiness: 'ready' | 'empty' | 'reload' = empty ? 'empty' : 'ready';
+  const readinessLabel = empty ? 'EMPTY' : 'READY';
+  const elevationVisible = elevCharge > 0.01;
+  const elevationDeg = Math.round(elevCharge * 30);
+  const broadsideSummary = broadsideWeapons.length === 0
+    ? 'No cannon mounted'
+    : `${broadsideWeapons.length} cannon${broadsideWeapons.length === 1 ? '' : 's'}`;
+  const broadsideTypes = Array.from(new Set(broadsideWeapons.map((w) => WEAPON_DEFS[w].name))).join(', ');
+  const broadsideNeedsShot = broadsideWeapons.length > 0 && cannonShot < broadsideWeapons.length;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 16, scale: 0.97 }}
+      transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+      className="absolute left-1/2 z-40 -translate-x-1/2 pointer-events-none"
+      style={{ bottom: isMobile ? 'calc(6.1rem + var(--sai-bottom))' : 'calc(6.15rem + var(--sai-bottom))', width: isMobile ? 'min(23rem, calc(100vw - 1.5rem))' : 'min(45rem, calc(100vw - 2rem))' }}
+    >
+      <div className="relative overflow-hidden rounded-[10px] border border-[#d7c08a]/18 bg-[#111722]/88 shadow-[0_16px_36px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.075)] backdrop-blur-xl">
+        <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-red-200/60 to-transparent" />
+        <div className={`${isMobile ? 'px-3.5 py-3' : 'px-[18px] py-3.5'}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <ReadinessPip state={readiness} />
+              <span className="font-serif text-[12px] font-bold uppercase tracking-[0.2em] text-red-100">Fight Mode</span>
+            </div>
+            <span className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.16em] ${readiness === 'ready' ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200' : 'border-red-300/30 bg-red-500/12 text-red-200'}`}>
+              {readinessLabel}
+            </span>
+          </div>
+          <div className="mt-2">
+            <CombatStationRow
+              label="Bow Gun"
+              primary={mountedDef.name}
+              secondary={`${ammoName} ${ammoCount} · ${mountedDef.range}m range`}
+              actions={!isMobile && (
+                <>
+                  <CombatKey value="Click" label="fire" />
+                  {bowWeapons.length > 1 && <CombatKey value="Tab" label="change" />}
+                </>
+              )}
+            />
+            <CombatStationRow
+              label="Broadside"
+              primary={broadsideSummary}
+              secondary={broadsideWeapons.length > 0
+                ? `${broadsideNeedsShot ? 'Need' : 'Cannon Shot'} ${cannonShot}/${broadsideWeapons.length} · ${broadsideTypes}`
+                : 'Visit a shipyard to mount guns'}
+              muted={broadsideWeapons.length === 0}
+              actions={!isMobile && broadsideWeapons.length > 0 && (
+                <>
+                  <CombatKey value="Q" label={`port ${portLeft > 0 ? `${(portLeft / 1000).toFixed(1)}s` : 'ready'}`} />
+                  <CombatKey value="R" label={`starboard ${starboardLeft > 0 ? `${(starboardLeft / 1000).toFixed(1)}s` : 'ready'}`} />
+                </>
+              )}
+            />
+            {!isMobile && (
+              <div className="mt-2 flex justify-end">
+                <CombatKey value="F" label="stand down" />
+              </div>
+            )}
+          </div>
+          {elevationVisible && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-orange-200/80">Elevation</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/45">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-orange-300 via-red-300 to-yellow-200"
+                  style={{ width: `${Math.max(3, elevCharge * 100)}%`, transition: 'width 0.05s linear' }}
+                />
+              </div>
+              <span className="w-8 text-right font-mono text-[10px] font-bold text-orange-100">{elevationDeg}°</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Anchor Banner ───────────────────────────────────────────────────────────
 // ASCII-style top-center indicator when at anchor — calmer counterpart to fight mode
 function AnchorBanner() {
@@ -698,6 +948,7 @@ function QuestsBarButton({ active, onClick }: { active: boolean; onClick: () => 
     <button
       onClick={onClick}
       aria-pressed={active}
+      data-nudge-target="commissions"
       className={`group relative w-11 h-11 rounded-full flex items-center justify-center
         bg-[#1a1e2e] border-2
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
@@ -742,6 +993,9 @@ export function UI() {
   const anchored = useGameStore((state) => state.anchored);
   const combatMode = useGameStore((state) => state.combatMode);
   const playerMode = useGameStore((state) => state.playerMode);
+  const setCombatMode = useGameStore((state) => state.setCombatMode);
+  const setAnchored = useGameStore((state) => state.setAnchored);
+  const activeLandWeapon = useGameStore((state) => state.activeLandWeapon);
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
   const settingsV2 = useGameStore((state) => state.renderDebug.settingsV2);
@@ -757,6 +1011,8 @@ export function UI() {
   const reputation = useGameStore((state) => state.reputation);
   const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const voyageBegun = useGameStore((state) => state.voyageBegun);
+  const leads = useGameStore((state) => state.leads);
+  const knowledgeState = useGameStore((state) => state.knowledgeState);
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -809,6 +1065,8 @@ export function UI() {
   const [showJournal, setShowJournal] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [seenNudges, setSeenNudges] = useState<Set<NudgeId>>(() => readSeenNudges());
   const [showWind, setShowWind] = useState(false);
   const [showOverlayMenu, setShowOverlayMenu] = useState(false);
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
@@ -840,6 +1098,41 @@ export function UI() {
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission || showVoyageCurtain;
+
+  const dismissNudge = useCallback((id: NudgeId) => {
+    setSeenNudges((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      writeSeenNudges(next);
+      return next;
+    });
+  }, []);
+
+  const toggleCombatMode = useCallback(() => {
+    const next = !combatMode;
+    dismissNudge('hostile-fight');
+    setCombatMode(next);
+
+    if (playerMode === 'ship') {
+      if (next) {
+        if (anchored) setAnchored(false);
+        sfxBattleStations();
+        audioManager.startFightMusic();
+        addNotification('Battle stations!', 'info');
+      } else {
+        audioManager.stopFightMusic();
+        addNotification('Standing down.', 'info');
+      }
+      return;
+    }
+
+    if (next) {
+      addNotification(`${LAND_WEAPON_DEFS[activeLandWeapon].name} drawn. Click to fire.`, 'info');
+    } else {
+      addNotification('Weapon lowered.', 'info');
+    }
+  }, [activeLandWeapon, addNotification, anchored, combatMode, dismissNudge, playerMode, setAnchored, setCombatMode]);
 
   useEffect(() => {
     if (!voyageBegun || startupOverlayActive) return;
@@ -1265,6 +1558,7 @@ export function UI() {
       if (e.key === 'Escape') {
         if (showOverlayMenu) { sfxClose(); setShowOverlayMenu(false); }
         else if (hailNpc) { sfxClose(); closeHail(); }
+        else if (showHelp) { sfxClose(); setShowHelp(false); }
         else if (showDashboard) { sfxClose(); setShowDashboard(false); }
         else if (showLocalMap) { sfxClose(); setShowLocalMap(false); }
         else if (showWorldMap) { sfxClose(); setShowWorldMap(false); }
@@ -1277,7 +1571,7 @@ export function UI() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showOverlayMenu, showLocalMap, showWorldMap, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
+  }, [showOverlayMenu, showLocalMap, showWorldMap, showHelp, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
 
   useEffect(() => {
     if (!showOverlayMenu) return;
@@ -1292,15 +1586,15 @@ export function UI() {
   }, [showOverlayMenu]);
 
   useEffect(() => {
-    if (showLocalMap || showWorldMap || showSettings || showDashboard || activePort || hailNpc) {
+    if (showLocalMap || showWorldMap || showSettings || showHelp || showDashboard || activePort || hailNpc) {
       setShowOverlayMenu(false);
     }
-  }, [activePort, hailNpc, showDashboard, showLocalMap, showSettings, showWorldMap]);
+  }, [activePort, hailNpc, showDashboard, showHelp, showLocalMap, showSettings, showWorldMap]);
 
   useEffect(() => {
     const handleHailKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 't') return;
-      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort) return;
+      if (showInstructions || showSettings || showHelp || showDashboard || showLocalMap || showWorldMap || activePort) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       const state = useGameStore.getState();
@@ -1322,7 +1616,7 @@ export function UI() {
 
     window.addEventListener('keydown', handleHailKey);
     return () => window.removeEventListener('keydown', handleHailKey);
-  }, [showInstructions, showSettings, showDashboard, showLocalMap, showWorldMap, activePort]);
+  }, [showInstructions, showSettings, showHelp, showDashboard, showLocalMap, showWorldMap, activePort]);
 
   // Keep nearestHailableNpc subscribed so it stays reactive, but don't auto-close
   // the hail panel when the NPC drifts out of range — player closes it manually.
@@ -1363,6 +1657,7 @@ export function UI() {
           break;
         case '2': // Help
           sfxClick();
+          setShowHelp(true);
           break;
         case '3': // Settings
           sfxOpen();
@@ -1388,6 +1683,17 @@ export function UI() {
     window.addEventListener('keydown', handleHotkey);
     return () => window.removeEventListener('keydown', handleHotkey);
   }, [showInstructions, showSettings, activePort, hailNpc, paused, setPaused, cycleViewMode, toggleWorldMap]);
+
+  const activeLeadCount = leads.filter((lead) => lead.status === 'active').length;
+  const knownCommodityCount = Object.values(knowledgeState).filter((level) => level > 0).length;
+  const cargoUsed = Object.values(cargo).reduce((sum, qty) => sum + qty, 0);
+  const currentPortName = getWorldPortById(currentWorldPortId)?.name ?? 'this coast';
+  const suppressNudges = startupOverlayActive || showHelp || showSettings || showDashboard || showLocalMap || showWorldMap || !!activePort || !!hailNpc;
+  const activeNudge: NudgeId | null = !suppressNudges && collisionShipDesc && !combatMode && !anchored && playerMode === 'ship' && !seenNudges.has('hostile-fight')
+    ? 'hostile-fight'
+    : !suppressNudges && voyageBegun && activeLeadCount > 0 && !showQuests && !seenNudges.has('open-commissions')
+      ? 'open-commissions'
+      : null;
 
   const hullDamageSeverity = hullDamagePulse?.severity ?? 0;
   const hullDamageHudMotion = hullDamagePulse && !reduceMotion
@@ -1650,7 +1956,25 @@ export function UI() {
 
         {/* Minimap (top-right) — click to open full map */}
         <div className={`flex flex-col pointer-events-auto items-end ${isMobile ? 'gap-2' : 'gap-3'}`}>
-          <AudioMuteButton />
+          <div className="flex items-center gap-2">
+            <AudioMuteButton />
+            <button
+              type="button"
+              onClick={() => { sfxOpen(); setShowSettings(true); }}
+              onMouseEnter={sfxHover}
+              aria-label="Settings"
+              title="Settings"
+              className="group relative w-11 h-11 rounded-full flex items-center justify-center
+                bg-[#1a1e2e] border-2 border-[#4a4535]/60 text-[#8a8060] hover:text-slate-200 hover:border-slate-400/45
+                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+                transition-all active:scale-95"
+            >
+              <Settings size={16} />
+              <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                Settings
+              </span>
+            </button>
+          </div>
           {minimapEnabled && (
             <div className="relative group">
               <Minimap onClick={toggleLocalMap} size={isMobile ? 104 : 172} />
@@ -1680,6 +2004,9 @@ export function UI() {
                 title="Wind & Navigation"
               >
                 <RotatingWindIcon />
+                <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  Wind
+                </span>
               </button>
               <div ref={overlayMenuRef} className="relative">
                 <button
@@ -1696,6 +2023,9 @@ export function UI() {
                   title={cityFieldOverlayEnabled ? `Overlay: ${cityFieldMode === 'district' ? 'District' : CITY_FIELD_LABELS[cityFieldMode]}` : 'Overlay'}
                 >
                   <MapIcon size={15} />
+                  <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    {cityFieldOverlayEnabled ? 'Overlay On' : 'Overlay'}
+                  </span>
                 </button>
                 <AnimatePresence>
                   {showOverlayMenu && (
@@ -1770,6 +2100,9 @@ export function UI() {
                 }
               >
                 <Diamond size={15} />
+                <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  {plumbBobsEnabled || poiBeaconsEnabled ? 'Hide Beacons' : 'Show Beacons'}
+                </span>
               </button>
             </div>
             <AnimatePresence>
@@ -1898,18 +2231,9 @@ export function UI() {
         })()}
       </AnimatePresence>
 
-      {/* Combat Mode Banner */}
+      {/* Combat / Hunting HUD */}
       <AnimatePresence>
-        {combatMode && playerMode === 'ship' && (
-          <CombatModeBanner />
-        )}
-      </AnimatePresence>
-
-      {/* Hunting Mode Banner — land equivalent of CombatModeBanner */}
-      <AnimatePresence>
-        {combatMode && playerMode === 'walking' && (
-          <HuntingModeBanner />
-        )}
+        {combatMode && <CombatHud />}
       </AnimatePresence>
 
       {/* Anchor Indicator — top-center ASCII banner */}
@@ -2037,6 +2361,25 @@ export function UI() {
         )}
       </AnimatePresence>
 
+      <UiNudge
+        id="open-commissions"
+        active={activeNudge === 'open-commissions'}
+        title="First Route"
+        body="Open Commissions for a concrete trade goal."
+        targetSelector="[data-nudge-target='commissions']"
+        tone="amber"
+        onDismiss={dismissNudge}
+      />
+      <UiNudge
+        id="hostile-fight"
+        active={activeNudge === 'hostile-fight'}
+        title="Threat Nearby"
+        body="Use Fight to arm your weapons. Stand down when the danger passes."
+        targetSelector="[data-nudge-target='fight']"
+        tone="red"
+        onDismiss={dismissNudge}
+      />
+
       {/* Notifications — three tiered stacks, each right-aligned */}
       {(() => {
         const portNotes   = notifications.filter(n => n.tier === 'port');
@@ -2122,6 +2465,24 @@ export function UI() {
           Quests button. */}
       <QuestsPanel open={showQuests} onClose={() => setShowQuests(false)} />
 
+      <HelpModal
+        open={showHelp}
+        onClose={() => setShowHelp(false)}
+        playerMode={playerMode}
+        combatMode={combatMode}
+        anchored={anchored}
+        isMobile={isMobile}
+        activePortName={activePort?.name ?? currentPortName}
+        hull={stats.hull}
+        maxHull={stats.maxHull}
+        provisions={provisions}
+        cargoUsed={cargoUsed}
+        cargoCapacity={stats.cargoCapacity}
+        gold={gold}
+        activeLeadCount={activeLeadCount}
+        knownCommodityCount={knownCommodityCount}
+      />
+
       {/* Quest Toast — top-center event announcements (resolved / expired /
           failed for now; offers wired in once sources land). */}
       <QuestToast />
@@ -2165,8 +2526,8 @@ export function UI() {
 
       {/* Bottom Action Bar — Sunless Sea style.
           Desktop: 7 buttons in one row.
-          Mobile: 4 buttons [Pause][Navigate][Dashboard][⋯] with the remaining
-          five (Learn/Help/Settings/View/Quests) tucked into the overflow popover. */}
+          Mobile keeps the core controls visible and tucks secondary panels into
+          the overflow popover. */}
       <div
         data-testid="mobile-action-bar"
         className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
@@ -2184,10 +2545,9 @@ export function UI() {
             >
               <div className="flex items-center gap-3">
                 <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" accentColor="#60a5fa" glowColor="96,165,250" onClick={() => setShowOverflowMenu(false)} />
-                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => setShowOverflowMenu(false)} />
-                <ActionBarButton icon={<Settings size={13} />} label="Settings" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); setShowOverflowMenu(false); }} />
+                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => { setShowHelp(true); setShowOverflowMenu(false); }} />
                 <ViewModeButton />
-                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxClick(); setShowQuests(prev => !prev); setShowOverflowMenu(false); }} />
+                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); setShowOverflowMenu(false); }} />
               </div>
             </motion.div>
           )}
@@ -2200,10 +2560,19 @@ export function UI() {
           <div className={`relative flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
             {!isMobile && (
               <>
-                {/* Left group: Learn - Help - Settings */}
+                {/* Left group: Learn - Help - combat stance */}
                 <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" />
-                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" />
-                <ActionBarButton icon={<Settings size={13} />} label="Settings" hotkey="3" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
+                <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => setShowHelp(true)} />
+                <ActionBarButton
+                  icon={playerMode === 'ship' ? <Swords size={13} /> : <Crosshair size={13} />}
+                  label={playerMode === 'ship' ? (combatMode ? 'Stand Down' : 'Fight') : (combatMode ? 'Holster' : 'Hunt')}
+                  hotkey="F"
+                  accentColor={playerMode === 'ship' ? '#f87171' : '#f59e0b'}
+                  glowColor={playerMode === 'ship' ? '248,113,113' : '245,158,11'}
+                  active={combatMode}
+                  nudgeTarget="fight"
+                  onClick={toggleCombatMode}
+                />
               </>
             )}
             {/* Center — pause/play, bigger */}
@@ -2226,12 +2595,21 @@ export function UI() {
               <>
                 {/* Right group: View - Quests - Navigate */}
                 <ViewModeButton />
-                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxClick(); setShowQuests(prev => !prev); }} />
+                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); }} />
                 <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
               </>
             )}
             {isMobile && (
               <>
+                <ActionBarButton
+                  icon={playerMode === 'ship' ? <Swords size={13} /> : <Crosshair size={13} />}
+                  label={playerMode === 'ship' ? (combatMode ? 'Stand Down' : 'Fight') : (combatMode ? 'Holster' : 'Hunt')}
+                  accentColor={playerMode === 'ship' ? '#f87171' : '#f59e0b'}
+                  glowColor={playerMode === 'ship' ? '248,113,113' : '245,158,11'}
+                  active={combatMode}
+                  nudgeTarget="fight"
+                  onClick={toggleCombatMode}
+                />
                 <ActionBarButton icon={<Compass size={13} />} label="Navigate" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
                 <ActionBarButton icon={<Users size={13} />} label="Dashboard" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxOpen(); setDashboardState({}); }} />
                 <ActionBarButton icon={<MoreHorizontal size={13} />} label="More" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => setShowOverflowMenu(v => !v)} />
@@ -2998,6 +3376,274 @@ function RenderToggleRow({
   );
 }
 
+function HelpModal({
+  open,
+  onClose,
+  playerMode,
+  combatMode,
+  anchored,
+  isMobile,
+  activePortName,
+  hull,
+  maxHull,
+  provisions,
+  cargoUsed,
+  cargoCapacity,
+  gold,
+  activeLeadCount,
+  knownCommodityCount,
+}: {
+  open: boolean;
+  onClose: () => void;
+  playerMode: 'ship' | 'walking';
+  combatMode: boolean;
+  anchored: boolean;
+  isMobile: boolean;
+  activePortName: string;
+  hull: number;
+  maxHull: number;
+  provisions: number;
+  cargoUsed: number;
+  cargoCapacity: number;
+  gold: number;
+  activeLeadCount: number;
+  knownCommodityCount: number;
+}) {
+  const hullRatio = maxHull > 0 ? hull / maxHull : 1;
+  const cargoRatio = cargoCapacity > 0 ? cargoUsed / cargoCapacity : 0;
+
+  const advice: string[] = [];
+  if (hullRatio < 0.45) advice.push('Repair before a long passage. A damaged hull turns ordinary weather and collisions into a voyage-ending risk.');
+  if (provisions < 18) advice.push('Buy provisions soon. Food is a quiet timer: running short hurts crew survival before it looks dramatic.');
+  if (cargoRatio > 0.85) advice.push('Sell or lighten cargo before buying more. Full holds make good prices useless.');
+  if (activeLeadCount > 0) advice.push('Open Commissions and pick one delivery or sale target. Commissions are the clearest early route to profit.');
+  if (knownCommodityCount < 5) advice.push('Prioritize learning goods in ports and conversations. Unknown cargo sells badly and is more vulnerable to fraud.');
+  if (combatMode) advice.push(playerMode === 'ship' ? 'Fight mode is for deliberate engagements. Press F again to stand down before docking or navigating.' : 'Hunting mode is useful near wildlife, but lower the weapon before entering buildings.');
+  if (anchored) advice.push(isMobile ? 'You are at anchor. Use the sail button or movement controls when you are ready to move again.' : 'You are at anchor. Press Space or W/S when you are ready to move again.');
+  if (advice.length === 0) {
+    advice.push(playerMode === 'ship'
+      ? `You are off ${activePortName}. Dock, check market prices, then use Navigate to choose a short route with goods you recognize.`
+      : `You are ashore at ${activePortName}. Walk into markets, forts, shrines, and marked places; prompts appear when you are close enough.`);
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[120] flex items-end justify-center bg-black/35 px-3 pb-[calc(5.25rem+var(--sai-bottom))] pt-[calc(1rem+var(--sai-top))] backdrop-blur-[2px] pointer-events-auto sm:items-center sm:pb-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) onClose();
+          }}
+        >
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="help-modal-title"
+            className="w-full max-w-2xl overflow-hidden rounded-xl border border-violet-300/20 bg-[#0a0e18]/95 text-slate-100 shadow-[0_24px_80px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)]"
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-4 py-3">
+              <div>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300">
+                  <HelpCircle size={13} />
+                  Captain's Help
+                </div>
+                <h2 id="help-modal-title" className="mt-1 font-serif text-xl font-semibold text-[#f8ead0]">What to do next</h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-400 transition-colors hover:border-violet-300/30 hover:text-violet-200"
+                aria-label="Close help"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid gap-3 px-4 py-4 sm:grid-cols-[1.05fr_0.95fr]">
+              <section className="rounded-lg border border-violet-300/15 bg-violet-300/[0.06] p-3">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-violet-200">Advice now</h3>
+                <div className="mt-3 space-y-2">
+                  {advice.slice(0, 4).map((item) => (
+                    <p key={item} className="rounded-md border border-white/8 bg-black/18 px-3 py-2 text-[13px] leading-relaxed text-slate-200">
+                      {item}
+                    </p>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-200">Core loop</h3>
+                <ol className="mt-3 space-y-2 text-[13px] leading-relaxed text-slate-300">
+                  <li><span className="font-bold text-slate-100">1.</span> Learn what goods are, then what they are worth.</li>
+                  <li><span className="font-bold text-slate-100">2.</span> Buy recognized goods where the ledger price is favorable.</li>
+                  <li><span className="font-bold text-slate-100">3.</span> Sail to a port that wants them.</li>
+                  <li><span className="font-bold text-slate-100">4.</span> Sell, repair, provision the crew, and follow commissions.</li>
+                </ol>
+              </section>
+
+              <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3 sm:col-span-2">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-200">Controls</h3>
+                <div className="mt-3 grid gap-2 text-[12px] text-slate-300 sm:grid-cols-3">
+                  {isMobile ? (
+                    <>
+                      <HelpKey keys="Joystick" label={playerMode === 'ship' ? 'Steer and throttle in joystick mode' : 'Walk'} />
+                      {playerMode === 'ship' && <HelpKey keys="Tap water" label="Set heading in tap-steer mode" />}
+                      <HelpKey keys="+ / -" label="Zoom camera" />
+                    </>
+                  ) : (
+                    <>
+                      <HelpKey keys="W / S" label={playerMode === 'ship' ? 'Sail ahead / reverse' : 'Move forward / back'} />
+                      <HelpKey keys="A / D" label={playerMode === 'ship' ? 'Turn port / starboard' : 'Strafe'} />
+                      <HelpKey keys="Shift" label={playerMode === 'ship' ? 'Trim sails and tighter turns' : 'Run'} />
+                      <HelpKey keys="Z / X" label="Rotate camera" />
+                      <HelpKey keys="Mouse wheel" label="Zoom camera" />
+                    </>
+                  )}
+                  <HelpKey keys="E" label={playerMode === 'ship' ? 'Disembark at safe shore' : 'Embark when near ship'} />
+                  <HelpKey keys="Space" label={playerMode === 'ship' ? (combatMode ? 'Hold broadside elevation' : 'Drop or weigh anchor') : 'Jump; harvest when prompted'} />
+                  <HelpKey keys="F" label="Fight or stand down" />
+                  {combatMode && playerMode === 'ship' && <HelpKey keys="Q / R" label="Port / starboard broadside" />}
+                  {combatMode && <HelpKey keys="LMB / Fire" label={playerMode === 'ship' ? 'Fire bow weapon' : 'Fire hunting weapon'} />}
+                  {combatMode && <HelpKey keys="Tab" label={playerMode === 'ship' ? 'Cycle bow weapon' : 'Swap hunting weapon'} />}
+                  {playerMode === 'ship' && <HelpKey keys="C" label="Cast fishing net" />}
+                  {playerMode === 'ship' && <HelpKey keys="T" label="Hail nearby ship" />}
+                  <HelpKey keys="1-7" label="Bottom action bar" />
+                  <HelpKey keys="7" label="Open navigation" />
+                  <HelpKey keys="Esc" label="Close panels" />
+                </div>
+              </section>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function HelpKey({ keys, label }: { keys: string; label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-white/8 bg-black/16 px-3 py-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-amber-200">{keys}</span>
+      <span className="text-right text-slate-300">{label}</span>
+    </div>
+  );
+}
+
+function UiNudge({
+  id,
+  active,
+  title,
+  body,
+  targetSelector,
+  tone,
+  onDismiss,
+}: {
+  id: NudgeId;
+  active: boolean;
+  title: string;
+  body: string;
+  targetSelector: string;
+  tone: 'amber' | 'red';
+  onDismiss: (id: NudgeId) => void;
+}) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+
+    const update = () => {
+      const target = document.querySelector<HTMLElement>(targetSelector);
+      setRect(target?.getBoundingClientRect() ?? null);
+    };
+
+    update();
+    const id = window.setInterval(update, 250);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [active, targetSelector]);
+
+  if (!active || !rect) return null;
+
+  const color = tone === 'red' ? '#f87171' : '#fbbf24';
+  const ringPad = 7;
+  const ring = {
+    left: rect.left - ringPad,
+    top: rect.top - ringPad,
+    width: rect.width + ringPad * 2,
+    height: rect.height + ringPad * 2,
+  };
+  const tooltipWidth = Math.min(260, Math.max(210, window.innerWidth - 24));
+  const placeAbove = rect.top > 120;
+  const tooltipLeft = Math.max(12, Math.min(window.innerWidth - tooltipWidth - 12, rect.left + rect.width / 2 - tooltipWidth / 2));
+  const tooltipTop = placeAbove ? Math.max(12, rect.top - 96) : Math.min(window.innerHeight - 112, rect.bottom + 18);
+  const arrowLeft = Math.max(18, Math.min(tooltipWidth - 18, rect.left + rect.width / 2 - tooltipLeft));
+
+  return (
+    <div className="fixed inset-0 z-[115] pointer-events-none">
+      <motion.div
+        className="absolute rounded-full border-2"
+        style={{
+          left: ring.left,
+          top: ring.top,
+          width: ring.width,
+          height: ring.height,
+          borderColor: `${color}d9`,
+          boxShadow: `0 0 0 5px ${color}1c, 0 0 22px ${color}85, inset 0 0 16px ${color}2e`,
+        }}
+        initial={{ opacity: 0, scale: 0.86 }}
+        animate={{ opacity: [0.7, 1, 0.72], scale: [0.96, 1.08, 0.96] }}
+        transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute pointer-events-auto rounded-lg border bg-[#0a0e18]/96 p-3 text-slate-100 shadow-[0_16px_44px_rgba(0,0,0,0.62)] backdrop-blur-xl"
+        style={{
+          left: tooltipLeft,
+          top: tooltipTop,
+          width: tooltipWidth,
+          borderColor: `${color}66`,
+        }}
+        initial={{ opacity: 0, y: placeAbove ? 8 : -8, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: placeAbove ? 8 : -8, scale: 0.98 }}
+      >
+        <div
+          className={`absolute h-3 w-3 rotate-45 border ${placeAbove ? '-bottom-[7px] border-l-0 border-t-0' : '-top-[7px] border-r-0 border-b-0'} bg-[#0a0e18]`}
+          style={{
+            left: arrowLeft - 6,
+            borderColor: `${color}66`,
+          }}
+        />
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color }}>
+              {title}
+            </div>
+            <p className="mt-1 text-[13px] leading-snug text-slate-200">{body}</p>
+          </div>
+          <button
+            onClick={() => onDismiss(id)}
+            className="shrink-0 rounded-full border border-white/10 bg-white/[0.04] p-1 text-slate-400 transition-colors hover:text-slate-100"
+            aria-label="Dismiss tip"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function OverlayMenuRow({
   label,
   description,
@@ -3084,16 +3730,39 @@ function ViewModeButton() {
   );
 }
 
-function ActionBarButton({ icon, label, hotkey, accentColor = '#b0a880', glowColor = '176,168,128', onClick }: { icon: React.ReactNode; label: string; hotkey?: string; accentColor?: string; glowColor?: string; onClick?: () => void }) {
+function ActionBarButton({
+  icon,
+  label,
+  hotkey,
+  accentColor = '#b0a880',
+  glowColor = '176,168,128',
+  active = false,
+  nudgeTarget,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hotkey?: string;
+  accentColor?: string;
+  glowColor?: string;
+  active?: boolean;
+  nudgeTarget?: string;
+  onClick?: () => void;
+}) {
   return (
     <button
       onClick={() => { sfxClick(); onClick?.(); }}
+      data-nudge-target={nudgeTarget}
       className="group relative w-8 h-8 rounded-full flex items-center justify-center
-        bg-[#1a1e2e] border-2 border-[#3a3530]/50
+        bg-[#1a1e2e] border-2
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_1px_4px_rgba(0,0,0,0.4)]
         transition-all duration-200 active:scale-95"
       style={{
-        color: '#6a6550',
+        color: active ? accentColor : '#6a6550',
+        borderColor: active ? `${accentColor}99` : 'rgba(58,53,48,0.5)',
+        boxShadow: active
+          ? `inset 0 2px 4px rgba(0,0,0,0.4), inset 0 -1px 3px rgba(255,255,255,0.1), 0 0 14px rgba(${glowColor},0.35), 0 0 4px rgba(${glowColor},0.18)`
+          : undefined,
       }}
       onMouseEnter={(e) => {
         sfxHover();
@@ -3104,9 +3773,11 @@ function ActionBarButton({ icon, label, hotkey, accentColor = '#b0a880', glowCol
       }}
       onMouseLeave={(e) => {
         const btn = e.currentTarget;
-        btn.style.color = '#6a6550';
-        btn.style.borderColor = 'rgba(58,53,48,0.5)';
-        btn.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 2px rgba(255,255,255,0.05), 0 1px 4px rgba(0,0,0,0.4)';
+        btn.style.color = active ? accentColor : '#6a6550';
+        btn.style.borderColor = active ? `${accentColor}99` : 'rgba(58,53,48,0.5)';
+        btn.style.boxShadow = active
+          ? `inset 0 2px 4px rgba(0,0,0,0.4), inset 0 -1px 3px rgba(255,255,255,0.1), 0 0 14px rgba(${glowColor},0.35), 0 0 4px rgba(${glowColor},0.18)`
+          : 'inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 2px rgba(255,255,255,0.05), 0 1px 4px rgba(0,0,0,0.4)';
       }}
       title={hotkey ? `${label} [${hotkey}]` : label}
     >

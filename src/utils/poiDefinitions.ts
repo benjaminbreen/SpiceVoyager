@@ -20,6 +20,7 @@
 // plumbob; others are hover-only until the marker taxonomy expands.
 
 import type { Commodity } from './commodities';
+import type { POIMedallionKey } from './poiMedallions';
 import type { SemanticClass } from './semanticClasses';
 
 // Eight kinds total. Four groups:
@@ -65,6 +66,12 @@ export interface POICost {
   commodityId?: Commodity;    // for 'commodity' type
 }
 
+export type POIReward =
+  | { type: 'none' }
+  | { type: 'cargo'; commodityId: Commodity; min: number; max: number; chance: number }
+  | { type: 'knowledge'; commodityId: Commodity; level: 1 | 2 }
+  | { type: 'journal'; entryKey: string };
+
 export interface POIDefinition {
   id: string;
   name: string;
@@ -86,6 +93,16 @@ export interface POIDefinition {
   lore: string;
   /** Optional: visiting unlocks knowledge of another port. */
   unlocksPort?: string;
+  /** Optional visual override for modal/map iconography. */
+  medallionKey?: POIMedallionKey;
+  /** True for generated POIs attached to Port.pois at map generation. */
+  generated?: boolean;
+  /** Broad visual/content variant within a POI kind. */
+  poiVariant?: string;
+  /** False for inspectable sites without a named keeper or conversation. */
+  hasKeeper?: boolean;
+  /** Small deterministic reward hook for generated inspectable sites. */
+  reward?: POIReward;
 }
 
 // ── Phase 1 data ────────────────────────────────────────────────────────────

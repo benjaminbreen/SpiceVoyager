@@ -20,7 +20,7 @@ import { useGameStore } from '../store/gameStore';
 import type { POIDefinition } from '../utils/poiDefinitions';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import { SEMANTIC_STYLE } from '../utils/semanticClasses';
-import { sfxClick, sfxClose } from '../audio/SoundEffects';
+import { sfxClick, sfxClose, sfxHover } from '../audio/SoundEffects';
 import {
   buildPOISystemPrompt,
   buildPOIInitialSceneMessage,
@@ -105,6 +105,7 @@ export function POIModal({
             </div>
             <button
               onClick={() => { sfxClose(); onDismiss(); }}
+              onMouseEnter={() => sfxHover()}
               className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center
                 text-slate-500 hover:text-white/80 hover:bg-white/[0.06] transition-all"
               aria-label="Close"
@@ -121,6 +122,9 @@ export function POIModal({
                 <button
                   key={t}
                   onClick={() => { sfxClick(); setTab(t); }}
+                  onMouseEnter={() => {
+                    if (tab !== t) sfxHover();
+                  }}
                   className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all
                     ${tab === t
                       ? 'bg-white/[0.08] text-white/90'
@@ -242,6 +246,9 @@ function LearnTab({ poi }: { poi: POIDefinition }) {
               <button
                 disabled={!nextLevel || !canAfford}
                 onClick={() => nextLevel && attemptLearn(commodityId, nextLevel)}
+                onMouseEnter={() => {
+                  if (nextLevel && canAfford) sfxHover();
+                }}
                 className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-semibold tracking-wider uppercase
                   border transition-all
                   ${!nextLevel
@@ -306,6 +313,7 @@ function ConverseTab({ poi, port }: { poi: POIDefinition; port: import('../store
 
   async function send(text: string, type?: POISuggestedResponse['type']) {
     if (!text.trim() || isLoading) return;
+    sfxClick();
     const userMsg: POIConversationMessage = { role: 'user', text };
     const newHistory = [...history, userMsg];
     setHistory(newHistory);
@@ -368,6 +376,7 @@ function ConverseTab({ poi, port }: { poi: POIDefinition; port: import('../store
               <button
                 key={i}
                 onClick={() => send(s.label, s.type)}
+                onMouseEnter={() => sfxHover()}
                 disabled={isLoading}
                 className="px-2.5 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08]
                   border border-white/[0.06] text-[11px] text-slate-300 hover:text-white/90
@@ -397,6 +406,9 @@ function ConverseTab({ poi, port }: { poi: POIDefinition; port: import('../store
           <button
             type="submit"
             disabled={isLoading || !playerInput.trim()}
+            onMouseEnter={() => {
+              if (!isLoading && playerInput.trim()) sfxHover();
+            }}
             className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25
               border border-amber-500/40 text-[11px] font-semibold text-amber-200/90
               uppercase tracking-wider disabled:opacity-40 transition-all"

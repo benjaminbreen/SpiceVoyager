@@ -22,7 +22,7 @@ import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { POIDefinition } from '../utils/poiDefinitions';
 import type { SemanticClass } from '../utils/semanticClasses';
 import { useBuildingPresence } from '../utils/pedestrianPresence';
-import { sfxClick, sfxClose } from '../audio/SoundEffects';
+import { sfxClick, sfxClose, sfxCoin, sfxHover, sfxPickupLegendary, sfxPickupRare } from '../audio/SoundEffects';
 import {
   buildPOIInitialSceneMessage,
   buildPOISystemPrompt,
@@ -34,6 +34,7 @@ import {
 import { ConfigPortrait, tavernNpcToPortraitConfig } from './CrewPortrait';
 import { hasPOIModelPreview, POIModelPreview } from './POIModelPreview';
 import { PresenceRow } from './PresenceRow';
+import { poiMedallionAsset, type POIMedallionAsset } from '../utils/poiMedallions';
 
 type Tab = 'learn' | 'converse';
 type AccessKind = 'open' | 'offering' | 'reputation';
@@ -85,12 +86,6 @@ const SHELL_BY_CLASS: Record<SemanticClass, {
 
 type POIShell = (typeof SHELL_BY_CLASS)[SemanticClass];
 
-interface POIMedallionAsset {
-  key: string;
-  path: string;
-  label: string;
-}
-
 export function POIModalV2({
   poi,
   onDismiss,
@@ -102,12 +97,13 @@ export function POIModalV2({
     poi.port ? state.ports.find((p) => p.id === poi.port) ?? null : null,
   );
   const markPOIDiscovered = useGameStore((state) => state.markPOIDiscovered);
+  const claimPOIReward = useGameStore((state) => state.claimPOIReward);
   const [entered, setEntered] = useState(false);
   const [tab, setTab] = useState<Tab>('learn');
   const [npcStanding, setNpcStanding] = useState<NpcStanding>(0);
 
   const hasLearnTab = poi.knowledgeDomain.length > 0;
-  const hasConverseTab = !!port && poi.kind !== 'natural';
+  const hasConverseTab = !!port && poi.kind !== 'natural' && poi.hasKeeper !== false;
   const hasModelPreview = hasPOIModelPreview(poi);
   const shell = SHELL_BY_CLASS[poi.class];
   const presenceBuildingId = useMemo(() => {
@@ -128,12 +124,17 @@ export function POIModalV2({
   }, [poi.id, markPOIDiscovered]);
 
   useEffect(() => {
+    if (entered && poi.generated) claimPOIReward(poi);
+  }, [claimPOIReward, entered, poi]);
+
+  useEffect(() => {
     setEntered(false);
     setTab(hasLearnTab ? 'learn' : 'converse');
     setNpcStanding(0);
   }, [poi.id, hasLearnTab]);
 
-  const activeTab = hasLearnTab ? tab : 'converse';
+  const hasRecordView = !hasLearnTab && !hasConverseTab;
+  const activeTab = hasLearnTab ? tab : hasConverseTab ? 'converse' : 'learn';
 
   return (
     <AnimatePresence>
@@ -203,6 +204,7 @@ export function POIModalV2({
             <header className={`relative border-b border-white/[0.08] px-5 py-4 md:px-8 md:py-6 ${hasModelPreview ? 'md:pr-[13.5rem] lg:pr-[15rem] xl:pr-[16.5rem]' : ''}`}>
               <button
                 onClick={() => { sfxClose(); onDismiss(); }}
+                onMouseEnter={() => sfxHover()}
                 className="absolute right-4 top-4 flex h-7 w-7 items-center justify-center rounded-full
                   border border-white/[0.07] bg-white/[0.02] text-[#8e856f]
                   transition-colors hover:border-white/[0.16] hover:text-[#e8ddbf]"
@@ -258,11 +260,17 @@ export function POIModalV2({
                       Converse
                     </TabButton>
                   )}
+                  {hasRecordView && (
+                    <TabButton active accent={shell.accent} onClick={() => {}}>
+                      Record
+                    </TabButton>
+                  )}
                 </nav>
 
                 <div className="min-h-0 flex-1 overflow-hidden">
                   {activeTab === 'learn' && hasLearnTab && <LearnTab poi={poi} shell={shell} />}
-                  {activeTab === 'converse' && port && (
+                  {hasRecordView && <RecordTab poi={poi} shell={shell} />}
+                  {activeTab === 'converse' && port && hasConverseTab && (
                     <ConverseTab
                       poi={poi}
                       port={port}
@@ -351,7 +359,7 @@ function POISidebar({
       {entered && (
         <div className="mt-5 hidden border-t pt-5 md:block" style={{ borderColor: shell.accentSoft }}>
           <SidebarFact label="known for" value={knownFor(poi)} />
-          <SidebarFact label="keeper" value={poi.npcName} />
+          <SidebarFact label={poi.hasKeeper === false ? 'status' : 'keeper'} value={poi.hasKeeper === false ? 'unattended' : poi.npcName} />
 
           {showPortrait && (
             <div className="mt-5 border-t pt-5" style={{ borderColor: shell.accentSoft }}>
@@ -513,6 +521,9 @@ function ThresholdView({
             access.pay();
             onEntered();
           } : undefined}
+          onMouseEnter={() => {
+            if (access.canEnter) sfxHover();
+          }}
           className={`min-h-[42px] rounded-lg border-2 px-4 text-[10px] font-bold uppercase tracking-[0.13em]
             shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
             transition-all active:scale-95
@@ -526,6 +537,7 @@ function ThresholdView({
         <button
           type="button"
           onClick={() => { sfxClose(); onDismiss(); }}
+          onMouseEnter={() => sfxHover()}
           className="min-h-[42px] rounded-lg border-2 border-[#4a4535]/60 bg-[#1a1e2e]/70 px-4
             text-[10px] font-bold uppercase tracking-[0.13em] text-[#8a8060]
             shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.45)]
@@ -563,6 +575,9 @@ function TabButton({
     <button
       type="button"
       onClick={() => { sfxClick(); onClick(); }}
+      onMouseEnter={() => {
+        if (!active) sfxHover();
+      }}
       className="relative py-3 pr-7 text-[14px] font-[560] transition-colors"
       style={{ color: active ? '#e8ddbf' : '#8e856f', fontFamily: '"Fraunces", serif' }}
     >
@@ -580,6 +595,7 @@ function LearnTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
   const gold = useGameStore((s) => s.gold);
   const cargo = useGameStore((s) => s.cargo);
   const learnAboutCommodity = useGameStore((s) => s.learnAboutCommodity);
+  const [learnPulse, setLearnPulse] = useState<{ commodityId: Commodity; targetLevel: 1 | 2; nonce: number } | null>(null);
 
   const lessonCost = poi.cost.type === 'gold' ? poi.cost.amount ?? 0 : 0;
   const canPayLesson = lessonCost === 0 || gold >= lessonCost;
@@ -589,8 +605,16 @@ function LearnTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
     if (targetLevel <= current || !canPayLesson) return;
     if (lessonCost > 0) {
       useGameStore.setState((state) => ({ gold: state.gold - lessonCost }));
+      sfxCoin(lessonCost);
     }
-    sfxClick();
+    window.setTimeout(() => {
+      if (targetLevel === 2) {
+        sfxPickupLegendary();
+      } else {
+        sfxPickupRare();
+      }
+    }, lessonCost > 0 ? 95 : 0);
+    setLearnPulse({ commodityId, targetLevel, nonce: Date.now() });
     learnAboutCommodity(commodityId, targetLevel, `${poi.npcName} at ${poi.name}`);
   }
 
@@ -642,19 +666,12 @@ function LearnTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
               className="grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3 border-b py-3 md:grid-cols-[54px_minmax(0,1fr)_96px]"
               style={{ borderColor: 'rgba(231,224,202,0.09)' }}
             >
-              <div
-                className="grid h-[42px] w-[42px] place-items-center rounded-full"
-                style={{
-                  background: shell.medallion,
-                  boxShadow: 'inset 0 2px 3px rgba(255,232,174,0.34), inset 0 -2px 4px rgba(0,0,0,0.52), 0 2px 6px rgba(0,0,0,0.42)',
-                }}
-              >
-                <div className="grid h-[31px] w-[31px] place-items-center rounded-full bg-[#0a0703] text-[15px]"
-                  style={{ color: shell.accent, boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.8)' }}
-                >
-                  {level === 2 ? '✓' : nextLevel === 2 ? '※' : '◆'}
-                </div>
-              </div>
+              <CommodityLessonIcon
+                commodityId={commodityId}
+                shell={shell}
+                level={level}
+                pulse={learnPulse?.commodityId === commodityId ? learnPulse : null}
+              />
               <div className="min-w-0">
                 <div
                   className="truncate text-[16px] font-[560] text-[#e8ddbf]"
@@ -670,6 +687,9 @@ function LearnTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
                 type="button"
                 disabled={disabled}
                 onClick={() => nextLevel && attemptLearn(commodityId, nextLevel)}
+                onMouseEnter={() => {
+                  if (!disabled) sfxHover();
+                }}
                 className={`col-start-2 min-h-9 justify-self-start rounded-lg border-2 px-3 text-[10px] font-bold uppercase tracking-[0.13em]
                   transition-all active:scale-95 md:col-start-auto md:justify-self-end
                   ${disabled
@@ -688,6 +708,126 @@ function LearnTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
           You do not have enough gold for another lesson.
         </div>
       )}
+    </div>
+  );
+}
+
+function CommodityLessonIcon({
+  commodityId,
+  shell,
+  level,
+  pulse,
+}: {
+  commodityId: Commodity;
+  shell: POIShell;
+  level: 0 | 1 | 2;
+  pulse: { commodityId: Commodity; targetLevel: 1 | 2; nonce: number } | null;
+}) {
+  const def = COMMODITY_DEFS[commodityId];
+  const displayLevel = pulse?.targetLevel ?? level;
+  const statusGlyph = displayLevel === 2 ? '✓' : displayLevel === 1 ? '•' : '?';
+  const isMasterPulse = pulse?.targetLevel === 2;
+  const iconAnimation = pulse
+    ? {
+        scale: isMasterPulse ? [1, 1.42, 1.12, 1.22, 1] : [1, 1.22, 1],
+        filter: isMasterPulse
+          ? [
+              'drop-shadow(0 0 0 rgba(232,221,191,0))',
+              'drop-shadow(0 0 20px rgba(232,221,191,0.72))',
+              'drop-shadow(0 0 8px rgba(143,184,200,0.45))',
+              'drop-shadow(0 0 0 rgba(232,221,191,0))',
+            ]
+          : [
+              'drop-shadow(0 0 0 rgba(143,184,200,0))',
+              'drop-shadow(0 0 12px rgba(143,184,200,0.58))',
+              'drop-shadow(0 0 0 rgba(143,184,200,0))',
+            ],
+      }
+    : undefined;
+
+  return (
+    <motion.div
+      className="relative grid h-[42px] w-[42px] place-items-center"
+      animate={iconAnimation}
+      transition={{ duration: isMasterPulse ? 0.82 : 0.46, ease: [0.18, 0.82, 0.22, 1] }}
+    >
+      {def?.iconImage ? (
+        <span
+          className="grid h-[39px] w-[39px] place-items-center overflow-hidden rounded-full"
+          style={{ background: 'rgba(10,7,3,0.62)' }}
+        >
+          <img src={def.iconImage} alt="" className="h-[122%] w-[122%] object-cover" />
+        </span>
+      ) : (
+        <span
+          className="grid h-[39px] w-[39px] place-items-center rounded-full bg-[#0a0703]/60 text-[18px]"
+          style={{ color: def?.color ?? shell.accent }}
+        >
+          {def?.icon ?? '?'}
+        </span>
+      )}
+      <motion.span
+        key={pulse?.nonce ?? displayLevel}
+        className="absolute -bottom-0.5 -right-0.5 grid h-[17px] w-[17px] place-items-center rounded-full text-[9px] font-bold"
+        initial={pulse ? { scale: 0.2, opacity: 0, rotate: isMasterPulse ? -45 : 0 } : false}
+        animate={pulse ? { scale: 1, opacity: 1, rotate: 0 } : undefined}
+        transition={{ delay: isMasterPulse ? 0.18 : 0.08, duration: 0.28, ease: [0.18, 0.82, 0.22, 1] }}
+        style={{
+          background: isMasterPulse ? shell.accent : '#0a0703',
+          border: `1px solid ${shell.accentSoft}`,
+          color: isMasterPulse ? '#0a0703' : shell.accent,
+          boxShadow: isMasterPulse
+            ? `0 0 12px ${shell.accentSoft}, 0 1px 4px rgba(0,0,0,0.55)`
+            : '0 1px 4px rgba(0,0,0,0.55)',
+        }}
+        aria-label={displayLevel === 2 ? 'Mastered' : displayLevel === 1 ? 'Recognized' : 'Unknown'}
+      >
+        {statusGlyph}
+      </motion.span>
+      {isMasterPulse && (
+        <motion.span
+          className="pointer-events-none absolute inset-0 rounded-full"
+          initial={{ opacity: 0.65, scale: 0.72 }}
+          animate={{ opacity: 0, scale: 1.9 }}
+          transition={{ duration: 0.72, ease: 'easeOut' }}
+          style={{
+            border: `1px solid ${shell.accent}`,
+            boxShadow: `0 0 18px ${shell.accentSoft}`,
+          }}
+        />
+      )}
+    </motion.div>
+  );
+}
+
+function RecordTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
+  return (
+    <div className="h-full overflow-y-auto px-5 py-5 md:px-8">
+      <p
+        className="max-w-[62ch] text-[15px] leading-[1.68] text-[#d4ccb6] md:text-[16px]"
+        style={{ fontFamily: '"Fraunces", serif', fontVariationSettings: '"opsz" 30, "SOFT" 32' }}
+      >
+        {poi.lore}
+      </p>
+      <div className="mt-6 grid grid-cols-[42px_minmax(0,1fr)] items-center gap-3 border-y py-3" style={{ borderColor: shell.accentSoft }}>
+        <div
+          className="grid h-[42px] w-[42px] place-items-center rounded-full text-[14px] font-bold text-[#211707]"
+          style={{
+            background: shell.medallion,
+            boxShadow: 'inset 0 1px 1px rgba(255,242,190,0.48), inset 0 -2px 4px rgba(0,0,0,0.45), 0 3px 8px rgba(0,0,0,0.34)',
+          }}
+        >
+          ✓
+        </div>
+        <div>
+          <div className="text-[15px] font-[560] text-[#e8ddbf]" style={{ fontFamily: '"Fraunces", serif' }}>
+            Recorded in the journal
+          </div>
+          <div className="mt-1 text-[12.5px] leading-[1.45] text-[#8e856f]">
+            This site has no keeper; its value is in observation and local memory.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -742,6 +882,7 @@ function ConverseTab({
 
   async function send(text: string, type?: POISuggestedResponse['type']) {
     if (!text.trim() || isLoading) return;
+    sfxClick();
     const userMsg: POIConversationMessage = { role: 'user', text };
     const newHistory = [...history, userMsg];
     setHistory(newHistory);
@@ -809,6 +950,7 @@ function ConverseTab({
                 key={i}
                 type="button"
                 onClick={() => send(s.label, s.type)}
+                onMouseEnter={() => sfxHover()}
                 className="text-left text-[13px] leading-[1.4] text-[#c6bda6] transition-colors hover:text-[#e8ddbf]"
               >
                 <span
@@ -841,6 +983,9 @@ function ConverseTab({
           <button
             type="submit"
             disabled={isLoading || !playerInput.trim()}
+            onMouseEnter={() => {
+              if (!isLoading && playerInput.trim()) sfxHover();
+            }}
             className="text-[10px] font-bold uppercase tracking-[0.14em] disabled:opacity-40"
             style={{ color: shell.accent }}
           >
@@ -915,18 +1060,21 @@ function useAccessState(poi: POIDefinition, port: Port | null) {
     kind: accessKind,
     canEnter: true,
     token: '✓',
-    label: 'Open threshold',
+    label: poi.hasKeeper === false ? 'Open site' : 'Open threshold',
     detail: cost.type === 'gold' && cost.amount
       ? `Entry is open. Formal lessons cost ${cost.amount} gold each.`
-      : 'Entry is open.',
+      : poi.hasKeeper === false ? 'No permission is needed to inspect it.' : 'Entry is open.',
     denial: '',
-    actionLabel: 'Enter',
+    actionLabel: poi.hasKeeper === false ? 'Inspect' : 'Enter',
     thresholdText: thresholdBody(poi, 'open'),
     pay: () => {},
   };
 }
 
 function thresholdBody(poi: POIDefinition, kind: AccessKind): string {
+  if (poi.hasKeeper === false) {
+    return `${poi.lore} You can inspect the place and add the observation to your record.`;
+  }
   if (kind === 'reputation') {
     return `The threshold is guarded by custom and reputation. ${poi.npcName} receives captains only when their standing is already known.`;
   }
@@ -945,71 +1093,6 @@ function thresholdDescription(poi: POIDefinition, port: Port | null): string {
 function knownFor(poi: POIDefinition): string {
   if (poi.knowledgeDomain.length === 0) return 'local memory and observation';
   return poi.knowledgeDomain.slice(0, 3).join(', ');
-}
-
-function poiMedallionAsset(poi: POIDefinition): POIMedallionAsset {
-  const key = poiMedallionKey(poi);
-  return {
-    key,
-    path: `/poi-medallions/${key}.png`,
-    label: key.replace(/-/g, ' '),
-  };
-}
-
-function poiMedallionKey(poi: POIDefinition): string {
-  switch (poi.id) {
-    case 'london-apothecaries-hall':
-      return 'poi-apothecary-dispensary';
-    case 'london-oxford':
-    case 'goa-botanical-garden':
-      return 'poi-physic-garden';
-    case 'goa-bom-jesus':
-    case 'mombasa-fort-apothecary':
-      return 'poi-mission-apothecary';
-    case 'surat-banyan-counting-house':
-    case 'calicut-mappila-house':
-    case 'malacca-chetty-compound':
-      return 'poi-counting-house';
-    case 'surat-sufi-lodge':
-      return 'poi-sufi-lodge';
-    case 'mocha-shadhili-coffee':
-      return 'poi-coffee-shrine';
-    case 'macau-colegio-sao-paulo':
-    case 'nagasaki-jesuit-press':
-      return 'poi-college-mission';
-    case 'mocha-aloe-camp':
-    case 'aden-customs-hakim':
-      return 'poi-healer-camp';
-    case 'masulipatnam-golconda-broker':
-    case 'hormuz-pearl-divers-bazaar':
-      return 'poi-gem-brokerage';
-    case 'bantam-pepper-warehouses':
-      return 'poi-pepper-godown';
-    case 'manila-parian-silk-market':
-    case 'manila-sangley-parian':
-      return 'poi-customs-office';
-    case 'lisbon-casa-da-india':
-    case 'seville-casa-contratacion':
-      return 'poi-customs-office';
-    case 'jamestown-rolfe-tobacco-patch':
-    case 'havana-tabaquero-shed':
-      return 'poi-tobacco-shed';
-    case 'socotra-dragons-blood-grove':
-      return 'poi-spice-plantation';
-    case 'bantam-krakatoa':
-      return 'poi-pilgrimage-shrine';
-    default:
-      break;
-  }
-
-  if (poi.kind === 'garden') return 'poi-spice-plantation';
-  if (poi.kind === 'shrine') return poi.class === 'learned' ? 'poi-mission-apothecary' : 'poi-pilgrimage-shrine';
-  if (poi.kind === 'ruin') return 'poi-pilgrimage-shrine';
-  if (poi.kind === 'wreck') return 'poi-shipwreck';
-  if (poi.kind === 'smugglers_cove' || poi.kind === 'caravanserai') return 'poi-caravanserai-cove';
-  if (poi.kind === 'natural') return 'poi-pilgrimage-shrine';
-  if (poi.class === 'mercantile') return 'poi-counting-house';
-  return 'poi-apothecary-dispensary';
 }
 
 function shortNpcRole(poi: POIDefinition): string {

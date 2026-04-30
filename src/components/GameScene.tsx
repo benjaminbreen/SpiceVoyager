@@ -68,7 +68,7 @@ import {
   reportAtmosphereMs,
   perfSignals,
 } from '../utils/performanceStats';
-import { sampleCameraShake, sampleCameraFovPulse } from '../utils/cameraShakeState';
+import { addCameraFovPulse, addCameraShake, sampleCameraShake, sampleCameraFovPulse } from '../utils/cameraShakeState';
 import { sampleIntroCinematic, skipIntroCinematic, isIntroCinematicActive } from '../utils/cinematicIntroState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 
@@ -250,6 +250,34 @@ function bowWeaponLaunchSpeed(weaponType: WeaponType) {
 function bowWeaponUsesBallisticArc(weaponType: WeaponType) {
   return weaponType !== 'swivelGun';
 }
+
+function isBroadsideWeapon(weaponType: WeaponType | LandWeaponType): weaponType is WeaponType {
+  return weaponType in WEAPON_DEFS && !WEAPON_DEFS[weaponType as WeaponType].aimable;
+}
+
+function broadsideImpactScale(weaponType: WeaponType | LandWeaponType) {
+  switch (weaponType) {
+    case 'demiCannon':
+      return 2.0;
+    case 'basilisk':
+      return 1.85;
+    case 'demiCulverin':
+      return 1.65;
+    case 'saker':
+      return 1.45;
+    case 'minion':
+      return 1.25;
+    default:
+      return 1.0;
+  }
+}
+
+function shipWaterSplashScale(weaponType: WeaponType | LandWeaponType) {
+  if (isBroadsideWeapon(weaponType)) return broadsideImpactScale(weaponType);
+  const shipWeapon = weaponType in WEAPON_DEFS ? weaponType as WeaponType : null;
+  return shipWeapon === 'swivelGun' ? 0.45 : 0.75;
+}
+
 function aimSurfaceHeight(x: number, z: number) {
   return Math.max(getTerrainHeight(x, z), SEA_LEVEL);
 }
@@ -1668,6 +1696,8 @@ function tryFireBroadside(side: 'port' | 'starboard') {
 
   // Notify Ship.tsx for smoke effects
   window.dispatchEvent(new CustomEvent('broadside-fired', { detail: { side } }));
+  addCameraShake(Math.min(0.62, 0.28 + broadsideWeapons.length * 0.045));
+  addCameraFovPulse(-1.4);
   const elevMsg = elevCharge > 0.15 ? ` — elevated ${Math.round(elevCharge * 30)}°` : '';
   state.addNotification(
     `${side === 'port' ? 'Port' : 'Starboard'} broadside! (${broadsideWeapons.length} guns)${elevMsg}`,
@@ -1970,12 +2000,14 @@ const _rocketBodyDir = new THREE.Vector3();
 
 function ProjectileSystem() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const broadsideMeshRef = useRef<THREE.InstancedMesh>(null);
   const rocketMeshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const broadsideDummy = useMemo(() => new THREE.Object3D(), []);
   const rocketDummy = useMemo(() => new THREE.Object3D(), []);
 
   useFrame((_, delta) => {
-    if (!meshRef.current) return;
+    if (!meshRef.current || !broadsideMeshRef.current) return;
 
     // Auto-fire while mouse is held in combat mode — routes to the right weapon
     // based on player mode. Each weapon's own reload timer prevents spam.
@@ -1998,6 +2030,7 @@ function ProjectileSystem() {
           owner: shot.owner,
           ownerId: shot.ownerId,
         });
+        spawnMuzzleBurst(shot.origin.x, shot.origin.y, shot.origin.z, shot.direction.x, shot.direction.y, shot.direction.z, 1.35);
         sfxBroadsideCannon();
         shot.fired = true;
       }
@@ -2046,7 +2079,7 @@ function ProjectileSystem() {
           spawnRocketFireBurst(p.pos.x, 0.2, p.pos.z, 1.2);
           sfxRocketImpact();
         } else {
-          spawnSplash(p.pos.x, p.pos.z, p.weaponType === 'swivelGun' ? 0.5 : 0.9);
+          spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
           sfxCannonSplash();
         }
         projectiles.splice(i, 1);
@@ -2068,7 +2101,7 @@ function ProjectileSystem() {
           } else {
             sfxCannonImpact();
           }
-          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.55 : 0.95);
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.55 : broadsideImpactScale(p.weaponType) * 0.8);
           damageShip(damage);
           addNotification(`Enemy shot strikes the hull! -${damage} hull`, 'warning');
           projectiles.splice(i, 1);
@@ -2289,7 +2322,7 @@ function ProjectileSystem() {
 
       const building = pointHitsBuilding(p.pos);
       if (building) {
-        const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.8 : 1.2;
+        const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.8 : broadsideImpactScale(p.weaponType) * 0.85;
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.7);
         applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType), buildingMaxHp(building));
@@ -2303,7 +2336,7 @@ function ProjectileSystem() {
 
       const tree = pointHitsTree(p.pos);
       if (tree) {
-        const baseImpact = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.95 : 1.3;
+        const baseImpact = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.95 : broadsideImpactScale(p.weaponType);
         const impactIntensity = tree.kind === 'palm' ? baseImpact * 1.15 : baseImpact;
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.85);
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.62 : 0.48));
@@ -2318,7 +2351,7 @@ function ProjectileSystem() {
 
       const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
       if (p.pos.y <= surfaceY) {
-        spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : 0.7);
+          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
         projectiles.splice(i, 1);
         continue;
       }
@@ -2330,7 +2363,7 @@ function ProjectileSystem() {
         if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
           sfxCannonImpact();
           const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
-          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.5 : 0.9);
+          spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.5 : broadsideImpactScale(p.weaponType) * 0.9);
           // Deal damage based on projectile's weapon type + gunner/ability bonuses
           const gState = useGameStore.getState();
           const gunner = getCrewByRole(gState, 'Gunner');
@@ -2354,12 +2387,13 @@ function ProjectileSystem() {
       if (hit) continue;
     }
 
-    // Sphere mesh: all non-rocket projectiles.
+    // Light sphere mesh: land weapons + aimable ship weapons.
+    // Heavy sphere mesh: broadside cannonballs, rendered dark and larger.
     // Rocket capsule mesh: rockets only, oriented along velocity.
     if (meshRef.current) {
       for (let i = 0; i < PROJECTILE_COUNT; i++) {
         const proj = i < projectiles.length ? projectiles[i] : null;
-        if (proj && proj.weaponType !== 'fireRocket') {
+        if (proj && proj.weaponType !== 'fireRocket' && !isBroadsideWeapon(proj.weaponType)) {
           dummy.position.copy(proj.pos);
           const wt = proj.weaponType;
           const s = wt === 'musket' ? 0.28
@@ -2377,6 +2411,32 @@ function ProjectileSystem() {
         meshRef.current.setMatrixAt(i, dummy.matrix);
       }
       meshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (broadsideMeshRef.current) {
+      let slot = 0;
+      for (let i = 0; i < projectiles.length && slot < PROJECTILE_COUNT; i++) {
+        const proj = projectiles[i];
+        if (!isBroadsideWeapon(proj.weaponType)) continue;
+        broadsideDummy.position.copy(proj.pos);
+        const s = proj.weaponType === 'demiCannon' ? 1.35
+          : proj.weaponType === 'basilisk' ? 1.25
+            : proj.weaponType === 'demiCulverin' ? 1.15
+              : proj.weaponType === 'saker' ? 1.05
+                : 0.95;
+        broadsideDummy.scale.setScalar(s);
+        broadsideDummy.rotation.set(0, 0, 0);
+        broadsideDummy.updateMatrix();
+        broadsideMeshRef.current.setMatrixAt(slot, broadsideDummy.matrix);
+        slot++;
+      }
+      for (; slot < PROJECTILE_COUNT; slot++) {
+        broadsideDummy.position.set(0, -1000, 0);
+        broadsideDummy.scale.setScalar(0);
+        broadsideDummy.updateMatrix();
+        broadsideMeshRef.current.setMatrixAt(slot, broadsideDummy.matrix);
+      }
+      broadsideMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     if (rocketMeshRef.current) {
@@ -2416,6 +2476,16 @@ function ProjectileSystem() {
         roughness={0.3}
         metalness={0.5}
         toneMapped={false}
+      />
+    </instancedMesh>
+    <instancedMesh ref={broadsideMeshRef} args={[undefined, undefined, PROJECTILE_COUNT]} frustumCulled={false}>
+      <sphereGeometry args={[0.35, 10, 10]} />
+      <meshStandardMaterial
+        color="#171512"
+        emissive="#3b2114"
+        emissiveIntensity={0.25}
+        roughness={0.72}
+        metalness={0.85}
       />
     </instancedMesh>
     {/* Rocket capsule — oriented along velocity each frame */}

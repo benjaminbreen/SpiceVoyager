@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer, SMAA, Vignette } from '@react-three/postprocessing';
 import { motion } from 'framer-motion';
@@ -60,6 +60,29 @@ const BODY_FONT   = '"Manrope", "Inter", "DM Sans", system-ui, sans-serif';
 // Card labels — elegant serif, sentence-case ("England", "Random", "Standard").
 const CARD_LABEL_FONT = '"Cormorant Garamond", "EB Garamond", Georgia, serif';
 const MONO        = '"SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace';
+
+type IntroProgressRef = React.MutableRefObject<number>;
+
+const INTRO_CAMERA_DURATION = 3.35;
+const INTRO_GLOBE_DURATION = 2.65;
+const INTRO_SHIP_DELAY = 1.38;
+const INTRO_SHIP_DURATION = 1.15;
+
+function clamp01(v: number) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function easeOutCubic(v: number) {
+  const t = clamp01(v);
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeOutBack(v: number) {
+  const t = clamp01(v);
+  const c1 = 1.35;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
 
 // ─── small util ──────────────────────────────────────────────────────────────
 
@@ -2247,16 +2270,19 @@ function LighthouseStructure({ dayRef }: { dayRef: React.MutableRefObject<DaySta
     if (lampMatRef.current) {
       // Gentle breathing pulse on the lamp room itself.
       const pulse = 0.88 + Math.sin(t * 4.2 + phase) * 0.08;
-      lampMatRef.current.opacity = (0.45 + nightMix * 0.55) * pulse;
+      const introWink = Math.sin(clamp01((t - 0.82) / 0.58) * Math.PI);
+      lampMatRef.current.opacity = Math.min(1, (0.45 + nightMix * 0.55) * pulse + introWink * 0.42);
     }
     if (lampGlowMatRef.current) {
       // Outer glow halo — only really visible at night.
-      lampGlowMatRef.current.opacity = nightMix * 0.55;
+      const introWink = Math.sin(clamp01((t - 0.82) / 0.58) * Math.PI);
+      lampGlowMatRef.current.opacity = Math.min(0.82, nightMix * 0.55 + introWink * 0.35);
     }
     const u = beamMatRef.current?.uniforms;
     if (u) {
       (u.uTime as { value: number }).value = t;
-      (u.uNightMix as { value: number }).value = nightMix;
+      const introWink = Math.sin(clamp01((t - 0.82) / 0.58) * Math.PI);
+      (u.uNightMix as { value: number }).value = Math.min(1, nightMix + introWink * 0.55);
     }
   });
 
@@ -2399,14 +2425,19 @@ function Lighthouse({ dayRef }: { dayRef: React.MutableRefObject<DayState> }) {
 function Globe({
   rotationRef,
   dayRef,
+  introRef,
 }: {
   rotationRef: React.MutableRefObject<THREE.Quaternion>;
   dayRef: React.MutableRefObject<DayState>;
+  introRef: IntroProgressRef;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   useFrame(() => {
     if (!groupRef.current) return;
+    const intro = easeOutCubic(introRef.current / INTRO_GLOBE_DURATION);
     groupRef.current.quaternion.copy(rotationRef.current);
+    groupRef.current.scale.setScalar(0.90 + intro * 0.10);
+    groupRef.current.position.y = (1 - intro) * -0.055;
   });
   return (
     <group ref={groupRef}>
@@ -2418,6 +2449,40 @@ function Globe({
       <Aurora dayRef={dayRef} pole="south" />
       <Lighthouse dayRef={dayRef} />
     </group>
+  );
+}
+
+function GlobeRevealMask({ introRef }: { introRef: IntroProgressRef }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+
+  useFrame(() => {
+    const intro = easeOutCubic(introRef.current / 2.55);
+    const opacity = (1 - intro) * 0.96;
+    if (matRef.current) {
+      matRef.current.opacity = opacity;
+      matRef.current.visible = opacity > 0.01;
+    }
+    if (meshRef.current) {
+      const globeIntro = easeOutCubic(introRef.current / INTRO_GLOBE_DURATION);
+      meshRef.current.scale.setScalar(0.90 + globeIntro * 0.10);
+      meshRef.current.position.y = (1 - globeIntro) * -0.055;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef} renderOrder={90}>
+      <sphereGeometry args={[GLOBE_RADIUS * 1.09, 64, 48]} />
+      <meshBasicMaterial
+        ref={matRef}
+        color="#04050a"
+        transparent
+        opacity={0.96}
+        depthWrite={false}
+        depthTest={false}
+        toneMapped={false}
+      />
+    </mesh>
   );
 }
 
@@ -2500,23 +2565,71 @@ function createShipTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function createWakeTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 160;
+  const ctx = c.getContext('2d')!;
+  ctx.clearRect(0, 0, 256, 160);
+
+  const wake = ctx.createLinearGradient(128, 16, 128, 154);
+  wake.addColorStop(0, 'rgba(255,255,255,0)');
+  wake.addColorStop(0.18, 'rgba(230,248,255,0.45)');
+  wake.addColorStop(0.56, 'rgba(180,230,255,0.16)');
+  wake.addColorStop(1, 'rgba(255,255,255,0)');
+
+  ctx.strokeStyle = wake;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < 5; i++) {
+    const offset = (i - 2) * 13;
+    const alpha = 1 - Math.abs(i - 2) * 0.16;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 3.5 - Math.abs(i - 2) * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(128 + offset * 0.18, 18);
+    ctx.bezierCurveTo(118 + offset, 48, 92 + offset * 1.2, 86, 54 + offset * 1.45, 140);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(128 - offset * 0.18, 18);
+    ctx.bezierCurveTo(138 - offset, 48, 164 - offset * 1.2, 86, 202 - offset * 1.45, 140);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.42;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(128, 28, 38, 9, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(220,245,255,0.45)';
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
 function ShipSprite({
   heelRef,
   collisionRef,
   speedRef,
   dayRef,
   factionKey,
+  introRef,
 }: {
   heelRef: React.MutableRefObject<number>;
   collisionRef: React.MutableRefObject<number>;
   speedRef: React.MutableRefObject<number>;
   dayRef: React.MutableRefObject<DayState>;
   factionKey: FactionKey;
+  introRef: IntroProgressRef;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const innerRef = useRef<THREE.Group>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const shadowMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const wakeMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const fallbackTexture = useMemo(() => createShipTexture(), []);
+  const wakeTexture = useMemo(() => createWakeTexture(), []);
   const [loadedTexture, setLoadedTexture] = useState<THREE.Texture | null>(null);
 
   // Try to load the faction-specific sprite. Until a key is enabled in
@@ -2582,6 +2695,8 @@ function ShipSprite({
   useFrame((state) => {
     if (!groupRef.current || !innerRef.current) return;
     const t = state.clock.elapsedTime;
+    const intro = easeOutBack((introRef.current - INTRO_SHIP_DELAY) / INTRO_SHIP_DURATION);
+    const introFade = easeOutCubic((introRef.current - INTRO_SHIP_DELAY) / INTRO_SHIP_DURATION);
 
     const bob = Math.sin(t * 2.2) * 0.005;
     const recoil = collisionRef.current * 0.025;
@@ -2590,6 +2705,7 @@ function ShipSprite({
     groupRef.current.position
       .copy(SHIP_ANCHOR)
       .add(surfaceNormal.clone().multiplyScalar(0.05 + bob - recoil));
+    groupRef.current.scale.setScalar(0.72 + intro * 0.28);
 
     // Compose: worldTilt ∘ base ∘ heading. headingQ rotates around the
     // plane's local +Z (= surface normal after baseQ); baseQ aligns the
@@ -2619,6 +2735,14 @@ function ShipSprite({
         Math.min(1, warmth + day.sunColor.g * 0.03),
         Math.min(1, warmth * 0.95 + day.sunColor.b * 0.03)
       );
+      matRef.current.opacity = introFade;
+    }
+    if (shadowMatRef.current) shadowMatRef.current.opacity = 0.42 * introFade;
+    if (wakeMatRef.current) {
+      const introWake = Math.sin(clamp01((introRef.current - 0.72) / 0.74) * Math.PI);
+      const movementWake = THREE.MathUtils.clamp(speedRef.current * 0.42, 0, 0.32);
+      const wakeOpacity = Math.max(introWake * 0.42, movementWake);
+      wakeMatRef.current.opacity = wakeOpacity;
     }
 
   });
@@ -2632,12 +2756,27 @@ function ShipSprite({
       <mesh renderOrder={9} position={[0.012, -0.012, -0.002]} scale={1.08}>
         <planeGeometry args={[0.18, 0.18]} />
         <meshBasicMaterial
+          ref={shadowMatRef}
           map={texture}
           color="#000000"
           transparent
-          opacity={0.42}
+          opacity={0}
           depthWrite={false}
           depthTest={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh renderOrder={10} position={[0, -0.065, -0.001]} scale={[1.25, 0.78, 1]}>
+        <planeGeometry args={[0.26, 0.18]} />
+        <meshBasicMaterial
+          ref={wakeMatRef}
+          map={wakeTexture}
+          color="#d8f2ff"
+          transparent
+          opacity={0}
+          depthWrite={false}
+          depthTest={false}
+          blending={THREE.AdditiveBlending}
           toneMapped={false}
         />
       </mesh>
@@ -2769,7 +2908,7 @@ function SunMoonBillboards({ dayRef }: { dayRef: React.MutableRefObject<DayState
 
 // ─── camera animation (lights now provided by SkyLights) ────────────────────
 
-function CameraDrift({ isMobile }: { isMobile: boolean }) {
+function CameraDrift({ isMobile, introRef }: { isMobile: boolean; introRef: IntroProgressRef }) {
   const { camera, gl } = useThree();
   // Zoom = uniform scale of the camera offset from target. 1.0 = base
   // framing; smaller pulls in, larger pulls back. Smoothed toward
@@ -2808,6 +2947,8 @@ function CameraDrift({ isMobile }: { isMobile: boolean }) {
 
   useFrame((state, dt) => {
     const t = state.clock.elapsedTime;
+    introRef.current = Math.min(INTRO_CAMERA_DURATION, t);
+    const intro = easeOutCubic(t / INTRO_CAMERA_DURATION);
     // Ease zoom toward target — fast enough to feel responsive, slow
     // enough that one trackpad flick reads as a smooth glide.
     zoomRef.current += (zoomTargetRef.current - zoomRef.current) * Math.min(1, dt * 8);
@@ -2815,10 +2956,12 @@ function CameraDrift({ isMobile }: { isMobile: boolean }) {
 
     const driftX = Math.sin(t * 0.07) * 0.14;
     const driftY = Math.sin(t * 0.05) * 0.5;
+    const introZoom = 1.72 - intro * 0.72;
+    const introY = (1 - intro) * -0.38;
     camera.position.set(
-      (BASE_OFFSET.x + driftX) * zoom + TARGET.x,
-      (BASE_OFFSET.y + driftY) * zoom + TARGET.y,
-      BASE_OFFSET.z * zoom + TARGET.z
+      (BASE_OFFSET.x + driftX) * zoom * introZoom + TARGET.x,
+      (BASE_OFFSET.y + driftY + introY) * zoom + TARGET.y,
+      BASE_OFFSET.z * zoom * introZoom + TARGET.z
     );
     camera.lookAt(TARGET);
   });
@@ -3172,6 +3315,49 @@ const TICKER_LINES = [
   'Surat reports a fair monsoon and full warehouses',
 ];
 
+const SPICE_ASCII = `╔═╗  ╔═╗  ╦  ╔═╗  ╔═╗
+╚═╗  ╠═╝  ║  ║    ╠═ 
+╚═╝  ╩    ╩  ╚═╝  ╚═╝`;
+
+function AnimatedSpiceAscii() {
+  return (
+    <>
+      {SPICE_ASCII.split('\n').map((line, lineIndex) => (
+        <Fragment key={lineIndex}>
+          {line.split('').map((char, charIndex) => {
+            const key = `${lineIndex}-${charIndex}`;
+            if (char === ' ') return <span key={key}> </span>;
+            const delay = ((lineIndex * 7 + charIndex) % 16) * 0.13;
+            return (
+              <motion.span
+                key={key}
+                animate={{
+                  color: ['#c9a84c', '#efd27a', '#c9a84c'],
+                  textShadow: [
+                    '0 0 14px rgba(201,168,76,0.45)',
+                    '0 0 18px rgba(239,210,122,0.58)',
+                    '0 0 14px rgba(201,168,76,0.45)',
+                  ],
+                }}
+                transition={{
+                  duration: 2.4,
+                  ease: 'easeInOut',
+                  repeat: Infinity,
+                  repeatDelay: 3.6,
+                  delay,
+                }}
+              >
+                {char}
+              </motion.span>
+            );
+          })}
+          {lineIndex < 2 && '\n'}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function Ticker() {
   const [i, setI] = useState(0);
   useEffect(() => {
@@ -3240,7 +3426,12 @@ function ChoiceCard({
   const iconSz = compact ? 64 : 96;
   const labelSz = compact ? 15 : 19;
   return (
-    <button
+    <motion.button
+      variants={{
+        hidden: { opacity: 0, y: 10 },
+        show: { opacity: 1, y: 0 },
+      }}
+      transition={{ duration: 0.38, ease: 'easeOut' }}
       onClick={() => { if (!disabled) { sfxClick(); onClick?.(); } }}
       disabled={disabled}
       title={description ? undefined : hint}
@@ -3374,7 +3565,7 @@ function ChoiceCard({
           }}/>
         </div>
       )}
-    </button>
+    </motion.button>
   );
 }
 
@@ -3439,6 +3630,7 @@ export function ClaudeSplashGlobe(props: Props) {
   const heelRef = useRef(0);
   const speedRef = useRef(0);
   const collisionRef = useRef(0);
+  const introRef = useRef(0);
   const dayRef = useRef<DayState>(makeDayState());
   // Initialize palette once before first frame so things don't render gray.
   useMemo(() => sampleDayPalette(0.20, dayRef.current), []);
@@ -3491,7 +3683,7 @@ export function ClaudeSplashGlobe(props: Props) {
           dpr={isMobile ? [1, 1.5] : [1, 2]}
           gl={{ antialias: true, alpha: false, toneMapping: THREE.ACESFilmicToneMapping }}
         >
-          <CameraDrift isMobile={isMobile} />
+          <CameraDrift isMobile={isMobile} introRef={introRef} />
           {/* Day/night-driven sky gradient + lights + stars. Sun and
               CrepuscularRays remain omitted for a cleaner read. */}
           <SkyDome dayRef={dayRef} />
@@ -3507,8 +3699,9 @@ export function ClaudeSplashGlobe(props: Props) {
             dayRef={dayRef}
             keys={keys}
           />
-          <Globe rotationRef={rotationRef} dayRef={dayRef} />
+          <Globe rotationRef={rotationRef} dayRef={dayRef} introRef={introRef} />
           <AtmosphereShell dayRef={dayRef} />
+          <GlobeRevealMask introRef={introRef} />
           <SunMoonBillboards dayRef={dayRef} />
 
           <SkyClouds dayRef={dayRef} tintNight={false} />
@@ -3531,6 +3724,7 @@ export function ClaudeSplashGlobe(props: Props) {
             speedRef={speedRef}
             dayRef={dayRef}
             factionKey={faction.key}
+            introRef={introRef}
           />
 
           <EffectComposer multisampling={0}>
@@ -3540,6 +3734,21 @@ export function ClaudeSplashGlobe(props: Props) {
           </EffectComposer>
         </Canvas>
       </div>
+      <motion.div
+        aria-hidden="true"
+        initial={{ opacity: 0.94 }}
+        animate={{ opacity: 0 }}
+        transition={{ duration: 2.15, ease: [0.22, 1, 0.36, 1], delay: 0.04 }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background: `
+            radial-gradient(circle at 50% 48%, rgba(4,5,10,0.38) 0%, rgba(4,5,10,0.58) 38%, rgba(4,5,10,0.92) 100%),
+            #04050a
+          `,
+        }}
+      />
 
       {/* HTML overlay UI.
           On mobile we let this layer own scrolling (pointerEvents: auto +
@@ -3568,8 +3777,22 @@ export function ClaudeSplashGlobe(props: Props) {
         }}
       >
         {/* Title block — ASCII title (matches Opening.tsx) + elegant subtitle */}
-        <div style={{ textAlign: 'center', pointerEvents: 'none' }}>
-          <div
+        <motion.div
+          initial={{ opacity: 0, y: -10, filter: 'blur(3px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          transition={{ duration: 0.58, ease: [0.22, 1, 0.36, 1], delay: 0.22 }}
+          style={{ textAlign: 'center', pointerEvents: 'none' }}
+        >
+          <motion.div
+            initial={{ boxShadow: '0 0 0 1px rgba(201,168,76,0.06) inset, 0 12px 38px rgba(10,5,0,0.34)' }}
+            animate={{
+              boxShadow: [
+                '0 0 0 1px rgba(201,168,76,0.10) inset, 0 12px 38px rgba(10,5,0,0.38), 0 0 12px rgba(201,168,76,0.04) inset',
+                '0 0 0 1px rgba(201,168,76,0.18) inset, 0 18px 58px rgba(10,5,0,0.52), 0 0 28px rgba(201,168,76,0.13) inset',
+                '0 0 0 1px rgba(201,168,76,0.14) inset, 0 18px 58px rgba(10,5,0,0.52), 0 0 24px rgba(201,168,76,0.08) inset',
+              ],
+            }}
+            transition={{ duration: 0.9, ease: 'easeOut', delay: 0.30 }}
             style={{
               display: 'block',
               width: 'fit-content',
@@ -3580,11 +3803,6 @@ export function ClaudeSplashGlobe(props: Props) {
               border: '1px solid rgba(201,168,76,0.42)',
               borderRadius: 22,
               position: 'relative',
-              boxShadow: `
-                0 0 0 1px rgba(201,168,76,0.14) inset,
-                0 18px 58px rgba(10,5,0,0.52),
-                0 0 24px rgba(201,168,76,0.08) inset
-              `,
               backdropFilter: 'blur(2px)',
             }}
           >
@@ -3600,9 +3818,7 @@ export function ClaudeSplashGlobe(props: Props) {
                 whiteSpace: 'pre',
               }}
             >
-{`╔═╗  ╔═╗  ╦  ╔═╗  ╔═╗
-╚═╗  ╠═╝  ║  ║    ╠═ 
-╚═╝  ╩    ╩  ╚═╝  ╚═╝`}
+              <AnimatedSpiceAscii />
             </pre>
             <pre
               style={{
@@ -3631,8 +3847,11 @@ export function ClaudeSplashGlobe(props: Props) {
 ╚╗╔╝  ║ ║  ╚╦╝  ╠═╣  ║ ╦  ╠═   ╠╦╝
  ╚╝   ╚═╝   ╩   ╩ ╩  ╚═╝  ╚═╝  ╩╚═`}
             </pre>
-          </div>
-          <div
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.95, ease: 'easeOut', delay: 1.45 }}
             style={{
               fontFamily: SUBTITLE_FN,
               fontStyle: 'italic',
@@ -3649,12 +3868,15 @@ export function ClaudeSplashGlobe(props: Props) {
             }}
           >
             A historical spice and drug trading game set in 1612
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
 
         {/* Bottom dock — picker cards above, wide SET SAIL bar below.
             Stacks the same way on desktop and mobile; only sizing changes. */}
-        <div
+        <motion.div
+          initial={{ opacity: 0, y: 22, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 1.05, ease: [0.22, 1, 0.36, 1], delay: 2.05 }}
           style={{
             display: 'flex',
             flexDirection: 'column',
@@ -3671,7 +3893,14 @@ export function ClaudeSplashGlobe(props: Props) {
             maxWidth: '96vw',
           }}
         >
-          <div style={{
+          <motion.div
+            initial="hidden"
+            animate="show"
+            variants={{
+              hidden: {},
+              show: { transition: { staggerChildren: 0.14, delayChildren: 2.22 } },
+            }}
+            style={{
             display: 'flex',
             gap: isMobile ? 8 : 16,
             justifyContent: 'center',
@@ -3701,7 +3930,12 @@ export function ClaudeSplashGlobe(props: Props) {
               compact={isMobile}
               onClick={cycleDiff}
             />
-          </div>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.68, ease: 'easeOut', delay: 2.78 }}
+          >
           <BeginButton
             ready={ready}
             loadingMessage={loadingMessage}
@@ -3709,12 +3943,16 @@ export function ClaudeSplashGlobe(props: Props) {
             compact={isMobile}
             onClick={handleEnter}
           />
-        </div>
+          </motion.div>
+        </motion.div>
       </div>
 
       {/* Top-left: controls hint (hidden on mobile — touch users tap the dock) */}
       {!isMobile && (
-        <div
+        <motion.div
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.82, ease: 'easeOut', delay: 2.95 }}
           style={{
             position: 'absolute',
             top: 18,
@@ -3729,10 +3967,13 @@ export function ClaudeSplashGlobe(props: Props) {
           }}
         >
           W/S sail · A/D turn · SHIFT trim · ENTER begin
-        </div>
+        </motion.div>
       )}
       {/* Top-right: Settings + About icon buttons */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.82, ease: 'easeOut', delay: 2.65 }}
         style={{
           position: 'absolute',
           top: 16,
@@ -3749,7 +3990,7 @@ export function ClaudeSplashGlobe(props: Props) {
         <CornerIconButton label="Settings" onClick={openSettings}>
           <SettingsIcon size={18} strokeWidth={2.2} />
         </CornerIconButton>
-      </div>
+      </motion.div>
 
       {!isMobile && <Ticker />}
 
@@ -3866,6 +4107,23 @@ function BeginButton({
               linear-gradient(180deg, rgba(255,232,176,0.16) 0%, rgba(255,232,176,0) 36%, rgba(55,35,12,0.18) 100%)
             `,
             boxShadow: '0 0 0 1px rgba(255,230,170,0.18) inset',
+          }}
+        />
+      )}
+      {ready && (
+        <motion.span
+          aria-hidden="true"
+          initial={{ x: '-130%', opacity: 0 }}
+          animate={{ x: '130%', opacity: [0, 0.72, 0] }}
+          transition={{ duration: 0.95, ease: 'easeOut', delay: 0.08 }}
+          style={{
+            position: 'absolute',
+            top: -10,
+            bottom: -10,
+            width: '36%',
+            background: 'linear-gradient(90deg, rgba(255,244,216,0) 0%, rgba(255,244,216,0.46) 48%, rgba(255,244,216,0) 100%)',
+            pointerEvents: 'none',
+            zIndex: 1,
           }}
         />
       )}

@@ -33,7 +33,8 @@
 // without a full archetype-aware pipeline is non-trivial. Material caching
 // captures most of the win until then.
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import { getPOIsForPort } from '../utils/poiDefinitions';
@@ -148,6 +149,23 @@ const CAMP_WOOD: [number, number, number] = [0.32, 0.20, 0.12];
 const CAMP_SALT: [number, number, number] = [0.86, 0.83, 0.74];
 const CAMP_RESIN: [number, number, number] = [0.78, 0.55, 0.22];
 const CAMP_FIRE_ASH: [number, number, number] = [0.18, 0.15, 0.13];
+
+const NATURAL_STONE: [number, number, number] = [0.42, 0.40, 0.34];
+const NATURAL_DARK: [number, number, number] = [0.16, 0.15, 0.13];
+const NATURAL_WATER: [number, number, number] = [0.36, 0.62, 0.72];
+const NATURAL_GREEN: [number, number, number] = [0.26, 0.42, 0.22];
+const NATURAL_SMOKE: [number, number, number] = [0.55, 0.53, 0.48];
+const RUIN_STONE: [number, number, number] = [0.56, 0.50, 0.40];
+const RUIN_SHADOW: [number, number, number] = [0.28, 0.24, 0.19];
+const RUIN_VINE: [number, number, number] = [0.20, 0.36, 0.18];
+const TORCH_FIRE: [number, number, number] = [1.0, 0.52, 0.16];
+const PROD_WOOD: [number, number, number] = [0.38, 0.25, 0.14];
+const PROD_THATCH: [number, number, number] = [0.62, 0.52, 0.31];
+const TOBACCO_LEAF: [number, number, number] = [0.48, 0.34, 0.16];
+const INDIGO_LIQUID: [number, number, number] = [0.08, 0.13, 0.34];
+const SUGAR_CANE: [number, number, number] = [0.58, 0.68, 0.30];
+const PEARL_SHELL: [number, number, number] = [0.82, 0.76, 0.62];
+const PEARL_GLOW: [number, number, number] = [0.94, 0.88, 0.74];
 
 // ── Wreck ───────────────────────────────────────────────────────────────────
 //
@@ -320,13 +338,19 @@ function SmugglersCoveSilhouette({ poiId, position, rotationY }: {
 // (Mughal red sandstone, Jesuit cream, Chinese grey brick, Yemeni adobe),
 // greenhouse y/n, herb-bed grid dimensions.
 
-function GardenSilhouette({ poiId, position, rotationY }: {
-  poiId: string;
+function GardenSilhouette({ poi, position, rotationY }: {
+  poi: POIDefinition;
   position: [number, number, number];
   rotationY: number;
 }) {
+  if (poi.poiVariant === 'tobacco-shed') {
+    return <TobaccoShedSilhouette poiId={poi.id} position={position} rotationY={rotationY} />;
+  }
+  if (poi.poiVariant === 'spice-plantation') {
+    return <SpicePlantationSilhouette poiId={poi.id} position={position} rotationY={rotationY} />;
+  }
   const variant = useMemo(() => {
-    const rng = mulberry32(hashStr(poiId) ^ 0x7c7c);
+    const rng = mulberry32(hashStr(poi.id) ^ 0x7c7c);
     const culture = GARDEN_CULTURES[Math.floor(rng() * GARDEN_CULTURES.length)];
     return {
       culture,
@@ -334,7 +358,7 @@ function GardenSilhouette({ poiId, position, rotationY }: {
       bedRows: 2 + Math.floor(rng() * 2),
       bedCols: 3 + Math.floor(rng() * 2),
     };
-  }, [poiId]);
+  }, [poi.id]);
 
   const wall = chunkyMaterial(variant.culture.wall);
   const trim = chunkyMaterial(variant.culture.wallTrim);
@@ -400,6 +424,90 @@ function GardenSilhouette({ poiId, position, rotationY }: {
       })}
       <mesh position={[0, 0.06, 0]} material={path}>
         <boxGeometry args={[1.2, 0.10, D * 0.85]} />
+      </mesh>
+    </group>
+  );
+}
+
+function TobaccoShedSilhouette({ poiId, position, rotationY }: {
+  poiId: string;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const sway = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!sway.current) return;
+    sway.current.rotation.z = Math.sin(clock.elapsedTime * 1.5 + hashStr(poiId) * 0.001) * 0.025;
+  });
+  const wood = chunkyMaterial(PROD_WOOD, { roughness: 1 });
+  const thatch = chunkyMaterial(PROD_THATCH, { roughness: 1 });
+  const leaf = chunkyMaterial(TOBACCO_LEAF, { roughness: 1 });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.12, 0]} material={chunkyMaterial([0.45, 0.36, 0.22], { roughness: 1 })}>
+        <boxGeometry args={[9.5, 0.24, 6.2]} />
+      </mesh>
+      {[-3.7, 0, 3.7].map((x) => (
+        <group key={x}>
+          <mesh position={[x, 1.45, -2.4]} material={wood}>
+            <cylinderGeometry args={[0.12, 0.14, 2.8, 6]} />
+          </mesh>
+          <mesh position={[x, 1.45, 2.4]} material={wood}>
+            <cylinderGeometry args={[0.12, 0.14, 2.8, 6]} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[0, 3.05, 0]} rotation={[0, 0, 0.08]} material={thatch}>
+        <boxGeometry args={[10.4, 0.34, 7.0]} />
+      </mesh>
+      <group ref={sway}>
+        {Array.from({ length: 14 }).map((_, i) => {
+          const x = -4.0 + (i % 7) * 1.35;
+          const z = i < 7 ? -1.0 : 1.0;
+          return (
+            <mesh key={i} position={[x, 1.7, z]} rotation={[0.15, 0, i % 2 === 0 ? 0.15 : -0.15]} material={leaf}>
+              <boxGeometry args={[0.28, 1.15, 0.08]} />
+            </mesh>
+          );
+        })}
+      </group>
+    </group>
+  );
+}
+
+function SpicePlantationSilhouette({ poiId, position, rotationY }: {
+  poiId: string;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const rng = useMemo(() => mulberry32(hashStr(poiId) ^ 0x5544), [poiId]);
+  const leaf = chunkyMaterial([0.22, 0.42, 0.20], { roughness: 1 });
+  const trunk = chunkyMaterial(PROD_WOOD, { roughness: 1 });
+  const mat = chunkyMaterial([0.68, 0.48, 0.25], { roughness: 1 });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.08, 0]} material={chunkyMaterial([0.42, 0.34, 0.20], { roughness: 1 })}>
+        <boxGeometry args={[11.0, 0.16, 8.0]} />
+      </mesh>
+      {Array.from({ length: 12 }).map((_, i) => {
+        const row = Math.floor(i / 4);
+        const col = i % 4;
+        const x = -4.2 + col * 2.8;
+        const z = -2.5 + row * 2.5;
+        const h = 1.7 + rng() * 0.9;
+        return (
+          <group key={i} position={[x, 0.1, z]}>
+            <mesh position={[0, h * 0.5, 0]} material={trunk}>
+              <cylinderGeometry args={[0.08, 0.12, h, 6]} />
+            </mesh>
+            <mesh position={[0.18, h * 0.72, 0]} rotation={[0.2, 0, -0.35]} material={leaf}>
+              <boxGeometry args={[0.18, h * 0.75, 0.16]} />
+            </mesh>
+          </group>
+        );
+      })}
+      <mesh position={[3.9, 0.18, 3.1]} material={mat}>
+        <boxGeometry args={[2.1, 0.16, 1.4]} />
       </mesh>
     </group>
   );
@@ -527,13 +635,22 @@ function CaravanseraiSilhouette({ poiId, position, rotationY }: {
 // which is the only `naturalist` POI kind that still needs a silhouette.
 
 
-function NaturalistCampSilhouette({ poiId, position, rotationY }: {
-  poiId: string;
+function NaturalistCampSilhouette({ poi, position, rotationY }: {
+  poi: POIDefinition;
   position: [number, number, number];
   rotationY: number;
 }) {
+  if (poi.poiVariant === 'indigo-vat') {
+    return <IndigoVatSilhouette position={position} rotationY={rotationY} />;
+  }
+  if (poi.poiVariant === 'sugar-mill') {
+    return <SugarMillSilhouette position={position} rotationY={rotationY} />;
+  }
+  if (poi.poiVariant === 'pearl-bank') {
+    return <PearlBankSilhouette poiId={poi.id} position={position} rotationY={rotationY} />;
+  }
   const variant = useMemo(() => {
-    const rng = mulberry32(hashStr(poiId) ^ 0x8181);
+    const rng = mulberry32(hashStr(poi.id) ^ 0x8181);
     const tentCount = 4 + Math.floor(rng() * 2);
     const tents = Array.from({ length: tentCount }).map((_, i) => {
       const angle = (i / tentCount) * Math.PI * 2 + rng() * 0.4;
@@ -547,7 +664,7 @@ function NaturalistCampSilhouette({ poiId, position, rotationY }: {
       };
     });
     return { tents, seed: rng() };
-  }, [poiId]);
+  }, [poi.id]);
 
   const goathair = chunkyMaterial(CAMP_GOATHAIR, { roughness: 1 });
   const canvas = chunkyMaterial(CAMP_CANVAS, { roughness: 1 });
@@ -649,6 +766,261 @@ function NaturalistCampSilhouette({ poiId, position, rotationY }: {
   );
 }
 
+function IndigoVatSilhouette({ position, rotationY }: {
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const liquid = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!liquid.current) return;
+    const s = 1 + Math.sin(clock.elapsedTime * 2.4) * 0.035;
+    liquid.current.scale.set(s, 1, s);
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.45, 0]} material={chunkyMaterial([0.50, 0.43, 0.30], { roughness: 1 })}>
+        <cylinderGeometry args={[3.7, 4.0, 0.9, 18]} />
+      </mesh>
+      <mesh ref={liquid} position={[0, 0.95, 0]} material={chunkyMaterial(INDIGO_LIQUID, { opacity: 0.9, roughness: 0.42 })}>
+        <cylinderGeometry args={[3.15, 3.15, 0.08, 18]} />
+      </mesh>
+      {[-3.0, -1.0, 1.0, 3.0].map((x, i) => (
+        <mesh key={i} position={[x, 2.1, -3.9]} material={chunkyMaterial(i % 2 ? [0.22, 0.25, 0.48] : [0.12, 0.16, 0.36], { roughness: 1 })}>
+          <boxGeometry args={[0.9, 1.8, 0.08]} />
+        </mesh>
+      ))}
+      <mesh position={[0, 2.7, -3.9]} material={chunkyMaterial(PROD_WOOD, { roughness: 1 })}>
+        <cylinderGeometry args={[0.08, 0.08, 6.8, 6]} />
+      </mesh>
+    </group>
+  );
+}
+
+function SugarMillSilhouette({ position, rotationY }: {
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const roller = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (roller.current) roller.current.rotation.z = clock.elapsedTime * 0.7;
+  });
+  const wood = chunkyMaterial(PROD_WOOD, { roughness: 1 });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.16, 0]} material={chunkyMaterial([0.50, 0.40, 0.25], { roughness: 1 })}>
+        <boxGeometry args={[9.2, 0.32, 6.6]} />
+      </mesh>
+      <group ref={roller} position={[0, 1.35, 0]}>
+        <mesh position={[-0.7, 0, 0]} rotation={[Math.PI / 2, 0, 0]} material={wood}>
+          <cylinderGeometry args={[0.45, 0.45, 3.1, 10]} />
+        </mesh>
+        <mesh position={[0.7, 0, 0]} rotation={[Math.PI / 2, 0, 0]} material={wood}>
+          <cylinderGeometry args={[0.45, 0.45, 3.1, 10]} />
+        </mesh>
+      </group>
+      <mesh position={[-3.3, 1.25, 0]} rotation={[0, 0, -0.25]} material={chunkyMaterial(SUGAR_CANE, { roughness: 1 })}>
+        <boxGeometry args={[0.22, 2.4, 0.16]} />
+      </mesh>
+      <mesh position={[-2.7, 1.2, 0.5]} rotation={[0.2, 0, 0.18]} material={chunkyMaterial(SUGAR_CANE, { roughness: 1 })}>
+        <boxGeometry args={[0.22, 2.2, 0.16]} />
+      </mesh>
+      <mesh position={[3.2, 0.65, 0]} material={chunkyMaterial([0.24, 0.20, 0.16], { roughness: 1 })}>
+        <cylinderGeometry args={[0.9, 1.1, 0.7, 12]} />
+      </mesh>
+    </group>
+  );
+}
+
+function PearlBankSilhouette({ poiId, position, rotationY }: {
+  poiId: string;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const glint = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!glint.current) return;
+    const s = 0.7 + Math.max(0, Math.sin(clock.elapsedTime * 3.0 + hashStr(poiId) * 0.01)) * 0.55;
+    glint.current.scale.setScalar(s);
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.1, 0]} material={chunkyMaterial([0.70, 0.62, 0.44], { roughness: 1 })}>
+        <cylinderGeometry args={[5.2, 5.6, 0.2, 16]} />
+      </mesh>
+      {[-2.6, -1.2, 1.0, 2.4].map((x, i) => (
+        <mesh key={i} position={[x, 0.42, i % 2 ? 0.9 : -0.7]} rotation={[0.2, i * 0.7, 0]} material={chunkyMaterial(PEARL_SHELL, { roughness: 0.62 })}>
+          <sphereGeometry args={[0.72, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.48]} />
+        </mesh>
+      ))}
+      <mesh ref={glint} position={[0.7, 0.86, -0.35]} material={chunkyMaterial(PEARL_GLOW, { opacity: 0.9, metalness: 0.15, roughness: 0.25 })}>
+        <sphereGeometry args={[0.18, 8, 6]} />
+      </mesh>
+    </group>
+  );
+}
+
+function NaturalFeatureSilhouette({ poi, position, rotationY }: {
+  poi: POIDefinition;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const variant = poi.poiVariant ?? 'sacred-mountain';
+  if (variant === 'water-source') return <WaterSourceSilhouette position={position} rotationY={rotationY} />;
+  if (variant === 'cave') return <CaveSilhouette position={position} rotationY={rotationY} />;
+  if (variant === 'reef') return <ReefSilhouette position={position} rotationY={rotationY} />;
+  return <SacredMountainSilhouette position={position} rotationY={rotationY} />;
+}
+
+function WaterSourceSilhouette({ position, rotationY }: { position: [number, number, number]; rotationY: number }) {
+  const shimmer = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!shimmer.current) return;
+    const s = 1 + Math.sin(clock.elapsedTime * 2.2) * 0.045;
+    shimmer.current.scale.set(s, 1, s);
+    shimmer.current.rotation.y = clock.elapsedTime * 0.18;
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.08, 0]} material={chunkyMaterial(NATURAL_STONE, { roughness: 1 })}>
+        <cylinderGeometry args={[4.2, 4.8, 0.35, 16]} />
+      </mesh>
+      <mesh ref={shimmer} position={[0, 0.32, 0]} material={chunkyMaterial(NATURAL_WATER, { opacity: 0.82, roughness: 0.35 })}>
+        <cylinderGeometry args={[3.0, 3.1, 0.08, 24]} />
+      </mesh>
+      {[-2.6, -1.2, 1.4, 2.5].map((x, i) => (
+        <mesh key={i} position={[x, 0.85, i % 2 === 0 ? -2.8 : 2.7]} rotation={[0, i * 0.7, 0]} material={chunkyMaterial(NATURAL_GREEN)}>
+          <coneGeometry args={[0.35, 1.4, 5]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function CaveSilhouette({ position, rotationY }: { position: [number, number, number]; rotationY: number }) {
+  const ember = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!ember.current) return;
+    const s = 0.85 + Math.sin(clock.elapsedTime * 5.3) * 0.15;
+    ember.current.scale.setScalar(s);
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 1.6, 0]} material={chunkyMaterial(NATURAL_STONE, { roughness: 1 })}>
+        <boxGeometry args={[7.8, 3.2, 4.8]} />
+      </mesh>
+      <mesh position={[0, 1.15, -2.45]} material={chunkyMaterial(NATURAL_DARK, { roughness: 1 })}>
+        <boxGeometry args={[3.2, 2.25, 0.22]} />
+      </mesh>
+      <mesh ref={ember} position={[-1.3, 0.45, -2.1]} material={chunkyMaterial(TORCH_FIRE, { opacity: 0.72, roughness: 0.4 })}>
+        <sphereGeometry args={[0.25, 8, 6]} />
+      </mesh>
+      {[-2.9, 2.9].map((x) => (
+        <mesh key={x} position={[x, 0.55, -2.6]} material={chunkyMaterial(NATURAL_GREEN)}>
+          <coneGeometry args={[0.45, 1.0, 5]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ReefSilhouette({ position, rotationY }: { position: [number, number, number]; rotationY: number }) {
+  const foam = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!foam.current) return;
+    foam.current.rotation.y = clock.elapsedTime * 0.22;
+    foam.current.scale.setScalar(1 + Math.sin(clock.elapsedTime * 2.8) * 0.04);
+  });
+  return (
+    <group position={[position[0], Math.max(position[1], SEA_LEVEL), position[2]]} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.15, 0]} material={chunkyMaterial(NATURAL_STONE, { roughness: 1 })}>
+        <boxGeometry args={[6.0, 0.75, 3.2]} />
+      </mesh>
+      <mesh position={[-1.5, 0.95, 0.1]} material={chunkyMaterial([0.82, 0.55, 0.42], { roughness: 1 })}>
+        <coneGeometry args={[0.45, 1.7, 5]} />
+      </mesh>
+      <mesh position={[1.1, 0.75, -0.5]} material={chunkyMaterial([0.72, 0.42, 0.32], { roughness: 1 })}>
+        <coneGeometry args={[0.36, 1.25, 5]} />
+      </mesh>
+      <group ref={foam}>
+        {[0, 1, 2].map((i) => (
+          <mesh key={i} position={[Math.cos(i * 2.1) * 3.2, 0.18, Math.sin(i * 2.1) * 1.9]} material={chunkyMaterial([0.84, 0.88, 0.82], { opacity: 0.7, roughness: 0.65 })}>
+            <torusGeometry args={[0.7, 0.035, 6, 18]} />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function SacredMountainSilhouette({ position, rotationY }: { position: [number, number, number]; rotationY: number }) {
+  const smoke = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!smoke.current) return;
+    smoke.current.position.y = 4.9 + Math.sin(clock.elapsedTime * 1.1) * 0.2;
+    smoke.current.rotation.y = clock.elapsedTime * 0.35;
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 2.1, 0]} material={chunkyMaterial(NATURAL_STONE, { roughness: 1 })}>
+        <coneGeometry args={[4.6, 4.2, 5]} />
+      </mesh>
+      <mesh position={[0, 4.25, 0]} material={chunkyMaterial(NATURAL_DARK, { roughness: 1 })}>
+        <coneGeometry args={[1.0, 0.55, 5]} />
+      </mesh>
+      <mesh position={[0, 0.32, -3.6]} material={chunkyMaterial([0.72, 0.56, 0.36], { roughness: 1 })}>
+        <cylinderGeometry args={[0.55, 0.7, 0.45, 10]} />
+      </mesh>
+      <group ref={smoke}>
+        {[0, 1, 2].map((i) => (
+          <mesh key={i} position={[Math.cos(i * 2.1) * 0.45, i * 0.42, Math.sin(i * 2.1) * 0.45]} material={chunkyMaterial(NATURAL_SMOKE, { opacity: 0.34, roughness: 1 })}>
+            <sphereGeometry args={[0.42 + i * 0.13, 8, 6]} />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function RuinSilhouette({ poi, position, rotationY }: {
+  poi: POIDefinition;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const flame = useRef<THREE.Mesh>(null);
+  const isFort = poi.poiVariant === 'abandoned-fort';
+  useFrame(({ clock }) => {
+    if (!flame.current) return;
+    flame.current.scale.set(1, 0.82 + Math.sin(clock.elapsedTime * 6.1) * 0.16, 1);
+  });
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      <mesh position={[0, 0.2, 0]} material={chunkyMaterial(RUIN_SHADOW, { roughness: 1 })}>
+        <boxGeometry args={[7.4, 0.4, 5.4]} />
+      </mesh>
+      <mesh position={[-2.6, 1.45, -1.7]} material={chunkyMaterial(RUIN_STONE, { roughness: 1 })}>
+        <boxGeometry args={[1.1, 2.9, 0.9]} />
+      </mesh>
+      <mesh position={[2.4, 1.05, -1.6]} material={chunkyMaterial(RUIN_STONE, { roughness: 1 })}>
+        <boxGeometry args={[1.0, 2.1, 0.9]} />
+      </mesh>
+      <mesh position={[0, 2.65, -1.7]} material={chunkyMaterial(RUIN_STONE, { roughness: 1 })}>
+        <boxGeometry args={[4.6, 0.55, 0.8]} />
+      </mesh>
+      {isFort && (
+        <mesh position={[0, 1.0, 1.6]} material={chunkyMaterial(RUIN_STONE, { roughness: 1 })}>
+          <boxGeometry args={[5.8, 2.0, 1.0]} />
+        </mesh>
+      )}
+      <mesh position={[0.6, 0.85, -1.95]} material={chunkyMaterial(RUIN_VINE, { roughness: 1 })}>
+        <boxGeometry args={[0.28, 1.55, 0.12]} />
+      </mesh>
+      <mesh ref={flame} position={[-0.9, 0.82, -2.15]} material={chunkyMaterial(TORCH_FIRE, { opacity: 0.86, roughness: 0.35 })}>
+        <coneGeometry args={[0.24, 0.75, 6]} />
+      </mesh>
+    </group>
+  );
+}
+
 // ── Top-level dispatcher ────────────────────────────────────────────────────
 //
 // Reads ports + their POI lists, resolves position per POI, dispatches to
@@ -662,7 +1034,7 @@ function NaturalistCampSilhouette({ poiId, position, rotationY }: {
 // they share the kind with procedural gardens — no new code, just new data.
 
 const SILHOUETTE_KINDS = new Set<string>([
-  'wreck', 'smugglers_cove', 'garden', 'caravanserai',
+  'wreck', 'smugglers_cove', 'garden', 'caravanserai', 'natural', 'ruin',
   // `naturalist` covers itinerant camps only (Mocha aloe camp); permanent
   // halls render as in-city landmarks. `merchant_guild` is landmark-only,
   // no silhouette.
@@ -711,6 +1083,8 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
         if (!placed) continue;
         const baseY = poi.kind === 'wreck'
           ? SEA_LEVEL - 0.05
+          : poi.kind === 'natural'
+            ? Math.max(SEA_LEVEL, getTerrainHeight(placed.x, placed.z))
           : getTerrainHeight(placed.x, placed.z);
         const rng = mulberry32(hashStr(poi.id) ^ 0xbe11);
         const rotationY = rng() * Math.PI * 2;
@@ -735,11 +1109,15 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
           case 'smugglers_cove':
             return <SmugglersCoveSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
           case 'garden':
-            return <GardenSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
+            return <GardenSilhouette key={poi.id} poi={poi} position={position} rotationY={rotationY} />;
           case 'caravanserai':
             return <CaravanseraiSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
           case 'naturalist':
-            return <NaturalistCampSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
+            return <NaturalistCampSilhouette key={poi.id} poi={poi} position={position} rotationY={rotationY} />;
+          case 'natural':
+            return <NaturalFeatureSilhouette key={poi.id} poi={poi} position={position} rotationY={rotationY} />;
+          case 'ruin':
+            return <RuinSilhouette key={poi.id} poi={poi} position={position} rotationY={rotationY} />;
           default:
             return null;
         }

@@ -2153,6 +2153,7 @@ export function generateCity(
       label: cropPick.label,
       labelSub: cropPick.sub,
       familyName,
+      household: { kind: 'farmstead', crop: cropPick.crop, good: cropPick.label },
       crop: cropPick.crop,
       cropPlot: cropPick.crop
         ? { halfWidth: chosen.halfWidth, halfDepth: chosen.halfDepth, tint: cropPick.tint }
@@ -2197,6 +2198,7 @@ export function generateCity(
       b.label = result.label;
       b.labelSub = result.sub;
       if (result.familyName) b.familyName = result.familyName;
+      if (result.household) b.household = result.household;
     }
 
     // Semantic class → eyebrow + color. Shared source of truth with the

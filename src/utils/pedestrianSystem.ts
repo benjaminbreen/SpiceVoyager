@@ -143,6 +143,15 @@ function pedestrianTypeForBuilding(b: Building): PedestrianType {
   if (t === 'landmark' && b.labelEyebrow?.toLowerCase() === 'religious') return 'religious';
   if (t === 'farmhouse') return 'farmer';
   if (t === 'estate') return 'merchant';
+  if (b.household?.kind === 'farmstead') return 'farmer';
+  if (b.household?.kind === 'shop') return 'merchant';
+  if (b.household?.kind === 'workshop') {
+    const profession = (b.household.profession ?? '').toLowerCase();
+    if (profession.includes('shipwright') || profession.includes('rope') || profession.includes('sail') || profession.includes('net')) return 'sailor';
+    return 'laborer';
+  }
+  if (b.household?.kind === 'elite') return 'merchant';
+  if (b.household?.kind === 'laboring') return 'laborer';
   // Houses: infer from label
   const label = (b.label ?? '').toLowerCase();
   if (label.includes('shipwright') || label.includes('rope') || label.includes('sail') || label.includes('net'))

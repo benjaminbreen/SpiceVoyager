@@ -1,9 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
-import type { Building, Port } from '../store/gameStore';
+import { useGameStore, type Building, type Port } from '../store/gameStore';
 import { DISTRICT_LABELS } from '../utils/cityDistricts';
+import { buildingDescription } from '../utils/buildingDescriptions';
 import { useBuildingPresence } from '../utils/pedestrianPresence';
-import { sfxClose } from '../audio/SoundEffects';
+import { sfxClose, sfxHover } from '../audio/SoundEffects';
 import { PresenceRow } from './PresenceRow';
 
 interface Shell {
@@ -77,6 +78,8 @@ export function BuildingDetailModal({
   const shell = shellForBuilding(building);
   const medallionAsset = buildingMedallionAsset(building);
   const presentPeople = useBuildingPresence(building.id);
+  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  const weather = useGameStore((state) => state.weather);
 
   return (
     <AnimatePresence>
@@ -144,6 +147,7 @@ export function BuildingDetailModal({
           <section className="relative min-w-0">
             <button
               onClick={() => { sfxClose(); onDismiss(); }}
+              onMouseEnter={() => sfxHover()}
               className="absolute right-4 top-4 z-40 flex h-9 w-9 items-center justify-center rounded-full
                 border border-[#e8ddbf]/30 bg-[#090806]/82 text-[#f3ead2]
                 shadow-[0_6px_18px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.12)]
@@ -173,13 +177,14 @@ export function BuildingDetailModal({
               <p className="max-w-[62ch] text-[15px] leading-[1.68] text-[#d4ccb6] md:text-[16px]"
                 style={{ fontFamily: '"Fraunces", serif', fontVariationSettings: '"opsz" 30, "SOFT" 32' }}
               >
-                {buildingDescription(building, port)}
+                {buildingDescription(building, port, presentPeople, { timeOfDay, weather })}
               </p>
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => { sfxClose(); onDismiss(); }}
+                  onMouseEnter={() => sfxHover()}
                   className="min-h-[42px] rounded-lg border-2 border-[#4a4535]/60 bg-[#1a1e2e]/70 px-4
                     text-[10px] font-bold uppercase tracking-[0.13em] text-[#8a8060]
                     shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.45)]
@@ -303,25 +308,6 @@ function religiousMedallionKey(faith?: string): string {
   if (faith === 'hindu') return 'religious-hindu';
   if (faith === 'buddhist' || faith === 'chinese-folk') return 'religious-buddhist';
   return 'religious-sunni';
-}
-
-function buildingDescription(building: Building, port: Port): string {
-  if (building.landmarkId) {
-    return `${building.label ?? 'This landmark'} stands as one of ${port.name}'s named places. It is part of the city fabric rather than a full point of interest: no formal lesson or conversation is available here yet.`;
-  }
-  if (building.type === 'spiritual') {
-    return `A place of worship in ${port.name}, marked by the customs of its congregation. It gives the district its rhythm, but for now it offers only orientation and quiet observation.`;
-  }
-  if (building.type === 'fort') {
-    return `A defensive work watching the harbor approaches and roadstead. Guards, guns, and official business gather here, but this view remains a static city entry rather than a negotiated audience.`;
-  }
-  if (building.type === 'palace') {
-    return `A residence of authority and ceremony, set apart from the ordinary quarters of ${port.name}. Entry beyond the outer spaces would require a more specific invitation.`;
-  }
-  if (building.type === 'warehouse' || building.type === 'dock' || building.type === 'market') {
-    return `A working commercial place in ${port.name}, useful for reading the movement of goods and labor through the city. Formal trade still belongs in the port market.`;
-  }
-  return `A ${typeLabel(building)} in ${port.name}. It is part of the lived city rather than a special authored encounter, but it helps mark the character of this district.`;
 }
 
 export default BuildingDetailModal;

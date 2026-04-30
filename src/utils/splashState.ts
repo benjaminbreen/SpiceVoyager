@@ -89,7 +89,7 @@ let _nextClock = 0; // set by SplashSystem each frame
 export function setSplashClock(t: number) { _nextClock = t; }
 
 export function spawnSplash(x: number, z: number, intensity = 1) {
-  const ev: SplashEvent = { x, z, time: _nextClock, intensity: Math.min(1, Math.max(0.1, intensity)) };
+  const ev: SplashEvent = { x, z, time: _nextClock, intensity: Math.min(2.4, Math.max(0.1, intensity)) };
   if (splashes.length >= MAX_SPLASHES) {
     splashes.shift();
   }
@@ -97,7 +97,7 @@ export function spawnSplash(x: number, z: number, intensity = 1) {
 }
 
 export function spawnSplinters(x: number, y: number, z: number, intensity = 1) {
-  const ev: SplinterEvent = { x, y, z, time: _nextClock, intensity: Math.min(1, Math.max(0.1, intensity)) };
+  const ev: SplinterEvent = { x, y, z, time: _nextClock, intensity: Math.min(2, Math.max(0.1, intensity)) };
   if (splinters.length >= MAX_SPLINTERS) {
     splinters.shift();
   }
@@ -105,7 +105,7 @@ export function spawnSplinters(x: number, y: number, z: number, intensity = 1) {
 }
 
 export function spawnImpactBurst(x: number, y: number, z: number, intensity = 1) {
-  const ev: ImpactBurstEvent = { x, y, z, time: _nextClock, intensity: Math.min(1, Math.max(0.1, intensity)) };
+  const ev: ImpactBurstEvent = { x, y, z, time: _nextClock, intensity: Math.min(2, Math.max(0.1, intensity)) };
   if (impactBursts.length >= MAX_IMPACT_BURSTS) {
     impactBursts.shift();
   }
@@ -145,7 +145,7 @@ export function spawnMuzzleBurst(
     dirY,
     dirZ,
     time: _nextClock,
-    intensity: Math.min(1, Math.max(0.1, intensity)),
+    intensity: Math.min(2, Math.max(0.1, intensity)),
   };
   if (muzzleBursts.length >= MAX_MUZZLE_BURSTS) {
     muzzleBursts.shift();

@@ -25,6 +25,9 @@ const TABS: { id: SettingsTab; label: string; accent: string }[] = [
 ];
 
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
+const SETTINGS_BODY_FONT = 15;
+const SETTINGS_CONTROL_FONT = 13;
+const SETTINGS_MICRO_FONT = 11;
 
 const S = {
   bg:        '#0c0b09',
@@ -50,11 +53,11 @@ const S = {
 function SectionRule({ label }: { label: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, marginTop: 4 }}>
-      <span style={{ color: S.gold, fontFamily: MONO, fontSize: 10, userSelect: 'none', flexShrink: 0, opacity: 0.6 }}>▸</span>
+      <span style={{ color: S.gold, fontFamily: MONO, fontSize: SETTINGS_MICRO_FONT, userSelect: 'none', flexShrink: 0, opacity: 0.6 }}>▸</span>
       <span style={{
         color: S.label,
         fontFamily: MONO,
-        fontSize: 10,
+        fontSize: SETTINGS_MICRO_FONT,
         letterSpacing: '0.24em',
         textTransform: 'uppercase' as const,
         flexShrink: 0,
@@ -93,7 +96,7 @@ function PrimaryBtn({
         width: '100%',
         padding: '11px 18px',
         fontFamily: MONO,
-        fontSize: 11,
+        fontSize: SETTINGS_CONTROL_FONT,
         letterSpacing: '0.26em',
         textTransform: 'uppercase' as const,
         color: disabled ? S.dim : (hov ? S.bright : S.warm),
@@ -156,7 +159,7 @@ function SecBtn({
       style={{
         padding: narrow ? '7px 12px' : '9px 15px',
         fontFamily: MONO,
-        fontSize: 11,
+        fontSize: SETTINGS_CONTROL_FONT,
         letterSpacing: '0.16em',
         textTransform: 'uppercase' as const,
         color: textColor,
@@ -197,7 +200,7 @@ function Toggle({
       style={{
         padding: '7px 16px',
         fontFamily: MONO,
-        fontSize: 11,
+        fontSize: SETTINGS_CONTROL_FONT,
         letterSpacing: '0.18em',
         textTransform: 'uppercase' as const,
         border: `1px solid ${value ? S.tealDim : S.rule}`,
@@ -234,9 +237,9 @@ function CtrlRow({
       borderBottom: last ? 'none' : `1px solid ${S.borderDim}`,
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: MONO, fontSize: 12, color: S.txt, letterSpacing: '0.04em' }}>{label}</div>
+        <div style={{ fontFamily: MONO, fontSize: SETTINGS_BODY_FONT, color: S.txt, letterSpacing: '0.04em' }}>{label}</div>
         {desc && (
-          <div style={{ fontFamily: MONO, fontSize: 11, color: S.dim, marginTop: 4, lineHeight: 1.6, maxWidth: 300 }}>
+          <div style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, marginTop: 4, lineHeight: 1.6, maxWidth: 330 }}>
             {desc}
           </div>
         )}
@@ -273,7 +276,7 @@ function SegControl<T extends string>({
             style={{
               padding: '7px 14px',
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: SETTINGS_CONTROL_FONT,
               letterSpacing: '0.14em',
               textTransform: 'uppercase' as const,
               color: active ? S.warm : S.dim,
@@ -316,7 +319,7 @@ function VolSlider({
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
         <span style={{
           fontFamily: MONO,
-          fontSize: 11,
+          fontSize: SETTINGS_CONTROL_FONT,
           letterSpacing: '0.18em',
           textTransform: 'uppercase' as const,
           color: hov ? S.txt : S.label,
@@ -375,7 +378,7 @@ function VolSlider({
           }}
         />
       </div>
-      <div style={{ fontFamily: MONO, fontSize: 11, color: S.dim, marginTop: 8, lineHeight: 1.55 }}>
+      <div style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, marginTop: 8, lineHeight: 1.6 }}>
         {desc}
       </div>
     </div>
@@ -424,7 +427,7 @@ function PaletteCard({
         </motion.span>
         <span style={{
           fontFamily: MONO,
-          fontSize: 11,
+          fontSize: SETTINGS_CONTROL_FONT,
           letterSpacing: '0.14em',
           textTransform: 'uppercase' as const,
           color: active ? S.warm : S.txt,
@@ -433,7 +436,7 @@ function PaletteCard({
           {label}
         </span>
       </div>
-      <div style={{ fontFamily: MONO, fontSize: 11, color: S.dim, lineHeight: 1.5, letterSpacing: '0.02em' }}>
+      <div style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, lineHeight: 1.55, letterSpacing: '0.02em' }}>
         {description}
       </div>
     </motion.button>
@@ -463,7 +466,7 @@ function TabBar({ tab, onSetTab }: { tab: SettingsTab; onSetTab: (t: SettingsTab
               position: 'relative',
               padding: '12px 18px',
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: SETTINGS_CONTROL_FONT,
               letterSpacing: '0.16em',
               textTransform: 'uppercase' as const,
               color: active ? t.accent : S.dim,
@@ -540,7 +543,7 @@ function WorldTab({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <div>
         <SectionRule label="Current Seed" />
-        <p style={{ fontFamily: MONO, fontSize: 11, color: S.dim, lineHeight: 1.6, marginBottom: 12 }}>
+        <p style={{ fontFamily: MONO, fontSize: SETTINGS_BODY_FONT, color: S.dim, lineHeight: 1.65, marginBottom: 12 }}>
           Share this number to let others explore the same world.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -586,7 +589,7 @@ function WorldTab({
 
       <div>
         <SectionRule label="New Voyage" />
-        <p style={{ fontFamily: MONO, fontSize: 11, color: S.dim, lineHeight: 1.6, marginBottom: 12 }}>
+        <p style={{ fontFamily: MONO, fontSize: SETTINGS_BODY_FONT, color: S.dim, lineHeight: 1.65, marginBottom: 12 }}>
           Enter a seed or generate a random one. Restarts the game.
         </p>
         <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -621,7 +624,7 @@ function WorldTab({
               border: `1px solid ${S.border}`,
               borderRadius: 2,
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: SETTINGS_CONTROL_FONT,
               letterSpacing: '0.14em',
               textTransform: 'uppercase' as const,
               color: S.dim,
@@ -650,7 +653,7 @@ function WorldTab({
 
       <div>
         <SectionRule label="Sea Palette" />
-        <p style={{ fontFamily: MONO, fontSize: 10, color: S.dim, lineHeight: 1.55, marginBottom: 10 }}>
+        <p style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, lineHeight: 1.6, marginBottom: 10 }}>
           How ocean water is color-graded across the world.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(136px, 1fr))', gap: 6 }}>
@@ -724,13 +727,41 @@ function AudioTab() {
   );
 }
 
-function GameplayTab() {
+function GameplayTab({
+  renderDebug,
+  onUpdate,
+}: {
+  renderDebug: RenderDebugSettings;
+  onUpdate: (p: Partial<RenderDebugSettings>) => void;
+}) {
+  const shipSteeringMode = useGameStore(s => s.shipSteeringMode);
+  const setShipSteeringMode = useGameStore(s => s.setShipSteeringMode);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 0', gap: 12 }}>
-      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.25em', color: S.dimGold }}>── ◆ ──</div>
-      <div style={{ fontFamily: MONO, fontSize: 11, color: S.txt, letterSpacing: '0.08em' }}>Gameplay settings</div>
-      <div style={{ fontFamily: MONO, fontSize: 10, color: S.dim, textAlign: 'center', maxWidth: 240, lineHeight: 1.6 }}>
-        Time speed, auto-pause, and difficulty settings will appear here.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div>
+        <SectionRule label="Controls" />
+        <CtrlRow label="Ship Steering" desc="Tap sets a target heading; joystick mirrors WASD. Mainly affects touch screens.">
+          <SegControl
+            options={[{ value: 'tap', label: 'Tap' }, { value: 'joystick', label: 'Stick' }]}
+            value={shipSteeringMode}
+            onChange={v => setShipSteeringMode(v)}
+          />
+        </CtrlRow>
+      </div>
+
+      <div>
+        <SectionRule label="Navigation" />
+        <CtrlRow label="Minimap" desc="Small live chart in the sailing HUD.">
+          <Toggle value={renderDebug.minimap} onChange={v => onUpdate({ minimap: v })} />
+        </CtrlRow>
+        <CtrlRow label="World Map" desc="Brass portolan chart or the older flat modal." last>
+          <SegControl
+            options={[{ value: 'chart', label: 'Chart' }, { value: 'classic', label: 'Classic' }]}
+            value={renderDebug.worldMapChart ? 'chart' : 'classic'}
+            onChange={v => onUpdate({ worldMapChart: v === 'chart' })}
+          />
+        </CtrlRow>
       </div>
     </div>
   );
@@ -841,7 +872,7 @@ function DevTab({
           />
         </CtrlRow>
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontFamily: MONO, fontSize: 10, color: S.dim, marginBottom: 8, lineHeight: 1.5 }}>
+          <div style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, marginBottom: 8, lineHeight: 1.55 }}>
             {renderDebug.cityFieldMode === 'district'
               ? 'District classification: citadel, sacred, urban core, elite, artisan, waterside, fringe.'
               : CITY_FIELD_DESCRIPTIONS[renderDebug.cityFieldMode]}
@@ -890,8 +921,8 @@ function DevTab({
           borderRadius: 3,
         }}>
           <div>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: S.warm, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Solo Mode</span>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: S.dim, marginLeft: 10 }}>
+            <span style={{ fontFamily: MONO, fontSize: SETTINGS_MICRO_FONT, color: S.warm, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Solo Mode</span>
+            <span style={{ fontFamily: MONO, fontSize: SETTINGS_MICRO_FONT, color: S.dim, marginLeft: 10 }}>
               {CORE_PORTS.find(p => p.id === devSoloPort)?.name ?? devSoloPort}
             </span>
           </div>
@@ -901,7 +932,7 @@ function DevTab({
 
       <div>
         <SectionRule label="Port Archetypes" />
-        <p style={{ fontFamily: MONO, fontSize: 10, color: S.dim, lineHeight: 1.55, marginBottom: 10 }}>
+        <p style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.dim, lineHeight: 1.6, marginBottom: 10 }}>
           Load a single port to preview its geographic archetype.
         </p>
         <div style={{
@@ -935,7 +966,7 @@ function DevTab({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                   <span style={{ fontFamily: MONO, fontSize: 13, color: S.dim }}>{GEO_ICONS[port.geography] ?? '·'}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: active ? S.warm : S.txt, letterSpacing: '0.06em' }}>
+                  <span style={{ fontFamily: MONO, fontSize: SETTINGS_MICRO_FONT, color: active ? S.warm : S.txt, letterSpacing: '0.06em' }}>
                     {port.name}
                   </span>
                 </div>
@@ -958,8 +989,21 @@ function DevTab({
 }
 
 function AboutTab() {
+  const bodyStyle = {
+    fontFamily: MONO,
+    fontSize: SETTINGS_BODY_FONT,
+    color: S.txt,
+    lineHeight: 1.7,
+    margin: 0,
+  } as const;
+  const linkStyle = {
+    color: S.warm,
+    textDecoration: 'none',
+    borderBottom: `1px solid ${S.dimGold}66`,
+  } as const;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <div>
         <SectionRule label="Game" />
         <div style={{
@@ -972,18 +1016,54 @@ function AboutTab() {
         }}>
           Spice Voyager <span style={{ color: S.dim, fontSize: 16 }}>1612</span>
         </div>
-        <p style={{ fontFamily: MONO, fontSize: 11, color: S.txt, lineHeight: 1.7, maxWidth: 400 }}>
-          A sailing and trading game set in the Indian Ocean, 1612 AD.
-          Chart your course between distant ports, trade exotic spices and silk,
-          and build your fortune in the age of oceanic commerce.
+        <p style={{ ...bodyStyle, maxWidth: 510 }}>
+          A historical sailing, trading, and knowledge game set in the Indian Ocean and connected Atlantic worlds of 1612. The game is centered on spices, drugs, medicines, ports, winds, ships, fraud, reputation, and the fragile business of knowing what a thing is before you stake your voyage on it.
         </p>
       </div>
+
+      <div>
+        <SectionRule label="Author" />
+        <p style={bodyStyle}>
+          Spice Voyager is a project by Benjamin Breen, a historian at UC Santa Cruz and the author of <em style={{ color: S.bright }}>The Age of Intoxication: Origins of the Global Drug Trade</em>. His work studies early modern drugs, commodities, pharmacology, colonialism, and the trade networks that connected Europe, Africa, Asia, and the Americas.
+        </p>
+        <p style={{ ...bodyStyle, marginTop: 12 }}>
+          He has also written about AI-enabled historical educational games at{' '}
+          <a
+            href="https://resobscura.substack.com"
+            target="_blank"
+            rel="noreferrer"
+            style={linkStyle}
+          >
+            resobscura.substack.com
+          </a>
+          .
+        </p>
+      </div>
+
+      <div>
+        <SectionRule label="Design" />
+        <p style={bodyStyle}>
+          The goal is not to make a generic age-of-sail trading loop with period wallpaper. The game treats commodities as historical objects with origins, uses, risks, reputations, and local expertise. Pepper, coffee, indigo, ambergris, dragon's blood, bezoar stones, and other goods are meant to feel specific: things handled by merchants, physicians, sailors, brokers, informants, and port officials, not abstract colored cubes.
+        </p>
+        <p style={{ ...bodyStyle, marginTop: 12 }}>
+          The knowledge system is central. You begin with partial understanding. Crew members can identify goods. Taverns and encounters may teach, mislead, or confirm what you think you know. A cargo that looks profitable can still be counterfeit, misunderstood, or badly timed.
+        </p>
+      </div>
+
+      <div>
+        <SectionRule label="Historical Frame" />
+        <p style={bodyStyle}>
+          The year 1612 sits at a volatile moment: Portuguese routes still matter, Dutch and English companies are pushing into Asian waters, Mughal and Gujarati commerce shapes the western Indian Ocean, Red Sea coffee is becoming globally consequential, and Atlantic colonies are beginning to alter the map of trade. The simulation compresses and stylizes this world, but its systems are built around that specific historical moment.
+        </p>
+      </div>
+
       <div>
         <SectionRule label="Build" />
         {[
           ['Version',  '0.1.0'],
           ['Engine',   'Three.js + React'],
-          ['Terrain',  'Procedural (Simplex Noise)'],
+          ['World',    'Procedural ports + authored data'],
+          ['Terrain',  'Procedural terrain and cities'],
           ['Renderer', 'WebGL 2.0'],
         ].map(([label, value], i, arr) => (
           <div
@@ -996,8 +1076,8 @@ function AboutTab() {
               borderBottom: i < arr.length - 1 ? `1px solid ${S.borderDim}` : 'none',
             }}
           >
-            <span style={{ fontFamily: MONO, fontSize: 10, color: S.dim, letterSpacing: '0.15em', textTransform: 'uppercase' }}>{label}</span>
-            <span style={{ fontFamily: MONO, fontSize: 11, color: S.txt }}>{value}</span>
+            <span style={{ fontFamily: MONO, fontSize: SETTINGS_MICRO_FONT, color: S.dim, letterSpacing: '0.15em', textTransform: 'uppercase' }}>{label}</span>
+            <span style={{ fontFamily: MONO, fontSize: SETTINGS_CONTROL_FONT, color: S.txt }}>{value}</span>
           </div>
         ))}
       </div>
@@ -1098,9 +1178,6 @@ export function SettingsModalV2({
             <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '0.22em', textTransform: 'uppercase', color: S.warm }}>
               Settings
             </span>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: S.dim, letterSpacing: '0.06em' }}>
-              seed·{worldSeed}
-            </span>
           </div>
           <button
             onClick={() => { sfxClose(); onClose(); }}
@@ -1136,7 +1213,7 @@ export function SettingsModalV2({
             />],
             ['display', <DisplayTab renderDebug={renderDebug} onUpdate={updateRenderDebug} />],
             ['audio', <AudioTab />],
-            ['gameplay', <GameplayTab />],
+            ['gameplay', <GameplayTab renderDebug={renderDebug} onUpdate={updateRenderDebug} />],
             ['dev', <DevTab
               worldSeed={worldSeed}
               worldSize={worldSize}

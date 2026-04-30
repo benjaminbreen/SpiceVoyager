@@ -611,15 +611,34 @@ function AboutTab() {
           Spice Voyager: <span className="text-amber-300/80">1612</span>
         </h3>
         <p className="text-slate-400 text-sm leading-relaxed">
-          A sailing and trading game set in the Indian Ocean, 1612 AD.
-          Chart your course between distant ports, trade exotic spices and silk,
-          and build your fortune in the age of exploration.
+          A historical sailing, trading, and knowledge game set in the Indian Ocean and connected Atlantic worlds of 1612.
+          The game is centered on spices, drugs, medicines, ports, winds, ships, fraud, reputation, and the fragile business of knowing what a thing is before you stake your voyage on it.
+        </p>
+      </div>
+      <div>
+        <h4 className="text-[11px] uppercase tracking-[0.2em] text-amber-300/80 mb-2">Author</h4>
+        <p className="text-slate-400 text-sm leading-relaxed">
+          Spice Voyager is a project by Benjamin Breen, a historian at UC Santa Cruz and the author of <em className="text-slate-300">The Age of Intoxication: Origins of the Global Drug Trade</em>. His work studies early modern drugs, commodities, pharmacology, colonialism, and the trade networks that connected Europe, Africa, Asia, and the Americas.
+        </p>
+        <p className="text-slate-400 text-sm leading-relaxed mt-3">
+          He has also written about AI-enabled historical educational games at{' '}
+          <a className="text-amber-300 underline decoration-amber-300/40 underline-offset-4" href="https://resobscura.substack.com" target="_blank" rel="noreferrer">
+            resobscura.substack.com
+          </a>
+          .
+        </p>
+      </div>
+      <div>
+        <h4 className="text-[11px] uppercase tracking-[0.2em] text-amber-300/80 mb-2">Design</h4>
+        <p className="text-slate-400 text-sm leading-relaxed">
+          The goal is not to make a generic age-of-sail trading loop with period wallpaper. The game treats commodities as historical objects with origins, uses, risks, reputations, and local expertise.
         </p>
       </div>
       <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-4 space-y-2">
         <InfoRow label="Version" value="0.1.0" />
         <InfoRow label="Engine" value="Three.js + React" />
-        <InfoRow label="Terrain" value="Procedural (Simplex Noise)" />
+        <InfoRow label="World" value="Procedural ports + authored data" />
+        <InfoRow label="Terrain" value="Procedural terrain and cities" />
       </div>
     </div>
   );

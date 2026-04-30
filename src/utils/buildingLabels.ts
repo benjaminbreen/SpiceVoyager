@@ -1,4 +1,4 @@
-import { BuildingType, Culture, Nationality, CulturalRegion } from '../store/gameStore';
+import { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold } from '../store/gameStore';
 
 type EuropeanNationality = 'English' | 'Dutch' | 'Spanish' | 'Portuguese';
 const EUROPEAN_NATIONALITIES: EuropeanNationality[] = ['English', 'Dutch', 'Spanish', 'Portuguese'];
@@ -1137,6 +1137,7 @@ export interface BuildingLabelResult {
   familyName?: string;
   /** Honorific (Fidalgo, Sheikh, Seth …) for elite residences. */
   title?: string;
+  household?: BuildingHousehold;
 }
 
 // ── Named landmark labels ────────────────────────────────────────────────────
@@ -1569,6 +1570,7 @@ export function generateBuildingLabel(
         sub: 'estate',
         familyName: householdFamily,
         title,
+        household: { kind: 'elite', title },
       };
     }
 
@@ -1577,11 +1579,12 @@ export function generateBuildingLabel(
         label: pick(shacks, rng),
         sub: 'dwelling',
         familyName: householdFamily,
+        household: { kind: 'laboring' },
       };
 
     case 'farmhouse': {
       const label = pick(moisture > 0.5 ? wetCrops : dryCrops, rng);
-      return { label, sub: 'farmstead', familyName: householdFamily };
+      return { label, sub: 'farmstead', familyName: householdFamily, household: { kind: 'farmstead', crop: undefined, good: label } };
     }
 
     case 'house': {
@@ -1593,10 +1596,12 @@ export function generateBuildingLabel(
 
       // Near water + low → maritime trades
       if (isNearWater && rng() < 0.6) {
+        const trade = pick(TRADES_NEAR_WATER, rng);
         return {
-          label: pick(TRADES_NEAR_WATER, rng),
+          label: trade,
           sub: 'workshop',
           familyName: householdFamily,
+          household: { kind: 'workshop', profession: trade },
         };
       }
 
@@ -1609,12 +1614,15 @@ export function generateBuildingLabel(
             label: `${capitalize(good)} merchant`,
             sub: 'shop',
             familyName: householdFamily,
+            household: { kind: 'shop', profession: 'merchant', good },
           };
         }
+        const trade = pick(trades, rng);
         return {
-          label: pick(trades, rng),
+          label: trade,
           sub: 'shop',
           familyName: householdFamily,
+          household: { kind: 'shop', profession: trade },
         };
       }
 
@@ -1627,12 +1635,14 @@ export function generateBuildingLabel(
             sub: 'residence',
             familyName: householdFamily,
             title,
+            household: { kind: 'elite', title },
           };
         }
         return {
           label: `Residence of the ${householdFamily} family`,
           sub: 'residence',
           familyName: householdFamily,
+          household: { kind: 'residence' },
         };
       }
 
@@ -1642,21 +1652,25 @@ export function generateBuildingLabel(
           label: pick(commoners, rng),
           sub: 'dwelling',
           familyName: householdFamily,
+          household: { kind: 'laboring' },
         };
       }
 
       // Default middle-class — mix of trades and residences
       if (rng() < 0.5) {
+        const trade = pick(trades, rng);
         return {
-          label: pick(trades, rng),
+          label: trade,
           sub: 'shop',
           familyName: householdFamily,
+          household: { kind: 'shop', profession: trade },
         };
       }
       return {
         label: `House of ${householdFamily}`,
         sub: 'residence',
         familyName: householdFamily,
+        household: { kind: 'residence' },
       };
     }
 

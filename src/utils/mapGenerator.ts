@@ -14,6 +14,7 @@ import { faithsForPort } from './portReligions';
 import { palaceStyleForPort } from './palaceStyles';
 import { postprocessRoads } from './roadTopology';
 import { generateShrinesForPort } from './proceduralShrines';
+import { generateProceduralPOIsForPort } from './proceduralPOIs';
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
@@ -387,6 +388,18 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           },
           config.seed,
         );
+        const proceduralPOIs = generateProceduralPOIsForPort(
+          {
+            id: override.id,
+            name: override.name,
+            scale: override.scale,
+            position: [portX, 0.5, portZ],
+            buildings: [...buildingsForShrineClearance, ...shrines.buildings],
+            portDef,
+            inventory: baseInventory,
+          },
+          config.seed,
+        );
         // Densify + weld + graph the combined network so hinterland tracks
         // connect to city roads cleanly and the ribbon renderer has short
         // segments that hug terrain. Mutates `roads` in place.
@@ -396,7 +409,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           buildings: [...city.buildings, ...hinterland.buildings, ...shrines.buildings],
           roads,
           roadGraph,
-          pois: shrines.pois,
+          pois: [...shrines.pois, ...proceduralPOIs.pois],
         };
       })(),
     });
@@ -416,6 +429,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
   const naturalIslands = generatedPorts.flatMap((port) =>
     getPOIsForPort(port)
       .filter((poi) => poi.kind === 'natural'
+        && !poi.generated
         && (poi.location.kind === 'hinterland' || poi.location.kind === 'coords'))
       .map((poi) => {
         const [lx, lz] = (poi.location as { position: [number, number] }).position;

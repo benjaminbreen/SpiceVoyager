@@ -9,7 +9,7 @@ import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorW
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
 import { syncLiveShipTransform } from '../utils/livePlayerTransform';
-import { addCameraShake, addCameraFovPulse } from '../utils/cameraShakeState';
+import { addCameraImpulse, addCameraShake, addCameraFovPulse } from '../utils/cameraShakeState';
 import { swivelAimAngle, swivelAimPitch, broadsideReload, getCurrentElevationCharge } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
 import { spawnSplash } from '../utils/splashState';
@@ -765,6 +765,7 @@ export function Ship() {
       const sideAngle = side === 'port' ? shipRot + Math.PI / 2 : shipRot - Math.PI / 2;
       const sideX = Math.sin(sideAngle);
       const sideZ = Math.cos(sideAngle);
+      addCameraImpulse(-sideX, -sideZ, 0.22, 0.02);
 
       // Burst particles outward from the firing side
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
@@ -778,13 +779,13 @@ export function Ship() {
           1.2 + Math.random() * 0.5,
           startZ + (Math.random() - 0.5) * 0.5,
         );
-        const speed = 2 + Math.random() * 4;
+        const speed = 3 + Math.random() * 6;
         p.vel.set(
-          sideX * speed + (Math.random() - 0.5) * 2,
-          1.5 + Math.random() * 2,
-          sideZ * speed + (Math.random() - 0.5) * 2,
+          sideX * speed + (Math.random() - 0.5) * 2.6,
+          1.8 + Math.random() * 2.8,
+          sideZ * speed + (Math.random() - 0.5) * 2.6,
         );
-        p.life = 0.6 + Math.random() * 0.8;
+        p.life = 0.85 + Math.random() * 1.05;
       }
     };
     window.addEventListener('broadside-fired', handleBroadside);
