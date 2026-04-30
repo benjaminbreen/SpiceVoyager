@@ -290,30 +290,38 @@ export interface Gateway {
   label?: string;
   /** Optional offset in pixels for the label, when the coords point isn't the best anchor. */
   labelOffset?: [number, number];
+  /**
+   * Visibility tier for the label.
+   *  - 'primary'   = ocean basin / always visible
+   *  - 'secondary' = sea / bay / gulf / iconic feature, visible at moderate zoom
+   *  - 'detail'    = strait / small island / named coast, only at high zoom
+   * Defaults to 'detail' if omitted.
+   */
+  labelTier?: 'primary' | 'secondary' | 'detail';
 }
 
 export const GATEWAYS: Record<string, Gateway> = {
   // ── Europe & approach ────────────────────────────────────────────
-  'channel-w':     { coords: [-5, 49.5],   label: 'English Channel' },
+  'channel-w':     { coords: [-5, 49.5],   label: 'English Channel', labelTier: 'secondary' },
   'channel-e':     { coords: [2.5, 51.5] },
-  'biscay':        { coords: [-7, 46],     label: 'Bay of Biscay' },
+  'biscay':        { coords: [-7, 46],     label: 'Bay of Biscay', labelTier: 'secondary' },
   'iberia-nw':     { coords: [-11, 43] },
   'iberia-sw':     { coords: [-10, 37] },
-  'gibraltar':     { coords: [-7.5, 36],   label: 'Str. of Gibraltar', labelOffset: [0, 18] },
+  'gibraltar':     { coords: [-7.5, 36],   label: 'Str. of Gibraltar', labelOffset: [0, 18], labelTier: 'detail' },
 
   // ── Mediterranean ────────────────────────────────────────────────
   'alboran':       { coords: [-2, 36] },
   'sardinia-s':    { coords: [9, 38] },
-  'sicily-strait': { coords: [11.5, 37],   label: 'Str. of Sicily', labelOffset: [0, 14] },
-  'ionian':        { coords: [18, 37],     label: 'Ionian Sea' },
-  'otranto':       { coords: [19, 40],     label: 'Str. of Otranto' },
+  'sicily-strait': { coords: [11.5, 37],   label: 'Str. of Sicily', labelOffset: [0, 14], labelTier: 'detail' },
+  'ionian':        { coords: [18, 37],     label: 'Ionian Sea', labelTier: 'detail' },
+  'otranto':       { coords: [19, 40],     label: 'Str. of Otranto', labelTier: 'detail' },
   'adriatic-s':    { coords: [17.5, 42] },
-  'adriatic-n':    { coords: [13.5, 44.5], label: 'Adriatic Sea' },
+  'adriatic-n':    { coords: [13.5, 44.5], label: 'Adriatic Sea', labelTier: 'secondary' },
 
   // ── Atlantic ─────────────────────────────────────────────────────
-  'canaries':      { coords: [-17, 28],    label: 'Canary Is.' },
-  'cape-verde':    { coords: [-22, 13],    label: 'Cape Verde Is.' },
-  'azores':        { coords: [-30, 38],    label: 'Azores' },
+  'canaries':      { coords: [-17, 28],    label: 'Canary Is.', labelTier: 'detail' },
+  'cape-verde':    { coords: [-22, 13],    label: 'Cape Verde Is.', labelTier: 'detail' },
+  'azores':        { coords: [-30, 38],    label: 'Azores', labelTier: 'detail' },
   'atl-narrows':   { coords: [-25, 0] },
   'brazil-ne':     { coords: [-34, -6] },
   'w-africa-bulge':{ coords: [-18, 8] },
@@ -322,29 +330,29 @@ export const GATEWAYS: Record<string, Gateway> = {
   'windward':      { coords: [-62, 15] },
   'bahamas-e':     { coords: [-72, 23] },
   'florida-str':   { coords: [-80, 25] },
-  'bermuda':       { coords: [-65, 32],    label: 'Bermuda' },
+  'bermuda':       { coords: [-65, 32],    label: 'Bermuda', labelTier: 'detail' },
   'virginia-capes':{ coords: [-75, 37] },
 
   // ── West & South Africa ─────────────────────────────────────────
-  'guinea':        { coords: [2, 2],       label: 'Gulf of Guinea' },
+  'guinea':        { coords: [2, 2],       label: 'Gulf of Guinea', labelTier: 'secondary' },
   'luanda-approach':{ coords: [11, -9] },
   'south-atl-e':   { coords: [11, -22] },
-  'cape-gh':       { coords: [18, -36],    label: 'Cape of Good Hope', labelOffset: [0, 14] },
+  'cape-gh':       { coords: [18, -36] }, // labeled by the port of the same name
 
   // ── East Africa ─────────────────────────────────────────────────
   'natal':         { coords: [33, -28] },
-  'mozambique':    { coords: [41, -15],    label: 'Mozambique Chan.' },
+  'mozambique':    { coords: [41, -15],    label: 'Mozambique Chan.', labelTier: 'secondary' },
   'zanzibar-app':  { coords: [41, -5] },
 
   // ── Horn of Africa / Red Sea ────────────────────────────────────
-  'socotra-n':     { coords: [54, 14],     label: 'Socotra' },
-  'horn-africa':   { coords: [51, 11],     label: 'Gulf of Aden' },
+  'socotra-n':     { coords: [54, 14],     label: 'Socotra', labelTier: 'detail' },
+  'horn-africa':   { coords: [51, 11],     label: 'Gulf of Aden', labelTier: 'secondary' },
   'bab-mandeb':    { coords: [44, 12.5] },
 
   // ── Arabian Sea & Persian Gulf ──────────────────────────────────
-  'arabian-sea':   { coords: [62, 15],     label: 'Arabian Sea' },
+  'arabian-sea':   { coords: [62, 15],     label: 'Arabian Sea', labelTier: 'primary' },
   'oman':          { coords: [58, 21] },
-  'hormuz-mouth':  { coords: [56.5, 26],   label: 'Str. of Hormuz' },
+  'hormuz-mouth':  { coords: [56.5, 26],   label: 'Str. of Hormuz', labelTier: 'detail' },
 
   // ── India ───────────────────────────────────────────────────────
   'gujarat':       { coords: [68, 22] },
@@ -352,25 +360,25 @@ export const GATEWAYS: Record<string, Gateway> = {
 
   // ── Eastern Indian Ocean ────────────────────────────────────────
   'ceylon-s':      { coords: [82, 5] },
-  'bengal-bay':    { coords: [88, 8],      label: 'Bay of Bengal' },
+  'bengal-bay':    { coords: [88, 8],      label: 'Bay of Bengal', labelTier: 'primary' },
 
   // ── SE Asia & South China Sea ───────────────────────────────────
-  'malacca-n':     { coords: [100, 4],     label: 'Str. of Malacca' },
-  'java-sea':      { coords: [109, -4],    label: 'Java Sea' },
-  'sunda':         { coords: [105, -6.5],  label: 'Sunda Str.' },
-  'scs-s':         { coords: [111, 8],     label: 'South China Sea' },
+  'malacca-n':     { coords: [100, 4],     label: 'Str. of Malacca', labelOffset: [-22, -10], labelTier: 'secondary' },
+  'java-sea':      { coords: [109, -4],    label: 'Java Sea', labelTier: 'primary' },
+  'sunda':         { coords: [105, -6.5],  label: 'Sunda Str.', labelOffset: [-32, 10], labelTier: 'detail' },
+  'scs-s':         { coords: [111, 8],     label: 'South China Sea', labelTier: 'primary' },
   'scs-n':         { coords: [115, 18] },
   'manila-app':    { coords: [119, 14] },   // Manila Bay approach off Luzon
 
   // ── Coromandel (east coast of India) ────────────────────────────
-  'coromandel':    { coords: [82, 13],     label: 'Coromandel Coast', labelOffset: [0, 16] },
+  'coromandel':    { coords: [82, 13],     label: 'Coromandel Coast', labelOffset: [0, 28], labelTier: 'detail' },
 
   // ── Kyushu corridor — Macau/Manila → Nagasaki ───────────────────
   // Nao do Trato route: along Taiwan's eastern flank, up through the Ryukyu
   // chain, into the approaches of Nagasaki's fjord on the west coast of Kyushu.
   'luzon-n':       { coords: [122, 20.5] },
-  'ryukyu':        { coords: [128, 26],    label: 'Ryukyu Is.' },
-  'kyushu-sw':     { coords: [130, 32],    label: 'Kyushu' },
+  'ryukyu':        { coords: [128, 26],    label: 'Ryukyu Is.', labelOffset: [18, 12], labelTier: 'detail' },
+  'kyushu-sw':     { coords: [130, 32],    label: 'Kyushu', labelOffset: [24, 22], labelTier: 'detail' },
 };
 
 /**

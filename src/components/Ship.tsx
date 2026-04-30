@@ -795,7 +795,20 @@ export function Ship() {
       return key in keys.current ? key as keyof typeof keys.current : null;
     };
 
+    const isInputTarget = (t: EventTarget | null) =>
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      (t instanceof HTMLElement && t.isContentEditable);
+    const isModalOpen = () => {
+      const s = useGameStore.getState();
+      return !!(s.activePort || s.activePOI);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputTarget(e.target) || isModalOpen()) {
+        keys.current.w = keys.current.a = keys.current.s = keys.current.d = false;
+        return;
+      }
       const rawKey = e.key.toLowerCase();
       const key = movementKeyFor(e);
       if (key) {
@@ -824,6 +837,7 @@ export function Ship() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (isInputTarget(e.target) || isModalOpen()) return;
       const key = movementKeyFor(e);
       if (key) {
         keys.current[key] = false;

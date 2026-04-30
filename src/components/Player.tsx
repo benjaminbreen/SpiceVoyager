@@ -129,7 +129,21 @@ export function Player() {
       return key in keys.current ? key as keyof typeof keys.current : null;
     };
 
+    const isInputTarget = (t: EventTarget | null) =>
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      (t instanceof HTMLElement && t.isContentEditable);
+    const isModalOpen = () => {
+      const s = useGameStore.getState();
+      return !!(s.activePort || s.activePOI);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputTarget(e.target) || isModalOpen()) {
+        // Release any held keys so movement doesn't latch while the modal is up
+        keys.current.w = keys.current.a = keys.current.s = keys.current.d = false;
+        return;
+      }
       const movementKey = movementKeyFor(e);
       if (movementKey) {
         keys.current[movementKey] = true;
@@ -143,6 +157,7 @@ export function Player() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (isInputTarget(e.target) || isModalOpen()) return;
       const movementKey = movementKeyFor(e);
       if (movementKey) {
         keys.current[movementKey] = false;

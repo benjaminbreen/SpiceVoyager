@@ -1109,7 +1109,20 @@ function CameraController() {
     };
 
     // Z/X camera rotation keys (use window so they work even when canvas isn't focused)
+    const isRotInputTarget = (t: EventTarget | null) =>
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      (t instanceof HTMLElement && t.isContentEditable);
+    const isRotModalOpen = () => {
+      const s = useGameStore.getState();
+      return !!(s.activePort || s.activePOI);
+    };
     const handleRotKeyDown = (e: KeyboardEvent) => {
+      if (isRotInputTarget(e.target) || isRotModalOpen()) {
+        rotationKeys.current.z = false;
+        rotationKeys.current.x = false;
+        return;
+      }
       const k = e.key.toLowerCase();
       if (k === 'z') rotationKeys.current.z = true;
       if (k === 'x') rotationKeys.current.x = true;
@@ -1117,6 +1130,7 @@ function CameraController() {
       if (e.key === 'Enter' && isIntroCinematicActive()) skipIntroCinematic();
     };
     const handleRotKeyUp = (e: KeyboardEvent) => {
+      if (isRotInputTarget(e.target) || isRotModalOpen()) return;
       const k = e.key.toLowerCase();
       if (k === 'z') rotationKeys.current.z = false;
       if (k === 'x') rotationKeys.current.x = false;
@@ -1785,8 +1799,15 @@ function InteractionController() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
+      const t = e.target;
+      if (
+        t instanceof HTMLInputElement ||
+        t instanceof HTMLTextAreaElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      ) return;
       const state = useGameStore.getState();
+      if (state.activePort || state.activePOI) return;
+      const key = e.key.toLowerCase();
       if (key === 'e') {
         if (state.interactionPrompt === 'Shore too steep — find lower ground') {
           sfxDisembarkBlocked();

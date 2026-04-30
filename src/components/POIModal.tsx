@@ -39,7 +39,11 @@ export function POIModal({
   poi: POIDefinition;
   onDismiss: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>('learn');
+  // Natural POIs (volcanoes, etc.) and other no-commerce sites have an empty
+  // knowledgeDomain — the Learn tab makes no sense, so hide it and start on
+  // Converse (the LLM voices the site itself or its surrounding folklore).
+  const hasLearnTab = poi.knowledgeDomain.length > 0;
+  const [tab, setTab] = useState<Tab>(hasLearnTab ? 'learn' : 'converse');
   const style = SEMANTIC_STYLE[poi.class];
 
   // Resolve the port the POI belongs to so we can pass cultural / faction
@@ -111,18 +115,20 @@ export function POIModal({
 
           {/* Tabs */}
           <div className="flex items-center gap-1 px-3 py-2 border-b border-white/[0.04]">
-            {(['learn', 'converse'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => { sfxClick(); setTab(t); }}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all
-                  ${tab === t
-                    ? 'bg-white/[0.08] text-white/90'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'}`}
-              >
-                {t === 'learn' ? 'Learn' : 'Converse'}
-              </button>
-            ))}
+            {(['learn', 'converse'] as const)
+              .filter((t) => t !== 'learn' || hasLearnTab)
+              .map((t) => (
+                <button
+                  key={t}
+                  onClick={() => { sfxClick(); setTab(t); }}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all
+                    ${tab === t
+                      ? 'bg-white/[0.08] text-white/90'
+                      : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'}`}
+                >
+                  {t === 'learn' ? 'Learn' : 'Converse'}
+                </button>
+              ))}
           </div>
 
           {/* Body */}

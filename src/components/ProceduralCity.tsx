@@ -3361,6 +3361,11 @@ function POIBeacons({ ports }: { ports: PortsProp }) {
     const out: { pos: [number, number, number]; topY: number; discovered: boolean }[] = [];
     for (const port of visiblePorts) {
       for (const poi of getPOIsForPort(port)) {
+        // Natural features (volcanoes, etc.) bring their own self-evident
+        // visual marker — a glowing emissive crater + smoke column makes the
+        // cyan pillar redundant and visually noisy. Skip the beacon; the
+        // minimap dot + walk/sail proximity toast still fire.
+        if (poi.kind === 'natural') continue;
         // Unified resolver — same snapped position the silhouettes,
         // bespoke renderers, and minimap all consume. Returns null when
         // no valid cell exists within 78u, in which case skip the beacon

@@ -22,7 +22,7 @@
 import type { Commodity } from './commodities';
 import type { SemanticClass } from './semanticClasses';
 
-// Seven kinds total. Three groups:
+// Eight kinds total. Four groups:
 //   Bespoke-only (hand-authored sites with culturally-specific NPCs):
 //     'naturalist'  — covers naturalists, apothecaries, banyan factors, and
 //                     other "expert who examines and teaches about goods"
@@ -32,6 +32,14 @@ import type { SemanticClass } from './semanticClasses';
 //     'garden', 'shrine'
 //   Procedural-only archetypes:
 //     'ruin', 'wreck', 'smugglers_cove', 'caravanserai'
+//   Natural features (bespoke only for now):
+//     'natural'     — distinctive landscape features (volcanoes, sacred
+//                     mountains, distinctive cliffs, hot springs). Unlike
+//                     the other kinds these have no NPC keeper and no
+//                     commerce — the player walks/sails up and gets a
+//                     lore-rich discovery toast. Learn tab is hidden when
+//                     knowledgeDomain is empty; Converse tab voices the
+//                     site itself or its surrounding folklore.
 //
 // Earlier drafts had 'temple', 'court', 'hermitage', 'battlefield', 'monastery',
 // 'physick_garden', 'merchant_guild' — all folded. Religious sites (including
@@ -42,7 +50,8 @@ import type { SemanticClass } from './semanticClasses';
 export type POIKind =
   | 'naturalist'
   | 'garden' | 'shrine'
-  | 'ruin' | 'wreck' | 'smugglers_cove' | 'caravanserai';
+  | 'ruin' | 'wreck' | 'smugglers_cove' | 'caravanserai'
+  | 'natural';
 
 export type POILocation =
   | { kind: 'landmark'; landmarkId: string }
@@ -360,6 +369,28 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     lore: "The Sultanate of Banten is the great pepper hub of western Java in 1612 — Sundanese hill-villages send sacks down to the port through a chain of regional collectors, and the syahbandar (harbormaster's commercial agent) controls who buys what. The English EIC and Dutch VOC both have factories on the foreshore but distrust each other so violently that a third party often does better than either. Wijayakusuma's compound is a great bamboo-and-thatch godown south of the kraton, smelling of pepper-dust and clove-smoke. He weighs in pikuls, will sample a bag's pungency by chewing two corns, and considers the European factors quarrelsome children. He has a soft spot for Mappila and Persian merchants, both of whom were here generations before any Dutch arrived.",
   },
 
+  // ── Bantam — Krakatoa ─────────────────────────────────────────────────────
+  // Natural-feature POI. Bantam openDirection 'N' → sea is to -Z. Place
+  // Krakatoa offshore northwest in the Sunda Strait, far from the harbor
+  // approach lanes and well outside the playable city footprint. The cone
+  // brings its own island geometry — the snap predicate for 'natural' POIs
+  // skips the land-check so a deep-water authored coord is honored verbatim.
+  {
+    id: 'bantam-krakatoa',
+    name: 'Krakatoa',
+    sub: 'Smoking island in the Sunda Strait',
+    kind: 'natural',
+    class: 'civic',                  // no obvious semantic class — 'civic' eyebrow reads as "landmark"
+    port: 'bantam',
+    location: { kind: 'hinterland', position: [-300, -360] },
+    knowledgeDomain: [],             // natural features have no commerce — Learn tab hides when empty
+    masteryGoods: [],
+    cost: { type: 'gold', amount: 0 },
+    npcName: 'The mountain itself',
+    npcRole: 'Sentinel of the Sunda strait',
+    lore: "Pulau Rakata, called Krakatoa by the Dutch — a forested volcanic island in the strait between Java and Sumatra, three peaks stitched together by old lava flows, the tallest reaching some six hundred fathoms above the sea. In 1612 it is quiet; the great cataclysm that will hollow the island and drown its villagers lies more than two and a half centuries off (1883). For now Bantamese fisherfolk and Lampung pepper-traders cross its shadow daily, and Sundanese pilots use the smoking cone as a sea-mark for the strait. The locals say the spirit of the mountain is irritable but slow to wake; offerings of rice and kemenyan (benzoin) are left at a small shrine on the southern shore. The Dutch chartmakers do not yet know what is sleeping under it.",
+  },
+
   // ── Nagasaki ──────────────────────────────────────────────────────────────
   {
     id: 'nagasaki-jesuit-press',
@@ -418,26 +449,114 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     lore: "Aden in 1612 has been Ottoman for nearly seventy years — Yemen Eyalet, ruled out of San'a, with a Janissary garrison and a customs administration that taxes everything moving north up the Red Sea or south toward the Gulf. Sulayman is a hakim from a long Adani family; he runs the customs house at the inland edge of the city by the famous Tawila cisterns (rock-cut reservoirs in the volcanic crater walls) and supplements his salary by grading caravan-borne resins for visiting merchants. He drinks qishr (the husk-and-ginger coffee Yemenis prefer to the Mocha bean), reads the qarurah, and has strong opinions about which Ethiopian coffee is superior to the Yemeni ridge crop (he says none are).",
   },
 
-  // ── Zanzibar ──────────────────────────────────────────────────────────────
+  // ── Malacca ───────────────────────────────────────────────────────────────
   {
-    id: 'zanzibar-cinco-chagas-wreck',
-    name: 'Wreck of the Cinco Chagas',
-    sub: 'Reef south of the harbor — broken Portuguese carrack',
-    kind: 'wreck',
-    class: 'civic',
-    port: 'zanzibar',
-    // Zanzibar openDirection 'W'. Wreck sits offshore (west) within the
-    // narrow shallow band — the fringing reef along Zanzibar's west coast
-    // wrecked many ships historically. The snapper will pull onto a
-    // shallow cell within 78u if the authored coord misses the reef.
-    location: { kind: 'hinterland', position: [-110, 40] },
-    knowledgeDomain: ['Ivory', 'Cloves', 'Ambergris'],
-    masteryGoods: ['Ambergris'],
-    cost: { type: 'gold', amount: 0 },
-    npcName: 'The wreck itself',
-    npcRole: 'Sea-rotted ship\'s ledger',
-    lore: "A Portuguese carrack, the Cinco Chagas (\"Five Wounds\") — named for a common Iberian devotion to the wounds of Christ — broke up on the reef south of Unguja sometime in the late 1500s on the run home from Goa. The hull is half-buried in the sand at low tide; a few timbers and the stub of one mast are still visible. Swahili divers stripped most of the cargo years ago, but the captain's small chest is still wedged in the stern, and a sodden ledger inside it can be read by anyone with patience and a candle. There is no NPC here — only the wreck and what it tells.",
+    id: 'malacca-chetty-compound',
+    name: 'Chetty Trading Compound',
+    sub: 'Tamil merchant quarter, inland of the Portuguese fort',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'malacca',
+    // Malacca openDirection 'E' → harbor faces east (-X is inland). The
+    // Tamil quarter under Portuguese rule sat inland of the bazaar.
+    location: { kind: 'hinterland', position: [-200, 30] },
+    knowledgeDomain: ['Black Pepper', 'Indigo', 'Tamarind', 'Camphor', 'Benzoin', 'Betel Nut'],
+    masteryGoods: ['Indigo', 'Tamarind'],
+    cost: { type: 'gold', amount: 90 },
+    npcName: 'Murugan Chetty',
+    npcRole: 'Nattukottai Chettiar headman',
+    lore: "The Tamil merchants of Malacca — Chettiars, originally from the Chola country in southern India — arrived through the Bay of Bengal trading networks long before the Portuguese took the city in 1511. Under the Estado they kept their Hindu shrines, their account-book Tamil, and a walled quarter inland of the main bazaar. Murugan Chetty handles consignments of indigo-dyed cottons from the Coromandel ports (Pulicat, Masulipatnam) and resells them to Javanese, Bugis, and Chinese buyers, with a moneylending arm running in parallel. He prefers payment in Spanish reales of eight, distrusts the Dutch (whose iconoclasm against Hindu and Catholic shrines he resents in equal measure), and considers the Portuguese garrison a tax he pays for the privilege of doing what his great-great-grandfather did before any European arrived.",
   },
+
+  // ── Lisbon ────────────────────────────────────────────────────────────────
+  {
+    id: 'lisbon-casa-da-india',
+    name: 'Casa da Índia',
+    sub: 'Royal warehouses, Ribeira waterfront',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'lisbon',
+    // Lisbon openDirection 'W' → river/harbor is west (-X), inland is +X.
+    // The historical Casa stood on the Praça do Comércio waterfront — close
+    // to the river edge but inside the city footprint.
+    location: { kind: 'coords', position: [-40, 20] },
+    knowledgeDomain: ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg', 'Chinese Porcelain', 'Camphor'],
+    masteryGoods: ['Black Pepper', 'Cinnamon'],
+    cost: { type: 'gold', amount: 120 },
+    npcName: 'Dom Vasco Aranha',
+    npcRole: 'Provedor da Casa da Índia',
+    lore: "Every cargo coming home from the Estado da Índia is registered, weighed, and assessed at the Casa da Índia on the Tagus waterfront — the old Casa da Mina expanded into a sprawling complex of three warehouses, the great pepper hall, the porcelain rooms, and the lapidary chamber where Goan diamonds are inventoried. Royal customs guards and Hieronymite friars oversee tithing. Aranha is a fidalgo of modest birth who climbed through the Estado bureaucracy at Cochin and Hormuz before the king recalled him. He is tired, professionally cynical, and can quote pepper prices going back to the 1580s. The union of crowns under Philip III since 1580 has stripped much of the Casa's authority — Madrid wants the spice trade run from Seville — and Aranha takes wry satisfaction in finding small ways to obstruct that.",
+  },
+
+  // ── Venice ────────────────────────────────────────────────────────────────
+  {
+    id: 'venice-theriac-spezieria',
+    name: 'Spezieria al Cedro',
+    sub: 'Theriac workshop on the Riva del Vin, Rialto',
+    kind: 'naturalist',
+    class: 'learned',
+    port: 'venice',
+    // Venice openDirection 'E' → lagoon is east (+X), inland sestieri to -X.
+    // The Rialto sits centrally in the city; place the spezieria in the
+    // Rialto-adjacent core just inland of the waterfront.
+    location: { kind: 'coords', position: [-30, 15] },
+    knowledgeDomain: ['Theriac', 'Mumia', 'Saffron', 'Rhubarb', 'Frankincense', 'Cardamom'],
+    masteryGoods: ['Theriac', 'Saffron'],
+    cost: { type: 'gold', amount: 110 },
+    npcName: 'Maestro Stefano da Zen',
+    npcRole: 'Theriac master under the Provveditori alla Sanità',
+    lore: "Theriac is the prestige polypharmacy of European medicine — the Andromachus formula, sixty-four ingredients, mixed once a year in a public ceremony at the Rialto under the eye of the Republic's health magistrates. Maestro da Zen is one of about a dozen Venetian masters licensed to compound it. His shop on the Riva del Vin has the iron-grilled display window where the year's mixing is conducted in view of any passerby, dried viper-flesh hanging from the rafters (vipera carne is one of the prestige ingredients), and a brass scale shipped up from Augsburg. He buys mumia from Cairo, cinnamon from Aleppo, and gentian root from the Tyrolean valleys. The seal of San Marco on a sealed crock of theriac doubles its price in any apothecary from Lyon to Buda. He hates the Genoese.",
+  },
+
+  // ── Jamestown ────────────────────────────────────────────────────────────
+  {
+    id: 'jamestown-rolfe-tobacco-patch',
+    name: "Rolfe's Tobacco Patch",
+    sub: 'Cleared ground outside the palisade — Trinidad-strain seed, first crop',
+    kind: 'garden',
+    class: 'mercantile',
+    port: 'jamestown',
+    // Jamestown openDirection 'E' → river east, inland west (-X). Patch sits
+    // in cleared ground on the marshy peninsula outside the palisade.
+    location: { kind: 'hinterland', position: [-150, 60] },
+    knowledgeDomain: ['Virginia Tobacco', 'Tobacco', 'Sassafras', 'Indigo'],
+    masteryGoods: ['Virginia Tobacco'],
+    cost: { type: 'gold', amount: 50 },
+    npcName: 'John Rolfe',
+    npcRole: 'Yeoman planter, recently widowed',
+    lore: "Rolfe arrived 1610 on the third supply, lost his wife Sarah and infant daughter Bermuda to the crossing, and has just this spring planted a small experimental crop of Spanish-seed tobacco — Nicotiana tabacum, the Trinidad strain, smuggled out at considerable personal risk — on cleared ground just west of the palisade. The native Powhatan tobacco is harsh and unmarketable; the Spanish leaf is what London apothecaries pay for. The first Virginia harvest will go to England next year and will, within a decade, become the colony's only viable export. None of this is yet known. Rolfe is a quiet, methodical man, half-broken by grief, drawn to Pocahontas (the Powhatan chief's daughter, currently held hostage at Henricus) for reasons he has not articulated to himself. He will talk plant-husbandry with anyone who will listen.",
+  },
+
+  // ── Havana ────────────────────────────────────────────────────────────────
+  {
+    id: 'havana-tabaquero-shed',
+    name: "Tabaquero's Curing Shed",
+    sub: 'Vega outside the city walls, sun-cured Cuban leaf',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'havana',
+    // Havana openDirection 'N' → harbor faces north, inland is +Z. The vega
+    // sits on the outskirts toward the south, away from the customs walls.
+    location: { kind: 'hinterland', position: [80, 200] },
+    knowledgeDomain: ['Tobacco', 'Sugar', 'Hides', 'Sassafras'],
+    masteryGoods: ['Tobacco'],
+    cost: { type: 'gold', amount: 60 },
+    npcName: 'Don Diego Mendoza',
+    npcRole: 'Vega owner, Canary Islands émigré',
+    lore: "Cuban leaf — the real article, sun-cured on long racks under wooden eaves, fermented in pile, cut for chewing or twisted into rolls for smoking — is just becoming the island's signature export in 1612. The Casa de la Contratación in Seville taxes it; English raiders are already trying to intercept the leaf on the run home; and the church remains uncertain whether smoking is licit. Mendoza came across from Tenerife twenty years ago, married into a creole vega-owning family, and runs a small sun-cured plot with hired workers and his three sons. He chews a quid all day, has views on which cabildos are corrupt (most of them), and cuts a discreet deal with Sangley sailors off the Manila Galleon who carry private bales as far as Mexico City.",
+  },
+
+  // ── Future / deferred ─────────────────────────────────────────────────────
+  // Banda Neira nutmeg grove + orang kaya compound — proposed but not yet
+  // wired. Banda is geographically too distant from Bantam (~3000km east in
+  // Maluku) to anchor as a Bantam-zone hinterland POI; cleanest path is to
+  // add Banda Neira as its own small island port (alongside Socotra/Diu)
+  // with the nutmeg grove and a Fort Nassau silhouette across the strait.
+  // Decision pending. See AGENTS.md → POI System.
+  //
+  // Cinco Chagas wreck — was a bespoke entry; removed in favor of the
+  // procedural wreck archetype. Wrecks have no recurring named NPC and so
+  // get nothing structural from the bespoke slot.
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────

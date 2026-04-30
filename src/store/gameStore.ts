@@ -879,6 +879,11 @@ export interface RenderDebugSettings {
   rain: boolean;
   algae: boolean;
   coralReefs: boolean;
+  /** Animated pink/cyan caustic shimmer over reef-zone shallows. Off by default
+   *  because it produces noticeable chromatic stippling, especially near river
+   *  mouths where the silt overlay raises water-surface alpha and exposes the
+   *  caustic that was previously masked by zero alpha. Toggle on for testing. */
+  reefCaustics: boolean;
   wildlifeMotion: boolean;
   cloudShadows: boolean;
   animalMarkers: boolean;
@@ -1109,6 +1114,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   rain: false,
   algae: true,
   coralReefs: false,
+  reefCaustics: false,
   wildlifeMotion: true,
   cloudShadows: true,
   animalMarkers: true,
@@ -1639,7 +1645,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   currentWorldPortId: _startingPortId,
   waterPaletteSetting: 'auto',
   forceMobileLayout: false,
-  shipSteeringMode: 'tap',
+  // Touch devices default to joystick — ship physics have momentum/turn
+  // radius, which makes tap-to-set-heading feel laggy. Pointer fine devices
+  // keep tap as the default. Settings → Controls lets the user override.
+  shipSteeringMode:
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(pointer: coarse)').matches
+      ? 'joystick'
+      : 'tap',
   touchSailRaised: false,
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,

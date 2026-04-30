@@ -1075,10 +1075,12 @@ export function UI() {
         }
         if (!findNearbyPort(playerPos, ports)) dismissedPortRef.current = null;
 
-        // Ship-accessible POIs (wrecks, smuggler's coves) toast in ship mode.
-        // findNearestPOI's per-kind radius means hinterland POIs naturally
-        // can't fire here — the player would never be within ~12u of an
-        // inland garden while sailing, so no need to filter by kind here.
+        // Ship-accessible POIs (wrecks, smuggler's coves, offshore natural
+        // features like Krakatoa) toast in ship mode. findNearestPOI's
+        // per-kind radius means inland hinterland POIs (gardens, naturalist
+        // camps) naturally can't fire here — the player would never be
+        // within ~12u of an inland garden while sailing — so no need to
+        // filter by kind here.
         const shipPoiHit = findNearestPOI(playerPos, ports);
         if (shipPoiHit) {
           const current = activePOIToastRef.current;
@@ -2534,6 +2536,11 @@ function RenderTestPanel() {
           label="Algae"
           enabled={renderDebug.algae}
           onToggle={() => updateRenderDebug({ algae: !renderDebug.algae })}
+        />
+        <RenderToggleRow
+          label="Reef Caustics"
+          enabled={renderDebug.reefCaustics}
+          onToggle={() => updateRenderDebug({ reefCaustics: !renderDebug.reefCaustics })}
         />
         <RenderToggleRow
           label="Wildlife Motion"

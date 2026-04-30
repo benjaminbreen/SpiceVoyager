@@ -2937,7 +2937,8 @@ function GlobeDriver({
       // Forward blocked by a continent. Try drift-only so the view doesn't
       // lock up entirely.
       _candidate.multiplyQuaternions(_driftQ, rotationRef.current);
-      if (isClearForQuat(_candidate)) rotationRef.current.copy(_candidate);
+      const driftClear = isClearForQuat(_candidate);
+      if (driftClear) rotationRef.current.copy(_candidate);
 
       // Bounce: reflect any forward-going velocity into a backward kick so
       // the ship visibly recoils off the coast instead of dead-stopping.
@@ -2949,6 +2950,15 @@ function GlobeDriver({
         fwdVelRef.current = -Math.max(fwdVelRef.current * ELASTICITY, MIN_KICK);
         // Lateral heel impulse so the bow visibly veers off the obstacle.
         heelRef.current += (Math.random() < 0.5 ? -1 : 1) * 0.22;
+        collisionRef.current = 1;
+      } else if (!driftClear) {
+        // Idle drift wedged against a coast (no forward input, and drift
+        // alone can't clear). Without this branch the ship grinds the
+        // shoreline forever — visible on mobile where there are no keys to
+        // back it off. Apply a small reverse nudge + heel impulse so it
+        // un-sticks and resumes drifting in open water.
+        fwdVelRef.current = -0.3;
+        heelRef.current += (Math.random() < 0.5 ? -1 : 1) * 0.18;
         collisionRef.current = 1;
       } else {
         collisionRef.current = Math.min(1, collisionRef.current + 0.5);
@@ -3457,7 +3467,13 @@ export function ClaudeSplashGlobe(props: Props) {
       transition={{ duration: 0.7 }}
       style={{
         position: 'fixed',
-        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        // 100dvh follows iOS Safari's collapsing toolbars; the fallback covers
+        // browsers without dynamic-viewport support.
+        height: '100dvh',
+        minHeight: '100vh',
         zIndex: 60,
         overflow: 'hidden',
         pointerEvents: 'auto',
@@ -3520,7 +3536,11 @@ export function ClaudeSplashGlobe(props: Props) {
         </Canvas>
       </div>
 
-      {/* HTML overlay UI */}
+      {/* HTML overlay UI.
+          On mobile we let this layer own scrolling (pointerEvents: auto +
+          overflowY: auto) so the dock is always reachable when the title
+          block + dock combined exceed the iOS visible viewport. Desktop
+          keeps the original click-through behaviour (canvas takes drags). */}
       <div
         style={{
           position: 'absolute',
@@ -3529,8 +3549,17 @@ export function ClaudeSplashGlobe(props: Props) {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: isMobile ? '64px 12px 64px' : '52px 24px 92px',
-          pointerEvents: 'none',
+          padding: isMobile
+            ? '20px 12px calc(20px + env(safe-area-inset-bottom))'
+            : '52px 24px 92px',
+          paddingTop: isMobile
+            ? 'calc(20px + env(safe-area-inset-top))'
+            : 52,
+          gap: isMobile ? 16 : 0,
+          pointerEvents: isMobile ? 'auto' : 'none',
+          overflowY: isMobile ? 'auto' : 'visible',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
         }}
       >
         {/* Title block — ASCII title (matches Opening.tsx) + elegant subtitle */}
@@ -3711,7 +3740,7 @@ export function ClaudeSplashGlobe(props: Props) {
         </CornerIconButton>
       </div>
 
-      <Ticker />
+      {!isMobile && <Ticker />}
 
       {settingsOpen && (
         <Suspense fallback={null}>
@@ -3857,27 +3886,6 @@ function BeginButton({
             ◆
           </span>
           <span style={{ paddingTop: 1 }}>Charting{dots}</span>
-          {!compact && loadingMessage && (
-            <span
-              style={{
-                position: 'absolute',
-                right: 18,
-                fontFamily: CARD_LABEL_FONT,
-                fontStyle: 'italic',
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.01em',
-                textTransform: 'none',
-                color: 'rgba(245,236,214,0.55)',
-                maxWidth: 240,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {loadingMessage}
-            </span>
-          )}
         </>
       )}
 

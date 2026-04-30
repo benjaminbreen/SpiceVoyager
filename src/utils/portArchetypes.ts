@@ -391,7 +391,7 @@ export const CORE_PORTS: PortDefinition[] = [
     id: 'macau',
     name: 'Macau',
     geography: 'peninsula',
-    climate: 'temperate',
+    climate: 'monsoon',
     culture: 'European',
     buildingStyle: 'luso-colonial',
     scale: 'Medium',
@@ -1216,6 +1216,39 @@ export function getClimateMoisture(climate: ClimateProfile): [number, number] {
     case 'monsoon':  return [0.4, 0.8];
     case 'mediterranean': return [0.15, 0.45];
   }
+}
+
+/** Strength of a turbid river plume at world-local (localX, localZ), in [0, 1].
+ *  Non-zero only for archetypes with an explicit river mouth (estuary / tidal_river,
+ *  or any def that sets riverMouthWidth). Peaks at the mouth and fans seaward and
+ *  laterally — anisotropic so the plume reaches further out to sea than it does
+ *  sideways along the coast. Used by the terrain shader to silt-tint ocean color
+ *  near deltas. */
+export function getRiverPlumeStrength(
+  localX: number,
+  localZ: number,
+  def: PortDefinition,
+): number {
+  const hasExplicitRiver =
+    def.geography === 'estuary' ||
+    def.geography === 'tidal_river' ||
+    def.riverMouthWidth !== undefined;
+  if (!hasExplicitRiver) return 0;
+
+  const MESH_HALF = _archetypeMeshHalf;
+  const wx = localX / MESH_HALF;
+  const wz = localZ / MESH_HALF;
+  const [wrx, wrz] = rotateToOpen(wx, wz, def.openDirection);
+
+  const mouthW = def.riverMouthWidth ?? 0.18;
+  // Plume reaches ~4× mouth width seaward, ~2.5× laterally — wider rivers carry
+  // sediment further. Only counts seaward (negative wrz, where the rotated frame
+  // puts the open ocean).
+  const lateral = Math.abs(wrx) / Math.max(mouthW * 2.5, 0.04);
+  const seaward = Math.max(0, -wrz) / Math.max(mouthW * 4.0, 0.06);
+  const radial = Math.sqrt(lateral * lateral + seaward * seaward);
+  // Hold strong out to ~0.5, taper to nothing by 1.2.
+  return 1 - smoothstep(0.5, 1.2, radial);
 }
 
 // ── Archetype Radius ───────────────────────────────────────────────────────────

@@ -1066,6 +1066,9 @@ export function NagasakiPress({ poiId, position, rotationY }: {
   const pineY = terrainAt(pinePos[0], pinePos[1]) - anchorY;
   const basinY = terrainAt(basinPos[0], basinPos[1]) - anchorY;
   const gravesY = terrainAt(gravesPos[0], gravesPos[1]) - anchorY;
+  // Sample terrain at the back-wall midpoint so the wall sits on the hill
+  // rather than floating/sinking when the slope past the church is steep.
+  const backWallY = terrainAt(0, 13) - anchorY;
 
   // Atmosphere — torch spots at each stone lantern + 1 at the gate.
   const torchSpots: POITorchSpot[] = useMemo(() => {
@@ -1116,7 +1119,7 @@ export function NagasakiPress({ poiId, position, rotationY }: {
       <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
         {/* Gravel approach path — thin strip between gate and church steps */}
         <mesh
-          position={[0, anchorY * 0 + 0.04, (gatePos[1] + churchPos[1]) * 0.5 - 1.5]}
+          position={[0, 0.06, (gatePos[1] + churchPos[1]) * 0.5 - 1.5]}
           rotation={[-Math.PI / 2, 0, 0]}
           material={gravelMat}
         >
@@ -1141,8 +1144,8 @@ export function NagasakiPress({ poiId, position, rotationY }: {
         {/* Church */}
         <NagasakiChurch position={[churchPos[0], churchY, churchPos[1]]} rotationY={0} />
 
-        {/* Press shed */}
-        <PressShed position={[pressPos[0], pressY, pressPos[1]]} rotationY={-Math.PI / 2} />
+        {/* Press shed — open front faces -X (toward the courtyard/path) */}
+        <PressShed position={[pressPos[0], pressY, pressPos[1]]} rotationY={Math.PI / 2} />
 
         {/* Bell tower */}
         <BellTower position={[bellPos[0], bellY, bellPos[1]]} rotationY={0} />
@@ -1171,7 +1174,7 @@ export function NagasakiPress({ poiId, position, rotationY }: {
 
         {/* Stone perimeter wall along the back edge (uphill side) */}
         <BoundaryWall
-          position={[0, churchY, 13]}
+          position={[0, backWallY, 13]}
           width={28}
           depth={1.4}
           height={1.5}

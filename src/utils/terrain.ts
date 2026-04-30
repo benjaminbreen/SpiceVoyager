@@ -1,6 +1,7 @@
 import { createNoise2D } from 'simplex-noise';
 import {
   PortDefinition, ARCHETYPE_RADIUS, getArchetypeShape, getClimateMoisture,
+  getRiverPlumeStrength,
   reseedArchetypeNoise, setArchetypeMeshHalf, resolveDirRadians,
   type ClimateProfile,
 } from './portArchetypes';
@@ -95,6 +96,63 @@ export function setActiveCanals(entries: { layout: CanalLayout; cx: number; cz: 
 
 export function getActiveCanals() {
   return _activeCanals;
+}
+
+// ── Natural-feature POI islands (volcanoes, etc.) ────────────────────────────
+//
+// Bespoke natural POIs (currently Krakatoa) bring their own visual cone but
+// no land underneath them in the procgen heightmap. That breaks ship
+// collision (sails right through), disembark (no land detected), and any
+// downstream code that expects the world to be self-consistent. The registry
+// below lets a natural POI publish a small disc-of-land bump at its location
+// — terrain queries inside the disc return a moderate above-sea height with
+// a smooth ramp to deep water at the perimeter, so:
+//   • Ship.tsx's terrainHeight > -0.15 collision check fires inside the disc
+//   • GameScene disembark cliff-rise check passes (gentle ramp, not steep)
+//   • Walking-mode ground sampling sees a flat plateau to stand on
+// The visual cone deliberately extends *past* the bump so its lower flank
+// reads as rocky outcrops emerging from water, while the safe disembark
+// area is the inner plateau.
+interface NaturalIsland {
+  cx: number;
+  cz: number;
+  /** Beyond this radius the bump has no effect — pure terrain shows through. */
+  outerRadius: number;
+  /** Within this radius the bump is full peakHeight — flat plateau. */
+  innerRadius: number;
+  /** Height above SEA_LEVEL at the plateau center. */
+  peakHeight: number;
+}
+let _naturalIslands: NaturalIsland[] = [];
+
+export function setNaturalIslands(islands: NaturalIsland[]) {
+  _naturalIslands = islands;
+}
+
+/** Apply any natural-POI island bumps to a base terrain height. The bump
+ *  takes the max with the existing terrain so we never lower real land. */
+function applyNaturalIslandBump(x: number, z: number, height: number): number {
+  if (_naturalIslands.length === 0) return height;
+  let result = height;
+  for (const isle of _naturalIslands) {
+    const dx = x - isle.cx;
+    const dz = z - isle.cz;
+    const d2 = dx * dx + dz * dz;
+    const outerSq = isle.outerRadius * isle.outerRadius;
+    if (d2 >= outerSq) continue;
+    const d = Math.sqrt(d2);
+    let bump: number;
+    if (d <= isle.innerRadius) {
+      bump = isle.peakHeight;
+    } else {
+      const t = (d - isle.innerRadius) / (isle.outerRadius - isle.innerRadius);
+      const eased = 1 - smoothstep(0, 1, t);
+      bump = isle.peakHeight * eased;
+    }
+    const bumped = SEA_LEVEL + bump;
+    if (bumped > result) result = bumped;
+  }
+  return result;
 }
 
 // ── Terrain mesh extent (set by World.tsx to match actual mesh half-size) ─────
@@ -205,6 +263,10 @@ export interface TerrainData {
   reefFactor: number;
   paddyFlooded: boolean;
   slope: number;
+  /** Climate-scaled silty river-plume strength in [0,1]. Non-zero only near
+   *  the mouth of an estuary/tidal-river archetype; consumed by the ocean
+   *  surface overlay to brown the water near deltas. */
+  plumeFactor: number;
 }
 
 const WET_SAND_COLOR: TerrainColor = [0.76, 0.68, 0.50];
@@ -302,6 +364,9 @@ function getHeightOnly(x: number, z: number): number {
       }
     }
   }
+  // Natural-POI islands (volcano discs, etc.) — applied last so they show
+  // through any base terrain or canal carving. The bump only ever raises.
+  height = applyNaturalIslandBump(x, z, height);
   return height;
 }
 
@@ -573,6 +638,9 @@ export function getTerrainData(x: number, z: number): TerrainData {
   // Shape functions use mesh-scale coords internally so they handle their own
   // edge fading (islands fade to ocean, continents extend to edges).
   let appliedArchetype = false;
+  let activeArchetype: PortDefinition | null = null;
+  let activeDx = 0;
+  let activeDz = 0;
   for (const pa of _placedArchetypes) {
     if (pa.def.geography === 'archipelago') continue;
 
@@ -587,6 +655,9 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
     finalHeight = archetypeHeight;
     appliedArchetype = true;
+    activeArchetype = pa.def;
+    activeDx = dx;
+    activeDz = dz;
 
     // Climate moisture override
     const [moistMin, moistMax] = getClimateMoisture(pa.def.climate);
@@ -672,6 +743,10 @@ export function getTerrainData(x: number, z: number): TerrainData {
     }
   }
 
+  // Natural-POI island bumps (volcano discs, etc.) — last, so they raise
+  // above any other carving. Mirrors getHeightOnly so all consumers agree.
+  finalHeight = applyNaturalIslandBump(x, z, finalHeight);
+
   // ── Slope estimation (central differences via lightweight height function) ──
   const SLOPE_EPS = 2.0;
   const hR = getHeightOnly(x + SLOPE_EPS, z);
@@ -742,6 +817,22 @@ export function getTerrainData(x: number, z: number): TerrainData {
       * clamp01(1 - coastSteepness * 1.2)
     : 0;
 
+  // ── River-plume strength (climate-scaled) ────────────────────────────────────
+  // Reused by the seafloor tint below and by the ocean surface overlay.
+  let plumeFactor = 0;
+  if (activeArchetype) {
+    const rawPlume = getRiverPlumeStrength(activeDx, activeDz, activeArchetype);
+    if (rawPlume > 0) {
+      const climateScale =
+        activeArchetype.climate === 'monsoon'       ? 1.00 :
+        activeArchetype.climate === 'temperate'     ? 0.85 :
+        activeArchetype.climate === 'tropical'      ? 0.55 :
+        activeArchetype.climate === 'mediterranean' ? 0.40 :
+        0; // arid: Red Sea / Gulf rivers don't carry visible silt
+      plumeFactor = rawPlume * climateScale;
+    }
+  }
+
   // Determine inland biome first, then blend coastal colors on top.
   let biome: BiomeType = 'ocean';
   let color: TerrainColor = deepWaterColor;
@@ -777,6 +868,20 @@ export function getTerrainData(x: number, z: number): TerrainData {
     color = mixColor(deepWaterColor, shallowWaterColor, underwaterBlend);
     color = mixColor(color, surfZoneColor, surfFactor * 0.25);
     color = mixColor(color, ROCKY_SHORE_COLOR, underwaterBlend * coastSteepness * 0.18);
+
+    // Silty river-plume tint near deltas — sediment carried out by the outflow
+    // makes the water near a river mouth read brown-green instead of clean blue.
+    // Pushed hard on the seafloor since the reflective Water surface overhead
+    // washes most of this out; the matching tint on the ocean overlay (Ocean.tsx)
+    // is what actually carries the effect to the player.
+    if (plumeFactor > 0) {
+      const depthScale = 0.55 + 0.45 * underwaterBlend; // ~half strength in deep, full in shallows
+      // Muted olive-brown silt — equal R/G with a touch of B reads as muddy
+      // sediment without going pure yellow-tan. R must not exceed G or the lerp
+      // from the cyan-green water palette drifts back through magenta.
+      const siltColor: TerrainColor = [0.38, 0.38, 0.22];
+      color = mixColor(color, siltColor, plumeFactor * depthScale * 0.85);
+    }
 
     // Coral reef color tinting on the seafloor
     if (reefFactor > 0.1) {
@@ -1042,6 +1147,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
     reefFactor,
     paddyFlooded,
     slope,
+    plumeFactor,
   };
 }
 

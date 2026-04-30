@@ -258,28 +258,44 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       .attr('stroke', COLORS.landStroke)
       .attr('stroke-width', 0.5);
 
-    // Gateway labels — italic sea / strait names that give the chart its
-    // cartographic voice. Kept faint so they recede behind port labels.
+    // Gateway labels — three tiers (primary ocean basins / secondary seas /
+    // detail features). Tier governs typography, base font size, opacity, and
+    // the zoom level at which the label fades in. Collision avoidance against
+    // port labels happens later in cullLabelOverlaps.
     const gatewayGroup = g.append('g').attr('class', 'gateway-labels').attr('pointer-events', 'none');
     for (const [id, gw] of Object.entries(GATEWAYS)) {
       if (!gw.label) continue;
       const pos = projection(gw.coords);
       if (!pos) continue;
       const offset = gw.labelOffset ?? [0, 0];
+      const tier = gw.labelTier ?? 'detail';
+      const isPrimary = tier === 'primary';
+      const text = isPrimary ? gw.label.toUpperCase() : gw.label;
       gatewayGroup.append('text')
-        .attr('class', 'gateway-label')
+        .attr('class', `gateway-label tier-${tier}`)
+        .attr('data-tier', tier)
         .attr('data-x', pos[0] + offset[0])
         .attr('data-y', pos[1] + offset[1])
         .attr('x', pos[0] + offset[0])
         .attr('y', pos[1] + offset[1])
         .attr('text-anchor', 'middle')
-        .attr('fill', 'rgba(180, 200, 220, 0.38)')
-        .attr('font-size', '11px')
-        .attr('font-weight', '400')
-        .attr('font-style', 'italic')
+        .attr('fill',
+          isPrimary           ? 'rgba(186, 208, 232, 0.45)' :
+          tier === 'secondary'? 'rgba(176, 198, 222, 0.40)' :
+                                'rgba(162, 186, 210, 0.32)'
+        )
+        .attr('font-size',
+          isPrimary           ? '11px' :
+          tier === 'secondary'? '9.5px' :
+                                '8.5px'
+        )
+        .attr('font-weight', isPrimary ? '500' : '450')
+        .attr('font-style', isPrimary ? 'normal' : 'italic')
         .attr('font-family', '"Fraunces", serif')
-        .attr('letter-spacing', '0.04em')
-        .text(gw.label);
+        .attr('letter-spacing', isPrimary ? '0.22em' : '0.10em')
+        .style('text-rendering', 'geometricPrecision')
+        .style('font-variation-settings', isPrimary ? '"opsz" 144, "SOFT" 30' : '"opsz" 24, "SOFT" 60')
+        .text(text);
     }
 
     // Decorative compass rose — placed in mid-Atlantic (empty quadrant)
@@ -374,17 +390,27 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
           if (travel) {
             const midIdx = Math.floor(projectedPoints.length / 2);
             const midPt = projectedPoints[midIdx];
-            seaLaneGroup.append('text')
-              .attr('class', 'route-days-label')
-              .attr('x', midPt[0])
-              .attr('y', midPt[1] - 8)
-              .attr('text-anchor', 'middle')
-              .attr('fill', COLORS.routeDays)
-              .attr('font-size', '10px')
-              .attr('font-weight', '700')
-              .attr('font-family', '"Fraunces", serif')
-              .attr('letter-spacing', '0.04em')
-              .text(`${travel.days} days`);
+            const labelText = `${travel.days} days`;
+            // Halo: paint-order=stroke draws a wide dark stroke behind the
+            // glyphs, fill on top — auto-fits the text and counter-scales
+            // cleanly with the rest of the labels (no separate rect needed).
+            const renderDays = (cls: string, fill: string, strokeWidth: number) =>
+              seaLaneGroup.append('text')
+                .attr('class', cls)
+                .attr('x', midPt[0])
+                .attr('y', midPt[1] - 8)
+                .attr('text-anchor', 'middle')
+                .attr('fill', fill)
+                .attr('stroke', 'rgba(8, 14, 28, 0.95)')
+                .attr('stroke-width', strokeWidth)
+                .attr('stroke-linejoin', 'round')
+                .attr('paint-order', 'stroke')
+                .attr('font-size', '10px')
+                .attr('font-weight', '700')
+                .attr('font-family', '"Fraunces", serif')
+                .attr('letter-spacing', '0.04em')
+                .text(labelText);
+            renderDays('route-days-label', COLORS.routeDays, 4);
           }
         }
       }
@@ -519,8 +545,24 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
     // For each label, try four candidate positions around its dot (right,
     // left, above, below) and take the first one that doesn't overlap an
     // already-placed label. Only hide the label if every candidate collides.
+    // After port labels are placed, gateway (sea/strait) labels are placed
+    // against the same rect set, with port labels winning every contest.
     const cullLabelOverlaps = (k: number) => {
       const invK = 1 / k;
+      // Visible viewport in g's local svg coords. Any label whose bbox extends
+      // past these bounds is hidden — fixes labels clipping at the right edge
+      // (covered by the side panel) and the left/top/bottom edges of the chart.
+      const t = svgRef.current ? d3.zoomTransform(svgRef.current) : null;
+      const tx = t?.x ?? 0;
+      const ty = t?.y ?? 0;
+      const edgePad = 4 * invK;
+      const viewLeft   = (-tx) * invK + edgePad;
+      const viewRight  = (width  - tx) * invK - edgePad;
+      const viewTop    = (-ty) * invK + edgePad;
+      const viewBottom = (height - ty) * invK - edgePad;
+      const isOutOfBounds = (r: { x: number; y: number; w: number; h: number }) =>
+        r.x < viewLeft || r.x + r.w > viewRight ||
+        r.y < viewTop  || r.y + r.h > viewBottom;
       const nodes = g.selectAll<SVGTextElement, unknown>('.port-label').nodes();
       const items = nodes.map(node => {
         const cls = node.getAttribute('class') || '';
@@ -574,8 +616,83 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
             rect.y < b.y + b.h &&
             rect.y + rect.h > b.y
           );
-          if (!overlaps) {
+          if (!overlaps && !isOutOfBounds(rect)) {
             placed.push(rect);
+            placedOk = true;
+            break;
+          }
+        }
+        if (!placedOk) {
+          node.setAttribute('display', 'none');
+        }
+      }
+
+      // Gateway label pass — placed against port-label rects + each other.
+      // Tier governs both visibility threshold and placement priority. We also
+      // expand the port-label rects with a generous buffer so gateway labels
+      // sit visibly clear of port markers, not just non-overlapping pixel-wise.
+      const portBuffer = 8 * invK;
+      const portRects = placed.map(r => ({
+        x: r.x - portBuffer,
+        y: r.y - portBuffer,
+        w: r.w + portBuffer * 2,
+        h: r.h + portBuffer * 2,
+      }));
+      const gatewayPlaced: { x: number; y: number; w: number; h: number }[] = [...portRects];
+
+      const tierMinK: Record<string, number> = { primary: 0.42, secondary: 0.78, detail: 1.25 };
+      const tierPriority: Record<string, number> = { primary: 3, secondary: 2, detail: 1 };
+
+      const gwNodes = g.selectAll<SVGTextElement, unknown>('.gateway-label').nodes();
+      const gwItems = gwNodes.map(node => {
+        const tier = node.getAttribute('data-tier') || 'detail';
+        return { node, tier, priority: tierPriority[tier] ?? 1 };
+      });
+      gwItems.sort((a, b) => b.priority - a.priority);
+
+      const gwPlacements: { dx: number; dy: number; anchor: 'start' | 'end' | 'middle' }[] = [
+        { dx:  0,         dy:  0,         anchor: 'middle' }, // base
+        { dx:  0,         dy: -10 * invK, anchor: 'middle' }, // up
+        { dx:  0,         dy:  12 * invK, anchor: 'middle' }, // down
+        { dx:  14 * invK, dy:  0,         anchor: 'start'  }, // right
+        { dx: -14 * invK, dy:  0,         anchor: 'end'    }, // left
+      ];
+      const gwPad = 2 * invK;
+
+      for (const { node, tier } of gwItems) {
+        if (k < (tierMinK[tier] ?? 1.25)) {
+          node.setAttribute('display', 'none');
+          continue;
+        }
+        const bx = parseFloat(node.getAttribute('data-x') || '0');
+        const by = parseFloat(node.getAttribute('data-y') || '0');
+        node.removeAttribute('display');
+
+        let placedOk = false;
+        for (const { dx, dy, anchor } of gwPlacements) {
+          node.setAttribute('x', String(bx + dx));
+          node.setAttribute('y', String(by + dy));
+          node.setAttribute('text-anchor', anchor);
+          let bbox: SVGRect;
+          try {
+            bbox = node.getBBox();
+          } catch {
+            break;
+          }
+          const rect = {
+            x: bbox.x - gwPad,
+            y: bbox.y - gwPad,
+            w: bbox.width + gwPad * 2,
+            h: bbox.height + gwPad * 2,
+          };
+          const overlaps = gatewayPlaced.some(b =>
+            rect.x < b.x + b.w &&
+            rect.x + rect.w > b.x &&
+            rect.y < b.y + b.h &&
+            rect.y + rect.h > b.y
+          );
+          if (!overlaps && !isOutOfBounds(rect)) {
+            gatewayPlaced.push(rect);
             placedOk = true;
             break;
           }
@@ -597,17 +714,23 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
         const fontSize = Math.min(11, Math.max(7, 11 * invK));
         g.selectAll('.port-label').attr('font-size', `${fontSize}px`);
 
-        // Gateway (sea/strait) labels — hidden at extreme zoom, counter-scaled otherwise
-        const gatewayFontSize = Math.min(12, Math.max(8, 11 * invK));
-        g.selectAll('.gateway-label')
-          .attr('font-size', `${gatewayFontSize}px`)
-          .attr('display', (k < 0.55 || k > 3.5) ? 'none' : null)
-          .each(function() {
-            const el = d3.select(this);
-            const bx = parseFloat(el.attr('data-x'));
-            const by = parseFloat(el.attr('data-y'));
-            el.attr('x', bx).attr('y', by);
-          });
+        // Gateway labels — counter-scaled per tier so each tier holds a roughly
+        // constant on-screen size. Visibility is decided in cullLabelOverlaps:
+        // tiers fade in at increasing zoom (primary always, secondary at ~0.8,
+        // detail at ~1.25), and any label colliding with a port label is hidden.
+        g.selectAll<SVGTextElement, unknown>('.gateway-label').each(function() {
+          const el = d3.select(this);
+          const tier = el.attr('data-tier') || 'detail';
+          const baseSize = tier === 'primary' ? 11 : tier === 'secondary' ? 9.5 : 8.5;
+          const minSize  = tier === 'primary' ? 8.5 : tier === 'secondary' ? 7.5 : 7;
+          const maxSize  = tier === 'primary' ? 12 : tier === 'secondary' ? 10.5 : 9.5;
+          const fontSize = Math.min(maxSize, Math.max(minSize, baseSize * invK));
+          el.attr('font-size', `${fontSize}px`);
+          // Reset to base anchor before cullLabelOverlaps re-positions it.
+          const bx = parseFloat(el.attr('data-x'));
+          const by = parseFloat(el.attr('data-y'));
+          el.attr('x', bx).attr('y', by).attr('text-anchor', 'middle');
+        });
 
         g.selectAll('.port-dot')
           .attr('r', function() {
@@ -623,7 +746,8 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
 
         const daysFontSize = Math.min(10, Math.max(6, 10 * invK));
         g.selectAll('.route-days-label')
-          .attr('font-size', `${daysFontSize}px`);
+          .attr('font-size', `${daysFontSize}px`)
+          .attr('stroke-width', 4 * invK);
 
         g.selectAll('.sea-lane')
           .attr('stroke-width', function() {

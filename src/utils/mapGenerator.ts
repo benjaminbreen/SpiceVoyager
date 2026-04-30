@@ -1,4 +1,5 @@
-import { getTerrainData, setPlacedArchetypes, setActiveCanals } from './terrain';
+import { getTerrainData, setPlacedArchetypes, setActiveCanals, setNaturalIslands } from './terrain';
+import { getPOIsForPort } from './poiDefinitions';
 import { generateCity } from './cityGenerator';
 import { generateHinterland } from './hinterland';
 import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
@@ -404,6 +405,38 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
   // worldGeneration, will sink at canal cells and let the ocean overlay show
   // through as visible water.
   setActiveCanals(canalRegistrations);
+
+  // Register natural-POI island bumps (volcanoes, etc.) so the heightmap
+  // reads as land at their positions — ship collision, disembark, and
+  // ground-sample paths all consume getTerrainHeight, so plumbing it here
+  // covers all of them with no per-system patches. Bespoke natural POIs
+  // bring their own visual cone; the bump is the underlying disc the
+  // player can disembark on.
+  const naturalIslands = generatedPorts.flatMap((port) =>
+    getPOIsForPort(port)
+      .filter((poi) => poi.kind === 'natural'
+        && (poi.location.kind === 'hinterland' || poi.location.kind === 'coords'))
+      .map((poi) => {
+        const [lx, lz] = (poi.location as { position: [number, number] }).position;
+        return {
+          // POI hinterland coords are in port-local space; the port sits at
+          // its world (cx, cz), so add to translate into world space.
+          cx: port.position[0] + lx,
+          cz: port.position[2] + lz,
+          // Sized to match the volcano cone's visible coastline (cone meets
+          // sea at r ≈ 56 with ±22% noise, so outerRadius=60 gets collision
+          // and the visible rocks lining up reasonably).
+          // - inner plateau (≤30u): flat disc the player can disembark onto
+          // - outer ramp (30→60u): smooth rise from sea level to peakHeight,
+          //   shallow enough that GameScene's 4m-over-3m cliff-rise check
+          //   accepts a disembark anywhere on the ramp.
+          innerRadius: 30,
+          outerRadius: 60,
+          peakHeight: 2.5,
+        };
+      })
+  );
+  setNaturalIslands(naturalIslands);
 
   return generatedPorts;
 }

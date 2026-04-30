@@ -61,12 +61,17 @@ function getReflectionTuning(waterPaletteId: WaterPaletteId): ReflectionTuning {
         distanceFadeFloor: 0.44,
       };
     case 'monsoon':
+      // Sediment-laden monsoon water scatters light from below instead of
+      // mirroring the sky. Slightly lower reflectance + slightly higher scatter
+      // than tropical/arid lets the water read from its own dark-teal palette
+      // (and the river-plume silt tint) instead of being washed by overcast
+      // sky reflection past the shoreline.
       return {
-        reflectanceBase: 0.22,
-        reflectanceBoost: 0.40,
-        reflectanceCap: 0.56,
-        scatterScale: 0.90,
-        distanceFadeFloor: 0.46,
+        reflectanceBase: 0.16,
+        reflectanceBoost: 0.32,
+        reflectanceCap: 0.42,
+        scatterScale: 1.05,
+        distanceFadeFloor: 0.40,
       };
     case 'temperate':
     default:
@@ -107,6 +112,12 @@ function ShallowWaterTint() {
     const _outerShallow = new THREE.Color().setRGB(...waterPalette.oceanOverlay.outerShallow);
     const turquoise = new THREE.Color();
 
+    // Muted olive-brown silt for the river-plume tint. Equal R/G keeps the
+    // lerp from the cyan-green oceanOverlay palette out of the magenta
+    // midpoint; raised B pulls it off pure yellow-tan toward muddy olive,
+    // which reads more like real estuary water than straw.
+    const _siltColor = new THREE.Color().setRGB(0.38, 0.38, 0.22);
+
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i);
       const worldZ = -position.getY(i);
@@ -117,14 +128,24 @@ function ShallowWaterTint() {
       const aboveWater = terrain.height >= SEA_LEVEL;
       const depthBelowSea = SEA_LEVEL - terrain.height;
       const depthFade = aboveWater ? 0 : 1 - smoothstep(0.5, 6.2, depthBelowSea);
-      const alpha =
-        tintStrength *
-        0.55 *
-        (1 - terrain.coastSteepness * 0.20) *
-        depthFade;
+      // River plume forces overlay alpha visibility independent of shoreline
+      // factors — silt extends out into deeper water around the mouth, where
+      // tintStrength would otherwise be ~0 and the reflective sky would win.
+      const plumeAlpha = aboveWater ? 0 : terrain.plumeFactor * 0.55;
+      const alpha = Math.min(
+        1,
+        tintStrength * 0.55 * (1 - terrain.coastSteepness * 0.20) * depthFade
+          + plumeAlpha,
+      );
       turquoise.copy(_turquoiseBase);
       turquoise.lerp(_outerShallow, terrain.shallowFactor * 0.68);
       turquoise.lerp(_paleSurf, terrain.surfFactor * 0.58);
+      // Silty river-plume tint — sediment carried by the outflow turns the
+      // water brown-green near deltas. Mixes hard so it reads against the
+      // sky reflection on the Water plane above.
+      if (terrain.plumeFactor > 0.01) {
+        turquoise.lerp(_siltColor, Math.min(1, terrain.plumeFactor * 0.95));
+      }
 
       colors[i * 3] = turquoise.r;
       colors[i * 3 + 1] = turquoise.g;
@@ -157,6 +178,9 @@ function ShallowWaterTint() {
       uniforms: {
         uTime: { value: 0 },
         uDaylight: { value: 1.0 },
+        // Reef caustics produce a saturated pink/cyan animated dapple over
+        // shallow reef-zone water. Off by default — toggle via renderDebug.reefCaustics.
+        uReefCaustics: { value: 0.0 },
       },
       vertexShader: /* glsl */ `
         uniform float uTime;
@@ -191,6 +215,7 @@ function ShallowWaterTint() {
       fragmentShader: /* glsl */ `
         uniform float uTime;
         uniform float uDaylight;
+        uniform float uReefCaustics;
         varying vec3 vColor;
         varying float vAlpha;
         varying float vFoam;
@@ -244,8 +269,11 @@ function ShallowWaterTint() {
             alpha = max(alpha, foamMask * 0.36);
           }
 
-          // Coral reef caustic shimmer — warm dappled light over reef patches (suppressed at night)
-          if (vReef > 0.1 && uDaylight > 0.15) {
+          // Coral reef caustic shimmer — warm dappled light over reef patches (suppressed at night).
+          // Gated by uReefCaustics (renderDebug.reefCaustics) — defaults off because the saturated
+          // pink/cyan produces visible chromatic stippling, especially where the silt overlay
+          // raises water-surface alpha and exposes the caustic that would otherwise be alpha-masked.
+          if (uReefCaustics > 0.5 && vReef > 0.1 && uDaylight > 0.15) {
             float caustic = noise(vWorldXZ * 1.2 + uTime * vec2(0.12, -0.08));
             caustic = smoothstep(0.55, 0.65, caustic);
             vec3 reefWarm = mix(vec3(0.75, 0.48, 0.58), vec3(0.40, 0.72, 0.58), caustic);
@@ -291,10 +319,13 @@ function ShallowWaterTint() {
       mat.uniforms.uTime.value = state.clock.elapsedTime;
 
       // Daylight factor: 1 = full day, 0 = deep night
-      const time = useGameStore.getState().timeOfDay;
+      const storeState = useGameStore.getState();
+      const time = storeState.timeOfDay;
       const theta = ((time - 6) / 24) * Math.PI * 2;
       const sunH = Math.sin(theta);
       mat.uniforms.uDaylight.value = smoothstep(-0.15, 0.25, sunH);
+      // Reef caustic gate — runtime-toggleable via dev panel
+      mat.uniforms.uReefCaustics.value = storeState.renderDebug.reefCaustics ? 1.0 : 0.0;
     }
   });
 

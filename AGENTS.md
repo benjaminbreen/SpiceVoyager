@@ -355,6 +355,8 @@ Three small modules share one invariant: the renderer, the ground-height resolve
 ### View modes
 `viewMode: 'default' | 'cinematic' | 'topdown' | 'firstperson'`, cycled by `cycleViewMode()`. Each mode retargets camera offset + look behavior.
 
+**Default view is angled top-down (~45°), not third-person.** The camera sits at roughly `(0.5, 1, 1) * cameraZoom` from the player and looks at the player. There is effectively no visible horizon or skyline — distant features that try to read as "background" (mountains on the horizon, sky-mounted icons, etc.) won't be framed the way they are in a chase-cam game. Any landmark intended to be visible *from far away* must live on the map plane within map bounds, and gets its sense of distance from on-plane separation (water gap, impassable terrain, far-quadrant placement near the map edge), not from horizon framing. `topdown` mode is even flatter (near-vertical with a tiny tilt offset) and reinforces this constraint.
+
 ### Wind, day/night
 - `wind.ts` exposes direction/speed; Ocean.tsx uses it for waves, Ship.tsx for sail animation.
 - `timeOfDay: 0-24` + `dayCount` advance via `gameDate.ts`. Day length scales game time.

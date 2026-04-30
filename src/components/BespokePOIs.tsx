@@ -17,6 +17,9 @@ import { SEA_LEVEL } from '../constants/world';
 import { SocotraGrove } from './poi/SocotraGrove';
 import { HormuzPearlBazaar } from './poi/HormuzPearlBazaar';
 import { NagasakiPress } from './poi/NagasakiPress';
+import { BantamKrakatoa } from './poi/BantamKrakatoa';
+import { VeniceSpezieria } from './poi/VeniceSpezieria';
+import { LisbonCasaDaIndia } from './poi/LisbonCasaDaIndia';
 
 type PortsProp = ReturnType<typeof useGameStore.getState>['ports'];
 
@@ -54,6 +57,29 @@ const BESPOKE_POI_RENDERERS: Record<string, BespokeRenderer> = {
     // if it ends up backwards in playtest.
     rotationSeed: 0x4c91,
   },
+  'bantam-krakatoa': {
+    Component: BantamKrakatoa,
+    // Rotation just spins the satellite peaks around the central cone — any
+    // value is fine, this seed is chosen for an asymmetric three-peak read.
+    rotationSeed: 0x9f23,
+  },
+  'venice-theriac-spezieria': {
+    Component: VeniceSpezieria,
+    // The compound's local -Z faces the canal. Venice openDirection 'E' →
+    // the lagoon water is to world +X. We want the canal-facing front of
+    // the compound to point roughly toward the city's water — but since
+    // the spezieria sits inland near Rialto, any rotation reads OK as long
+    // as the canal alignment looks intentional. Seed chosen empirically.
+    rotationSeed: 0x7e21,
+  },
+  'lisbon-casa-da-india': {
+    Component: LisbonCasaDaIndia,
+    // Compound's local -Z faces the Tagus. Lisbon openDirection 'W' → the
+    // river is at world -X, so the quay-facing front (-Z local) should
+    // resolve roughly toward -X world. Tune via seed in playtest if the
+    // caravel ends up moored on the inland side.
+    rotationSeed: 0x6c10,
+  },
 };
 
 export const BESPOKE_POI_IDS: ReadonlySet<string> = new Set(Object.keys(BESPOKE_POI_RENDERERS));
@@ -84,7 +110,14 @@ export function BespokePOIs({ ports }: { ports: PortsProp }) {
           console.warn(`[BespokePOI] ${poi.id} skipped — no valid placement on port ${port.id}`);
           continue;
         }
-        const baseY = poi.kind === 'wreck' ? SEA_LEVEL - 0.05 : getTerrainHeight(placed.x, placed.z);
+        const baseY = poi.kind === 'wreck'
+          ? SEA_LEVEL - 0.05
+          // Natural offshore features (volcanoes, etc.) sit at sea level and
+          // bring their own island/peak geometry — terrainHeight in deep water
+          // would sink the cone below the surface.
+          : poi.kind === 'natural'
+            ? SEA_LEVEL
+            : getTerrainHeight(placed.x, placed.z);
         const rotationY = ((hashStr(poi.id) ^ renderer.rotationSeed) >>> 0) / 0xffffffff * Math.PI * 2;
         out.push({
           poi,

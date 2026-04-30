@@ -45,6 +45,10 @@ export const POI_INTERACTION_RADIUS_BY_KIND: Partial<Record<POIKind, number>> = 
   // enough to catch a ship drifting alongside.
   wreck: 16,
   smugglers_cove: 12,
+  // Natural features — large, distant landmarks (volcanoes, sacred peaks)
+  // typically far offshore or deep in hinterland. Generous radius so a ship
+  // circling the island or a walker on a viewpoint trail catches the toast.
+  natural: 22,
 };
 
 export interface POIHit {
@@ -73,6 +77,10 @@ const POI_FOOTPRINT_BY_KIND: Partial<Record<POIKind, number>> = {
   garden: 12,
   caravanserai: 14,
   ruin: 12,
+  // Natural features bring their own island/peak geometry, so the land-check
+  // is skipped at the resolveSnappedPOI level. This footprint is unused by
+  // isPOIOnLand but kept here so getPOIFootprint stays well-defined.
+  natural: 24,
 };
 
 const LAND_HEIGHT_MIN = SEA_LEVEL + 0.3;
@@ -184,6 +192,15 @@ export function resolveSnappedPOI(
 
   // Landmark POIs are pinned to existing buildings — no snap needed.
   if (poi.location.kind === 'landmark') {
+    const out: SnappedPosition = { x: resolved.x, z: resolved.z, snapped: false, rejected: false };
+    snappedCache.set(key, out);
+    return out;
+  }
+
+  // Natural features (volcanoes, etc.) bring their own island/peak geometry
+  // and are intentionally placed in deep water or hinterland with no land
+  // backing. Skip the snap entirely — honor the authored coord verbatim.
+  if (poi.kind === 'natural') {
     const out: SnappedPosition = { x: resolved.x, z: resolved.z, snapped: false, rejected: false };
     snappedCache.set(key, out);
     return out;
