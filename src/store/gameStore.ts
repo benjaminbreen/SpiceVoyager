@@ -86,6 +86,7 @@ export const PORT_FACTION: Record<string, Nationality> = {
   hormuz: 'Portuguese',  // Portuguese-occupied
   malacca: 'Portuguese',
   aden: 'Ottoman',
+  mocha: 'Ottoman',
   zanzibar: 'Portuguese', // nominal Portuguese control
   macau: 'Portuguese',
   mombasa: 'Portuguese',
@@ -93,6 +94,7 @@ export const PORT_FACTION: Record<string, Nationality> = {
   muscat: 'Portuguese',  // Portuguese fort
   aceh: 'Acehnese',
   bantam: 'Javanese',
+  manila: 'Spanish',
   // Nagasaki — Tokugawa shogunate port. Portuguese traders operate here under
   // license in 1612 but the port itself is Japanese-ruled.
   nagasaki: 'Japanese',
@@ -110,6 +112,7 @@ export const PORT_FACTION: Record<string, Nationality> = {
   amsterdam: 'Dutch',
   seville: 'Spanish',
   london: 'English',
+  venice: 'Venetian',
   // West Africa
   elmina: 'Portuguese',     // São Jorge da Mina fortress
   luanda: 'Portuguese',     // São Paulo de Luanda
@@ -690,6 +693,7 @@ export interface RestSummary {
 export type Nationality =
   | 'English' | 'Portuguese' | 'Dutch' | 'Spanish' | 'French' | 'Danish'
   | 'Venetian'
+  | 'Pirate'
   | 'Mughal' | 'Gujarati' | 'Persian' | 'Ottoman' | 'Omani'
   | 'Swahili'
   | 'Malay' | 'Acehnese' | 'Javanese' | 'Moluccan'
@@ -891,12 +895,14 @@ export interface RenderDebugSettings {
   worldMapChart: boolean;
   cityFieldOverlay: boolean;
   cityFieldMode: CityFieldKey | 'district';
+  /** Floating religious plumb bobs above sacred sites. */
   sacredMarkers: boolean;
+  /** Cyan interactable POI pillars. */
+  poiBeacons: boolean;
   /** Render the chunky POI silhouettes (wreck/cove/garden/caravanserai) and
    *  the bespoke shrine geometry that backs procedural shrines. POIs are
    *  *world content* (the structures exist in fiction), not optional UI
-   *  affordances, so default true. Separate from `sacredMarkers` (which
-   *  controls religious-site plumbobs and POI cyan beacons) so a player
+   *  affordances, so default true. Separate from marker/beacon toggles so a player
    *  who turns markers off doesn't lose visible buildings. */
   poiVisibility: boolean;
   settingsV2: boolean;
@@ -1123,6 +1129,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   cityFieldOverlay: false,
   cityFieldMode: 'prestige',
   sacredMarkers: true,
+  poiBeacons: true,
   poiVisibility: true,
   settingsV2: true,
 };
@@ -1208,6 +1215,7 @@ const PLAYABLE_FACTION_STARTS: Array<{
   { faction: 'Venetian',   humble: 'Carrack', grand: 'Galleon', homePortId: 'venice'    },
   { faction: 'Omani',      humble: 'Dhow',    grand: 'Baghla',  homePortId: 'muscat'    },
   { faction: 'Chinese',    humble: 'Junk',    grand: 'Jong',    homePortId: 'macau'     },
+  { faction: 'Pirate',     humble: 'Pinnace', grand: 'Caravel', homePortId: 'socotra'   },
   // Gujarati banias and Bohra/Memon merchant houses out of Surat — the great
   // Mughal-era port. Pattamar = lateen coastal trader; Ghurab ("raven") =
   // armed merchantman, the typical Surat blue-water hull.
@@ -1311,6 +1319,21 @@ export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: 
     { portId: 'malacca',  weight: 3  },
     { portId: 'diu',      weight: 5  },
   ],
+  // "Pirate" is not a nationality here; it is an outlaw flag. Starts cluster
+  // around loose anchorages, contested corridors, and ports where a mixed crew
+  // could plausibly slip between jurisdictions.
+  Pirate: [
+    { portId: 'socotra',  weight: 18 },
+    { portId: 'zanzibar', weight: 14 },
+    { portId: 'mombasa',  weight: 12 },
+    { portId: 'aden',     weight: 10 },
+    { portId: 'mocha',    weight: 9  },
+    { portId: 'hormuz',   weight: 8  },
+    { portId: 'cape',     weight: 8  },
+    { portId: 'havana',   weight: 7  },
+    { portId: 'bantam',   weight: 7  },
+    { portId: 'malacca',  weight: 7  },
+  ],
 };
 
 function pickSpawnPort(faction: Nationality, fallback: string): string {
@@ -1328,6 +1351,33 @@ function pickSpawnPort(faction: Nationality, fallback: string): string {
 function playableStartForFaction(faction: Nationality) {
   return PLAYABLE_FACTION_STARTS.find((entry) => entry.faction === faction)
     ?? PLAYABLE_FACTION_STARTS[0];
+}
+
+const PIRATE_STARTING_SHIPS: Array<{ type: ShipInfo['type']; weight: number }> = [
+  { type: 'Pinnace', weight: 20 },
+  { type: 'Dhow', weight: 16 },
+  { type: 'Pattamar', weight: 14 },
+  { type: 'Caravel', weight: 14 },
+  { type: 'Ghurab', weight: 10 },
+  { type: 'Fluyt', weight: 8 },
+  { type: 'Junk', weight: 7 },
+  { type: 'Baghla', weight: 6 },
+  { type: 'Carrack', weight: 3 },
+  { type: 'Jong', weight: 1 },
+  { type: 'Galleon', weight: 1 },
+];
+
+function pickStartingShipType(faction: Nationality, luckyStart: boolean, factionStart: { humble: ShipInfo['type']; grand: ShipInfo['type'] }): ShipInfo['type'] {
+  if (faction === 'Pirate') {
+    const total = PIRATE_STARTING_SHIPS.reduce((sum, row) => sum + row.weight, 0);
+    let roll = Math.random() * total;
+    for (const row of PIRATE_STARTING_SHIPS) {
+      roll -= row.weight;
+      if (roll <= 0) return row.type;
+    }
+    return PIRATE_STARTING_SHIPS[0].type;
+  }
+  return luckyStart ? factionStart.grand : factionStart.humble;
 }
 
 // Per-hull handling baseline. Speed is 0–25 (kn at top trim), turnSpeed is
@@ -1408,10 +1458,33 @@ function buildStartingArmament(type: ShipInfo['type'], faction: Nationality): We
   const range = cfg.swivelMax - cfg.swivelMin + 1;
   const swivelCount = cfg.swivelMin + Math.floor(Math.random() * range);
   const swivelType = factionSwivelType(faction);
-  return [
+  const armament = [
     ...Array(swivelCount).fill(swivelType),
     ...cfg.mounted,
   ];
+  if (faction === 'Pirate' && armament.length === 0) {
+    armament.push(swivelType);
+  }
+  if (
+    faction === 'Pirate' &&
+    (type === 'Pinnace' || type === 'Dhow' || type === 'Pattamar') &&
+    armament.length < 2
+  ) {
+    armament.push(swivelType);
+  }
+  return armament;
+}
+
+function pirateStartingGold(baseGold: number): number {
+  return Math.max(250, Math.floor(baseGold * 0.62));
+}
+
+function tunePirateStartingCargo(cargo: Record<Commodity, number>, cargoCapacity: number) {
+  for (const commodity of Object.keys(cargo) as Commodity[]) {
+    cargo[commodity] = Math.floor((cargo[commodity] ?? 0) * 0.55);
+  }
+  cargo['Small Shot'] = Math.max(cargo['Small Shot'] ?? 0, 16);
+  cargo['Cannon Shot'] = Math.max(cargo['Cannon Shot'] ?? 0, Math.max(4, Math.floor(cargoCapacity / 22)));
 }
 
 // Per-ship starting hold (tons) and purse (reals). Humble ships reflect a
@@ -1441,6 +1514,20 @@ const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold
 // with the Portuguese — every Gujarati captain sails under cartaz tension
 // even when there's no active hostility.
 function buildStartingReputation(faction: Nationality): Partial<Record<Nationality, number>> {
+  if (faction === 'Pirate') {
+    return {
+      Portuguese: -35,
+      Spanish: -35,
+      Dutch: -25,
+      English: -25,
+      Ottoman: -20,
+      Mughal: -18,
+      Persian: -15,
+      Omani: -12,
+      Gujarati: -10,
+      Swahili: -8,
+    };
+  }
   if (faction === 'Gujarati') {
     return {
       Mughal: 20,
@@ -1465,7 +1552,7 @@ const _captainLuck = _startingCaptain.stats.luck ?? 10;
 
 // Captain luck is 1–20. Threshold 17 ≈ top ~20% of rolls upgrades the starter.
 const _luckyStart = _captainLuck >= 17;
-const _startingShipType: ShipInfo['type'] = _luckyStart ? _factionStart.grand : _factionStart.humble;
+const _startingShipType: ShipInfo['type'] = pickStartingShipType(_startingFaction, _luckyStart, _factionStart);
 
 const _baseStats = SHIP_BASE_STATS[_startingShipType];
 const _crewRangeSize = _baseStats.startMax - _baseStats.startMin + 1;
@@ -1477,11 +1564,17 @@ const _startingShipName = _shipNamePool[Math.floor(Math.random() * _shipNamePool
 
 const _shipProfile = SHIP_START_PROFILE[_startingShipType];
 const _startingCargoCapacity = _shipProfile.cargoCapacity;
-const _startingGold = _shipProfile.gold;
+const _startingGold = _startingFaction === 'Pirate' ? pirateStartingGold(_shipProfile.gold) : _shipProfile.gold;
 
-const _startingCargo = generateStartingCargo(_startingFaction, _startingCargoCapacity, _captainLuck);
+const _startingCargoRollCapacity = _startingFaction === 'Pirate'
+  ? Math.max(25, Math.floor(_startingCargoCapacity * 0.5))
+  : _startingCargoCapacity;
+const _startingCargo = generateStartingCargo(_startingFaction, _startingCargoRollCapacity, _captainLuck);
 const _startingArmament = buildStartingArmament(_startingShipType, _startingFaction);
 const _startingBroadsides = _startingArmament.filter(w => !WEAPON_DEFS[w].aimable).length;
+if (_startingFaction === 'Pirate') {
+  tunePirateStartingCargo(_startingCargo, _startingCargoCapacity);
+}
 
 // Seed the hold with 10 war rockets if the starting ship mounts a rocket rack
 // (Junk / Jong). Without this the Chinese-start player would have an inert
@@ -1518,7 +1611,7 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
   const captain = generateStartingCaptain(faction);
   const captainLuck = captain.stats.luck ?? 10;
   const luckyStart = captainLuck >= 17;
-  const shipType: ShipInfo['type'] = luckyStart ? factionStart.grand : factionStart.humble;
+  const shipType: ShipInfo['type'] = pickStartingShipType(faction, luckyStart, factionStart);
   const baseStats = SHIP_BASE_STATS[shipType];
   const crewRangeSize = baseStats.startMax - baseStats.startMin + 1;
   const crewSize = baseStats.startMin + Math.floor(Math.random() * crewRangeSize);
@@ -1526,8 +1619,14 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
   const shipNamePool = SHIP_NAMES[shipType];
   const shipName = shipNamePool[Math.floor(Math.random() * shipNamePool.length)];
   const shipProfile = SHIP_START_PROFILE[shipType];
-  const cargo = generateStartingCargo(faction, shipProfile.cargoCapacity, captainLuck);
+  const startingCargoCapacity = faction === 'Pirate'
+    ? Math.max(25, Math.floor(shipProfile.cargoCapacity * 0.5))
+    : shipProfile.cargoCapacity;
+  const cargo = generateStartingCargo(faction, startingCargoCapacity, captainLuck);
   const armament = buildStartingArmament(shipType, faction);
+  if (faction === 'Pirate') {
+    tunePirateStartingCargo(cargo, shipProfile.cargoCapacity);
+  }
   if (armament.includes('fireRocket')) {
     cargo['War Rockets'] = 10;
   }
@@ -1541,7 +1640,7 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
     crew,
     cargo,
     cargoProvenance: buildStartingProvenance(cargo),
-    gold: shipProfile.gold,
+    gold: faction === 'Pirate' ? pirateStartingGold(shipProfile.gold) : shipProfile.gold,
     stats: {
       hull: baseStats.maxHull,
       maxHull: baseStats.maxHull,

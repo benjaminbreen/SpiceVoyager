@@ -254,60 +254,79 @@ export function POITorchInstancer({ spots }: { spots: POITorchSpot[] }) {
 
 // ── Smoke wisp ────────────────────────────────────────────────────────────
 //
-// Three stacked translucent puffs that drift upward and fade. One per
-// chimney/brazier. Cheap because the count is tiny (≤2 per POI). For a
-// high count we'd switch to instancing; not warranted for ≤16 puffs total.
+// Three stacked translucent puffs that drift upward and shrink. Use the
+// instanced form when a POI has multiple smoke sources so it pays one draw
+// call per warmth instead of one mesh stack per chimney/brazier.
+
+export interface POISmokeSpot {
+  pos: readonly [number, number, number];
+  warmth?: 'warm' | 'cool';
+  scale?: number;
+}
+
+function SmokeInstancer({ spots, warmth }: { spots: POISmokeSpot[]; warmth: 'warm' | 'cool' }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
+  const baseColor = warmth === 'warm' ? [0.5, 0.42, 0.34] as const : [0.55, 0.55, 0.58] as const;
+  const geo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: new THREE.Color(...baseColor),
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+    flatShading: true,
+    roughness: 1,
+  }), [baseColor]);
+
+  useFrame(({ clock }) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const t = clock.elapsedTime;
+    const dummy = dummyRef.current;
+    let idx = 0;
+    for (let sIdx = 0; sIdx < spots.length; sIdx++) {
+      const spot = spots[sIdx];
+      const scale = spot.scale ?? 1;
+      const phase = (sIdx * 1.931 + (warmth === 'warm' ? 0.4 : 1.2)) % (Math.PI * 2);
+      for (let i = 0; i < 3; i++) {
+        const wave = Math.sin(t * 0.6 + phase + i * 0.7);
+        const lift = ((t * 0.4 + i * 0.55 + phase * 0.15) % 1.6);
+        const fade = Math.max(0, 1 - lift / 1.6);
+        const puffScale = (0.15 + fade * (0.35 + lift * 0.4)) * scale;
+        dummy.position.set(
+          spot.pos[0] + wave * 0.18 * scale,
+          spot.pos[1] + lift * scale,
+          spot.pos[2] + wave * 0.12 * scale,
+        );
+        dummy.scale.set(puffScale, puffScale, puffScale);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  if (spots.length === 0) return null;
+  return <instancedMesh ref={meshRef} args={[geo, mat, spots.length * 3]} />;
+}
+
+export function POISmokeInstancer({ spots }: { spots: POISmokeSpot[] }) {
+  const warm = useMemo(() => spots.filter((s) => (s.warmth ?? 'cool') === 'warm'), [spots]);
+  const cool = useMemo(() => spots.filter((s) => (s.warmth ?? 'cool') === 'cool'), [spots]);
+  return (
+    <>
+      <SmokeInstancer spots={warm} warmth="warm" />
+      <SmokeInstancer spots={cool} warmth="cool" />
+    </>
+  );
+}
 
 export function ChimneySmoke({ position, warmth = 'cool', scale = 1 }: {
   position: readonly [number, number, number];
   warmth?: 'warm' | 'cool';
   scale?: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const baseColor = warmth === 'warm' ? [0.5, 0.42, 0.34] as const : [0.55, 0.55, 0.58] as const;
-  const geo = useMemo(() => new THREE.SphereGeometry(1, 6, 5), []);
-  const phase = useMemo(() => Math.random() * Math.PI * 2, []);
-
-  // Three independent materials, memoized per-instance. The puffs need
-  // independent opacity so they fade out of phase, but the materials must
-  // persist across renders or every re-render leaks 3 GPU materials.
-  const puffMats = useMemo(() => {
-    const base = chunkyMat(baseColor, { opacity: 0.4, roughness: 1 });
-    return [base.clone(), base.clone(), base.clone()];
-  }, [baseColor]);
-
-  // Dispose puff materials on unmount so the GPU buffers are released.
-  useEffect(() => {
-    return () => {
-      for (const m of puffMats) m.dispose();
-    };
-  }, [puffMats]);
-
-  useFrame(({ clock }) => {
-    if (!groupRef.current) return;
-    const t = clock.elapsedTime;
-    groupRef.current.children.forEach((puff, i) => {
-      const wave = Math.sin(t * 0.6 + phase + i * 0.7);
-      const lift = ((t * 0.4 + i * 0.55 + phase * 0.15) % 1.6);
-      puff.position.y = lift * scale;
-      puff.position.x = wave * 0.18 * scale;
-      puff.position.z = wave * 0.12 * scale;
-      const fade = Math.max(0, 1 - lift / 1.6);
-      const s = (0.5 + lift * 0.4) * scale;
-      puff.scale.set(s, s, s);
-      const mesh = puff as THREE.Mesh;
-      const m = mesh.material as THREE.MeshStandardMaterial;
-      m.opacity = 0.45 * fade;
-    });
-  });
-
-  return (
-    <group ref={groupRef} position={position as unknown as [number, number, number]}>
-      {puffMats.map((mat, i) => (
-        <mesh key={i} geometry={geo} material={mat} />
-      ))}
-    </group>
-  );
+  return <POISmokeInstancer spots={[{ pos: position, warmth, scale }]} />;
 }
 
 // ── Stone hut ─────────────────────────────────────────────────────────────

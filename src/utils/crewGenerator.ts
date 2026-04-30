@@ -48,6 +48,11 @@ const NAME_POOLS: Record<Nationality, NamePool> = {
     last: ['Contarini', 'Mocenigo', 'Foscari', 'Dandolo', 'Morosini', 'Loredan', 'Grimani', 'Querini', 'Trevisan', 'Barbarigo', 'Pisani', 'Zorzi', 'Ziani', 'Vendramin', 'Bembo', 'Soranzo', 'Gritti', 'Tiepolo', 'Venier', 'Donà'],
     birthplaces: ['Venice', 'Murano', 'Chioggia', 'Padua', 'Verona', 'Treviso', 'Vicenza', 'Brescia', 'Bergamo', 'Candia', 'Corfu', 'Zara'],
   },
+  Pirate: {
+    first: ['Thomas', 'Diego', 'Gaspar', 'Jan', 'Pedro', 'William', 'Yusuf', 'Rashid', 'Abdul', 'Virji', 'Manuel', 'Hendrik'],
+    last: ['Ward', 'Reis', 'da Costa', 'Fletcher', 'al-Bahri', 'Surati', 'de la Mar', 'Cooper', 'bin Rashid', 'Memon', 'Rodrigues', 'Janssen'],
+    birthplaces: ['Socotra', 'Zanzibar', 'Mombasa', 'Aden', 'Mocha', 'Hormuz', 'Cape of Good Hope', 'Havana', 'Bantam', 'Malacca'],
+  },
   Mughal: {
     first: ['Mirza', 'Khwaja', 'Asaf', 'Muqarrab', 'Itimad', 'Nur', 'Sher', 'Dara', 'Aurangzeb', 'Shah', 'Iftikhar', 'Zulfiqar', 'Hakim', 'Qasim', 'Yusuf', 'Ibrahim', 'Salim', 'Rahim', 'Farid', 'Akbar'],
     last: ['Khan', 'Beg', 'ud-Daula', 'Ali', 'Jahan', 'Shah', 'Mirza', 'Bahadur', 'Singh', 'Ahmad', 'Husain', 'Malik', 'Quli', 'Baksh', 'Alam'],
@@ -249,6 +254,23 @@ const CREW_MIX: Record<string, NatWeight[]> = {
     ['Persian', 1],
     ['Mughal', 1],
   ],
+  // Pirate crews are mixed by status, not ancestry: deserters, lascars,
+  // pilots, smugglers, and men avoiding company or crown discipline.
+  Pirate: [
+    ['Portuguese', 18],
+    ['English', 12],
+    ['Dutch', 10],
+    ['Gujarati', 12],
+    ['Omani', 10],
+    ['Swahili', 9],
+    ['Malay', 8],
+    ['Spanish', 6],
+    ['Persian', 4],
+    ['Ottoman', 4],
+    ['Javanese', 3],
+    ['Chinese', 2],
+    ['French', 2],
+  ],
 };
 
 function weightedPick(weights: NatWeight[]): Nationality {
@@ -279,6 +301,7 @@ const NATIVE_LANGUAGE: Record<Nationality, Language> = {
   Spanish: 'Spanish',
   French: 'French',
   Venetian: 'Italian',
+  Pirate: 'Portuguese',
   Danish: 'Dutch',
   Mughal: 'Hindustani',
   Gujarati: 'Gujarati',
@@ -304,6 +327,7 @@ const CONTACT_LANGUAGES: Record<Nationality, Language[]> = {
   // Venetians ran the Levant trade — Greek-speaking islands, Ottoman lands,
   // Persian carpet/silk middlemen. Most educated merchants also had Latin.
   Venetian: ['Turkish', 'Arabic', 'Persian', 'Portuguese', 'Spanish'],
+  Pirate: ['Portuguese', 'English', 'Dutch', 'Arabic', 'Gujarati', 'Malay', 'Swahili', 'Spanish'],
   Danish: ['Dutch', 'English', 'Portuguese', 'Malay'],
   Mughal: ['Persian', 'Gujarati', 'Arabic', 'Portuguese'],
   Gujarati: ['Hindustani', 'Persian', 'Arabic', 'Portuguese'],
@@ -705,7 +729,7 @@ const ROLE_HUMOUR_BIAS: Record<CrewRole, Partial<Record<HumourKey, number>>> = {
 // Regional tendencies — stereotypes of the era (how Europeans and others perceived each other)
 type RegionKey = 'european' | 'indian' | 'southeast_asian' | 'east_asian' | 'african';
 const NAT_REGION: Record<Nationality, RegionKey> = {
-  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european', Venetian: 'european',
+  English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european', Venetian: 'european', Pirate: 'european',
   Mughal: 'indian', Gujarati: 'indian', Persian: 'indian', Ottoman: 'indian', Omani: 'indian',
   Swahili: 'african',
   Malay: 'southeast_asian', Acehnese: 'southeast_asian', Javanese: 'southeast_asian', Moluccan: 'southeast_asian', Siamese: 'southeast_asian',
@@ -1073,7 +1097,10 @@ export function generateCrewMember(
  * (which gates ship-tier selection) before crew size is decided.
  */
 export function generateStartingCaptain(factionFlag: Nationality): CrewMember {
-  const captain = generateCrewMember(factionFlag, 'Captain');
+  const captainNationality = factionFlag === 'Pirate'
+    ? weightedPick(CREW_MIX.Pirate)
+    : factionFlag;
+  const captain = generateCrewMember(captainNationality, 'Captain');
   captain.traits = ['Silver Tongue'];
   return captain;
 }

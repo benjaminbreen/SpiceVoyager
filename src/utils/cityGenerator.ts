@@ -8,6 +8,8 @@ import { distanceToNearestCanal, signedDistanceToNearestCanal } from './canalLay
 import { classifyBuildingDistrict, pruneDistrictBoundaries } from './cityDistricts';
 import { assignBuildingForms } from './cityBuildings';
 import { buildingSemanticClass, SEMANTIC_STYLE, LANDMARK_CLASS } from './semanticClasses';
+import type { POIDefinition } from './poiDefinitions';
+import { getPOIFootprint } from './proximityResolution';
 import {
   pickPathOrigin,
   pickPathTarget,
@@ -61,6 +63,12 @@ const ROAD_COUNTS = ROAD_DENSITY;
 // would clip the slope. Tuned to the dredge band width (3u) used there so
 // the buffer covers exactly the cells the carve disturbs.
 const CANAL_BANK_BUFFER = 3.0;
+
+// POIs are rendered outside the procedural building list, so city generation
+// must reserve their plots explicitly. This is intentionally larger than the
+// interaction footprint: it covers broad bespoke compounds such as Seville's
+// Casa de la Contratacion and leaves a visible yard around them.
+const POI_BUILDING_BUFFER = 16;
 
 // Minimum Y for a bridge's outermost abutment polyline vertex. The ramp from
 // the outer abutment to the deck must clear the waterline visually — without
@@ -525,6 +533,7 @@ export function generateCity(
   landmarkId?: string,
   faiths: readonly string[] = [],
   palaceStyle?: string | null,
+  pois: readonly POIDefinition[] = [],
 ): { buildings: Building[]; roads: Road[] } {
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
@@ -743,6 +752,23 @@ export function generateCity(
     const sz = Math.round((z - portZ) / cellSize) * cellSize + portZ;
     return gridMap.get(`${sx},${sz}`) ?? null;
   };
+
+  const reservePOIFootprint = (poi: POIDefinition) => {
+    if (poi.location.kind !== 'coords' && poi.location.kind !== 'hinterland') return;
+    const centerX = portX + poi.location.position[0];
+    const centerZ = portZ + poi.location.position[1];
+    const radiusCells = Math.ceil((getPOIFootprint(poi.kind) + POI_BUILDING_BUFFER) / cellSize / 2);
+    const center = snap(centerX, centerZ);
+    if (!center) return;
+    for (let r = -radiusCells; r <= radiusCells; r++) {
+      for (let c = -radiusCells; c <= radiusCells; c++) {
+        const cell = gridMap.get(`${center.x + c * cellSize},${center.z + r * cellSize}`);
+        if (cell && (cell.isLand || cell.isBeach)) cell.occupied = true;
+      }
+    }
+  };
+
+  for (const poi of pois) reservePOIFootprint(poi);
 
   // ── 0. Bridges ─────────────────────────────────────────────────────────────
   // Placed before any anchors so that (a) fort placement can see whether a
@@ -1181,6 +1207,8 @@ export function generateCity(
       size: [number, number, number];
       /** Strong preference for elevated / prominent ground. */
       elevated?: boolean;
+      /** Strong preference for the far-west coastal edge of the chosen bank. */
+      farWestCoast?: boolean;
     }
 
     // Per-landmark placement rules — each tries to honour the real-world
@@ -1194,7 +1222,7 @@ export function generateCity(
 
       // Torre de Belém — far west of Lisbon, directly on the Tagus.
       // Lisbon openDirection 'W'; downstream/seaward sits west of centre.
-      'belem-tower':         { offset: [-0.55,  0.05], coastal: true,  size: [6, 4, 6] },
+      'belem-tower':         { offset: [-0.88,  0.05], coastal: true, farWestCoast: true, size: [6, 4, 6] },
 
       // Oude Kerk — De Wallen, central-north of Amsterdam near the IJ harbor.
       // Amsterdam openDirection 'N'.
@@ -1279,9 +1307,10 @@ export function generateCity(
         const dz = c.z - targetZ;
         const dist = Math.sqrt(dx * dx + dz * dz);
         const bankPenalty = (dualBank && preferredLandmarkBank >= 0 && c.bank !== preferredLandmarkBank) ? 40 : 0;
-        const coastalPenalty = (rule.coastal && !hasNearWater(c)) ? 12 : 0;
+        const coastalPenalty = (rule.coastal && !hasNearWater(c)) ? (rule.farWestCoast ? 80 : 12) : 0;
         const elevBonus = Math.max(0, (c.height - SEA_LEVEL) * (rule.elevated ? 1.2 : 0.4));
-        return dist + bankPenalty + coastalPenalty - elevBonus;
+        const westBonus = rule.farWestCoast ? Math.max(0, portX - c.x) * 1.6 : 0;
+        return dist + bankPenalty + coastalPenalty - elevBonus - westBonus;
       };
 
       const spot = findSpot(

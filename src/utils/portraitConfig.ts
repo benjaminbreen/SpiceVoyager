@@ -85,6 +85,7 @@ const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   // Venetian: classic Mediterranean range — olive dominant, fair common,
   // tanned-weathered for sailors, occasional darker (Aegean/Levantine admixture)
   Venetian:   [[1, 25], [2, 32], [3, 18], [14, 12], [4, 8], [0, 5]],
+  Pirate:     [[14, 24], [2, 22], [3, 18], [4, 14], [1, 10], [5, 8], [10, 4]],
   // Middle Eastern: wide range from fair-skinned urbanites to dark-skinned traders
   Ottoman:    [[1, 8], [2, 30], [3, 35], [4, 15], [12, 8], [5, 4]],
   Persian:    [[1, 12], [2, 30], [3, 30], [4, 15], [12, 8], [5, 5]],
@@ -127,6 +128,7 @@ const EYE_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Spanish:    [[0, 18], [1, 30], [2, 22], [3, 12], [8, 10], [4, 5], [5, 3]],
   Portuguese: [[0, 18], [1, 28], [2, 22], [3, 14], [8, 10], [4, 5], [5, 3]],
   Venetian:   [[1, 22], [2, 28], [3, 18], [0, 12], [8, 10], [4, 6], [5, 4]],
+  Pirate:     [[0, 24], [1, 28], [2, 18], [8, 10], [3, 8], [5, 6], [4, 4], [6, 2]],
   Ottoman:    [[0, 25], [1, 28], [2, 20], [3, 12], [8, 8], [4, 4], [5, 3]],
   Persian:    [[0, 15], [1, 25], [2, 20], [3, 18], [4, 8], [8, 10], [5, 4]],
   Omani:      [[0, 30], [1, 35], [2, 15], [8, 12], [3, 5], [4, 3]],
@@ -174,6 +176,7 @@ const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   // Portuguese: similar to Spanish
   Portuguese: [[0, 22], [1, 30], [2, 25], [3, 12], [5, 5], [4, 4], [7, 2]],
   Venetian:   [[1, 22], [2, 28], [3, 22], [0, 12], [4, 8], [5, 5], [7, 3]],
+  Pirate:     [[0, 28], [1, 28], [2, 20], [3, 10], [5, 6], [4, 5], [7, 3]],
   // Ottoman: mostly dark, but auburn/brown exists in Anatolia
   Ottoman:    [[0, 40], [1, 30], [2, 15], [3, 8], [5, 4], [6, 3]],
   // Persian: dark with occasional lighter brown, rare auburn
@@ -268,6 +271,7 @@ const CULTURAL_GROUP_MAP: Record<Nationality, CulturalGroup> = {
   Spanish: 'SouthEuropean',
   Portuguese: 'SouthEuropean',
   Venetian: 'SouthEuropean',
+  Pirate: 'SouthEuropean',
   Ottoman: 'ArabPersian',
   Persian: 'ArabPersian',
   Omani: 'ArabPersian',

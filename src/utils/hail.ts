@@ -1,9 +1,10 @@
-import type { CrewMember, Language } from '../store/gameStore';
+import type { CrewMember, Language, Nationality } from '../store/gameStore';
 import type { NPCShipIdentity, RouteRole } from './npcShipGenerator';
 import { COMMODITY_DEFS, type Commodity } from './commodities';
 
 export interface HailGreetingContext {
   timeOfDay?: number; // 0-24, hours
+  playerFlag?: Nationality;
 }
 
 export type HailMood = 'HOSTILE' | 'COLD' | 'WARY' | 'CORDIAL' | 'WARM';
@@ -209,6 +210,23 @@ export function getHailGreeting(
   ctx: HailGreetingContext = {},
 ): string {
   const seed = npc.id + mood;
+
+  if (ctx.playerFlag === 'Pirate') {
+    const piratePool = mood === 'HOSTILE' || mood === 'COLD'
+      ? [
+          `Black flag. Keep off, or we fire.`,
+          `We see your colours. Stand away from us.`,
+          `No closer. We will not be taken for easy prey.`,
+          `That flag buys you no courtesy here. Speak from where you are.`,
+        ]
+      : [
+          `Black flag or no, keep your distance and speak.`,
+          `We see your colours. Say your piece quickly.`,
+          `A hard flag to trust. What do you want?`,
+          `Hold there. We will hear you, but no closer.`,
+        ];
+    return pickStable(piratePool, seed + 'pirate');
+  }
 
   // Friendly captains may volunteer a role-flavoured opener instead
   // of a generic one. Roughly 1 in 3, only on WARY+ moods.

@@ -785,8 +785,8 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               nothing if no leads target this port. */}
           <LeadResolvePrompt />
           {/* Banner */}
-          <div className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
-            activeTab === 'overview' ? 'h-[20rem] md:h-[24rem] lg:h-[28rem]' : 'h-56 md:h-64 lg:h-72'
+          <div data-testid="port-modal-banner" className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
+            activeTab === 'overview' ? 'h-[14rem] md:h-[24rem] lg:h-[28rem] max-h-[38vh]' : 'h-44 md:h-64 lg:h-72 max-h-[32vh]'
           }`}>
             {(() => {
               const animated = activeTab === 'overview' ? ANIMATED_BANNER_PORTS[activePort.id] : undefined;
@@ -893,6 +893,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                 return (
                   <button
                     key={tab.id}
+                    data-testid={`port-tab-mobile-${tab.id}`}
                     onClick={() => { sfxTab(); setActiveTab(tab.id); }}
                     aria-selected={isActive}
                     className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold tracking-wider transition-all whitespace-nowrap

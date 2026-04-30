@@ -334,6 +334,21 @@ export function Ship() {
       default: {
         ctx.fillStyle = c1;
         ctx.fillRect(0, 0, 64, 42);
+        if (shipFlag === 'Pirate') {
+          ctx.strokeStyle = c3;
+          ctx.lineWidth = 3;
+          ctx.strokeRect(6, 5, 52, 32);
+          ctx.strokeStyle = c2;
+          ctx.lineWidth = 5;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(18, 25);
+          ctx.bezierCurveTo(25, 11, 39, 11, 46, 25);
+          ctx.stroke();
+          ctx.fillStyle = c2;
+          ctx.beginPath(); ctx.arc(27, 20, 2.5, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(37, 20, 2.5, 0, Math.PI * 2); ctx.fill();
+        }
         break;
       }
     }

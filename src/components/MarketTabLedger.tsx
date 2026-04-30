@@ -240,6 +240,131 @@ export function MarketTabLedger({
 
   return (
     <div data-testid="market-ledger" className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.46fr)]">
+      <div
+        data-testid="mobile-market-trade-dock"
+        className={`sticky top-0 z-20 -mx-1 rounded-lg border p-3 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl md:hidden ${
+          selected.knowledgeLevel === 0
+            ? 'border-amber-400/20 bg-[#1a1208]/92'
+            : 'border-white/[0.08] bg-[#080c14]/94'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[8px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              {selected.knowledgeLevel === 0 ? 'Unknown Goods' : 'Selected Good'}
+            </div>
+            <div
+              className={`mt-0.5 truncate text-[17px] font-bold leading-tight ${
+                selected.knowledgeLevel === 0 ? 'italic text-amber-200/75' : selected.knowledgeLevel >= 2 ? 'text-emerald-200' : 'text-slate-100'
+              }`}
+              style={{ fontFamily: '"Fraunces", serif' }}
+            >
+              {selected.displayName}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className={`rounded-full border px-2 py-[3px] text-[9px] font-bold uppercase tracking-[0.12em] ${
+                selected.knowledgeLevel === 0 ? 'border-amber-400/20 bg-amber-400/[0.08] text-amber-300' : selectedRole.className
+              }`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                {selected.knowledgeLevel === 0 ? 'Unidentified' : selectedRole.label}
+              </span>
+              {selected.knowledgeLevel >= 1 && (
+                <span className={`rounded-full border px-2 py-[3px] text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                  {selectedSignal.label}
+                </span>
+              )}
+              <span className="font-mono text-[11px] text-slate-400">
+                {selected.price > 0 ? formatPrice(selected.price) : 'n/a'}
+              </span>
+            </div>
+          </div>
+          <div className="shrink-0 text-right font-mono text-[13px] text-slate-400">
+            <div>{cargoWeight}<span className="text-slate-600">/{cargoCapacity}</span></div>
+            <div className="mt-1 text-[#d8c47a]">{gold.toLocaleString()}g</div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-[38px_minmax(0,1fr)_38px_54px] gap-2">
+          <button
+            type="button"
+            aria-label="Decrease quantity"
+            disabled={clampedQuantity <= 1}
+            onClick={() => { sfxClick(); setQuantity(q => clamp(q - 1, 1, maxSelectedQuantity)); }}
+            className="h-10 rounded-lg border border-white/[0.08] bg-white/[0.04] text-base font-bold text-slate-300 disabled:cursor-not-allowed disabled:text-slate-700"
+          >
+            -
+          </button>
+          <div className="flex h-10 items-center justify-center rounded-lg border border-[#fbbf24]/18 bg-white/[0.04] text-center font-mono text-[14px] font-bold text-slate-100">
+            {clampedQuantity} {quantityUnit(clampedQuantity)}
+          </div>
+          <button
+            type="button"
+            aria-label="Increase quantity"
+            disabled={clampedQuantity >= maxSelectedQuantity}
+            onClick={() => { sfxClick(); setQuantity(q => clamp(q + 1, 1, maxSelectedQuantity)); }}
+            className="h-10 rounded-lg border border-white/[0.08] bg-white/[0.04] text-base font-bold text-slate-300 disabled:cursor-not-allowed disabled:text-slate-700"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            disabled={clampedQuantity >= maxSelectedQuantity}
+            onClick={() => { sfxClick(); setQuantity(maxSelectedQuantity); }}
+            className="h-10 rounded-lg border border-white/[0.08] bg-white/[0.04] text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 disabled:cursor-not-allowed disabled:text-slate-700"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Max
+          </button>
+        </div>
+
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            data-testid="mobile-market-sell-button"
+            type="button"
+            disabled={sellQty <= 0}
+            onClick={() => executeTrade(false)}
+            className="h-11 rounded-lg border border-amber-300/30 bg-amber-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200/90 disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Sell {sellQty}
+          </button>
+          <button
+            data-testid="mobile-market-buy-button"
+            type="button"
+            disabled={buyQty <= 0}
+            onClick={() => executeTrade(true)}
+            className="h-11 rounded-lg border border-emerald-300/30 bg-emerald-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200/90 disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
+          >
+            Buy {buyQty}
+          </button>
+        </div>
+
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-2.5 py-2">
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Buy Cost</div>
+            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">{formatPrice(buyTotal)}</div>
+            <div className={holdAfterBuy > cargoCapacity ? 'mt-0.5 font-mono text-red-400' : 'mt-0.5 font-mono text-slate-500'}>
+              Hold {holdAfterBuy}/{cargoCapacity}
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-2.5 py-2">
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Sell Gain</div>
+            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">{formatPrice(sellTotal)}</div>
+            <div className="mt-0.5 font-mono text-slate-500">Hold {holdAfterSell}/{cargoCapacity}</div>
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <span>{selected.knowledgeLevel >= 1 ? `Avg ${Math.round(selected.avg)}g` : 'Fair price unknown'}</span>
+          <span>{selected.knowledgeLevel >= 1 ? selectedSignal.label : 'Unknown risk'}</span>
+        </div>
+        {selected.knowledgeLevel === 0 && (MARKET_TRUST[port.id] ?? 0.5) < 0.5 && (
+          <p className="mt-1 text-[11px] leading-snug text-amber-500/80" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
+            Traders here have a reputation for counterfeits.
+          </p>
+        )}
+      </div>
+
       <section className="min-w-0">
         <div className="mb-2 flex flex-wrap items-end justify-between gap-2 px-1">
           <div>
@@ -423,7 +548,7 @@ export function MarketTabLedger({
         </div>
       </section>
 
-      <aside className={`rounded-lg border p-4 ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-950/[0.15]' : 'border-white/[0.05] bg-white/[0.018]'}`}>
+      <aside className={`hidden rounded-lg border p-4 md:block ${selected.knowledgeLevel === 0 ? 'border-amber-400/15 bg-amber-950/[0.15]' : 'border-white/[0.05] bg-white/[0.018]'}`}>
         <div className="flex items-start gap-4">
           {selectedImage ? (
             <span

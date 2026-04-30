@@ -5,8 +5,8 @@
 //     blocks, almost no sub-2u detail. Massing > prop count.
 //   - One long arcade-fronted warehouse + one battlemented customs tower
 //     + one royal banner waving on the flagpole. Everything else (sack
-//     pyramid, armillary sphere, caravel bow) is a single distinctive
-//     accent on a stone quay.
+//     pyramid, armillary sphere) is a single distinctive accent on a stone
+//     quay.
 //   - Palette is the silhouette: white limestone walls, terra-cotta tile
 //     roof, azulejo blue trim, royal-red banner. That four-color block
 //     IS the identity.
@@ -21,24 +21,24 @@
 //   4. Stone quay (Cais da Pedra) running along the river side, with five
 //      bollards, a pepper-sack pyramid (signature beige cargo pile), and
 //      a Manueline armillary-sphere ornament on a pedestal.
-//   5. Moored caravel bow at the quay's east end — one curved hull and
-//      a single mast suggesting active unloading.
-//   6. Tagus river plane filling the foreground.
+//   5. No bespoke water or ship props: the world terrain/ocean own the
+//      shoreline, and harbor traffic belongs to the shared ship systems.
 //
 // Atmosphere:
 //   - Royal banner waves on the flagpole (per-vertex sine on a segmented
 //     plane — the only "complex" animation here).
 //   - One smoke wisp from the customs hearth at the tower base.
 //   - 4 torches: 2 flanking the tower entrance, 2 at the arcade ends.
-//   - Caravel bobs gently on the river.
 
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { getTerrainHeight } from '../../utils/terrain';
+import { SEA_LEVEL } from '../../constants/world';
 import { chunkyMat, ChimneySmoke, POITorchInstancer, type POITorchSpot } from './atmosphere';
+import { WavingBanner } from './WavingBanner';
 
-// ── Palette — four core blocks, plus quay/river/timber neutrals ───────────
+// ── Palette — four core blocks, plus quay/timber neutrals ─────────────────
 
 const LIMESTONE: readonly [number, number, number] = [0.92, 0.90, 0.84];
 const LIMESTONE_SHADOW: readonly [number, number, number] = [0.72, 0.70, 0.64];
@@ -49,8 +49,6 @@ const BANNER_RED: readonly [number, number, number] = [0.74, 0.18, 0.20];
 const BANNER_GOLD: readonly [number, number, number] = [0.82, 0.66, 0.22];
 const STONE_QUAY: readonly [number, number, number] = [0.70, 0.66, 0.58];
 const STONE_QUAY_DARK: readonly [number, number, number] = [0.55, 0.52, 0.46];
-const TAGUS_WATER: readonly [number, number, number] = [0.32, 0.42, 0.44];
-const TAGUS_DEEP: readonly [number, number, number] = [0.18, 0.26, 0.28];
 const TIMBER_DARK: readonly [number, number, number] = [0.32, 0.20, 0.12];
 const TIMBER_PALE: readonly [number, number, number] = [0.55, 0.40, 0.24];
 const PEPPER_SACK: readonly [number, number, number] = [0.66, 0.55, 0.36];
@@ -303,92 +301,6 @@ function CustomsTower({ position, rotationY }: {
   );
 }
 
-// ── Portuguese royal banner — animated waving cloth ───────────────────────
-//
-// Rectangular cloth on a pole. Uses a segmented PlaneGeometry with per-
-// vertex Z displacement on a sine wave; the wave amplitude grows with
-// distance from the pole, so the cloth flutters at the trailing edge.
-// One material, one geometry — animation lives in vertex positions only.
-
-function PortugueseBanner({ position, rotationY }: {
-  position: readonly [number, number, number];
-  rotationY: number;
-}) {
-  const pole = chunkyMat(TIMBER_DARK, { roughness: 1 });
-  const finial = chunkyMat(BANNER_GOLD, { roughness: 0.5, metalness: 0.4 });
-  const ironMat = chunkyMat(IRON_DARK, { roughness: 0.9 });
-
-  // Banner cloth — front + back faces share a single segmented plane each.
-  const flagGeo = useMemo(() => new THREE.PlaneGeometry(2.6, 1.6, 10, 4), []);
-  const restPositions = useMemo(() => flagGeo.attributes.position.array.slice(0), [flagGeo]);
-
-  const flagMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: new THREE.Color(...BANNER_RED),
-    side: THREE.DoubleSide,
-    flatShading: true,
-    roughness: 1,
-  }), []);
-
-  // Royal-arms shield — a single white rectangle with a small gold dot
-  // that reads as "armorial bearing" from above without modeling castles.
-  const shieldWhite = chunkyMat([0.94, 0.92, 0.88], { roughness: 1 });
-  const shieldGold = chunkyMat(BANNER_GOLD, { roughness: 0.5, metalness: 0.4 });
-
-  const flagRef = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    const mesh = flagRef.current;
-    if (!mesh) return;
-    const pos = mesh.geometry.attributes.position;
-    const t = clock.elapsedTime;
-    for (let i = 0; i < pos.count; i++) {
-      const rx = restPositions[i * 3];
-      const ry = restPositions[i * 3 + 1];
-      // Distance from the pole edge (left side of the plane, x = -1.3).
-      const distFromPole = (rx + 1.3) / 2.6; // 0 at pole, 1 at trailing edge
-      // Wave grows quadratically with distance from pole.
-      const amp = distFromPole * distFromPole * 0.32;
-      const wave = Math.sin(rx * 3.5 + t * 4.0) * amp + Math.sin(rx * 7 + t * 6 + ry * 2) * amp * 0.4;
-      pos.setX(i, rx);
-      pos.setY(i, ry);
-      pos.setZ(i, wave);
-    }
-    pos.needsUpdate = true;
-    mesh.geometry.computeVertexNormals();
-  });
-
-  return (
-    <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-      {/* Pole */}
-      <mesh position={[0, 2.0, 0]} material={pole}>
-        <cylinderGeometry args={[0.08, 0.1, 4.0, 6]} />
-      </mesh>
-      {/* Pole bracket (iron) at base */}
-      <mesh position={[0, 0.18, 0]} material={ironMat}>
-        <boxGeometry args={[0.3, 0.36, 0.3]} />
-      </mesh>
-      {/* Gold finial at top */}
-      <mesh position={[0, 4.18, 0]} material={finial}>
-        <coneGeometry args={[0.14, 0.4, 6]} />
-      </mesh>
-      {/* Banner cloth — anchored at the pole, drifting along +X */}
-      <mesh
-        ref={flagRef}
-        position={[1.3, 3.0, 0]}
-        geometry={flagGeo}
-        material={flagMat}
-      />
-      {/* Royal-arms patch — small white square near the pole side of the
-          banner. Doesn't animate — it sits on the unbent area near the pole. */}
-      <mesh position={[0.5, 3.0, 0.02]} material={shieldWhite}>
-        <boxGeometry args={[0.7, 0.7, 0.04]} />
-      </mesh>
-      <mesh position={[0.5, 3.0, 0.05]} material={shieldGold}>
-        <boxGeometry args={[0.18, 0.18, 0.04]} />
-      </mesh>
-    </group>
-  );
-}
-
 // ── Pepper-sack pyramid ───────────────────────────────────────────────────
 //
 // Five beige sacks stacked in a 3-2 pyramid on a pallet. The signature
@@ -507,86 +419,6 @@ function ArmillarySphere({ position, rotationY }: {
   );
 }
 
-// ── Caravel bow — moored at the quay's east end ───────────────────────────
-//
-// Just the bow + a stub of one mast — suggests "ship being unloaded" without
-// modeling a full carrack. Reads as a curved dark hull from above, with a
-// single tall mast and a furled sail bundle.
-
-function CaravelBow({ position, rotationY }: {
-  position: readonly [number, number, number];
-  rotationY: number;
-}) {
-  const hullDark = chunkyMat(TIMBER_DARK, { roughness: 1 });
-  const hullPale = chunkyMat(TIMBER_PALE, { roughness: 1 });
-  const mast = chunkyMat([0.45, 0.32, 0.18], { roughness: 1 });
-  const sailBundle = chunkyMat([0.86, 0.82, 0.72], { roughness: 1 });
-  const cross = chunkyMat([0.65, 0.18, 0.18], { roughness: 1 });
-  const ironMat = chunkyMat(IRON_DARK, { roughness: 0.9 });
-
-  const ref = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    const t = clock.elapsedTime;
-    ref.current.position.y = Math.sin(t * 0.55) * 0.1;
-    ref.current.rotation.z = Math.sin(t * 0.4) * 0.012;
-  });
-
-  return (
-    <group ref={ref} position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-      {/* Main hull body — long box (vessel runs along local +X) */}
-      <mesh position={[0, 0.5, 0]} material={hullDark}>
-        <boxGeometry args={[8.0, 1.2, 2.4]} />
-      </mesh>
-      {/* Slightly raised forecastle at +X end */}
-      <mesh position={[3.4, 1.1, 0]} material={hullDark}>
-        <boxGeometry args={[1.6, 1.0, 2.4]} />
-      </mesh>
-      {/* Raised aftcastle at -X end */}
-      <mesh position={[-3.4, 1.3, 0]} material={hullDark}>
-        <boxGeometry args={[1.6, 1.4, 2.4]} />
-      </mesh>
-      {/* Pointed prow — angled wedge at +X */}
-      <mesh position={[4.2, 0.9, 0]} rotation={[0, 0, 0.3]} material={hullDark}>
-        <boxGeometry args={[1.0, 0.9, 1.6]} />
-      </mesh>
-      {/* Pale strake — thin decorative band */}
-      <mesh position={[0, 1.0, 1.21]} material={hullPale}>
-        <boxGeometry args={[7.0, 0.18, 0.04]} />
-      </mesh>
-      <mesh position={[0, 1.0, -1.21]} material={hullPale}>
-        <boxGeometry args={[7.0, 0.18, 0.04]} />
-      </mesh>
-      {/* Iron capstan on the foredeck */}
-      <mesh position={[2.8, 1.6, 0]} material={ironMat}>
-        <cylinderGeometry args={[0.28, 0.3, 0.5, 6]} />
-      </mesh>
-      {/* Single tall mast */}
-      <mesh position={[0, 5.2, 0]} material={mast}>
-        <cylinderGeometry args={[0.16, 0.22, 8.0, 6]} />
-      </mesh>
-      {/* Yard arm — horizontal beam */}
-      <mesh position={[0, 7.5, 0]} material={mast}>
-        <boxGeometry args={[3.6, 0.16, 0.16]} />
-      </mesh>
-      {/* Furled sail bundle hanging from the yard */}
-      <mesh position={[0, 7.0, 0]} material={sailBundle}>
-        <cylinderGeometry args={[0.28, 0.28, 3.0, 8]} />
-      </mesh>
-      {/* Cross of Christ on a small banner at the mast top */}
-      <mesh position={[0, 8.2, 0]} material={sailBundle}>
-        <boxGeometry args={[0.7, 0.7, 0.04]} />
-      </mesh>
-      <mesh position={[0, 8.2, 0.03]} material={cross}>
-        <boxGeometry args={[0.5, 0.16, 0.04]} />
-      </mesh>
-      <mesh position={[0, 8.2, 0.03]} material={cross}>
-        <boxGeometry args={[0.16, 0.5, 0.04]} />
-      </mesh>
-    </group>
-  );
-}
-
 // ── Bollard — single small stone post (reused along quay) ─────────────────
 
 function Bollard({ position }: { position: readonly [number, number, number] }) {
@@ -606,7 +438,7 @@ function Bollard({ position }: { position: readonly [number, number, number] }) 
 
 // ── Top-level compound ────────────────────────────────────────────────────
 
-export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
+export function LisbonCasaDaIndia({ poiId, position }: {
   poiId: string;
   position: readonly [number, number, number];
   rotationY: number;
@@ -615,35 +447,70 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
   void hashStr(poiId);
   const [ax, , az] = position as [number, number, number];
 
+  // Auto-orient toward the water. The compound's local -Z is the quay/river
+  // side; we want it to face the actual Tagus, wherever that ended up
+  // relative to the snapped land cell. Sample 16 directions around the
+  // anchor at three radii and pick the bearing with the most water (lowest
+  // averaged terrain). The hash-derived rotationY is intentionally ignored
+  // — terrain sampling beats a static seed when the snap can drift.
+  const rotationY = useMemo(() => {
+    let bestAngle = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < 16; i++) {
+      const alpha = (i / 16) * Math.PI * 2;
+      let score = 0;
+      for (const r of [18, 30, 44]) {
+        const sx = ax + Math.sin(alpha) * r;
+        const sz = az + Math.cos(alpha) * r;
+        const h = getTerrainHeight(sx, sz);
+        score += SEA_LEVEL - h; // deeper water → larger positive contribution
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestAngle = alpha;
+      }
+    }
+    // Three.js Y-rotation maps local (0,0,-1) → world (-sin θ, -cos θ).
+    // We want that to point toward (sin α*, cos α*) — the water bearing.
+    return Math.atan2(-Math.sin(bestAngle), -Math.cos(bestAngle));
+  }, [ax, az]);
+
+  // Three.js R_y(θ): wx = lx·cos θ + lz·sin θ; wz = -lx·sin θ + lz·cos θ.
+  // The previous formula here flipped the sign on the X term, so sub-mesh
+  // terrain sampling read from the wrong world cell.
   const terrainAt = useMemo(() => {
     return (lx: number, lz: number) => {
       const c = Math.cos(rotationY);
       const s = Math.sin(rotationY);
-      const wx = ax + (lx * c - lz * s);
-      const wz = az + (lx * s + lz * c);
+      const wx = ax + lx * c + lz * s;
+      const wz = az - lx * s + lz * c;
       return getTerrainHeight(wx, wz);
     };
   }, [ax, az, rotationY]);
 
   const anchorY = terrainAt(0, 0);
 
-  // Local-space layout. -Z is the river, +Z is inland.
-  // Tower at -X end, warehouse runs along +X, caravel at the +X end of quay.
+  // If a sub-mesh's local position rotates out over water, terrainAt drops
+  // below SEA_LEVEL and the building sinks. Floor it to the anchor so the
+  // quay/buildings always sit on (or above) the snapped land plane.
+  const groundY = (lx: number, lz: number) =>
+    Math.max(terrainAt(lx, lz), anchorY) - anchorY;
+
+  // Local-space layout. -Z faces the river, +Z faces inland.
+  // Tower at -X end, warehouse runs along +X.
   const warehousePos: [number, number] = [2, 4];
   const towerPos: [number, number] = [-12, 4];
   const bannerPos: [number, number] = [-12, 4]; // on top of the tower
   const sackPos: [number, number] = [4, -3];
   const armillaryPos: [number, number] = [-3, -3];
-  const caravelPos: [number, number] = [10, -10];
 
-  const warehouseY = terrainAt(warehousePos[0], warehousePos[1]) - anchorY;
-  const towerY = terrainAt(towerPos[0], towerPos[1]) - anchorY;
-  const sackY = terrainAt(sackPos[0], sackPos[1]) - anchorY;
-  const armillaryY = terrainAt(armillaryPos[0], armillaryPos[1]) - anchorY;
+  const warehouseY = groundY(warehousePos[0], warehousePos[1]);
+  const towerY = groundY(towerPos[0], towerPos[1]);
+  const sackY = groundY(sackPos[0], sackPos[1]);
+  const armillaryY = groundY(armillaryPos[0], armillaryPos[1]);
 
-  // Quay sits a hair above local ground; river surface is below.
+  // Stonework sits a hair above local ground so terrain still reads around it.
   const quayY = 0.05;
-  const riverSurfaceY = -0.5;
 
   // ── Atmosphere ───────────────────────────────────────────────────────────
 
@@ -655,9 +522,9 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
     const lz = towerPos[1];
     const ly = towerY + 0.5 + 11 + 0.5; // just above the battlements
     return [
-      ax + (lx * c - lz * s),
+      ax + lx * c + lz * s,
       anchorY + ly,
-      az + (lx * s + lz * c),
+      az - lx * s + lz * c,
     ];
   }, [ax, az, anchorY, towerY, rotationY]);
 
@@ -675,9 +542,9 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
     ];
     return local.map(([lx, ly, lz]) => ({
       pos: [
-        ax + (lx * c - lz * s),
+        ax + lx * c + lz * s,
         anchorY + ly,
-        az + (lx * s + lz * c),
+        az - lx * s + lz * c,
       ] as [number, number, number],
       warmth: 'warm',
     }));
@@ -686,15 +553,6 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
   // Materials shared at the top level.
   const quayMat = useMemo(() => chunkyMat(STONE_QUAY, { roughness: 1 }), []);
   const quayDarkMat = useMemo(() => chunkyMat(STONE_QUAY_DARK, { roughness: 1 }), []);
-  const riverMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: new THREE.Color(...TAGUS_WATER),
-    flatShading: true,
-    roughness: 0.3,
-    metalness: 0.55,
-    transparent: true,
-    opacity: 0.92,
-  }), []);
-  const riverDeepMat = useMemo(() => chunkyMat(TAGUS_DEEP, { roughness: 1 }), []);
 
   // Bollards — five along the quay edge.
   const bollardXs = [-9, -5, -1, 4, 8];
@@ -705,50 +563,32 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
       <ChimneySmoke position={smokePos} warmth="cool" scale={1.0} />
 
       <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-        {/* ── Tagus river plane (main foreground water) ── */}
+        {/* ── Stone quay and yard — local paving only, not a shoreline override ── */}
         <mesh
-          position={[0, riverSurfaceY, -12]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={riverMat}
-        >
-          <planeGeometry args={[40, 16]} />
-        </mesh>
-        <mesh
-          position={[0, riverSurfaceY - 0.25, -12]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={riverDeepMat}
-        >
-          <planeGeometry args={[40, 16]} />
-        </mesh>
-
-        {/* ── Stone quay (Cais da Pedra) running along the river edge ── */}
-        <mesh
-          position={[0, quayY, -2.5]}
+          position={[0, quayY, -2.4]}
           rotation={[-Math.PI / 2, 0, 0]}
           material={quayMat}
         >
-          <planeGeometry args={[32, 4.5]} />
+          <planeGeometry args={[28, 3.4]} />
         </mesh>
-        {/* Quay retaining wall — Istrian-style stone band facing the water */}
-        <mesh position={[0, -0.18, -4.6]} material={quayMat}>
-          <boxGeometry args={[32, 0.6, 0.5]} />
-        </mesh>
-        <mesh position={[0, -0.6, -4.65]} material={quayDarkMat}>
-          <boxGeometry args={[32, 0.5, 0.4]} />
-        </mesh>
-
-        {/* Inland paving — darker stone behind the quay, in front of arcade */}
         <mesh
-          position={[0, quayY - 0.005, 5]}
+          position={[1.5, quayY - 0.005, 4.8]}
           rotation={[-Math.PI / 2, 0, 0]}
           material={quayDarkMat}
         >
-          <planeGeometry args={[32, 16]} />
+          <planeGeometry args={[25, 9.5]} />
+        </mesh>
+        <mesh
+          position={[-12, quayY - 0.004, 4.4]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          material={quayMat}
+        >
+          <planeGeometry args={[8, 8]} />
         </mesh>
 
-        {/* Low back wall closing the compound at +Z */}
-        <mesh position={[0, 0.7, 14]} material={quayMat}>
-          <boxGeometry args={[32, 1.4, 0.5]} />
+        {/* Low rear wall, deliberately shorter than the full compound width. */}
+        <mesh position={[1.5, 0.7, 11.8]} material={quayMat}>
+          <boxGeometry args={[24, 1.4, 0.5]} />
         </mesh>
 
         {/* ── Bollards along the quay edge ── */}
@@ -760,9 +600,16 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
         <CustomsTower position={[towerPos[0], towerY, towerPos[1]]} rotationY={0} />
 
         {/* ── Royal banner on top of the tower ── */}
-        <PortugueseBanner
+        <WavingBanner
           position={[bannerPos[0] + 1.2, towerY + 0.5 + 11 + 1.0, bannerPos[1]]}
           rotationY={Math.PI / 2}
+          width={2.6}
+          height={1.6}
+          poleHeight={4.0}
+          poleColor={TIMBER_DARK}
+          finialColor={BANNER_GOLD}
+          pattern={{ kind: 'patch', field: BANNER_RED, patch: [0.94, 0.92, 0.88], device: BANNER_GOLD }}
+          phase={0.4}
         />
 
         {/* ── Warehouse ── */}
@@ -770,20 +617,14 @@ export function LisbonCasaDaIndia({ poiId, position, rotationY }: {
 
         {/* ── Pepper-sack pyramid on the quay ── */}
         <PepperSackPyramid
-          position={[sackPos[0], terrainAt(sackPos[0], sackPos[1]) - anchorY + quayY, sackPos[1]]}
+          position={[sackPos[0], sackY + quayY, sackPos[1]]}
           rotationY={0.3}
         />
 
         {/* ── Armillary sphere ornament ── */}
         <ArmillarySphere
-          position={[armillaryPos[0], terrainAt(armillaryPos[0], armillaryPos[1]) - anchorY + quayY, armillaryPos[1]]}
+          position={[armillaryPos[0], armillaryY + quayY, armillaryPos[1]]}
           rotationY={0}
-        />
-
-        {/* ── Moored caravel bow at the east end of the quay ── */}
-        <CaravelBow
-          position={[caravelPos[0], riverSurfaceY + 0.1, caravelPos[1]]}
-          rotationY={Math.PI}
         />
       </group>
     </>

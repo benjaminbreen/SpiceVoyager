@@ -2964,32 +2964,6 @@ export function GameScene() {
           gl={{ antialias: !IS_SAFARI, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
           shadows={{ type: THREE.PCFShadowMap }}
           camera={{ position: [0, 50, 50], fov: 45 }}
-          onPointerDown={(e: any) => {
-            // DIAGNOSTIC click probe — remove after identifying the orb.
-            const ints = e.intersections ?? [];
-            console.log('[ORB-PROBE] click — intersections:', ints.length);
-            for (let i = 0; i < Math.min(ints.length, 6); i++) {
-              const o = ints[i].object;
-              const chain: string[] = [];
-              let n: any = o;
-              while (n) {
-                chain.push(`${n.type}${n.name ? `[${n.name}]` : ''}`);
-                n = n.parent;
-              }
-              console.log(`  [${i}]`, {
-                geo: o.geometry?.type,
-                matColor: o.material?.color?.getHexString?.(),
-                matEmissive: o.material?.emissive?.getHexString?.(),
-                pos: ints[i].point?.toArray?.(),
-                chain: chain.join(' < '),
-              });
-            }
-          }}
-          onPointerMissed={(e: any) => {
-            // DIAGNOSTIC — fires when click hits nothing. Camera-ray raycast
-            // every visible scene object (overrides raycast={()=>null} too).
-            console.log('[ORB-PROBE] click MISSED all interactive meshes (orb likely has raycast disabled). Move camera/zoom and try again, or click a non-orb spot to confirm.');
-          }}
         >
           <Suspense fallback={null}>
             <color attach="background" args={['#87CEEB']} />

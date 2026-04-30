@@ -431,6 +431,7 @@ export function NPCShip({
   const alertUntil = useRef(0); // timestamp when alert ends
   const postureUntil = useRef(0);
   const combatPosture = useRef<NpcCombatPosture>('neutral');
+  const hostileContact = useRef(false);
   const lastProcessedHitAlert = useRef(0);
   const lastCollisionTime = useRef(0); // cooldown to prevent spam
   const collisionGrievanceCount = useRef(0);
@@ -475,12 +476,14 @@ export function NPCShip({
       if (detail.response === 'apologize' || detail.response === 'pay') {
         posture = identity.armed && hullFraction > 0.35 ? 'evade' : 'flee';
       } else if (detail.response === 'threaten') {
+        hostileContact.current = true;
         posture = chooseProvokedPosture(identity, {
           reputation: useGameStore.getState().getReputation(identity.flag) - 40,
           provoked: true,
           hullFraction,
         });
       } else {
+        hostileContact.current = true;
         posture = identity.armed && identity.morale >= 55 && hullFraction > 0.35 ? 'engage' : 'flee';
       }
       setCombatPosture(posture, now + ALERT_DURATION);
@@ -507,12 +510,14 @@ export function NPCShip({
       if (detail.response === 'alterCourse' || detail.response === 'payToll') {
         posture = 'evade';
       } else if (detail.response === 'threaten') {
+        hostileContact.current = true;
         posture = chooseProvokedPosture(identity, {
           reputation: useGameStore.getState().getReputation(identity.flag) - 35,
           provoked: true,
           hullFraction,
         });
       } else {
+        hostileContact.current = true;
         posture = identity.armed && identity.morale >= 45 && hullFraction > 0.35 ? 'pursue' : 'evade';
       }
       setCombatPosture(posture, now + ALERT_DURATION);
@@ -678,15 +683,18 @@ export function NPCShip({
         approachNotified.current = false;
       }
 
+      const factionReputation = getReputation(identity.flag);
+      const canHail = !hostileContact.current && combatPosture.current === 'neutral' && factionReputation > -60;
+
       // Hail prompt — only claim the slot if no other NPC already holds it
-      if (distToPlayer < HAIL_RADIUS && !inHailRange.current) {
+      if (canHail && distToPlayer < HAIL_RADIUS && !inHailRange.current) {
         if (!nearestHailableNpc) {
           inHailRange.current = true;
           setInteractionPrompt('Press T to Hail');
           setNearestHailableNpc(identity);
         }
       }
-      if (distToPlayer > HAIL_RADIUS * 1.2 && inHailRange.current) {
+      if ((!canHail || distToPlayer > HAIL_RADIUS * 1.2) && inHailRange.current) {
         inHailRange.current = false;
         // Only clear if we're the ones who set it
         if (nearestHailableNpc?.id === identity.id) {
@@ -730,6 +738,7 @@ export function NPCShip({
       // Only fire events/reputation/damage once per cooldown (matches Ship.tsx's 2s gate)
       if (now - lastCollisionTime.current > COLLISION_COOLDOWN) {
         lastCollisionTime.current = now;
+        const alreadyHostile = hostileContact.current || getReputation(identity.flag) <= -60;
         window.dispatchEvent(new CustomEvent('ship-collision', {
           detail: {
             appearancePhrase: identity.appearancePhrase,
@@ -739,7 +748,7 @@ export function NPCShip({
           },
         }));
         collisionGrievanceCount.current += 1;
-        if (now - lastCollisionHailTime.current > 9000) {
+        if (!alreadyHostile && now - lastCollisionHailTime.current > 9000) {
           lastCollisionHailTime.current = now;
           window.dispatchEvent(new CustomEvent('npc-collision-hail', {
             detail: {
@@ -788,6 +797,7 @@ export function NPCShip({
     // Check for projectile hit alert from combat system
     if (liveEntry?.hitAlert && Date.now() < liveEntry.hitAlert && liveEntry.hitAlert > lastProcessedHitAlert.current) {
       lastProcessedHitAlert.current = liveEntry.hitAlert;
+      hostileContact.current = true;
       const posture = chooseProvokedPosture(identity, {
         reputation: getReputation(identity.flag),
         provoked: true,
@@ -818,10 +828,16 @@ export function NPCShip({
       });
       if (initiative === 'warn' && now >= nextInitiativeWarningAt.current) {
         nextInitiativeWarningAt.current = now + ALERT_DURATION;
-        setCombatPosture('pursue', now + ALERT_DURATION);
-        window.dispatchEvent(new CustomEvent('npc-warning-hail', {
-          detail: { npc: identity },
-        }));
+        if (hostileContact.current || getReputation(identity.flag) <= -60) {
+          setCombatPosture(identity.armed ? 'pursue' : 'flee', now + ALERT_DURATION);
+        } else {
+          setCombatPosture('pursue', now + ALERT_DURATION);
+          window.dispatchEvent(new CustomEvent('npc-warning-hail', {
+            detail: { npc: identity },
+          }));
+        }
+      } else if (initiative === 'flee') {
+        setCombatPosture('flee', now + ALERT_DURATION);
       }
     }
 

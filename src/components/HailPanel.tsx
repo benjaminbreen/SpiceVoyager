@@ -338,8 +338,8 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     [canUnderstand, context, npc],
   );
   const greeting = useMemo(
-    () => rememberedCollisionGreeting ?? getHailGreeting(npc, mood, { timeOfDay }),
-    [rememberedCollisionGreeting, npc, mood, timeOfDay],
+    () => rememberedCollisionGreeting ?? getHailGreeting(npc, mood, { timeOfDay, playerFlag }),
+    [rememberedCollisionGreeting, npc, mood, timeOfDay, playerFlag],
   );
   const collisionGreeting = useMemo(() => getCollisionHail(npc, canUnderstand), [npc, canUnderstand]);
   const warningGreeting = useMemo(() => {

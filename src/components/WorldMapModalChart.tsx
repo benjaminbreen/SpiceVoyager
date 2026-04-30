@@ -856,11 +856,13 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       <motion.div
         {...modalPanelMotion}
         onClick={(e) => e.stopPropagation()}
-        className={`relative rounded-[18px] ${isMobile ? 'w-full h-[100dvh]' : 'w-full max-w-6xl h-[82vh]'}`}
-        style={{
-          padding: isMobile ? 3 : 7,
-          background:
-            'radial-gradient(ellipse at 22% 12%, #d4b16a 0%, #a78845 22%, #6b4f22 48%, #2c1f0c 100%)',
+	        className={`relative rounded-[18px] ${isMobile ? 'w-full h-[100dvh]' : 'w-full max-w-6xl h-[82vh]'}`}
+	        style={{
+	          padding: isMobile
+	            ? 'calc(3px + var(--sai-top)) calc(3px + var(--sai-right)) calc(3px + var(--sai-bottom)) calc(3px + var(--sai-left))'
+	            : 7,
+	          background:
+	            'radial-gradient(ellipse at 22% 12%, #d4b16a 0%, #a78845 22%, #6b4f22 48%, #2c1f0c 100%)',
           boxShadow:
             '0 12px 40px rgba(0,0,0,0.75), inset 0 2px 3px rgba(255,225,160,0.35), inset 0 -2px 4px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
         }}
@@ -881,7 +883,10 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
           }}
         >
           {/* ── Map (top on mobile, left on desktop) ─────────── */}
-          <div className="flex-1 relative flex flex-col min-w-0 min-h-0">
+	          <div
+	            data-testid="world-map-chart-map"
+	            className={`relative flex flex-col min-w-0 min-h-0 ${isMobile ? 'flex-1 basis-[58%]' : 'flex-1'}`}
+	          >
             {/* Region tab ruler — chart-edge navigation */}
             <div className={`relative flex items-stretch border-b border-[#3a3020]/50
               bg-gradient-to-b from-[#0a0f1a]/90 to-transparent z-[5] ${
@@ -1012,7 +1017,10 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
           />
 
           {/* ── Sidebar (bottom on mobile, right on desktop) ─── */}
-          <div className={`shrink-0 flex flex-col bg-[#080c14]/70 ${isMobile ? 'w-full max-h-[44%]' : 'w-72'}`}>
+	          <div
+	            data-testid="world-map-chart-route-sheet"
+	            className={`shrink-0 flex flex-col bg-[#080c14]/70 min-h-0 ${isMobile ? 'w-full basis-[42%]' : 'w-72'}`}
+	          >
             {/* Sidebar header — cartouche */}
             <div className="relative px-4 pt-3.5 pb-3 border-b border-[#2a2520]/50">
               <div className="flex items-center justify-between">
@@ -1037,7 +1045,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
                 </div>
 
                 {/* Brass knob close button */}
-                <BrassKnob onClick={() => { sfxClose(); onClose(); }} />
+	                <BrassKnob mobile={isMobile} onClick={() => { sfxClose(); onClose(); }} />
               </div>
 
               {/* Current position */}
@@ -1105,16 +1113,17 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
                       const isClickable = devMode || isPlayer || isReachable;
                       const travel = (isReachable || devMode) ? estimateSeaTravel(nearestPortId, port.id) : null;
                       return (
-                        <button
-                          key={port.id}
-                          onMouseEnter={() => sfxHover()}
+	                        <button
+	                          key={port.id}
+	                          data-testid={`world-route-port-${port.id}`}
+	                          onMouseEnter={() => sfxHover()}
                           aria-selected={isSelected}
                           onClick={() => {
                             if (!isClickable) return;
                             sfxClick();
                             setSelectedPort(isSelected ? null : port.id);
                           }}
-                          className={`relative w-full text-left pl-8 pr-4 py-1.5 transition-all ${
+	                          className={`relative w-full text-left pl-8 pr-4 transition-all ${isMobile ? 'py-2.5' : 'py-1.5'} ${
                             isSelected
                               ? 'bg-amber-500/[0.09]'
                               : isPlayer
@@ -1242,7 +1251,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
                     </div>
 
                     {/* Brass plaque — Set Sail */}
-                    <BrassPlaqueButton onClick={handleSetSail}>
+	                    <BrassPlaqueButton onClick={handleSetSail}>
                       <Navigation size={13} />
                       <span>Set Sail</span>
                     </BrassPlaqueButton>
@@ -1328,13 +1337,14 @@ function CornerNail({ position }: { position: 'tl' | 'tr' | 'bl' | 'br' }) {
 }
 
 /** Small circular brass pushbutton for the close action. */
-function BrassKnob({ onClick }: { onClick: () => void }) {
+function BrassKnob({ mobile = false, onClick }: { mobile?: boolean; onClick: () => void }) {
   return (
     <button
+      data-testid="world-map-close"
       onClick={onClick}
       onMouseEnter={() => sfxHover()}
-      className="group relative w-6 h-6 rounded-full flex items-center justify-center
-        transition-all active:scale-90"
+      className={`group relative rounded-full flex items-center justify-center
+        transition-all active:scale-90 ${mobile ? 'w-9 h-9' : 'w-6 h-6'}`}
       style={{
         background:
           'radial-gradient(circle at 30% 25%, #d8b46a 0%, #a08548 35%, #5c4320 75%, #291c08 100%)',
@@ -1343,7 +1353,7 @@ function BrassKnob({ onClick }: { onClick: () => void }) {
       }}
       title="Close (Esc)"
     >
-      <X size={11} className="text-[#2a1f0c] group-hover:text-[#1a0f00] transition-colors" strokeWidth={3} />
+      <X size={mobile ? 15 : 11} className="text-[#2a1f0c] group-hover:text-[#1a0f00] transition-colors" strokeWidth={3} />
     </button>
   );
 }
@@ -1352,6 +1362,7 @@ function BrassKnob({ onClick }: { onClick: () => void }) {
 function BrassPlaqueButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button
+      data-testid="world-map-set-sail"
       onClick={onClick}
       onMouseEnter={() => sfxHover()}
       className="group relative w-full py-2.5 rounded-md transition-all active:scale-[0.98]

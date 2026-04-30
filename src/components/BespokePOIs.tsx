@@ -20,8 +20,11 @@ import { NagasakiPress } from './poi/NagasakiPress';
 import { BantamKrakatoa } from './poi/BantamKrakatoa';
 import { VeniceSpezieria } from './poi/VeniceSpezieria';
 import { LisbonCasaDaIndia } from './poi/LisbonCasaDaIndia';
+import { SevilleCasaContratacion } from './poi/SevilleCasaContratacion';
+import { ManilaParian } from './poi/ManilaParian';
 
 type PortsProp = ReturnType<typeof useGameStore.getState>['ports'];
+const POI_RENDER_RADIUS_SQ = 340 * 340;
 
 interface BespokeRenderer {
   Component: React.ComponentType<{
@@ -74,11 +77,24 @@ const BESPOKE_POI_RENDERERS: Record<string, BespokeRenderer> = {
   },
   'lisbon-casa-da-india': {
     Component: LisbonCasaDaIndia,
-    // Compound's local -Z faces the Tagus. Lisbon openDirection 'W' → the
-    // river is at world -X, so the quay-facing front (-Z local) should
-    // resolve roughly toward -X world. Tune via seed in playtest if the
-    // caravel ends up moored on the inland side.
+    // The Lisbon component ignores this seed and auto-orients toward the
+    // water by sampling terrain around the snapped anchor — the original
+    // hash-derived rotation pointed the quay inland and sank the warehouse
+    // below the river. Seed kept for registry shape consistency.
     rotationSeed: 0x6c10,
+  },
+  'seville-casa-contratacion': {
+    Component: SevilleCasaContratacion,
+    // Local -Z is the formal river-facing entrance. This seed faces the broad
+    // compound toward Seville's Guadalquivir edge without needing bespoke
+    // water geometry.
+    rotationSeed: 0x51c0,
+  },
+  'manila-sangley-parian': {
+    Component: ManilaParian,
+    // Gate faces the approach road outside Intramuros rather than drawing any
+    // local bay or river geometry.
+    rotationSeed: 0x6a11,
   },
 };
 
@@ -96,10 +112,19 @@ function hashStr(s: string): number {
 export function BespokePOIs({ ports }: { ports: PortsProp }) {
   const visible = useGameStore((state) => state.renderDebug.poiVisibility);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+  const playerPos = useGameStore((state) => state.playerMode === 'walking' ? state.walkingPos : state.playerPos);
 
   const items = useMemo(() => {
     if (!visible) return [] as Array<{ poi: POIDefinition; position: [number, number, number]; rotationY: number; renderer: BespokeRenderer }>;
-    const visiblePorts = devSoloPort ? ports.filter((p) => p.id === devSoloPort) : ports;
+    const visiblePorts = devSoloPort
+      ? ports.filter((p) => p.id === devSoloPort)
+      : ports.filter((p) => {
+        if (p.id === currentWorldPortId) return true;
+        const dx = p.position[0] - playerPos[0];
+        const dz = p.position[2] - playerPos[2];
+        return dx * dx + dz * dz <= POI_RENDER_RADIUS_SQ;
+      });
     const out: Array<{ poi: POIDefinition; position: [number, number, number]; rotationY: number; renderer: BespokeRenderer }> = [];
     for (const port of visiblePorts) {
       for (const poi of getPOIsForPort(port)) {
@@ -128,7 +153,7 @@ export function BespokePOIs({ ports }: { ports: PortsProp }) {
       }
     }
     return out;
-  }, [devSoloPort, ports, visible]);
+  }, [currentWorldPortId, devSoloPort, playerPos, ports, visible]);
 
   if (!visible || items.length === 0) return null;
 

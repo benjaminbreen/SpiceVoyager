@@ -34,6 +34,12 @@ const STORE_SYNC_INTERVAL = 1 / 12;
 const THUD_COOLDOWN = 0.22; // seconds between thuds — prevents sliding-along-trunk chatter
 const TORSO_PITCH_FACTOR = 0.3;
 const WEAPON_PITCH_FACTOR = 0.72;
+const WALK_SPEED = 10;
+const RUN_MULTIPLIER = 1.55;
+const WALK_GAIT_RATE = 10;
+const RUN_GAIT_RATE = 15;
+const WALK_STRIDE = 0.5;
+const RUN_STRIDE = 0.72;
 
 // ── Rig measurements (single source of truth — change here to scale the figure) ──
 const RIG = {
@@ -105,7 +111,7 @@ export function Player() {
   }, [captainKey]);
 
   const { camera } = useThree();
-  const keys = useRef({ w: false, a: false, s: false, d: false });
+  const keys = useRef({ w: false, a: false, s: false, d: false, shift: false });
   const isMoving = useRef(false);
   const jumpVelocity = useRef(0);
   const isJumping = useRef(false);
@@ -141,8 +147,11 @@ export function Player() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isInputTarget(e.target) || isModalOpen()) {
         // Release any held keys so movement doesn't latch while the modal is up
-        keys.current.w = keys.current.a = keys.current.s = keys.current.d = false;
+        keys.current.w = keys.current.a = keys.current.s = keys.current.d = keys.current.shift = false;
         return;
+      }
+      if (e.key === 'Shift') {
+        keys.current.shift = true;
       }
       const movementKey = movementKeyFor(e);
       if (movementKey) {
@@ -157,6 +166,9 @@ export function Player() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') {
+        keys.current.shift = false;
+      }
       if (isInputTarget(e.target) || isModalOpen()) return;
       const movementKey = movementKeyFor(e);
       if (movementKey) {
@@ -202,8 +214,9 @@ export function Player() {
     const walking = getLiveWalkingTransform();
     const walkingPos = walking.pos;
     let walkingRot = walking.rot;
+    const isRunning = keys.current.shift && !store.combatMode;
 
-    const speed = 10 * delta;
+    const speed = WALK_SPEED * (isRunning ? RUN_MULTIPLIER : 1) * delta;
     const GRAVITY = 30;
 
     // Get camera forward/right projected onto XZ plane
@@ -539,15 +552,16 @@ export function Player() {
       if (lKn) lKn.rotation.x = 0;
       if (rKn) rKn.rotation.x = 0;
     } else if (isMoving.current) {
-      const t = state.clock.elapsedTime * 10;
+      const t = state.clock.elapsedTime * (isRunning ? RUN_GAIT_RATE : WALK_GAIT_RATE);
       const sinT = Math.sin(t);
-      if (lHi) lHi.rotation.x = sinT * 0.5;
-      if (rHi) rHi.rotation.x = -sinT * 0.5;
+      const stride = isRunning ? RUN_STRIDE : WALK_STRIDE;
+      if (lHi) lHi.rotation.x = sinT * stride;
+      if (rHi) rHi.rotation.x = -sinT * stride;
       // Bend knees on backswing for a slightly more natural step
-      if (lKn) lKn.rotation.x = Math.max(0, -sinT) * 0.4;
-      if (rKn) rKn.rotation.x = Math.max(0, sinT) * 0.4;
-      if (lSh) { lSh.rotation.x = -sinT * 0.5; lSh.rotation.z = 0; }
-      if (rSh) { rSh.rotation.x = sinT * 0.5; rSh.rotation.z = 0; }
+      if (lKn) lKn.rotation.x = Math.max(0, -sinT) * (isRunning ? 0.55 : 0.4);
+      if (rKn) rKn.rotation.x = Math.max(0, sinT) * (isRunning ? 0.55 : 0.4);
+      if (lSh) { lSh.rotation.x = -sinT * stride; lSh.rotation.z = 0; }
+      if (rSh) { rSh.rotation.x = sinT * stride; rSh.rotation.z = 0; }
       if (lEl) lEl.rotation.x = 0;
       if (rEl) rEl.rotation.x = 0;
 

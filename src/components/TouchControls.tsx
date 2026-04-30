@@ -78,6 +78,7 @@ export function TouchControls() {
 
   return (
     <div
+      data-testid="touch-controls"
       className="absolute pointer-events-none z-10 select-none"
       // Shrink the container by safe-area insets so absolutely-positioned
       // children (joystick, zoom, fire buttons) stay clear of the notch and
@@ -160,6 +161,7 @@ function VirtualJoystick({ target }: { target: 'walk' | 'ship' }) {
 
   return (
     <div
+      data-testid={`virtual-joystick-${target}`}
       ref={baseRef}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -209,6 +211,7 @@ function SailToggleButton() {
 
   return (
     <button
+      data-testid="touch-sail-toggle"
       onPointerDown={onTap}
       className={`absolute right-6 bottom-28 w-16 h-16 rounded-full flex items-center justify-center
         pointer-events-auto border-2 backdrop-blur-md transition-all active:scale-95
@@ -251,6 +254,7 @@ function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offset
   return (
     <>
       <button
+        data-testid="touch-zoom-in"
         onPointerDown={() => bump(1)}
         className="absolute w-12 h-12 rounded-full flex items-center justify-center pointer-events-auto
           border-2 border-amber-900/60 bg-[#0a0e18]/60 text-amber-300/80 backdrop-blur-md
@@ -261,6 +265,7 @@ function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offset
         <Plus size={20} strokeWidth={2.5} />
       </button>
       <button
+        data-testid="touch-zoom-out"
         onPointerDown={() => bump(-1)}
         className="absolute w-12 h-12 rounded-full flex items-center justify-center pointer-events-auto
           border-2 border-amber-900/60 bg-[#0a0e18]/60 text-amber-300/80 backdrop-blur-md

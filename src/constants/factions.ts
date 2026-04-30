@@ -81,6 +81,14 @@ export const FACTIONS: Record<Nationality, FactionInfo> = {
     colors: ['#A51E1E', '#F4C430', '#A51E1E'],  // crimson field, gold lion of St Mark
     flagPattern: 'plain',
   },
+  Pirate: {
+    id: 'Pirate',
+    displayName: 'Black Flag',
+    shortName: 'Pirate',
+    description: 'Outlaw captains, deserters, and smugglers sailing outside the protection of any crown or company.',
+    colors: ['#050505', '#F2E6C9', '#B01818'],
+    flagPattern: 'plain',
+  },
 
   // ── Indian Subcontinent ──────────────────────────────
   Mughal: {

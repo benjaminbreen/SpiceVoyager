@@ -161,4 +161,22 @@ describe('npcCombat', () => {
       cargoTemptation: 0,
     })).toBe('warn');
   });
+
+  it('makes patrols challenge pirate-flagged players', () => {
+    expect(chooseInitiativePosture(ship({ role: 'armed patrol', armed: true, morale: 65, flag: 'Portuguese' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Pirate',
+      cargoTemptation: 0,
+    })).toBe('warn');
+  });
+
+  it('makes civilian ships flee from pirate-flagged players', () => {
+    expect(chooseInitiativePosture(ship({ role: 'coastal trader', armed: true, morale: 45, flag: 'Gujarati' }), {
+      reputation: 0,
+      hullFraction: 1,
+      playerFlag: 'Pirate',
+      cargoTemptation: 0,
+    })).toBe('flee');
+  });
 });

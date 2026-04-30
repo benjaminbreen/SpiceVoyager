@@ -3346,7 +3346,7 @@ function SacredBuildingMarkers({ ports }: { ports: PortsProp }) {
 // recognition.
 
 function POIBeacons({ ports }: { ports: PortsProp }) {
-  const visible = useGameStore((state) => state.renderDebug.sacredMarkers);
+  const visible = useGameStore((state) => state.renderDebug.poiBeacons);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
   const discoveredPOIs = useGameStore((state) => state.discoveredPOIs);
 

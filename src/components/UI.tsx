@@ -8,7 +8,7 @@ import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
-  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal
+  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond
 } from 'lucide-react';
 import { useIsMobile } from '../utils/useIsMobile';
 import { audioManager } from '../audio/AudioManager';
@@ -49,7 +49,8 @@ import { findNearestPOI } from '../utils/proximityResolution';
 import { SEMANTIC_STYLE } from '../utils/semanticClasses';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
-const POIModal = lazy(() => import('./POIModal').then((module) => ({ default: module.POIModal })));
+const POIModal = lazy(() => import('./POIModalV2').then((module) => ({ default: module.POIModalV2 })));
+const BuildingDetailModal = lazy(() => import('./BuildingDetailModal').then((module) => ({ default: module.BuildingDetailModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
 const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
@@ -262,7 +263,8 @@ function BuildingToast({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 12 }}
       transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-      className={`absolute left-1/2 -translate-x-1/2 ${isMobile ? 'bottom-32' : 'bottom-40'} z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5`}
+      className="absolute left-1/2 -translate-x-1/2 z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5"
+      style={{ bottom: isMobile ? 'calc(8rem + var(--sai-bottom))' : '10rem' }}
     >
       {/* Floating tag — sits above card edge like a door label */}
       {displayEyebrow && (
@@ -336,7 +338,8 @@ function POIToast({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 12 }}
       transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-      className={`absolute left-1/2 -translate-x-1/2 ${isMobile ? 'bottom-32' : 'bottom-40'} z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5`}
+      className="absolute left-1/2 -translate-x-1/2 z-40 pointer-events-auto w-[min(380px,calc(100vw-2rem))] pt-5"
+      style={{ bottom: isMobile ? 'calc(8rem + var(--sai-bottom))' : '10rem' }}
     >
       <div className="absolute top-0 left-2 flex items-center gap-1.5 pointer-events-none select-none">
         <span
@@ -402,7 +405,8 @@ function PromptBubble({
   onTap: () => void;
 }) {
   const t = PROMPT_TONE[tone];
-  const common = `absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border ${t.border} ${t.shadow} ${t.text} font-bold tracking-wider ${isMobile ? 'bottom-24' : 'bottom-32'}`;
+  const common = `absolute left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border ${t.border} ${t.shadow} ${t.text} font-bold tracking-wider`;
+  const bottom = isMobile ? 'calc(6rem + var(--sai-bottom))' : '8rem';
 
   if (!isMobile) {
     return (
@@ -411,6 +415,7 @@ function PromptBubble({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 20 }}
         className={common}
+        style={{ bottom }}
       >
         {children}
       </motion.div>
@@ -430,7 +435,7 @@ function PromptBubble({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
       className={`${common} pointer-events-auto cursor-pointer active:scale-95 transition-transform select-none`}
-      style={{ touchAction: 'none' }}
+      style={{ bottom, touchAction: 'none' }}
     >
       {children}
     </motion.button>
@@ -744,6 +749,8 @@ export function UI() {
   const useWorldMapChart = useGameStore((state) => state.renderDebug.worldMapChart);
   const cityFieldOverlayEnabled = useGameStore((state) => state.renderDebug.cityFieldOverlay);
   const cityFieldMode = useGameStore((state) => state.renderDebug.cityFieldMode);
+  const plumbBobsEnabled = useGameStore((state) => state.renderDebug.sacredMarkers);
+  const poiBeaconsEnabled = useGameStore((state) => state.renderDebug.poiBeacons);
   const updateRenderDebug = useGameStore((state) => state.updateRenderDebug);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const captainExpression = useGameStore((state) => state.captainExpression);
@@ -851,13 +858,33 @@ export function UI() {
     if (!voyageBegun || startupOverlayActive || playerMode !== 'walking') return;
     if (typeof window === 'undefined') return;
 
-    const key = 'spice-voyager-control-hint-walking';
-    if (window.sessionStorage.getItem(key)) return;
-    window.sessionStorage.setItem(key, '1');
-    addNotification('WASD or arrow keys walk ashore. E enters marked places. Space harvests when prompted.', 'info', {
-      tier: 'ticker',
-      subtitle: 'ASHORE',
-    });
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const scheduleHint = (key: string, delayMs: number, message: string, subtitle: string) => {
+      if (window.sessionStorage.getItem(key)) return;
+      timers.push(setTimeout(() => {
+        if (useGameStore.getState().playerMode !== 'walking') return;
+        if (window.sessionStorage.getItem(key)) return;
+        window.sessionStorage.setItem(key, '1');
+        addNotification(message, 'info', { tier: 'ticker', subtitle });
+      }, delayMs));
+    };
+
+    scheduleHint(
+      'spice-voyager-control-hint-walking-run',
+      3_000,
+      'Hold Shift to run while ashore. Drawing a weapon slows you back to a walk.',
+      'ASHORE'
+    );
+    scheduleHint(
+      'spice-voyager-control-hint-walking-jump',
+      7_000,
+      'Press Space to jump. Near fresh game, Space harvests instead.',
+      'ASHORE'
+    );
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
   }, [addNotification, playerMode, startupOverlayActive, voyageBegun]);
 
   // Building entry toast (walking mode, non-market buildings)
@@ -868,6 +895,7 @@ export function UI() {
     activeBuildingToastRef.current = val;
     setActiveBuildingToastState(val);
   }, []);
+  const [activeBuildingDetail, setActiveBuildingDetail] = useState<{ building: Building; port: Port } | null>(null);
 
   // POI walk-up toast (parallel to building toast). The toast is local UI;
   // the modal-open state lives on gameStore as `activePOI` so any system can
@@ -1371,8 +1399,15 @@ export function UI() {
 
   return (
     <div
-      className="absolute inset-0 z-[60] pointer-events-none p-4 flex flex-col justify-between font-sans text-white text-shadow-sm select-none"
-      style={{ transform: 'translateZ(0)', willChange: 'transform' }}
+      className="absolute inset-0 z-[60] pointer-events-none flex flex-col justify-between font-sans text-white text-shadow-sm select-none"
+      style={{
+        paddingTop: 'calc(1rem + var(--sai-top))',
+        paddingRight: 'calc(1rem + var(--sai-right))',
+        paddingBottom: 'calc(1rem + var(--sai-bottom))',
+        paddingLeft: 'calc(1rem + var(--sai-left))',
+        transform: 'translateZ(0)',
+        willChange: 'transform',
+      }}
     >
       <AnimatePresence>
         {hullDamagePulse && (
@@ -1710,6 +1745,32 @@ export function UI() {
                   )}
                 </AnimatePresence>
               </div>
+              <button
+                onClick={() => {
+                  sfxClick();
+                  if (plumbBobsEnabled && poiBeaconsEnabled) {
+                    updateRenderDebug({ poiBeacons: false });
+                  } else if (plumbBobsEnabled) {
+                    updateRenderDebug({ sacredMarkers: false });
+                  } else {
+                    updateRenderDebug({ sacredMarkers: true, poiBeacons: true });
+                  }
+                }}
+                aria-pressed={plumbBobsEnabled || poiBeaconsEnabled}
+                className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+                  bg-[#1a1e2e] border-2 border-[#4a4535]/60 text-[#8a8060] hover:text-[#c084fc] hover:border-[#c084fc]/40
+                  shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+                  transition-all active:scale-95`}
+                title={
+                  plumbBobsEnabled && poiBeaconsEnabled
+                    ? 'Hide POI beacons'
+                    : plumbBobsEnabled
+                      ? 'Hide all beacons'
+                      : 'Show all beacons'
+                }
+              >
+                <Diamond size={15} />
+              </button>
             </div>
             <AnimatePresence>
               {showWind && (
@@ -1897,15 +1958,29 @@ export function UI() {
 
       {/* Building Entry Toast — walking mode, non-market buildings */}
       <AnimatePresence>
-        {activeBuildingToast && playerMode === 'walking' && !activePort && (
+        {activeBuildingToast && playerMode === 'walking' && !activePort && !activeBuildingDetail && (
           <BuildingToast
             key={activeBuildingToast.building.id}
             building={activeBuildingToast.building}
             isMobile={isMobile}
-            onEnter={() => { /* wired up later */ }}
+            onEnter={() => {
+              sfxOpen();
+              setActiveBuildingDetail(activeBuildingToast);
+              setActiveBuildingToast(null);
+            }}
           />
         )}
       </AnimatePresence>
+
+      {!startupOverlayActive && activeBuildingDetail && (
+        <Suspense fallback={null}>
+          <BuildingDetailModal
+            building={activeBuildingDetail.building}
+            port={activeBuildingDetail.port}
+            onDismiss={() => setActiveBuildingDetail(null)}
+          />
+        </Suspense>
+      )}
 
       {/* POI Walk-up Toast — walking mode, hand-authored sites */}
       <AnimatePresence>
@@ -1977,7 +2052,13 @@ export function UI() {
         );
 
         return (
-          <div className="absolute bottom-20 right-4 flex flex-col gap-3 items-end pointer-events-none">
+          <div
+            className="absolute right-4 flex flex-col gap-3 items-end pointer-events-none"
+            style={{
+              right: 'calc(1rem + var(--sai-right))',
+              bottom: isMobile ? 'calc(5.75rem + var(--sai-bottom))' : '5rem',
+            }}
+          >
             {/* Port tier (top) — max 1 */}
             <div className="flex flex-col gap-2 items-end">
               <AnimatePresence>{portNotes.map(renderToast)}</AnimatePresence>
@@ -2049,7 +2130,13 @@ export function UI() {
           is in the top-right cluster; mobile quests is in the action-bar
           overflow popover. */}
       {!isMobile && (
-        <div className="absolute bottom-4 left-4 pointer-events-auto flex items-center gap-2">
+        <div
+          className="absolute pointer-events-auto flex items-center gap-2"
+          style={{
+            left: 'calc(1rem + var(--sai-left))',
+            bottom: 'calc(1rem + var(--sai-bottom))',
+          }}
+        >
           <button
             onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
             aria-pressed={showJournal}
@@ -2080,7 +2167,11 @@ export function UI() {
           Desktop: 7 buttons in one row.
           Mobile: 4 buttons [Pause][Navigate][Dashboard][⋯] with the remaining
           five (Learn/Help/Settings/View/Quests) tucked into the overflow popover. */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-auto">
+      <div
+        data-testid="mobile-action-bar"
+        className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
+        style={{ bottom: 'calc(0.75rem + var(--sai-bottom))' }}
+      >
         {/* Mobile overflow popover — opens above the action bar */}
         <AnimatePresence>
           {isMobile && showOverflowMenu && (

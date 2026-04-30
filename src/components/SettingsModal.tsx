@@ -682,18 +682,22 @@ function DisplayTab({ renderDebug, onUpdateRenderDebug }: {
       <SettingsSection title="Map Markers" description="Small visual cues overlaid on the 3D port maps to help spot important buildings at a glance.">
         <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
           <div>
-            <div className="text-xs font-semibold text-slate-300">Sacred Site Markers</div>
-            <div className="text-[11px] text-slate-500">Floating purple diamonds above churches, mosques, temples, and religious landmarks.</div>
+            <div className="text-xs font-semibold text-slate-300">Beacons</div>
+            <div className="text-[11px] text-slate-500">Floating religious plumb bobs and cyan POI pillars on the 3D port map.</div>
           </div>
           <button
-            onClick={() => { sfxClick(); onUpdateRenderDebug({ sacredMarkers: !renderDebug.sacredMarkers }); }}
+            onClick={() => {
+              sfxClick();
+              const next = !(renderDebug.sacredMarkers || renderDebug.poiBeacons);
+              onUpdateRenderDebug({ sacredMarkers: next, poiBeacons: next });
+            }}
             className={`rounded-lg px-3 py-2 text-xs font-medium transition-all border ${
-              renderDebug.sacredMarkers
+              renderDebug.sacredMarkers || renderDebug.poiBeacons
                 ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
                 : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]'
             }`}
           >
-            {renderDebug.sacredMarkers ? 'On' : 'Off'}
+            {renderDebug.sacredMarkers || renderDebug.poiBeacons ? 'On' : 'Off'}
           </button>
         </div>
       </SettingsSection>

@@ -679,8 +679,11 @@ function DisplayTab({
   return (
     <div>
       <SectionRule label="Map Markers" />
-      <CtrlRow label="Sacred Site Markers" desc="Floating diamonds above churches, mosques, temples, and religious landmarks.">
-        <Toggle value={renderDebug.sacredMarkers} onChange={v => onUpdate({ sacredMarkers: v })} />
+      <CtrlRow label="Beacons" desc="Floating religious plumb bobs and cyan POI pillars on the 3D port map.">
+        <Toggle
+          value={renderDebug.sacredMarkers || renderDebug.poiBeacons}
+          onChange={v => onUpdate({ sacredMarkers: v, poiBeacons: v })}
+        />
       </CtrlRow>
       <CtrlRow label="Animal Markers" desc="Nearby wildlife cluster labels — camel, antelope, fish, etc." last>
         <Toggle value={renderDebug.animalMarkers} onChange={v => onUpdate({ animalMarkers: v })} />

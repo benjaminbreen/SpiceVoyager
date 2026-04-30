@@ -44,6 +44,7 @@ import { resolveSnappedPOI } from '../utils/proximityResolution';
 import { BESPOKE_POI_IDS } from './BespokePOIs';
 
 type PortsProp = ReturnType<typeof useGameStore.getState>['ports'];
+const POI_RENDER_RADIUS_SQ = 340 * 340;
 
 // ── Material cache ──────────────────────────────────────────────────────────
 //
@@ -674,6 +675,8 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
   // them with the sacred-marker plumbob system (which still gates beacons).
   const visible = useGameStore((state) => state.renderDebug.poiVisibility);
   const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+  const playerPos = useGameStore((state) => state.playerMode === 'walking' ? state.walkingPos : state.playerPos);
 
   const items = useMemo(() => {
     if (!visible) return [] as Array<{
@@ -683,7 +686,12 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
     }>;
     const visiblePorts = devSoloPort
       ? ports.filter((p) => p.id === devSoloPort)
-      : ports;
+      : ports.filter((p) => {
+        if (p.id === currentWorldPortId) return true;
+        const dx = p.position[0] - playerPos[0];
+        const dz = p.position[2] - playerPos[2];
+        return dx * dx + dz * dz <= POI_RENDER_RADIUS_SQ;
+      });
     const out: Array<{ poi: POIDefinition; position: [number, number, number]; rotationY: number }> = [];
     for (const port of visiblePorts) {
       for (const poi of getPOIsForPort(port)) {
@@ -714,7 +722,7 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
       }
     }
     return out;
-  }, [devSoloPort, ports, visible]);
+  }, [currentWorldPortId, devSoloPort, playerPos, ports, visible]);
 
   if (!visible || items.length === 0) return null;
 

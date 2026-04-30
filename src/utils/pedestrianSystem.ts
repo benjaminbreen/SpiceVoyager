@@ -43,6 +43,9 @@ export interface Corridor {
    *  inherit the building's familyName and get a given name. Hub-to-hub
    *  corridors leave this undefined — those walkers stay anonymous. */
   homeBuildingId?: string;
+  /** Important public destination at either end of the route. Pedestrians on
+   *  these corridors linger longer and can be surfaced in building/POI modals. */
+  attractorBuildingId?: string;
 }
 
 export interface Pedestrian {
@@ -87,6 +90,7 @@ export interface Pedestrian {
   homeBuildingId?: string;
   givenName?: string;
   familyName?: string;
+  attractorBuildingId?: string;
 }
 
 export interface PedestrianSystemState {
@@ -135,6 +139,8 @@ function pedestrianTypeForBuilding(b: Building): PedestrianType {
   if (t === 'dock') return 'sailor';
   if (t === 'warehouse') return 'laborer';
   if (t === 'market') return 'merchant';
+  if (t === 'spiritual') return 'religious';
+  if (t === 'landmark' && b.labelEyebrow?.toLowerCase() === 'religious') return 'religious';
   if (t === 'farmhouse') return 'farmer';
   if (t === 'estate') return 'merchant';
   // Houses: infer from label
@@ -267,6 +273,7 @@ function buildCorridor(
   weight: number,
   type: PedestrianType,
   homeBuildingId?: string,
+  attractorBuildingId?: string,
 ): Corridor | null {
   if (waypoints.length < 2) return null;
   const segLengths: number[] = [];
@@ -279,7 +286,7 @@ function buildCorridor(
     total += len;
   }
   if (total < 0.5) return null;
-  return { waypoints, segLengths, totalLength: total, weight, type, homeBuildingId };
+  return { waypoints, segLengths, totalLength: total, weight, type, homeBuildingId, attractorBuildingId };
 }
 
 function residentialSide(a: Building, b: Building): Building | undefined {
@@ -295,10 +302,24 @@ function residentialSide(a: Building, b: Building): Building | undefined {
 
 // How much traffic weight each building type generates
 const BUILDING_TRAFFIC: Record<BuildingType, number> = {
-  dock: 1.0, warehouse: 0.8, market: 1.0, fort: 0.3, landmark: 0.55, palace: 0.45,
+  dock: 1.0, warehouse: 0.8, market: 1.35, fort: 0.5, landmark: 0.85, palace: 0.75,
   estate: 0.4, house: 0.3, shack: 0.15, farmhouse: 0.25, plaza: 0.9,
-  spiritual: 0.6,
+  spiritual: 1.15,
 };
+
+function isAttractorBuilding(b: Building): boolean {
+  return b.type === 'market' || b.type === 'spiritual' || b.type === 'landmark' ||
+    b.type === 'palace' || b.type === 'fort' || !!b.poiId;
+}
+
+function corridorAttractor(a: Building, b: Building): Building | undefined {
+  const aAttr = isAttractorBuilding(a);
+  const bAttr = isAttractorBuilding(b);
+  if (aAttr && bAttr) return BUILDING_TRAFFIC[a.type] >= BUILDING_TRAFFIC[b.type] ? a : b;
+  if (aAttr) return a;
+  if (bAttr) return b;
+  return undefined;
+}
 
 /**
  * Compute a corridor endpoint offset from building center.
@@ -354,19 +375,20 @@ function generateCorridors(buildings: Building[], rng: () => number, roads?: Roa
     const type = pedestrianTypeForBuilding(dominant);
 
     const home = residentialSide(a, b)?.id;
+    const attractor = corridorAttractor(a, b)?.id;
 
     // Try a road-following path first; it gets a weight bonus because roads
     // are visually the "right" place for foot traffic.
     const roadPath = tryRoadAwarePath(ax, az, bx, bz, roads);
     if (roadPath && validateWaypoints(roadPath, roadIndex)) {
-      const c = buildCorridor(roadPath, weight * 1.3, type, home);
+      const c = buildCorridor(roadPath, weight * 1.3, type, home, attractor);
       if (c) { corridors.push(c); return; }
     }
 
     // Fallback: straight corridor from building edge to building edge.
     const straight: [number, number][] = [[ax, az], [bx, bz]];
     if (!validateWaypoints(straight, roadIndex)) return;
-    const c = buildCorridor(straight, weight, type, home);
+    const c = buildCorridor(straight, weight, type, home, attractor);
     if (c) corridors.push(c);
   };
 
@@ -376,7 +398,7 @@ function generateCorridors(buildings: Building[], rng: () => number, roads?: Roa
   const farms: Building[] = []; // farmhouses
 
   for (const b of buildings) {
-    if (b.type === 'dock' || b.type === 'market' || b.type === 'warehouse') hubs.push(b);
+    if (b.type === 'dock' || b.type === 'market' || b.type === 'warehouse' || isAttractorBuilding(b)) hubs.push(b);
     else if (b.type === 'farmhouse') farms.push(b);
     else if (b.type !== 'fort') homes.push(b);
   }
@@ -726,6 +748,7 @@ function makeCorridorWalker(ci: number, corridor: Corridor, rng: () => number, p
     panicFleeX: 0,
     panicFleeZ: 0,
     dead: false,
+    attractorBuildingId: corridor.attractorBuildingId,
   };
 }
 
@@ -845,7 +868,7 @@ export function updatePedestrians(
       if (p.progress >= 1) { p.progress = 1; p.direction = -1; reachedEnd = true; }
       else if (p.progress <= 0) { p.progress = 0; p.direction = 1; reachedEnd = true; }
       if (reachedEnd) {
-        p.dwellUntil = time + 5 + Math.random() * 20;
+        p.dwellUntil = time + (p.attractorBuildingId ? 12 + Math.random() * 34 : 5 + Math.random() * 20);
       }
 
       // Find which segment the current progress lands on

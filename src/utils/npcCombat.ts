@@ -92,12 +92,16 @@ export function chooseInitiativePosture(
   const bitterRival = relationModifier <= -35;
   const eligiblePredationTarget = !sameFaction && (rival || suspicious);
   const cargoTemptation = context.cargoTemptation ?? 0;
+  const playerIsPirate = context.playerFlag === 'Pirate';
 
-  if (identity.role === 'privateer' && (hostile || bitterRival || (eligiblePredationTarget && cargoTemptation >= 55) || (suspicious && rival))) {
+  if (identity.role === 'privateer' && (playerIsPirate || hostile || bitterRival || (eligiblePredationTarget && cargoTemptation >= 55) || (suspicious && rival))) {
     return identity.morale >= 35 ? 'warn' : 'neutral';
   }
-  if (identity.role === 'armed patrol' && (hostile || bitterRival || (suspicious && rival))) {
+  if (identity.role === 'armed patrol' && (playerIsPirate || hostile || bitterRival || (suspicious && rival))) {
     return identity.morale >= 45 ? 'warn' : 'neutral';
+  }
+  if (playerIsPirate && CIVILIAN_ROLES.has(identity.role)) {
+    return identity.morale >= 35 ? 'flee' : 'neutral';
   }
 
   return 'neutral';

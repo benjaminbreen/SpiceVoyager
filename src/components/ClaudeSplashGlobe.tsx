@@ -3136,7 +3136,7 @@ const FACTION_KEY_TO_NATIONALITY: Record<FactionKey, Nationality | null> = {
   gujarati: 'Gujarati',
   chinese: 'Chinese',
   random: null,            // any port
-  pirate: null,            // pirates start anywhere
+  pirate: 'Pirate',
 };
 
 /** Ordered list of port IDs available to a faction, weight-descending. We
@@ -3189,10 +3189,10 @@ function Ticker() {
         fontFamily: SUBTITLE_FN,
         fontStyle: 'italic',
         fontSize: 14,
-        color: 'rgba(255, 248, 232, 0.78)',
+        color: 'rgba(255, 248, 232, 0.88)',
         letterSpacing: '0.02em',
         pointerEvents: 'none',
-        textShadow: '0 1px 4px rgba(0,0,0,0.55)',
+        textShadow: '0 1px 3px rgba(0,0,0,0.68), 0 0 8px rgba(0,0,0,0.28)',
       }}
     >
       <motion.div
@@ -3201,6 +3201,11 @@ function Ticker() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -6 }}
         transition={{ duration: 0.6 }}
+        style={{
+          display: 'inline-block',
+          padding: '5px 28px 6px',
+          background: 'radial-gradient(ellipse at center, rgba(6,4,2,0.22) 0%, rgba(6,4,2,0.14) 45%, rgba(6,4,2,0) 78%)',
+        }}
       >
         {TICKER_LINES[i]}
       </motion.div>
@@ -3566,16 +3571,18 @@ export function ClaudeSplashGlobe(props: Props) {
         <div style={{ textAlign: 'center', pointerEvents: 'none' }}>
           <div
             style={{
-              display: 'inline-block',
+              display: 'block',
+              width: 'fit-content',
+              margin: '0 auto',
               padding: 'clamp(14px, 2.8vw, 24px) clamp(20px, 3.8vw, 36px)',
               background:
-                'radial-gradient(ellipse at center, rgba(10,8,4,0.78) 0%, rgba(8,6,3,0.62) 60%, rgba(6,4,2,0.42) 100%)',
+                'radial-gradient(ellipse at center, rgba(10,8,4,0.62) 0%, rgba(8,6,3,0.44) 62%, rgba(6,4,2,0.28) 100%)',
               border: '1px solid rgba(201,168,76,0.42)',
-              borderRadius: 4,
+              borderRadius: 22,
               position: 'relative',
               boxShadow: `
                 0 0 0 1px rgba(201,168,76,0.14) inset,
-                0 22px 70px rgba(10,5,0,0.65),
+                0 18px 58px rgba(10,5,0,0.52),
                 0 0 24px rgba(201,168,76,0.08) inset
               `,
               backdropFilter: 'blur(2px)',
@@ -3632,8 +3639,12 @@ export function ClaudeSplashGlobe(props: Props) {
               fontSize: 'clamp(15px, 1.7vw, 21px)',
               color: 'rgba(255,248,232,0.92)',
               letterSpacing: '0.04em',
-              marginTop: 18,
-              textShadow: '0 1px 4px rgba(20,10,0,0.55)',
+              margin: '18px auto 0',
+              padding: '6px 28px 7px',
+              display: 'block',
+              width: 'fit-content',
+              background: 'radial-gradient(ellipse at center, rgba(6,4,2,0.24) 0%, rgba(6,4,2,0.15) 46%, rgba(6,4,2,0) 76%)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.68), 0 0 8px rgba(0,0,0,0.28)',
               fontWeight: 500,
             }}
           >
@@ -3791,10 +3802,10 @@ function BeginButton({
   }, [ready]);
   const dots = '·'.repeat(dot);
 
-  const baseShadow = `0 0 0 1px ${BTN_GOLD}22 inset, 0 0 12px ${BTN_GOLD}22, 0 2px 10px rgba(0,0,0,0.5)`;
-  const litShadow = `0 0 0 1px ${BTN_GOLD}3a inset, 0 0 22px ${BTN_GOLD}44, 0 2px 10px rgba(0,0,0,0.5)`;
-  const hoverShadow = `0 0 0 1px ${BTN_GOLD}66 inset, 0 0 30px ${BTN_GOLD}66, 0 4px 14px rgba(0,0,0,0.6)`;
-  const disabledShadow = `0 0 0 1px ${BTN_DIM_GOLD}22 inset, 0 2px 8px rgba(0,0,0,0.4)`;
+  const baseShadow = `0 0 0 1px ${BTN_GOLD}44 inset, 0 1px 0 rgba(255,238,184,0.34) inset, 0 -1px 0 rgba(78,54,20,0.45) inset, 0 0 0 4px rgba(201,168,76,0.12) inset, 0 0 12px ${BTN_GOLD}22, 0 2px 10px rgba(0,0,0,0.5)`;
+  const litShadow = `0 0 0 1px ${BTN_GOLD}66 inset, 0 1px 0 rgba(255,238,184,0.48) inset, 0 -1px 0 rgba(78,54,20,0.4) inset, 0 0 0 4px rgba(201,168,76,0.18) inset, 0 0 22px ${BTN_GOLD}44, 0 2px 10px rgba(0,0,0,0.5)`;
+  const hoverShadow = `0 0 0 1px ${BTN_GOLD}88 inset, 0 1px 0 rgba(255,238,184,0.62) inset, 0 -1px 0 rgba(78,54,20,0.36) inset, 0 0 0 4px rgba(201,168,76,0.24) inset, 0 0 30px ${BTN_GOLD}66, 0 4px 14px rgba(0,0,0,0.6)`;
+  const disabledShadow = `0 0 0 1px ${BTN_DIM_GOLD}33 inset, 0 0 0 4px rgba(122,100,50,0.08) inset, 0 2px 8px rgba(0,0,0,0.4)`;
 
   return (
     <motion.button
@@ -3829,8 +3840,8 @@ function BeginButton({
         textTransform: 'uppercase',
         color: ready ? (hover ? BTN_BRIGHT : BTN_WARM) : 'rgba(214,180,108,0.45)',
         background: ready ? 'rgba(16, 14, 22, 0.92)' : 'rgba(12, 10, 16, 0.7)',
-        border: `1px solid ${BTN_DIM_GOLD}`,
-        borderRadius: 3,
+        border: `2px solid ${BTN_DIM_GOLD}`,
+        borderRadius: 14,
         cursor: ready ? 'pointer' : 'wait',
         overflow: 'hidden',
         display: 'flex',
@@ -3840,6 +3851,24 @@ function BeginButton({
         transition: 'color 200ms ease, background 200ms ease',
       }}
     >
+      {ready && (
+        <motion.span
+          aria-hidden="true"
+          animate={hover ? { opacity: 0.78 } : { opacity: [0.45, 0.62, 0.45] }}
+          transition={hover ? { duration: 0.18, ease: 'easeOut' } : { duration: 3.2, ease: 'easeInOut', repeat: Infinity }}
+          style={{
+            position: 'absolute',
+            inset: 2,
+            borderRadius: 11,
+            pointerEvents: 'none',
+            background: `
+              linear-gradient(115deg, rgba(255,244,216,0.34) 0%, rgba(255,244,216,0.1) 18%, rgba(201,168,76,0.05) 34%, rgba(0,0,0,0) 58%),
+              linear-gradient(180deg, rgba(255,232,176,0.16) 0%, rgba(255,232,176,0) 36%, rgba(55,35,12,0.18) 100%)
+            `,
+            boxShadow: '0 0 0 1px rgba(255,230,170,0.18) inset',
+          }}
+        />
+      )}
       {ready ? (
         <>
           {/* Pulsing diamond — same as SettingsModalV2 PrimaryBtn */}
@@ -3855,12 +3884,28 @@ function BeginButton({
           >
             ◆
           </motion.span>
-          <span style={{ paddingTop: 1 }}>Set&nbsp;Sail</span>
+          <motion.span
+            animate={hover ? { opacity: 1 } : { opacity: [0.86, 1, 0.86] }}
+            transition={hover ? { duration: 0.18, ease: 'easeOut' } : { duration: 2.4, ease: 'easeInOut', repeat: Infinity }}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              paddingTop: 1,
+              textShadow: hover
+                ? `0 0 12px ${BTN_GOLD}66, 0 1px 2px rgba(0,0,0,0.72)`
+                : `0 0 7px ${BTN_GOLD}3d, 0 1px 2px rgba(0,0,0,0.7)`,
+            }}
+          >
+            Set&nbsp;Sail
+          </motion.span>
           {!compact && (
-            <span
+            <motion.span
+              animate={hover ? { opacity: 1 } : { opacity: [0.58, 0.82, 0.58] }}
+              transition={hover ? { duration: 0.18, ease: 'easeOut' } : { duration: 2.4, ease: 'easeInOut', repeat: Infinity, delay: 0.18 }}
               style={{
                 position: 'absolute',
                 right: 18,
+                zIndex: 1,
                 fontFamily: MONO,
                 fontSize: 10,
                 fontWeight: 500,
@@ -3870,7 +3915,7 @@ function BeginButton({
               }}
             >
               ↵ Enter
-            </span>
+            </motion.span>
           )}
         </>
       ) : (

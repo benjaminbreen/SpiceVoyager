@@ -183,6 +183,20 @@ describe('gameStore integration', () => {
     expect(state.journalEntries[0]?.message).toContain('not to be trusted');
   });
 
+  it('starts a pirate run with a black flag, armed ship, and mixed crew', () => {
+    useGameStore.getState().startNewGame({ faction: 'Pirate', portId: 'socotra' });
+    const state = useGameStore.getState();
+
+    expect(state.ship.flag).toBe('Pirate');
+    expect(state.currentWorldPortId).toBe('socotra');
+    expect(state.stats.armament.length).toBeGreaterThan(0);
+    expect(state.gold).toBeLessThan(1000);
+    expect(state.cargo['Small Shot']).toBeGreaterThan(0);
+    expect(state.ship.armed).toBe(true);
+    expect(state.crew.every((member) => member.nationality !== 'Pirate')).toBe(true);
+    expect(state.getReputation('Portuguese')).toBeLessThan(0);
+  });
+
   it('damages the ship, lowers crew morale, and triggers game over on destruction', () => {
     const crew = [
       makeCrewMember({ id: 'captain', role: 'Captain', morale: 8 }),

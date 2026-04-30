@@ -442,6 +442,11 @@ function archetypeHeightFromShape(
 ): number {
   if (shape <= 0) return shape * 12;
 
+  if (archetype.geography === 'lagoon') {
+    const microRelief = _mainNoise(x * 0.028 + 51.7, z * 0.028 - 93.4) * 0.15;
+    return 9.7 + shape * 1.35 + microRelief;
+  }
+
   // Keep beaches, harbor edges, and most low ground calm; concentrate relief inland.
   const landDepth = smoothstep(0.24, 0.70, shape);
   const inlandBack = smoothstep(0.50, 0.86, shape);

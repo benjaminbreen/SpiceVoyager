@@ -22,6 +22,7 @@ import {
   initPedestrianSystem, updatePedestrians,
 } from '../utils/pedestrianSystem';
 import { syncLivePedestrians, clearLivePedestrians, consumePendingKills } from '../utils/livePedestrians';
+import { clearPedestrianPresence, publishPedestrianPresence, type PresentPedestrian } from '../utils/pedestrianPresence';
 import { applyRimLight, updateRimFromFog } from '../utils/rimLight';
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import {
@@ -402,6 +403,22 @@ const ROLE_LABEL: Record<string, string> = {
   farmer: 'farmer',
 };
 
+const PRESENCE_RADIUS = 11;
+
+function fallbackPresenceNationality(port: { id: string; culture: Culture }) {
+  return PORT_FACTION[port.id] ?? (
+    port.culture === 'European' ? 'Portuguese' :
+    port.culture === 'West African' ? 'Swahili' :
+    port.culture === 'Atlantic' ? 'Portuguese' :
+    'Gujarati'
+  );
+}
+
+function presenceRole(ped: { figureType: FigureType; type: PedestrianType }, home: Building | undefined): string {
+  if (ped.figureType === 'child') return 'errand-runner';
+  return occupationFromBuildingLabel(home?.label) ?? ROLE_LABEL[ped.type] ?? ped.type;
+}
+
 // ── Pedestrian description ──────────────────────────────────────────────────
 // Click-toast text. Deterministic per (worldSeed, ped index) so re-clicking
 // the same person yields the same description. Pulls a specific occupation
@@ -582,6 +599,7 @@ export function Pedestrians() {
   const systemRef = useRef<PedestrianSystemState | null>(null);
   const profilesRef = useRef<VisualProfile[]>([]);
   const portIdRef = useRef<string | undefined>(undefined);
+  const lastPresencePublishRef = useRef(0);
   const colorsNeedInit = useRef(true);
   const animAccumRef = useRef(0);
   const livePedXs = useRef<Float32Array>(new Float32Array(256));
@@ -665,6 +683,7 @@ export function Pedestrians() {
     systemRef.current = system;
     portIdRef.current = port.id;
     clearLivePedestrians();
+    clearPedestrianPresence();
     // Drop any stale selection from a previous port — the index would now
     // point at a different person in the new system.
     selectedPedIdx = null;
@@ -675,6 +694,10 @@ export function Pedestrians() {
     );
     colorsNeedInit.current = true;
   }, [ports, worldSeed]);
+
+  useEffect(() => () => {
+    clearPedestrianPresence();
+  }, []);
 
   useFrame((state, delta) => {
     updateRimFromFog(state.scene);
@@ -860,6 +883,44 @@ export function Pedestrians() {
       pzs[i] = system.pedestrians[i].z;
     }
     syncLivePedestrians(pubCount, pxs, pys, pzs);
+
+    if (state.clock.elapsedTime - lastPresencePublishRef.current > 0.75) {
+      lastPresencePublishRef.current = state.clock.elapsedTime;
+      const port = ports[0];
+      const presence: Record<string, PresentPedestrian[]> = {};
+      if (port) {
+        const buildingById = new Map(port.buildings.map((b) => [b.id, b]));
+        const nationality = fallbackPresenceNationality(port);
+        for (let i = 0; i < activeCount; i++) {
+          const p = system.pedestrians[i];
+          if (!p || p.dead || !p.attractorBuildingId) continue;
+          const building = buildingById.get(p.attractorBuildingId);
+          if (!building) continue;
+          const dx = p.x - building.position[0];
+          const dz = p.z - building.position[2];
+          const radius = PRESENCE_RADIUS + Math.max(building.scale[0], building.scale[2]) * 0.5;
+          if (dx * dx + dz * dz > radius * radius) continue;
+          const home = p.homeBuildingId ? buildingById.get(p.homeBuildingId) : undefined;
+          const name = p.givenName && p.familyName
+            ? `${p.givenName} ${p.familyName}`
+            : `Unfamiliar ${ROLE_LABEL[p.type] ?? 'townsperson'}`;
+          const list = presence[building.id] ?? [];
+          if (list.length < 4) {
+            list.push({
+              id: `${port.id}-${i}`,
+              buildingId: building.id,
+              name,
+              role: presenceRole(p, home),
+              nationality,
+              figureType: p.figureType,
+              pedestrianType: p.type,
+            });
+            presence[building.id] = list;
+          }
+        }
+      }
+      publishPedestrianPresence(presence);
+    }
 
     const d = dummy.current;
 

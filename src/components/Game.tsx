@@ -7,16 +7,36 @@ import { GameOverScreen } from './GameOverScreen';
 import { PERFORMANCE_STATS_EVENT, type PerformanceStats, setPerfEnabled } from '../utils/performanceStats';
 import { getTestModeConfig } from '../test/testMode';
 import { useGameStore } from '../store/gameStore';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const GameScene = lazy(() => import('./GameScene').then((module) => ({
   default: module.GameScene,
 })));
 
+const MOBILE_RENDER_PRESET = {
+  shadows: false,
+  postprocessing: false,
+  bloom: false,
+  vignette: false,
+  advancedWater: false,
+  shipWake: false,
+  algae: false,
+  wildlifeMotion: false,
+} as const;
+
 export function Game() {
   const testMode = getTestModeConfig();
+  const { isMobile } = useIsMobile();
   const [showPerformance, setShowPerformance] = useState(() => testMode.showPerformance);
   const [performanceStats, setPerformanceStats] = useState<PerformanceStats | null>(null);
   const showPerformanceRef = useRef(testMode.showPerformance);
+  const mobilePresetAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isMobile || mobilePresetAppliedRef.current) return;
+    mobilePresetAppliedRef.current = true;
+    useGameStore.getState().updateRenderDebug(MOBILE_RENDER_PRESET);
+  }, [isMobile]);
 
   useEffect(() => {
     setPerfEnabled(showPerformance);

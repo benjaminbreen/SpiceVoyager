@@ -157,6 +157,23 @@ export function FactionFlag({ nationality, size = 20 }: FactionFlagProps) {
 
       case 'plain':
       default: {
+        if (nationality === 'Pirate') {
+          return (
+            <>
+              <rect width={w} height={h} fill={c1} />
+              <rect x={w * 0.08} y={h * 0.12} width={w * 0.84} height={h * 0.76} fill="none" stroke={c3} strokeWidth={Math.max(1, w * 0.045)} opacity={0.85} />
+              <path
+                d={`M ${w * 0.28} ${h * 0.58} C ${w * 0.38} ${h * 0.34}, ${w * 0.62} ${h * 0.34}, ${w * 0.72} ${h * 0.58}`}
+                fill="none"
+                stroke={c2}
+                strokeWidth={Math.max(1.2, w * 0.075)}
+                strokeLinecap="round"
+              />
+              <circle cx={w * 0.42} cy={h * 0.48} r={Math.max(1, w * 0.045)} fill={c2} />
+              <circle cx={w * 0.58} cy={h * 0.48} r={Math.max(1, w * 0.045)} fill={c2} />
+            </>
+          );
+        }
         // Siamese: red with white elephant suggestion (simple shape)
         if (nationality === 'Siamese') {
           return (

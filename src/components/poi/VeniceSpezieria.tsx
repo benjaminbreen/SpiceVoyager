@@ -15,27 +15,22 @@
 //   3. Pointed Gothic windows on upper storeys with quatrefoil discs.
 //   4. Terra-cotta tile roof at low pitch (NOT the Japanese deep eaves).
 //   5. Distinctive Venetian mushroom-flared chimney pot.
-//   6. Stone canal-side fondamenta with a moored gondola (long black slim
-//      hull, raised iron ferro prow) and red-white striped briccole.
-//   7. Open-air theriac compounding hearth in the side courtyard: copper
-//      kettle on stone, dried herb bunches hanging on a pergola, smoke.
-//   8. Octagonal Istrian-stone wellhead (vera da pozzo) in the campiello.
-//   9. Small arched stone footbridge over a side canal cutting east of
-//      the compound.
+//   6. Small inland campiello footprint: warm Istrian paving, low walls,
+//      a wellhead, and one herb/hearth courtyard. No bespoke canal/waterline:
+//      the generated Venice terrain owns the shoreline.
 //
 // Atmosphere:
 //   - Two smoke wisps: chimney pot (cool wood-smoke) + cauldron hearth
 //     (warmer, herb-tinged).
-//   - Torches: 2 at shop entrance, 1 at cauldron, 1 each side of the bridge.
+//   - Torches: 2 at shop entrance, 1 at cauldron.
 //   - Theriac window glows warm at night; upper-floor windows glow softer.
 //   - Subtle sway on the hanging-herb bunches.
-//   - Gondola gently bobs on the canal.
 
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { getTerrainHeight } from '../../utils/terrain';
-import { chunkyMat, ChimneySmoke, POITorchInstancer, getNightFactor, type POITorchSpot } from './atmosphere';
+import { chunkyMat, POISmokeInstancer, POITorchInstancer, getNightFactor, type POITorchSpot } from './atmosphere';
 import { useGameStore } from '../../store/gameStore';
 
 // ── Palette — Venetian red, Istrian stone, terra-cotta, canal dark ────────
@@ -62,12 +57,6 @@ const CANAL_WATER: readonly [number, number, number] = [0.16, 0.22, 0.24];
 const CANAL_WATER_DEEP: readonly [number, number, number] = [0.10, 0.14, 0.18];
 const FONDAMENTA: readonly [number, number, number] = [0.78, 0.74, 0.68];
 const FONDAMENTA_DARK: readonly [number, number, number] = [0.62, 0.58, 0.52];
-const GONDOLA_BLACK: readonly [number, number, number] = [0.10, 0.10, 0.12];
-const GONDOLA_TRIM: readonly [number, number, number] = [0.62, 0.50, 0.18];
-const FERRO_STEEL: readonly [number, number, number] = [0.45, 0.48, 0.52];
-const BRICCOLA_RED: readonly [number, number, number] = [0.74, 0.22, 0.18];
-const BRICCOLA_PALE: readonly [number, number, number] = [0.92, 0.88, 0.82];
-const BRIDGE_STONE: readonly [number, number, number] = [0.74, 0.70, 0.62];
 const BAY_LAUREL_DARK: readonly [number, number, number] = [0.22, 0.32, 0.18];
 const BAY_LAUREL_BRIGHT: readonly [number, number, number] = [0.32, 0.44, 0.24];
 const SIGN_GOLD: readonly [number, number, number] = [0.78, 0.62, 0.20];
@@ -248,13 +237,13 @@ function SpezieriaHouse({ position, rotationY }: {
   position: readonly [number, number, number];
   rotationY: number;
 }) {
-  const w = 11;
-  const d = 7;
+  const w = 9.5;
+  const d = 6.4;
   const f1H = 3.0;        // ground floor (shop)
   const f2H = 2.6;        // first piano nobile
   const f3H = 2.0;        // attic floor
   const totalH = f1H + f2H + f3H;
-  const roofH = 1.6;
+  const roofH = 1.2;
 
   const stucco = chunkyMat(VENETIAN_RED, { roughness: 1 });
   const stuccoDeep = chunkyMat(VENETIAN_RED_DEEP, { roughness: 1 });
@@ -398,35 +387,35 @@ function SpezieriaHouse({ position, rotationY }: {
         <boxGeometry args={[0.05, totalH, d - 0.4]} />
       </mesh>
 
-      {/* ── Roof — terra-cotta gable, ridgeline running along Z (front-to-back) ── */}
+      {/* ── Roof — broad terra-cotta gable with chunky eaves ── */}
       {/* Roof base box (the eave-thickness slab at the top of the wall) */}
       <mesh position={[0, 0.36 + totalH + 0.4, 0]} material={tileRidge}>
         <boxGeometry args={[w + 0.4, 0.2, d + 0.4]} />
       </mesh>
       {/* Front (north) tile slope */}
       <mesh
-        position={[0, 0.36 + totalH + 0.4 + roofH * 0.5, -d * 0.25]}
-        rotation={[0.55, 0, 0]}
+        position={[0, 0.36 + totalH + 0.32 + roofH * 0.5, -d * 0.18]}
+        rotation={[-0.38, 0, 0]}
         material={tile}
       >
-        <boxGeometry args={[w + 0.6, 0.28, d * 0.7]} />
+        <boxGeometry args={[w + 0.8, 0.28, d * 0.62]} />
       </mesh>
       {/* Back (south) tile slope */}
       <mesh
-        position={[0, 0.36 + totalH + 0.4 + roofH * 0.5, d * 0.25]}
-        rotation={[-0.55, 0, 0]}
+        position={[0, 0.36 + totalH + 0.32 + roofH * 0.5, d * 0.18]}
+        rotation={[0.38, 0, 0]}
         material={tileDark}
       >
-        <boxGeometry args={[w + 0.6, 0.28, d * 0.7]} />
+        <boxGeometry args={[w + 0.8, 0.28, d * 0.62]} />
       </mesh>
       {/* Ridge cap */}
-      <mesh position={[0, 0.36 + totalH + 0.4 + roofH + 0.05, 0]} material={tileRidge}>
-        <boxGeometry args={[w + 0.2, 0.16, 0.4]} />
+      <mesh position={[0, 0.36 + totalH + 0.32 + roofH + 0.02, 0]} material={tileRidge}>
+        <boxGeometry args={[w + 0.45, 0.16, 0.34]} />
       </mesh>
 
       {/* Mushroom chimney pot on the back-left of the roof ridge */}
       <VenetianChimney
-        position={[-w * 0.28, 0.36 + totalH + 0.4 + roofH + 0.05, d * 0.18]}
+        position={[-w * 0.26, 0.36 + totalH + 0.32 + roofH + 0.04, d * 0.15]}
         scale={1.0}
       />
     </group>
@@ -702,212 +691,6 @@ function VeneraDaPozzo({ position, rotationY }: {
   );
 }
 
-// ── Briccola — striped wooden mooring post ────────────────────────────────
-//
-// Three slim posts roped together at the top, painted in the family's red
-// and white spirals. Stand in the canal half-submerged. Iconic Venetian
-// silhouette — reads as small candy-stripe verticals from above.
-
-function Briccola({ position, rotationY = 0, scale = 1 }: {
-  position: readonly [number, number, number];
-  rotationY?: number;
-  scale?: number;
-}) {
-  const wood = chunkyMat(BRICCOLA_RED, { roughness: 1 });
-  const pale = chunkyMat(BRICCOLA_PALE, { roughness: 1 });
-  const woodTop = chunkyMat([BRICCOLA_RED[0] * 0.7, BRICCOLA_RED[1] * 0.7, BRICCOLA_RED[2] * 0.7], { roughness: 1 });
-  const rope = chunkyMat([0.55, 0.42, 0.28], { roughness: 1 });
-
-  // Three posts, slightly fanned out, roped at top.
-  const posts: Array<[number, number]> = [[-0.2, 0], [0.18, -0.15], [0.18, 0.15]];
-
-  return (
-    <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]} scale={[scale, scale, scale]}>
-      {posts.map(([x, z], i) => (
-        <group key={i} position={[x, 0, z]}>
-          {/* Striped red-and-white sections — alternating bands */}
-          {Array.from({ length: 5 }).map((_, j) => {
-            const isRed = j % 2 === 0;
-            return (
-              <mesh
-                key={j}
-                position={[0, 0.4 + j * 0.6, 0]}
-                material={isRed ? wood : pale}
-              >
-                <cylinderGeometry args={[0.16, 0.16, 0.6, 6]} />
-              </mesh>
-            );
-          })}
-          {/* Cap (dark red) */}
-          <mesh position={[0, 3.4, 0]} material={woodTop}>
-            <coneGeometry args={[0.18, 0.3, 6]} />
-          </mesh>
-        </group>
-      ))}
-      {/* Rope tying the three together near the top */}
-      <mesh position={[0, 3.0, 0]} material={rope}>
-        <torusGeometry args={[0.32, 0.05, 4, 10]} />
-      </mesh>
-    </group>
-  );
-}
-
-// ── Gondola ───────────────────────────────────────────────────────────────
-//
-// Long slim asymmetric hull with the steel ferro at the prow. Black with
-// gold trim, red felze (cabin) optional — kept minimal here for the open
-// cargo gondola variant a spezieria would actually use. Subtle vertical
-// bobbing on a slow sine.
-
-function Gondola({ position, rotationY }: {
-  position: readonly [number, number, number];
-  rotationY: number;
-}) {
-  const black = chunkyMat(GONDOLA_BLACK, { roughness: 0.7 });
-  const trim = chunkyMat(GONDOLA_TRIM, { roughness: 0.5, metalness: 0.4 });
-  const ferro = chunkyMat(FERRO_STEEL, { roughness: 0.4, metalness: 0.7 });
-  const wood = chunkyMat(PERGOLA_WOOD, { roughness: 1 });
-
-  const ref = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    const t = clock.elapsedTime;
-    ref.current.position.y = Math.sin(t * 0.7) * 0.06;
-    ref.current.rotation.z = Math.sin(t * 0.5) * 0.012;
-  });
-
-  // Length runs along local +X (then rotated by parent).
-  return (
-    <group ref={ref} position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-      {/* Main hull — long thin tapered slab */}
-      <mesh position={[0, 0.18, 0]} material={black}>
-        <boxGeometry args={[6.8, 0.36, 0.85]} />
-      </mesh>
-      {/* Hull belly (deeper bottom) */}
-      <mesh position={[0, -0.04, 0]} scale={[0.96, 0.7, 0.85]} material={black}>
-        <boxGeometry args={[6.8, 0.36, 0.85]} />
-      </mesh>
-      {/* Tapered prow extension — angled rise at +X end */}
-      <mesh
-        position={[3.5, 0.4, 0]}
-        rotation={[0, 0, 0.45]}
-        material={black}
-      >
-        <boxGeometry args={[0.9, 0.32, 0.4]} />
-      </mesh>
-      {/* Tapered stern at -X end */}
-      <mesh
-        position={[-3.4, 0.32, 0]}
-        rotation={[0, 0, -0.3]}
-        material={black}
-      >
-        <boxGeometry args={[0.85, 0.32, 0.5]} />
-      </mesh>
-      {/* The ferro — distinctive comb-toothed steel prow ornament at +X */}
-      <group position={[3.95, 0.6, 0]}>
-        {/* Vertical blade */}
-        <mesh position={[0, 0.5, 0]} material={ferro}>
-          <boxGeometry args={[0.12, 1.0, 0.06]} />
-        </mesh>
-        {/* Six tooth-like horizontal cross-bars (the sestieri marks) */}
-        {Array.from({ length: 6 }).map((_, i) => (
-          <mesh
-            key={i}
-            position={[-0.18, 0.25 + i * 0.15, 0]}
-            material={ferro}
-          >
-            <boxGeometry args={[0.3, 0.05, 0.05]} />
-          </mesh>
-        ))}
-        {/* Top scroll curl */}
-        <mesh position={[0.1, 1.1, 0]} rotation={[0, 0, 0.4]} material={ferro}>
-          <boxGeometry args={[0.16, 0.18, 0.06]} />
-        </mesh>
-      </group>
-      {/* Stern small platform (gondolier's deck) */}
-      <mesh position={[-3.0, 0.42, 0]} material={trim}>
-        <boxGeometry args={[0.5, 0.08, 0.7]} />
-      </mesh>
-      {/* Gold trim line along the gunwale */}
-      <mesh position={[0, 0.36, 0.41]} material={trim}>
-        <boxGeometry args={[6.4, 0.04, 0.04]} />
-      </mesh>
-      <mesh position={[0, 0.36, -0.41]} material={trim}>
-        <boxGeometry args={[6.4, 0.04, 0.04]} />
-      </mesh>
-      {/* Three plank seats inside */}
-      {[-1.4, 0, 1.4].map((x, i) => (
-        <mesh key={i} position={[x, 0.32, 0]} material={wood}>
-          <boxGeometry args={[0.5, 0.06, 0.7]} />
-        </mesh>
-      ))}
-      {/* Oar laid across one seat */}
-      <mesh position={[0, 0.4, -0.5]} rotation={[0, 0.2, 0]} material={wood}>
-        <cylinderGeometry args={[0.04, 0.04, 2.4, 6]} />
-      </mesh>
-    </group>
-  );
-}
-
-// ── Small arched stone footbridge ─────────────────────────────────────────
-//
-// Single arched span over a side canal. Stone abutments, low parapets,
-// flat deck. Walks straight across — no steps for simplicity (period
-// Venetian footbridges had short steps but at top-down distance they read
-// the same as a flat span).
-
-function VenetianBridge({ position, rotationY, length = 5 }: {
-  position: readonly [number, number, number];
-  rotationY: number;
-  length?: number;
-}) {
-  const stone = chunkyMat(BRIDGE_STONE, { roughness: 1 });
-  const stoneShade = chunkyMat([BRIDGE_STONE[0] * 0.78, BRIDGE_STONE[1] * 0.78, BRIDGE_STONE[2] * 0.78], { roughness: 1 });
-  const stoneDeep = chunkyMat([BRIDGE_STONE[0] * 0.62, BRIDGE_STONE[1] * 0.62, BRIDGE_STONE[2] * 0.62], { roughness: 1 });
-
-  return (
-    <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-      {/* Two abutments — stone blocks at each end */}
-      <mesh position={[-length / 2 - 0.3, 0.5, 0]} material={stoneShade}>
-        <boxGeometry args={[0.8, 1.0, 1.6]} />
-      </mesh>
-      <mesh position={[length / 2 + 0.3, 0.5, 0]} material={stoneShade}>
-        <boxGeometry args={[0.8, 1.0, 1.6]} />
-      </mesh>
-      {/* Arch underneath — semicircle facing down */}
-      <mesh
-        position={[0, 0.6, 0]}
-        rotation={[Math.PI / 2, 0, 0]}
-        material={stoneDeep}
-      >
-        <cylinderGeometry args={[length / 2, length / 2, 1.4, 12, 1, false, 0, Math.PI]} />
-      </mesh>
-      {/* Bridge deck — a flat slab on top of the arch */}
-      <mesh position={[0, 1.2, 0]} material={stone}>
-        <boxGeometry args={[length + 0.4, 0.18, 1.6]} />
-      </mesh>
-      {/* Parapet — low walls on both sides */}
-      <mesh position={[0, 1.45, 0.8]} material={stone}>
-        <boxGeometry args={[length + 0.4, 0.5, 0.18]} />
-      </mesh>
-      <mesh position={[0, 1.45, -0.8]} material={stone}>
-        <boxGeometry args={[length + 0.4, 0.5, 0.18]} />
-      </mesh>
-      {/* Top capstones — small darker blocks at corners */}
-      {[-length / 2 - 0.1, length / 2 + 0.1].map((x, i) => (
-        <group key={i}>
-          <mesh position={[x, 1.78, 0.8]} material={stoneShade}>
-            <boxGeometry args={[0.4, 0.18, 0.32]} />
-          </mesh>
-          <mesh position={[x, 1.78, -0.8]} material={stoneShade}>
-            <boxGeometry args={[0.4, 0.18, 0.32]} />
-          </mesh>
-        </group>
-      ))}
-    </group>
-  );
-}
-
 // ── Bay laurel shrub — ornamental in the campiello ────────────────────────
 //
 // Small dense evergreen at the base of the back wall, providing a green
@@ -976,40 +759,30 @@ export function VeniceSpezieria({ poiId, position, rotationY }: {
 
   const anchorY = terrainAt(0, 0);
 
-  // Local-space layout. -Z faces the canal; +Z is the back of the campiello.
-  const housePos: [number, number] = [-2, 4];
-  const hearthPos: [number, number] = [9, 4];
-  const pergolaPos: [number, number] = [9, 9];
-  const wellPos: [number, number] = [-9, 9];
-  const gondolaPos: [number, number] = [-2, -8];
-  const bridgePos: [number, number] = [12, -5];
-  const laurelPositions: Array<[number, number]> = [[-12, 11], [-7, 12], [12, 12], [7, 11]];
+  // Compact local-space layout. The model is authored as one flat campiello
+  // so the modal preview cannot pull individual props above or below the shop.
+  const housePos: [number, number] = [0, 2.4];
+  const hearthPos: [number, number] = [-5.1, -3.8];
+  const pergolaPos: [number, number] = [-5.1, -3.8];
+  const wellPos: [number, number] = [4.8, -3.9];
+  const laurelPositions: Array<[number, number]> = [[-7.1, 6.9], [6.8, 6.9], [7.6, -0.8]];
 
-  // Y offsets relative to the anchor terrain.
-  const houseY = terrainAt(housePos[0], housePos[1]) - anchorY;
-  const hearthY = terrainAt(hearthPos[0], hearthPos[1]) - anchorY;
-  const pergolaY = terrainAt(pergolaPos[0], pergolaPos[1]) - anchorY;
-  const wellY = terrainAt(wellPos[0], wellPos[1]) - anchorY;
+  const houseY = 0;
+  const hearthY = 0;
+  const pergolaY = 0;
+  const wellY = 0;
 
-  // Canal is sunk below the local anchor — represents the cut canal channel.
-  // The fondamenta path edge sits at anchorY (0); the water surface is 0.6u
-  // below, with the stone retaining wall holding the bank.
-  const canalSurfaceY = -0.55;
-  const fondamentaY = 0.04;
+  const pavingY = 0.03;
 
-  // Atmosphere — torch spots at door, hearth, bridge ends.
+  // Atmosphere — torch spots at the shop door and hearth.
   const torchSpots: POITorchSpot[] = useMemo(() => {
     const c = Math.cos(rotationY);
     const s = Math.sin(rotationY);
     const local: Array<[number, number, number]> = [
-      // Two torches flanking the shop door (door is at local [-2 - 11*0.36, ?, -7/2 - 0.04] inside the house frame; computed in world: house at -2, door offset -3.96, so door at x ≈ -5.96, z ≈ housePos[1] - 7/2 = 0.5)
-      [housePos[0] - 5.0, houseY + 3.0, housePos[1] - 3.5],
-      [housePos[0] + 1.6, houseY + 3.0, housePos[1] - 3.5],
+      [housePos[0] - 4.5, houseY + 3.0, housePos[1] - 3.25],
+      [housePos[0] + 1.45, houseY + 3.0, housePos[1] - 3.25],
       // Hearth torch
       [hearthPos[0], hearthY + 2.5, hearthPos[1]],
-      // Bridge torches — one each end of the bridge
-      [bridgePos[0] - 2.8, fondamentaY + 1.8, bridgePos[1]],
-      [bridgePos[0] + 2.8, fondamentaY + 1.8, bridgePos[1]],
     ];
     return local.map(([lx, ly, lz]) => ({
       pos: [
@@ -1019,16 +792,15 @@ export function VeniceSpezieria({ poiId, position, rotationY }: {
       ] as [number, number, number],
       warmth: 'warm',
     }));
-  }, [ax, az, anchorY, houseY, hearthY, fondamentaY, rotationY]);
+  }, [ax, az, anchorY, houseY, hearthY, rotationY]);
 
   // Two smoke wisps — chimney pot + cauldron hearth.
   const chimneySmokePos: [number, number, number] = useMemo(() => {
     const c = Math.cos(rotationY);
     const s = Math.sin(rotationY);
-    // Chimney is at house local (-2 - 11*0.28, totalH ≈ 8 + roof, +7*0.18); using approx world Y above the roof.
-    const lx = housePos[0] - 11 * 0.28;
-    const lz = housePos[1] + 7 * 0.18;
-    const ly = houseY + 0.36 + (3.0 + 2.6 + 2.0) + 0.4 + 1.6 + 1.7; // rough top-of-chimney
+    const lx = housePos[0] - 9.5 * 0.26;
+    const lz = housePos[1] + 6.4 * 0.15;
+    const ly = houseY + 0.36 + (3.0 + 2.6 + 2.0) + 0.32 + 1.2 + 1.72;
     return [
       ax + (lx * c - lz * s),
       anchorY + ly,
@@ -1047,24 +819,15 @@ export function VeniceSpezieria({ poiId, position, rotationY }: {
     ];
   }, [ax, az, anchorY, hearthY, rotationY]);
 
-  // Gravel/stone palette materials — used for paving and canal banks.
+  const smokeSpots = useMemo(() => [
+    { pos: chimneySmokePos, warmth: 'cool' as const, scale: 0.85 },
+    { pos: hearthSmokePos, warmth: 'warm' as const, scale: 1.0 },
+  ], [chimneySmokePos, hearthSmokePos]);
+
+  // Gravel/stone palette materials — used for the campiello paving and walls.
   const fondamentaMat = useMemo(() => chunkyMat(FONDAMENTA, { roughness: 1 }), []);
   const fondamentaDarkMat = useMemo(() => chunkyMat(FONDAMENTA_DARK, { roughness: 1 }), []);
-  const canalMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: new THREE.Color(...CANAL_WATER),
-    flatShading: true,
-    roughness: 0.25,
-    metalness: 0.6,
-    transparent: true,
-    opacity: 0.92,
-  }), []);
-  const canalDeepMat = useMemo(() => chunkyMat(CANAL_WATER_DEEP, { roughness: 1 }), []);
   const istrianMat = useMemo(() => chunkyMat(ISTRIAN_STONE, { roughness: 1 }), []);
-
-  // Side-canal bridge runs in +Z direction (perpendicular to the main canal).
-  // The side canal is a thin offshoot at local x≈12 cutting from -Z toward +Z.
-  const sideCanalLength = 12;
-  const sideCanalWidth = 2.4;
 
   // Sway phase per laurel
   const laurelPhases = useMemo(() => laurelPositions.map(() => rng() * Math.PI * 2), [seed]);
@@ -1072,98 +835,30 @@ export function VeniceSpezieria({ poiId, position, rotationY }: {
   return (
     <>
       <POITorchInstancer spots={torchSpots} />
-      <ChimneySmoke position={chimneySmokePos} warmth="cool" scale={0.85} />
-      <ChimneySmoke position={hearthSmokePos} warmth="warm" scale={1.0} />
+      <POISmokeInstancer spots={smokeSpots} />
 
       <group position={position as unknown as [number, number, number]} rotation={[0, rotationY, 0]}>
-        {/* ── Main canal water plane (in front of the fondamenta, -Z side) ── */}
-        <mesh
-          position={[0, canalSurfaceY, -12]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={canalMat}
-        >
-          <planeGeometry args={[34, 8]} />
+        {/* ── Campiello paving: compact slabs, no modal z-fighting planes ── */}
+        <mesh position={[0, pavingY, 0.8]} material={fondamentaDarkMat}>
+          <boxGeometry args={[17, 0.12, 13.5]} />
         </mesh>
-        {/* Canal bottom (darker tone visible through the water) */}
-        <mesh
-          position={[0, canalSurfaceY - 0.2, -12]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={canalDeepMat}
-        >
-          <planeGeometry args={[34, 8]} />
+        <mesh position={[0, pavingY + 0.08, -2.2]} material={fondamentaMat}>
+          <boxGeometry args={[15.2, 0.1, 5.5]} />
+        </mesh>
+        <mesh position={[-5.1, pavingY + 0.14, -3.8]} material={fondamentaMat}>
+          <boxGeometry args={[5.4, 0.1, 4.2]} />
         </mesh>
 
-        {/* ── Side canal water plane (along +X side, runs from -Z up into the campiello, with the bridge crossing it) ── */}
-        <mesh
-          position={[12, canalSurfaceY, -3]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={canalMat}
-        >
-          <planeGeometry args={[sideCanalWidth, sideCanalLength]} />
+        {/* Low walls frame the court while keeping the whole POI readable. */}
+        <mesh position={[0, 0.55, 7.75]} material={istrianMat}>
+          <boxGeometry args={[16.8, 1.1, 0.42]} />
         </mesh>
-        <mesh
-          position={[12, canalSurfaceY - 0.2, -3]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={canalDeepMat}
-        >
-          <planeGeometry args={[sideCanalWidth, sideCanalLength]} />
+        <mesh position={[-8.6, 0.45, 1.5]} material={istrianMat}>
+          <boxGeometry args={[0.42, 0.9, 11.8]} />
         </mesh>
-
-        {/* ── Fondamenta — long stone path along the canal edge (-Z side) ── */}
-        <mesh
-          position={[0, fondamentaY, -7.5]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={fondamentaMat}
-        >
-          <planeGeometry args={[24, 3]} />
+        <mesh position={[8.6, 0.45, 2.2]} material={istrianMat}>
+          <boxGeometry args={[0.42, 0.9, 10.4]} />
         </mesh>
-        {/* Stone bank wall — Istrian-stone retaining wall holding the canal edge */}
-        <mesh position={[0, -0.18, -9.0]} material={istrianMat}>
-          <boxGeometry args={[24, 0.5, 0.4]} />
-        </mesh>
-        <mesh position={[0, -0.6, -9.05]} material={fondamentaDarkMat}>
-          <boxGeometry args={[24, 0.5, 0.3]} />
-        </mesh>
-
-        {/* Side canal banks (parallel to +Z, two retaining walls) */}
-        <mesh position={[10.7, -0.18, -3]} material={istrianMat}>
-          <boxGeometry args={[0.4, 0.5, sideCanalLength]} />
-        </mesh>
-        <mesh position={[13.3, -0.18, -3]} material={istrianMat}>
-          <boxGeometry args={[0.4, 0.5, sideCanalLength]} />
-        </mesh>
-        {/* Side canal stone path on the +X side */}
-        <mesh
-          position={[14.3, fondamentaY, -3]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={fondamentaMat}
-        >
-          <planeGeometry args={[1.6, sideCanalLength]} />
-        </mesh>
-
-        {/* ── Campiello stone paving (rest of the compound) ── */}
-        <mesh
-          position={[0, fondamentaY - 0.005, 4]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          material={fondamentaDarkMat}
-        >
-          <planeGeometry args={[24, 18]} />
-        </mesh>
-
-        {/* Back wall — Istrian-stone garden wall closing the campiello */}
-        <mesh position={[0, 1.0, 13]} material={istrianMat}>
-          <boxGeometry args={[24, 2.0, 0.5]} />
-        </mesh>
-        {/* Cap stones along the wall */}
-        {Array.from({ length: 8 }).map((_, i) => (
-          <mesh
-            key={`cap${i}`}
-            position={[-10.5 + i * 3.0, 2.1, 13]}
-            material={fondamentaDarkMat}
-          >
-            <boxGeometry args={[2.4, 0.2, 0.7]} />
-          </mesh>
-        ))}
 
         {/* ── The shop-house (Spezieria al Cedro) ── */}
         <SpezieriaHouse
@@ -1190,28 +885,12 @@ export function VeniceSpezieria({ poiId, position, rotationY }: {
           rotationY={Math.PI / 8}
         />
 
-        {/* ── Briccole — three groups along the canal edge ── */}
-        <Briccola position={[-7, canalSurfaceY + 0.1, -10.5]} rotationY={0.3} scale={1.0} />
-        <Briccola position={[1, canalSurfaceY + 0.1, -10.7]} rotationY={-0.2} scale={1.0} />
-        <Briccola position={[8, canalSurfaceY + 0.1, -10.5]} rotationY={0.5} scale={1.0} />
-
-        {/* ── Moored gondola ── */}
-        <Gondola position={[gondolaPos[0], canalSurfaceY + 0.05, gondolaPos[1]]} rotationY={0} />
-
-        {/* ── Stone footbridge crossing the side canal ── */}
-        <VenetianBridge
-          position={[bridgePos[0], fondamentaY, bridgePos[1]]}
-          rotationY={Math.PI / 2}
-          length={4.5}
-        />
-
         {/* ── Bay laurel shrubs along the back wall ── */}
         {laurelPositions.map(([lx, lz], i) => {
-          const ly = terrainAt(lx, lz) - anchorY;
           return (
             <BayLaurel
               key={i}
-              position={[lx, ly, lz]}
+              position={[lx, 0, lz]}
               scale={0.9 + (i % 2) * 0.15}
               swayPhase={laurelPhases[i]}
             />

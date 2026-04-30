@@ -476,16 +476,56 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     kind: 'naturalist',
     class: 'mercantile',
     port: 'lisbon',
-    // Lisbon openDirection 'W' → river/harbor is west (-X), inland is +X.
-    // The historical Casa stood on the Praça do Comércio waterfront — close
-    // to the river edge but inside the city footprint.
-    location: { kind: 'coords', position: [-40, 20] },
+    // The historical Casa stood on the Ribeira waterfront, central to the
+    // main harbor rather than downriver at Belém. Keep it near the city core
+    // so the snapper does not pull it onto the western tower site.
+    location: { kind: 'coords', position: [28, -36] },
     knowledgeDomain: ['Black Pepper', 'Cinnamon', 'Cloves', 'Nutmeg', 'Chinese Porcelain', 'Camphor'],
     masteryGoods: ['Black Pepper', 'Cinnamon'],
     cost: { type: 'gold', amount: 120 },
     npcName: 'Dom Vasco Aranha',
     npcRole: 'Provedor da Casa da Índia',
     lore: "Every cargo coming home from the Estado da Índia is registered, weighed, and assessed at the Casa da Índia on the Tagus waterfront — the old Casa da Mina expanded into a sprawling complex of three warehouses, the great pepper hall, the porcelain rooms, and the lapidary chamber where Goan diamonds are inventoried. Royal customs guards and Hieronymite friars oversee tithing. Aranha is a fidalgo of modest birth who climbed through the Estado bureaucracy at Cochin and Hormuz before the king recalled him. He is tired, professionally cynical, and can quote pepper prices going back to the 1580s. The union of crowns under Philip III since 1580 has stripped much of the Casa's authority — Madrid wants the spice trade run from Seville — and Aranha takes wry satisfaction in finding small ways to obstruct that.",
+  },
+
+  // ── Seville ───────────────────────────────────────────────────────────────
+  {
+    id: 'seville-casa-contratacion',
+    name: 'Casa de la Contratacion',
+    sub: 'Royal Indies registry, Alcazar precinct',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'seville',
+    // The Casa operated from the Alcazar precinct, near the cathedral and
+    // river-facing trade district rather than directly on a wharf. This point
+    // sits on generated land with the Guadalquivir still close enough to read.
+    location: { kind: 'coords', position: [50, -20] },
+    knowledgeDomain: ['Tobacco', 'Virginia Tobacco', 'Sugar', 'Hides', 'Sassafras', 'Quicksilver'],
+    masteryGoods: ['Tobacco', 'Sugar'],
+    cost: { type: 'gold', amount: 105 },
+    npcName: 'Licenciado Alonso de Valdes',
+    npcRole: 'Casa examiner and registry clerk',
+    lore: "The Casa de la Contratacion controls the legal machinery of Spain's Atlantic empire: pilot licensing, cargo registers, passenger permissions, cosmographical charts, bullion tallies, and inspections for goods arriving from the Indies. In 1612 its power still runs through Seville even as merchants complain that the Guadalquivir silts and larger ships work downriver at Sanlucar and Cadiz. Valdes is not a sailor. He is a sharp, ink-stained official who understands tobacco, hides, sugar, quicksilver, and silver accounts because every chest must become a line in a ledger before it becomes royal revenue.",
+  },
+
+  // ── Manila ───────────────────────────────────────────────────────────────
+  {
+    id: 'manila-sangley-parian',
+    name: 'Sangley Parian',
+    sub: 'Chinese silk and porcelain quarter outside Intramuros',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'manila',
+    // The Parian sat outside the Spanish walled city, close to the commercial
+    // edge of Manila rather than inside Intramuros. This authored point is on
+    // generated land near water, but the renderer owns no fake shoreline.
+    location: { kind: 'coords', position: [-90, 60] },
+    knowledgeDomain: ['Chinese Porcelain', 'Tea', 'China Root', 'Camphor', 'Rhubarb', 'Star Anise'],
+    masteryGoods: ['Chinese Porcelain', 'China Root'],
+    cost: { type: 'gold', amount: 95 },
+    npcName: 'Don Lim Tiong-co',
+    npcRole: 'Sangley broker and porcelain factor',
+    lore: "The Parian is Manila's Chinese merchant quarter, where Hokkien-speaking sangleys supply the silk, porcelain, lacquerware, tea, roots, and drugs that Spanish officials move across the Pacific in the Acapulco galleon. It sits outside Intramuros under close supervision after the violence of 1603, but the city cannot function without it. Lim Tiong-co keeps baptismal papers for Spanish officials, ancestor tablets for his household, and two sets of ledgers. He grades porcelain by ring and translucence, knows which roots came through Fujian apothecaries, and bargains as if every question has three prices.",
   },
 
   // ── Venice ────────────────────────────────────────────────────────────────
@@ -497,9 +537,9 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     class: 'learned',
     port: 'venice',
     // Venice openDirection 'E' → lagoon is east (+X), inland sestieri to -X.
-    // The Rialto sits centrally in the city; place the spezieria in the
-    // Rialto-adjacent core just inland of the waterfront.
-    location: { kind: 'coords', position: [-30, 15] },
+    // Keep this inside the built-up Rialto fabric rather than trying to snap
+    // the bespoke model to a generated waterline.
+    location: { kind: 'coords', position: [-58, 18] },
     knowledgeDomain: ['Theriac', 'Mumia', 'Saffron', 'Rhubarb', 'Frankincense', 'Cardamom'],
     masteryGoods: ['Theriac', 'Saffron'],
     cost: { type: 'gold', amount: 110 },
