@@ -5,11 +5,12 @@ import { motion } from 'framer-motion';
 import * as THREE from 'three';
 import { Info, Settings as SettingsIcon } from 'lucide-react';
 import { type DayState, makeDayState, sampleDayPalette } from '../utils/dayPhase';
-import { FACTION_SPAWN_WEIGHTS } from '../store/gameStore';
+import { FACTION_SPAWN_WEIGHTS, useGameStore, type Nationality } from '../store/gameStore';
 import { useIsMobile } from '../utils/useIsMobile';
 import { sfxClick, sfxHover } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
+import { AudioMuteButton } from './AudioMuteButton';
 import {
   DistantBirds,
   NightStars,
@@ -3115,7 +3116,7 @@ function portIconUrl(id: string) {
 }
 
 // Map splash faction keys → game's Nationality (or null = "any").
-const FACTION_KEY_TO_NATIONALITY: Record<FactionKey, string | null> = {
+const FACTION_KEY_TO_NATIONALITY: Record<FactionKey, Nationality | null> = {
   english: 'English',
   dutch: 'Dutch',
   portuguese: 'Portuguese',
@@ -3135,7 +3136,7 @@ const FACTION_KEY_TO_NATIONALITY: Record<FactionKey, string | null> = {
 function portsForFaction(factionKey: FactionKey): string[] {
   const nationality = FACTION_KEY_TO_NATIONALITY[factionKey];
   if (nationality) {
-    const weights = FACTION_SPAWN_WEIGHTS[nationality as keyof typeof FACTION_SPAWN_WEIGHTS];
+    const weights = FACTION_SPAWN_WEIGHTS[nationality];
     if (weights && weights.length) {
       return [...weights]
         .sort((a, b) => b.weight - a.weight)
@@ -3418,6 +3419,7 @@ export function ClaudeSplashGlobe(props: Props) {
   const startPortLabel = PORT_LABELS[startPortId] ?? startPortId;
   const startPortIconUrl = portIconUrl(startPortId);
   const startPortDescription = PORT_DESCRIPTIONS[startPortId];
+  const startNewGame = useGameStore((state) => state.startNewGame);
   const rotationRef = useRef(new THREE.Quaternion());
   const heelRef = useRef(0);
   const speedRef = useRef(0);
@@ -3428,6 +3430,10 @@ export function ClaudeSplashGlobe(props: Props) {
 
   const handleEnter = () => {
     if (!ready) return;
+    const selectedFaction = FACTION_KEY_TO_NATIONALITY[faction.key];
+    if (selectedFaction && startPortId) {
+      startNewGame({ faction: selectedFaction, portId: startPortId });
+    }
     // Intro music kicks in on commit, layering over the existing waves bed.
     // transitionToOverworld() (called later from UI.tsx after the commission
     // modal closes) will fade both tracks out and start the overworld rotation.
@@ -3696,6 +3702,7 @@ export function ClaudeSplashGlobe(props: Props) {
           pointerEvents: 'auto',
         }}
       >
+        <AudioMuteButton variant="splash" />
         <CornerIconButton label="About" onClick={openAbout}>
           <Info size={18} strokeWidth={2.2} />
         </CornerIconButton>

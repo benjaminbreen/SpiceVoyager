@@ -69,6 +69,7 @@ import {
   perfSignals,
 } from '../utils/performanceStats';
 import { sampleCameraShake, sampleCameraFovPulse } from '../utils/cameraShakeState';
+import { sampleIntroCinematic, skipIntroCinematic, isIntroCinematicActive } from '../utils/cinematicIntroState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
@@ -1112,6 +1113,8 @@ function CameraController() {
       const k = e.key.toLowerCase();
       if (k === 'z') rotationKeys.current.z = true;
       if (k === 'x') rotationKeys.current.x = true;
+      // Enter ends the intro cinematic on demand
+      if (e.key === 'Enter' && isIntroCinematicActive()) skipIntroCinematic();
     };
     const handleRotKeyUp = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
@@ -1244,6 +1247,34 @@ function CameraController() {
       camera.lookAt(currentPos.current);
     }
 
+    // Intro cinematic — orbit + dolly-in onto the ship after the Commission
+    // modal closes. Reshapes the gameplay pose so the cinematic ends *exactly*
+    // at the gameplay pose (no snap on hand-off).
+    const intro = sampleIntroCinematic(delta);
+    if (intro.active && playerMode === 'ship' && viewMode !== 'firstperson') {
+      const targetX = currentPos.current.x;
+      const targetY = currentPos.current.y;
+      const targetZ = currentPos.current.z;
+      // Vector from ship → gameplay camera, rotate it by sweepAngle and
+      // extend by distBoost so the intro pose is a wider, swung-around variant.
+      const dx = camera.position.x - targetX;
+      const dz = camera.position.z - targetZ;
+      const len = Math.hypot(dx, dz);
+      if (len > 0.001) {
+        const nx = dx / len;
+        const nz = dz / len;
+        const cs = Math.cos(intro.sweepAngle);
+        const sn = Math.sin(intro.sweepAngle);
+        const rotX = nx * cs - nz * sn;
+        const rotZ = nx * sn + nz * cs;
+        const newLen = len + intro.distBoost;
+        camera.position.x = targetX + rotX * newLen;
+        camera.position.z = targetZ + rotZ * newLen;
+        camera.position.y += intro.heightBoost;
+        camera.lookAt(targetX, targetY + 0.5, targetZ);
+      }
+    }
+
     // Camera shake/kick — applied on top of the base position set above.
     // World-space offset so the jitter doesn't rotate with cameraRotation.
     const shake = sampleCameraShake(delta);
@@ -1253,10 +1284,17 @@ function CameraController() {
 
     // FOV pulse — sprint engages a forward lurch (+deg), collisions a stop hit (-deg).
     // Lerp toward the pulse target each frame so the swing has shape, not snap.
+    // Intro cinematic adds a wider base FOV that eases back to gameplay — the
+    // world "exhales" into normal lensing as the dolly settles.
     if (camera instanceof THREE.PerspectiveCamera) {
-      const baseFov = 45;
+      const baseFov = 45 + intro.fovBoost;
       const pulseTarget = baseFov + sampleCameraFovPulse(delta);
-      const fovLerp = 1 - Math.exp(-delta * 12);
+      // Intro: snap FOV close to its target so the breathe shape isn't
+      // smeared by the smoothing lerp; gameplay: keep the gentler ease so
+      // pulses still have shape.
+      const fovLerp = intro.active
+        ? 1 - Math.exp(-delta * 30)
+        : 1 - Math.exp(-delta * 12);
       camera.fov += (pulseTarget - camera.fov) * fovLerp;
       camera.updateProjectionMatrix();
     }
@@ -2645,8 +2683,8 @@ function computeAtmosphere(
   const sunH = Math.sin(angle);
 
   // Climate-conditioned palette lookups. Strings only — cheap.
-  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#8fa8b2' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
-  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#a9b9bf' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
+  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#5e6c72' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
+  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#6e7a7a' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
   const duskSky = waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158';
   const duskFog = waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42';
   const warmSky = waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b';
@@ -2748,6 +2786,11 @@ function useQuantizedAtmosphere(): AtmosphereOut {
 function AtmosphereSync() {
   const { scene } = useThree();
   const atmosphereOut = useMemo(makeAtmosphereOut, []);
+  // Pre-allocated working colors so we don't allocate per frame when lerping
+  // toward the rain fog tint. Stored on the closure rather than reassigned.
+  const rainFog = useMemo(() => new THREE.Color(0.58, 0.64, 0.62), []);
+  const tmpFogColor = useMemo(() => new THREE.Color(), []);
+  const tmpSkyColor = useMemo(() => new THREE.Color(), []);
 
   useFrame(() => {
     const state = useGameStore.getState();
@@ -2755,8 +2798,18 @@ function AtmosphereSync() {
     computeAtmosphere(state.timeOfDay, resolveWaterPaletteId(state), mood, atmosphereOut);
     const { skyColor, fogColor, fogNear, fogFar } = atmosphereOut;
 
+    // Weather pulls the fog/sky toward a desaturated cool gray-green and pulls
+    // the far plane in so heavy rain feels enclosed. Reuses the existing eased
+    // weather.intensity so transitions match the LUT and rain overlay.
+    const rainOn = state.renderDebug.rain;
+    const wIntensity = rainOn ? Math.max(state.weather.intensity, 1) : state.weather.intensity;
+    const fogTint = wIntensity * 0.7; // cap blend so noon stays recognizable
+    const fogPull = THREE.MathUtils.lerp(1.0, 0.72, wIntensity); // far plane shrink
+    tmpFogColor.copy(fogColor).lerp(rainFog, fogTint);
+    tmpSkyColor.copy(skyColor).lerp(rainFog, fogTint * 0.85);
+
     if (scene.background instanceof THREE.Color) {
-      scene.background.copy(skyColor);
+      scene.background.copy(tmpSkyColor);
     }
     if (scene.fog instanceof THREE.Fog) {
       const shipTransform = getLiveShipTransform();
@@ -2772,9 +2825,9 @@ function AtmosphereSync() {
       const edgeNear = THREE.MathUtils.lerp(fogNear, Math.max(70, fogNear * 0.55), edgeFog);
       const edgeFar = THREE.MathUtils.lerp(fogFar, Math.max(260, fogFar * 0.6), edgeFog);
 
-      scene.fog.color.copy(fogColor);
+      scene.fog.color.copy(tmpFogColor);
       scene.fog.near = edgeNear;
-      scene.fog.far = Math.max(edgeNear + 80, edgeFar);
+      scene.fog.far = Math.max(edgeNear + 80, edgeFar * fogPull);
     }
   });
 

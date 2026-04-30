@@ -158,6 +158,7 @@ export function World() {
     uCloudTime: { value: number };
     uCloudWindDir: { value: THREE.Vector2 };
     uCloudStrength: { value: number };
+    uWetness: { value: number };
   } | null>(null);
   const terrainMaterial = useMemo(() => {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
@@ -166,6 +167,7 @@ export function World() {
       shader.uniforms.uCloudTime = { value: 0 };
       shader.uniforms.uCloudWindDir = { value: new THREE.Vector2(1, 0) };
       shader.uniforms.uCloudStrength = { value: 0 };
+      shader.uniforms.uWetness = { value: 0 };
       terrainShaderUniformsRef.current = shader.uniforms as any;
 
       // Pass world-position varying from vertex to fragment shader
@@ -188,6 +190,7 @@ export function World() {
         uniform float uCloudTime;
         uniform vec2 uCloudWindDir;
         uniform float uCloudStrength;
+        uniform float uWetness;
         varying vec3 vWorldPos;
 
         // Hash-based noise — fast, no texture lookups
@@ -246,6 +249,19 @@ export function World() {
           float colorShift = terrainNoise(wp * 0.12 + 77.7) - 0.5;
           diffuseColor.r += colorShift * 0.018 * noiseMask;
           diffuseColor.b -= colorShift * 0.012 * noiseMask;
+
+          // Wet ground — darken albedo and pull a touch of saturation up so
+          // soaked dirt/grass reads correctly. Single uniform, no extra textures.
+          // 0.78 multiplier at full rain matches the look of damp earth without
+          // crushing color into mud.
+          if (uWetness > 0.001) {
+            float wet = uWetness;
+            // Wetness lingers in low spots (dark luminance) more than highlights.
+            float wetMask = mix(0.6, 1.0, smoothstep(0.05, 0.4, lum));
+            diffuseColor.rgb *= mix(1.0, 0.78, wet * wetMask);
+            // Slight cool tint on wet surfaces — water absorbs warm wavelengths.
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.94, 0.98, 1.04), wet * 0.5);
+          }
         }
         `
       );
@@ -347,6 +363,7 @@ export function World() {
   } = useFloraAssets(waterPaletteId);
 
   const sunLightRef = useRef<THREE.DirectionalLight>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight>(null);
   const trunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const leavesMeshRef = useRef<THREE.InstancedMesh>(null);
   const deadTreeMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -1051,13 +1068,36 @@ export function World() {
     if (terrainShaderUniformsRef.current) {
       const u = terrainShaderUniformsRef.current;
       u.uPlayerPos.value.set(playerPos[0], playerPos[1], playerPos[2]);
-      const cloudsOn = useGameStore.getState().renderDebug.cloudShadows;
-      const { windDirection, windSpeed } = useGameStore.getState();
+      const storeState = useGameStore.getState();
+      const cloudsOn = storeState.renderDebug.cloudShadows;
+      const rainOn = storeState.renderDebug.rain;
+      const { windDirection, windSpeed } = storeState;
+      const weatherIntensity = storeState.weather.intensity;
+      // Dev rain toggle (forces full strength) overrides the eased value so the
+      // wet-ground look matches what the streak overlay does.
+      const effectiveWetness = rainOn ? Math.max(weatherIntensity, 1) : weatherIntensity;
       u.uCloudTime.value = state.clock.elapsedTime;
       u.uCloudWindDir.value.set(Math.sin(windDirection), Math.cos(windDirection));
       // Strength scales with wind speed so calm days have weaker, slower shadows.
       // Peak ~0.55: cloud patches darken sunlit ground by up to 55%.
-      u.uCloudStrength.value = cloudsOn ? 0.35 + 0.20 * THREE.MathUtils.clamp(windSpeed, 0, 1) : 0;
+      // Rain also boosts cloud darkness — overcast skies cast deeper shadow patches.
+      const cloudBase = cloudsOn ? 0.35 + 0.20 * THREE.MathUtils.clamp(windSpeed, 0, 1) : 0;
+      u.uCloudStrength.value = Math.min(0.85, cloudBase + effectiveWetness * 0.25);
+      u.uWetness.value = effectiveWetness;
+    }
+
+    // Dim the scene lights with weather. The LUT lerps hue/saturation; this
+    // pulls actual luminance down so heavy rain reads as overcast rather than
+    // "sunny day with a green filter." Sun takes a bigger hit than ambient.
+    {
+      const storeState = useGameStore.getState();
+      const rainOn = storeState.renderDebug.rain;
+      const wi = storeState.weather.intensity;
+      const w = rainOn ? Math.max(wi, 1) : wi;
+      const sun = sunLightRef.current;
+      const hemi = hemiLightRef.current;
+      if (sun) sun.intensity = sunIntensity * (1.0 - 0.45 * w);
+      if (hemi) hemi.intensity = ambientIntensity * (1.0 - 0.30 * w);
     }
 
     const cam = light.shadow.camera as THREE.OrthographicCamera;
@@ -1628,7 +1668,7 @@ export function World() {
     <group>
       <ClearSkyDome />
 
-      <hemisphereLight intensity={ambientIntensity} color={ambientColor} groundColor={groundColor} />
+      <hemisphereLight ref={hemiLightRef} intensity={ambientIntensity} color={ambientColor} groundColor={groundColor} />
       <directionalLight
         ref={sunLightRef}
         position={sunPosition}

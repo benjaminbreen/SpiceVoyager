@@ -14,6 +14,7 @@ import { sfxCoin, sfxClick, sfxHover } from '../audio/SoundEffects';
 import { getEffectiveKnowledge, type KnowledgeLevel } from '../utils/knowledgeSystem';
 import { MARKET_TRUST } from '../utils/worldPorts';
 import { ValueFlash } from './ValueFlash';
+import { quoteBuyCommodity, quoteSellCommodity } from '../utils/tradeQuotes';
 
 export interface MarketTabLedgerProps {
   port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
@@ -102,8 +103,6 @@ export function MarketTabLedger({
   const knowledgeState = useGameStore(s => s.knowledgeState);
   const crew = useGameStore(s => s.crew);
 
-  const spaceLeft = Math.max(0, cargoCapacity - cargoWeight);
-
   const rows = useMemo<MarketRow[]>(() => {
     const averageFor = (commodity: Commodity) => {
       const knownPorts = ports.filter(p => p.prices[commodity] > 0);
@@ -131,34 +130,48 @@ export function MarketTabLedger({
       const displayName = kLevel >= 1 ? commodity : def.physicalDescription;
 
       const avg = averageFor(commodity);
-      const portStocksGood = port.basePrices[commodity] > 0;
-      const sellPrice = portStocksGood
-        ? Math.max(1, Math.floor(Math.max(1, price) * 0.8))
-        : Math.max(1, Math.floor(getGlobalAveragePrice(commodity) * 0.5));
-      const maxBuyByGold = price > 0 ? Math.floor(gold / price) : 0;
-      const maxBuyBySpace = def.weight > 0 ? Math.floor(spaceLeft / def.weight) : 0;
-      const maxBuyByHoldCap = commodity === 'War Rockets' ? Math.max(0, 20 - playerInv) : Infinity;
-      const maxBuy = Math.max(0, Math.min(maxBuyByGold, maxBuyBySpace, portInv, maxBuyByHoldCap));
+      const buyQuote = quoteBuyCommodity({
+        commodity,
+        amount: Number.MAX_SAFE_INTEGER,
+        port,
+        cargo,
+        cargoWeight,
+        cargoCapacity,
+        gold,
+        crew,
+        knowledgeState,
+      });
+      const sellQuote = quoteSellCommodity({
+        commodity,
+        amount: Number.MAX_SAFE_INTEGER,
+        port,
+        cargo,
+        cargoWeight,
+        cargoCapacity,
+        gold,
+        crew,
+        knowledgeState,
+      });
       const ratio = avg > 0 && price > 0 ? price / avg : 1;
 
       return [{
         commodity,
         tier: def.tier,
-        price,
-        sellPrice,
+        price: buyQuote.unitPrice,
+        sellPrice: sellQuote.unitPrice,
         avg,
         ratio,
         signal: getSignal(ratio),
         role,
         portInv,
         playerInv,
-        maxBuy,
-        maxSell: playerInv,
+        maxBuy: buyQuote.maxAmount,
+        maxSell: sellQuote.maxAmount,
         knowledgeLevel: kLevel,
         displayName,
       }];
     });
-  }, [cargo, gold, port.basePrices, port.id, port.inventory, port.prices, ports, spaceLeft, knowledgeState, crew]);
+  }, [cargo, gold, port, port.id, port.inventory, port.prices, ports, cargoWeight, cargoCapacity, knowledgeState, crew]);
 
   const rowsByTier = useMemo(() => {
     const grouped = new Map<CommodityTier, MarketRow[]>();

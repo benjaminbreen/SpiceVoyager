@@ -482,8 +482,11 @@ Each archetype is a template that produces a `POIDefinition` at gen time, with a
 | **Smuggler's cove** | mercantile | culture × specialty (opium / unlicensed spice / English or Dutch interloper bypassing the *cartaz* system / Japanese-silver runners). Coastal-hinterland-native — hidden inlet on the remote edge of a port zone's coastline | Off-market trades that bypass port reputation; introduces a fence NPC; rep cost if caught later | 25% |
 | **Garden** | learned | tradition (Jesuit medicinal / Mughal hakim / VOC company-naturalist / Chinese herbalist / indigenous practitioner) | Mastery upgrades on specific commodities. The drug-knowledge engine of the system. Modeled on real 1612 institutions: Garcia da Orta's Goa garden, Mughal hakim compounds, Jesuit medicinal plots — estate gardens, not field camps. Shares the `garden` kind with bespoke gardens like Oxford and Malabar | 15% |
 | **Caravanserai** | mercantile | culture × isolation (highway / oasis / mountain pass). Port-local only — sits on the road into the city, in the hinterland band | Rumor-style leads, overland trade gossip, occasional traveler-NPC quest | 35% |
+| **Naturalist** (bespoke-only) | learned *or* mercantile | hand-authored per POI (Apothecaries' Hall, Banyan Counting House, Mappila House, Colégio São Paulo, Fort Jesus apothecary, Hadhrami aloe camp, etc.) | Mastery on specific commodities, faction contacts, named recurring giver for follow-up dialogue. Best lead-givers in the game because the NPC persists across visits | 25–35% (hand-tuned per POI) |
 
-Shrine and ruin do most of the work — they're the high-frequency procgen. The others are 5–15 instances each globally so they feel rare without being precious.
+This table is the **source of truth** for POI lead probabilities (referenced by `questplan.md` Source 3). When tuning lead frequency, edit numbers here.
+
+Shrine and ruin do most of the work — they're the high-frequency procgen. The others are 5–15 instances each globally so they feel rare without being precious. Naturalist is bespoke-only and capped at the ~6 hand-authored POIs.
 
 **Cut from earlier drafts:**
 - **Hermitage** as its own archetype — folded into Shrine as a `tenant: hermitage` axis. The geometry is a small shrine with a single sage NPC, not a separate building family. Keeping it separate would have duplicated the per-faith name pools and lore templates.

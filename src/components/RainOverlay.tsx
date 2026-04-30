@@ -28,14 +28,20 @@ function buildStreakGeometry(): THREE.InstancedBufferGeometry {
   }
   const offsets = new Float32Array(STREAK_COUNT * 3);
   const seeds = new Float32Array(STREAK_COUNT);
+  // Per-instance scale jitter — breaks the "uniform curtain" look. Range chosen
+  // so most streaks read normal-length while a minority are short fast drops or
+  // longer trails, mimicking real rain depth-of-field.
+  const scales = new Float32Array(STREAK_COUNT);
   for (let i = 0; i < STREAK_COUNT; i++) {
     offsets[i * 3 + 0] = (Math.random() * 2 - 1) * STREAK_RADIUS;
     offsets[i * 3 + 1] = Math.random() * STREAK_HEIGHT;
     offsets[i * 3 + 2] = (Math.random() * 2 - 1) * STREAK_RADIUS;
     seeds[i] = Math.random();
+    scales[i] = 0.7 + Math.random() * 0.7; // 0.7..1.4
   }
   geom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offsets, 3));
   geom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+  geom.setAttribute('aScale', new THREE.InstancedBufferAttribute(scales, 1));
   geom.instanceCount = STREAK_COUNT;
   base.dispose();
   return geom;
@@ -72,16 +78,28 @@ function buildRippleGeometry(): THREE.InstancedBufferGeometry {
 const STREAK_VERTEX = /* glsl */ `
   attribute vec3 aOffset;
   attribute float aSeed;
+  attribute float aScale;
   uniform float uTime;
   uniform float uHeight;
   uniform float uSpeed;
   uniform float uSlant;
+  uniform float uIntensity;
   uniform vec2 uWindDir;
   varying float vAlpha;
   varying vec2 vUv;
 
   void main() {
     vec3 local = position;
+
+    // Length jitter per instance — wider variance reads as motion-blurred depth.
+    // Width jitter is a milder sqrt so far drops aren't visibly wider than near ones.
+    local.y *= aScale;
+    local.x *= mix(0.85, 1.15, aSeed);
+
+    // Intensity-gated culling — drizzle is genuinely sparse, downpour fills the
+    // volume. Push culled instances behind the near plane via NaN-safe scale.
+    // Threshold maps so intensity=0.2 spawns ~40% of streaks, intensity=1 all.
+    float visible = step(aSeed, uIntensity * 1.2 + 0.2);
 
     // Per-instance falling Y, wrapped within volume so drops loop forever.
     float yPos = mod(aOffset.y - uTime * uSpeed - aSeed * uHeight, uHeight) - uHeight * 0.5;
@@ -104,7 +122,7 @@ const STREAK_VERTEX = /* glsl */ `
     gl_Position = projectionMatrix * viewMatrix * vec4(vertexWS, 1.0);
 
     float vNorm = (yPos / uHeight) + 0.5;
-    vAlpha = smoothstep(0.0, 0.2, vNorm) * smoothstep(1.0, 0.8, vNorm);
+    vAlpha = smoothstep(0.0, 0.2, vNorm) * smoothstep(1.0, 0.8, vNorm) * visible;
     vUv = uv;
   }
 `;

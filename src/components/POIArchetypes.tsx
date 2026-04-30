@@ -36,10 +36,12 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
-import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
+import { getPOIsForPort } from '../utils/poiDefinitions';
 import type { POIDefinition } from '../utils/poiDefinitions';
 import { getTerrainHeight } from '../utils/terrain';
 import { SEA_LEVEL } from '../constants/world';
+import { resolveSnappedPOI } from '../utils/proximityResolution';
+import { BESPOKE_POI_IDS } from './BespokePOIs';
 
 type PortsProp = ReturnType<typeof useGameStore.getState>['ports'];
 
@@ -136,6 +138,15 @@ const CARAVANSERAI_TRIM_SANDSTONE: [number, number, number] = [0.663, 0.527, 0.3
 const CARAVANSERAI_TRIM_MUDBRICK: [number, number, number] = [0.561, 0.442, 0.306];
 const CARAVANSERAI_GATE: [number, number, number] = [0.18, 0.12, 0.08];
 const CARAVANSERAI_FLAGPOLE: [number, number, number] = [0.32, 0.22, 0.14];
+
+// Naturalist Camp (Hadhrami aloe / gum collectors on salt flats).
+const CAMP_GOATHAIR: [number, number, number] = [0.20, 0.17, 0.14];
+const CAMP_CANVAS: [number, number, number] = [0.78, 0.68, 0.50];
+const CAMP_CANVAS_DARK: [number, number, number] = [0.62, 0.52, 0.36];
+const CAMP_WOOD: [number, number, number] = [0.32, 0.20, 0.12];
+const CAMP_SALT: [number, number, number] = [0.86, 0.83, 0.74];
+const CAMP_RESIN: [number, number, number] = [0.78, 0.55, 0.22];
+const CAMP_FIRE_ASH: [number, number, number] = [0.18, 0.15, 0.13];
 
 // ── Wreck ───────────────────────────────────────────────────────────────────
 //
@@ -505,6 +516,138 @@ function CaravanseraiSilhouette({ poiId, position, rotationY }: {
   );
 }
 
+// ── Naturalist Camp (hinterland silhouette) ────────────────────────────────
+//
+// Naturalist halls (Apothecaries' Hall, Royal College, etc.) are rendered as
+// landmarks in ProceduralCity.tsx, not as POI silhouettes — POIs in this
+// project are sites the player travels *to*, so urban halls live in city
+// geometry and only their landmark-bound POI metadata routes through here.
+// The camp variant below covers itinerant naturalists in the hinterland,
+// which is the only `naturalist` POI kind that still needs a silhouette.
+
+
+function NaturalistCampSilhouette({ poiId, position, rotationY }: {
+  poiId: string;
+  position: [number, number, number];
+  rotationY: number;
+}) {
+  const variant = useMemo(() => {
+    const rng = mulberry32(hashStr(poiId) ^ 0x8181);
+    const tentCount = 4 + Math.floor(rng() * 2);
+    const tents = Array.from({ length: tentCount }).map((_, i) => {
+      const angle = (i / tentCount) * Math.PI * 2 + rng() * 0.4;
+      const radius = 2.2 + rng() * 1.2;
+      return {
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+        rot: rng() * Math.PI,
+        kind: rng() < 0.65 ? ('goathair' as const) : ('canvas' as const),
+        scale: 0.85 + rng() * 0.35,
+      };
+    });
+    return { tents, seed: rng() };
+  }, [poiId]);
+
+  const goathair = chunkyMaterial(CAMP_GOATHAIR, { roughness: 1 });
+  const canvas = chunkyMaterial(CAMP_CANVAS, { roughness: 1 });
+  const canvasDark = chunkyMaterial(CAMP_CANVAS_DARK, { roughness: 1 });
+  const wood = chunkyMaterial(CAMP_WOOD, { roughness: 1 });
+  const salt = chunkyMaterial(CAMP_SALT, { roughness: 1 });
+  const resin = chunkyMaterial(CAMP_RESIN, { roughness: 1 });
+  const ash = chunkyMaterial(CAMP_FIRE_ASH, { roughness: 1 });
+
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      {/* Salt-flat plinth — wide flat circle slightly raised above terrain. */}
+      <mesh position={[0, 0.06, 0]} material={salt}>
+        <cylinderGeometry args={[7.0, 7.2, 0.12, 16]} />
+      </mesh>
+      {/* Tents — peaked low cones with a short rectangular awning. */}
+      {variant.tents.map((tent, i) => {
+        const tentColor = tent.kind === 'goathair' ? goathair : canvas;
+        const tentH = 1.8 * tent.scale;
+        const tentR = 1.3 * tent.scale;
+        return (
+          <group
+            key={`tent-${i}`}
+            position={[tent.x, 0.12, tent.z]}
+            rotation={[0, tent.rot, 0]}
+          >
+            {/* Main peaked tent body. */}
+            <mesh position={[0, tentH * 0.5, 0]} material={tentColor}>
+              <coneGeometry args={[tentR, tentH, 5]} />
+            </mesh>
+            {/* Awning — short rectangular flap off the front. */}
+            <mesh
+              position={[tentR * 0.9, tentH * 0.35, 0]}
+              rotation={[0, 0, 0.25]}
+              material={tent.kind === 'goathair' ? canvasDark : canvas}
+            >
+              <boxGeometry args={[1.0, 0.08, tentR * 1.1]} />
+            </mesh>
+            {/* Awning poles. */}
+            <mesh
+              position={[tentR * 1.4, tentH * 0.25, tentR * 0.5]}
+              material={wood}
+            >
+              <cylinderGeometry args={[0.06, 0.06, tentH * 0.55, 6]} />
+            </mesh>
+            <mesh
+              position={[tentR * 1.4, tentH * 0.25, -tentR * 0.5]}
+              material={wood}
+            >
+              <cylinderGeometry args={[0.06, 0.06, tentH * 0.55, 6]} />
+            </mesh>
+          </group>
+        );
+      })}
+      {/* Drying rack — long wood frame on the camp's edge with hanging
+          ochre resin strips. */}
+      <group position={[4.5, 0.12, 0]}>
+        <mesh position={[0, 0.9, -1.3]} material={wood}>
+          <cylinderGeometry args={[0.10, 0.10, 1.8, 6]} />
+        </mesh>
+        <mesh position={[0, 0.9, 1.3]} material={wood}>
+          <cylinderGeometry args={[0.10, 0.10, 1.8, 6]} />
+        </mesh>
+        <mesh position={[0, 1.7, 0]} material={wood}>
+          <cylinderGeometry args={[0.08, 0.08, 2.8, 6]} />
+        </mesh>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <mesh
+            key={`strip-${i}`}
+            position={[0, 1.2, -1.0 + i * 0.5]}
+            material={resin}
+          >
+            <boxGeometry args={[0.10, 0.7, 0.12]} />
+          </mesh>
+        ))}
+      </group>
+      {/* Camel post — a single peg with rope tied off. */}
+      <mesh position={[-4.6, 0.7, -0.4]} rotation={[0, 0, 0.08]} material={wood}>
+        <cylinderGeometry args={[0.10, 0.12, 1.2, 6]} />
+      </mesh>
+      {/* Fire ring — small ash circle in the camp center. */}
+      <mesh position={[0, 0.16, 0]} material={ash}>
+        <cylinderGeometry args={[0.6, 0.6, 0.08, 10]} />
+      </mesh>
+      {/* Cookpot stand — three stones around the fire. */}
+      {[0, 1, 2].map((i) => {
+        const a = (i / 3) * Math.PI * 2;
+        return (
+          <mesh
+            key={`stone-${i}`}
+            position={[Math.cos(a) * 0.5, 0.22, Math.sin(a) * 0.5]}
+            material={canvasDark}
+          >
+            <boxGeometry args={[0.20, 0.20, 0.20]} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
 // ── Top-level dispatcher ────────────────────────────────────────────────────
 //
 // Reads ports + their POI lists, resolves position per POI, dispatches to
@@ -519,6 +662,10 @@ function CaravanseraiSilhouette({ poiId, position, rotationY }: {
 
 const SILHOUETTE_KINDS = new Set<string>([
   'wreck', 'smugglers_cove', 'garden', 'caravanserai',
+  // `naturalist` covers itinerant camps only (Mocha aloe camp); permanent
+  // halls render as in-city landmarks. `merchant_guild` is landmark-only,
+  // no silhouette.
+  'naturalist',
 ]);
 
 export function POISilhouettes({ ports }: { ports: PortsProp }) {
@@ -541,16 +688,27 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
     for (const port of visiblePorts) {
       for (const poi of getPOIsForPort(port)) {
         if (!SILHOUETTE_KINDS.has(poi.kind)) continue;
-        const resolved = resolvePOIPosition(poi, port);
-        if (!resolved) continue;
+        // Landmark-bound POIs reuse the landmark's own mesh — drawing a
+        // silhouette on top would double-render (a Tudor hall on Fort Jesus,
+        // a merchant compound stamped over the Casa da Índia, etc.).
+        if (poi.location.kind === 'landmark') continue;
+        // Bespoke POIs (Phase 3+) own their own renderer in BespokePOIs.tsx.
+        // Skipping here prevents the generic silhouette stamping over them.
+        if (BESPOKE_POI_IDS.has(poi.id)) continue;
+        // Unified resolver — same answer the silhouette, beacon, minimap,
+        // and walking proximity check all consume. Author coords that land
+        // in water snap to the nearest valid cell (≤78u); fully-rejected
+        // POIs return null.
+        const placed = resolveSnappedPOI(poi, port);
+        if (!placed) continue;
         const baseY = poi.kind === 'wreck'
           ? SEA_LEVEL - 0.05
-          : Math.max(getTerrainHeight(resolved.x, resolved.z), SEA_LEVEL);
+          : getTerrainHeight(placed.x, placed.z);
         const rng = mulberry32(hashStr(poi.id) ^ 0xbe11);
         const rotationY = rng() * Math.PI * 2;
         out.push({
           poi,
-          position: [resolved.x, baseY, resolved.z],
+          position: [placed.x, baseY, placed.z],
           rotationY,
         });
       }
@@ -572,6 +730,8 @@ export function POISilhouettes({ ports }: { ports: PortsProp }) {
             return <GardenSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
           case 'caravanserai':
             return <CaravanseraiSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
+          case 'naturalist':
+            return <NaturalistCampSilhouette key={poi.id} poiId={poi.id} position={position} rotationY={rotationY} />;
           default:
             return null;
         }

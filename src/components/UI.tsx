@@ -15,6 +15,7 @@ import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
+import { startIntroCinematic } from '../utils/cinematicIntroState';
 import { ArrivalCurtain, DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
@@ -25,8 +26,11 @@ import { PORT_LATITUDES, getMusicZone } from '../utils/portCoords';
 import { HailPanel, type HailContext } from './HailPanel';
 import { Opening } from './Opening';
 import { ClaudeSplashGlobe } from './ClaudeSplashGlobe';
+import { AudioMuteButton } from './AudioMuteButton';
 import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
+import { QuestsPanel } from './QuestsPanel';
+import { QuestToast } from './QuestToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { activeBowWeapon, getCurrentElevationCharge } from '../utils/combatState';
@@ -682,6 +686,37 @@ function CollisionBanner({ shipDesc }: { shipDesc: string }) {
   );
 }
 
+// Sister to the Journal button at bottom-left; toggles QuestsPanel.
+function QuestsBarButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  const activeLeadCount = useGameStore(s => s.leads.filter(l => l.status === 'active').length);
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+        bg-[#1a1e2e] border-2
+        shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
+        transition-all active:scale-95
+        ${active
+          ? 'border-amber-500/60 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(245,158,11,0.25)]'
+          : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-400 hover:border-[#6a6545]/80'
+        }`}
+      title="Commissions"
+    >
+      <Scroll size={15} />
+      {!active && activeLeadCount > 0 && (
+        <span
+          className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-400/90 shadow-[0_0_4px_rgba(245,158,11,0.8)]"
+          aria-hidden
+        />
+      )}
+      <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+        Commissions<span className="ml-1 text-slate-500">[6]</span>
+      </span>
+    </button>
+  );
+}
+
 export function UI() {
   const testMode = getTestModeConfig();
   const gold = useGameStore((state) => state.gold);
@@ -765,6 +800,7 @@ export function UI() {
   const paused = useGameStore(s => s.paused);
   const setPaused = useGameStore(s => s.setPaused);
   const [showJournal, setShowJournal] = useState(false);
+  const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWind, setShowWind] = useState(false);
   const [showOverlayMenu, setShowOverlayMenu] = useState(false);
@@ -779,6 +815,11 @@ export function UI() {
   const [hullDamagePulse, setHullDamagePulse] = useState<{ key: number; severity: number } | null>(null);
   const [showCommission, setShowCommission] = useState(false);
   const [showVoyageCurtain, setShowVoyageCurtain] = useState(false);
+  // Intro fade phases:
+  //   'idle' — overlay invisible
+  //   'in'   — fading commission → black (modal still mounted underneath)
+  //   'out'  — black → cinematic (modal unmounted, camera is dollying)
+  const [introFadePhase, setIntroFadePhase] = useState<'idle' | 'in' | 'out'>('idle');
   const setVoyageBegun = useGameStore(s => s.setVoyageBegun);
   const [splashComplete, setSplashComplete] = useState(false);
   const [splashMinElapsed, setSplashMinElapsed] = useState(false);
@@ -897,14 +938,33 @@ export function UI() {
   }, [splashComplete, setVoyageBegun]);
 
   const closeCommission = useCallback(() => {
-    setShowCommission(false);
-    audioManager.transitionToOverworld();
+    // Begin fade to black with the commission still visible underneath.
+    // When the fade-in transition ends, we hide the modal and start the
+    // cinematic in handleIntroFadeEnd, then fade back out.
+    setIntroFadePhase('in');
     if (mapPreRenderTimerRef.current) clearTimeout(mapPreRenderTimerRef.current);
     mapPreRenderTimerRef.current = setTimeout(() => {
       startTerrainPreRender(waterPaletteId);
       mapPreRenderTimerRef.current = null;
     }, 600);
   }, [waterPaletteId]);
+
+  const handleIntroFadeEnd = useCallback(() => {
+    setIntroFadePhase((phase) => {
+      if (phase === 'in') {
+        // Fully black — swap modal off, drop camera to a tight gameplay zoom
+        // (the cinematic ends at whatever cameraZoom is now), start the
+        // cinematic, then begin fading out.
+        setShowCommission(false);
+        useGameStore.getState().setCameraZoom(28);
+        audioManager.transitionToOverworld();
+        startIntroCinematic();
+        return 'out';
+      }
+      if (phase === 'out') return 'idle';
+      return phase;
+    });
+  }, []);
 
   // Keep AudioManager's music zone synced to the player's current world
   // port so zone-restricted tracks (e.g. Monsoon Ledger in East Asian
@@ -1288,6 +1348,7 @@ export function UI() {
           break;
         case '6': // Quests
           sfxClick();
+          setShowQuests(prev => !prev);
           break;
         case '7': // Navigate (world map)
           toggleWorldMap();
@@ -1552,6 +1613,7 @@ export function UI() {
 
         {/* Minimap (top-right) — click to open full map */}
         <div className={`flex flex-col pointer-events-auto items-end ${isMobile ? 'gap-2' : 'gap-3'}`}>
+          <AudioMuteButton />
           {minimapEnabled && (
             <div className="relative group">
               <Minimap onClick={toggleLocalMap} size={isMobile ? 104 : 172} />
@@ -1973,10 +2035,19 @@ export function UI() {
         </Suspense>
       )}
 
-      {/* Journal Button — desktop: lower-left. Mobile version is rendered
-          inside the top-right cluster to avoid colliding with the action bar. */}
+      {/* Quests Panel — slide-out, sister to Journal. Renders above the
+          Quests button. */}
+      <QuestsPanel open={showQuests} onClose={() => setShowQuests(false)} />
+
+      {/* Quest Toast — top-center event announcements (resolved / expired /
+          failed for now; offers wired in once sources land). */}
+      <QuestToast />
+
+      {/* Journal + Quests Buttons — desktop: lower-left pair. Mobile journal
+          is in the top-right cluster; mobile quests is in the action-bar
+          overflow popover. */}
       {!isMobile && (
-        <div className="absolute bottom-4 left-4 pointer-events-auto">
+        <div className="absolute bottom-4 left-4 pointer-events-auto flex items-center gap-2">
           <button
             onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
             aria-pressed={showJournal}
@@ -1995,6 +2066,11 @@ export function UI() {
               Journal
             </span>
           </button>
+
+          <QuestsBarButton
+            active={showQuests}
+            onClick={() => { sfxClick(); setShowQuests(!showQuests); }}
+          />
         </div>
       )}
 
@@ -2018,7 +2094,7 @@ export function UI() {
                 <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => setShowOverflowMenu(false)} />
                 <ActionBarButton icon={<Settings size={13} />} label="Settings" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); setShowOverflowMenu(false); }} />
                 <ViewModeButton />
-                <ActionBarButton icon={<Scroll size={13} />} label="Quests" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => setShowOverflowMenu(false)} />
+                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxClick(); setShowQuests(prev => !prev); setShowOverflowMenu(false); }} />
               </div>
             </motion.div>
           )}
@@ -2057,7 +2133,7 @@ export function UI() {
               <>
                 {/* Right group: View - Quests - Navigate */}
                 <ViewModeButton />
-                <ActionBarButton icon={<Scroll size={13} />} label="Quests" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" />
+                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxClick(); setShowQuests(prev => !prev); }} />
                 <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
               </>
             )}
@@ -2129,6 +2205,25 @@ export function UI() {
         )}
       </AnimatePresence>
 
+      {/* Intro fade — always mounted (so the in/out transitions actually run),
+          but invisible + click-through when idle. Sits above the commission
+          modal so the modal fades through black with the rest of the world. */}
+      <div
+        aria-hidden
+        onTransitionEnd={handleIntroFadeEnd}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: '#000',
+          opacity: introFadePhase === 'in' ? 1 : 0,
+          // Asymmetric: snappy fade-in to black, slow elegant fade-out to game
+          transition: introFadePhase === 'in'
+            ? 'opacity 0.9s cubic-bezier(0.4, 0, 0.6, 1)'
+            : 'opacity 2.6s cubic-bezier(0.33, 0, 0.45, 1)',
+          pointerEvents: introFadePhase === 'in' ? 'auto' : 'none',
+          zIndex: 9999,
+        }}
+      />
     </div>
   );
 }

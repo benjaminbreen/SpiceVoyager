@@ -11,7 +11,8 @@ import {
   getSceneLabel,
   SceneInstance,
 } from '../utils/hinterlandScenes';
-import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
+import { getPOIsForPort } from '../utils/poiDefinitions';
+import { resolveSnappedPOI } from '../utils/proximityResolution';
 
 const MAP_SIZE = 150; // pixels
 const WORLD_RANGE = 300; // world units across the map
@@ -227,7 +228,11 @@ export function Minimap({ onClick, size = 144 }: { onClick?: () => void; size?: 
         if (state.discoveredPorts.includes(port.id)) {
           const pois = getPOIsForPort(port);
           for (const poi of pois) {
-            const resolved = resolvePOIPosition(poi, port);
+            // Use the unified snapped position so the minimap dot lines up
+            // with the in-world silhouette + beacon. Without this, an
+            // authored coord that landed in water shows a cyan dot on the
+            // sea while the actual POI renders elsewhere on land.
+            const resolved = resolveSnappedPOI(poi, port);
             if (!resolved) continue;
             const dx = resolved.x - px;
             const dz = resolved.z - pz;

@@ -10,7 +10,6 @@ import { getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impac
 const HOVER_MIN_RADIUS = 4;
 const HOVER_BUFFER = 1.6;
 const CHECK_INTERVAL = 0.12;
-const PORT_RANGE = 200;
 const FADE_IN_SEC = 0.14;
 const FADE_OUT_SEC = 0.22;
 
@@ -243,18 +242,6 @@ function detectHoveredBuilding(ports: Port[]): Building | null {
 
   const wx = mouseWorldPos.x;
   const wz = mouseWorldPos.z;
-  let nearPort: Port | null = null;
-  let nearPortDistSq = PORT_RANGE * PORT_RANGE;
-  for (const p of ports) {
-    const dx = p.position[0] - wx;
-    const dz = p.position[2] - wz;
-    const d = dx * dx + dz * dz;
-    if (d < nearPortDistSq) {
-      nearPortDistSq = d;
-      nearPort = p;
-    }
-  }
-  if (!nearPort) return null;
 
   const ox = mouseRay.origin.x;
   const oy = mouseRay.origin.y;
@@ -266,24 +253,29 @@ function detectHoveredBuilding(ports: Port[]): Building | null {
 
   let best: Building | null = null;
   let bestScore = Infinity;
-  for (const b of nearPort.buildings) {
-    if (!b.label) continue;
-    const planeY = b.position[1] + b.scale[1] * 0.5;
-    const t = (planeY - oy) / dy;
-    if (t <= 0) continue;
-    const hx = ox + dx * t;
-    const hz = oz + dz * t;
-    const ddx = b.position[0] - hx;
-    const ddz = b.position[2] - hz;
-    const distSq = ddx * ddx + ddz * ddz;
-    const halfFootprint = Math.max(b.scale[0], b.scale[2]) * 0.5;
-    const effRadius = Math.max(HOVER_MIN_RADIUS, halfFootprint + HOVER_BUFFER);
-    const effRadiusSq = effRadius * effRadius;
-    if (distSq < effRadiusSq) {
-      const score = distSq / effRadiusSq;
-      if (score < bestScore) {
-        bestScore = score;
-        best = b;
+  for (const port of ports) {
+    for (const b of port.buildings) {
+      if (!b.label) continue;
+      const planeY = b.position[1] + b.scale[1] * 0.5;
+      const t = (planeY - oy) / dy;
+      if (t <= 0) continue;
+      const hx = ox + dx * t;
+      const hz = oz + dz * t;
+      const ddx = b.position[0] - hx;
+      const ddz = b.position[2] - hz;
+      const distSq = ddx * ddx + ddz * ddz;
+      const halfFootprint = Math.max(b.scale[0], b.scale[2]) * 0.5;
+      const effRadius = Math.max(HOVER_MIN_RADIUS, halfFootprint + HOVER_BUFFER);
+      const effRadiusSq = effRadius * effRadius;
+      if (distSq < effRadiusSq) {
+        const mouseDx = b.position[0] - wx;
+        const mouseDz = b.position[2] - wz;
+        const mouseDistSq = mouseDx * mouseDx + mouseDz * mouseDz;
+        const score = (distSq + mouseDistSq * 0.2) / effRadiusSq;
+        if (score < bestScore) {
+          bestScore = score;
+          best = b;
+        }
       }
     }
   }

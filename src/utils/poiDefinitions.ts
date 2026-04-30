@@ -22,20 +22,25 @@
 import type { Commodity } from './commodities';
 import type { SemanticClass } from './semanticClasses';
 
-// Eight kinds total. Three groups:
+// Seven kinds total. Three groups:
 //   Bespoke-only (hand-authored sites with culturally-specific NPCs):
-//     'naturalist', 'merchant_guild'
+//     'naturalist'  — covers naturalists, apothecaries, banyan factors, and
+//                     other "expert who examines and teaches about goods"
+//                     POIs. Class field (learned vs mercantile) carries the
+//                     finer distinction; the kind drives the gameplay verb.
 //   Both bespoke and procedural:
 //     'garden', 'shrine'
 //   Procedural-only archetypes:
 //     'ruin', 'wreck', 'smugglers_cove', 'caravanserai'
 //
 // Earlier drafts had 'temple', 'court', 'hermitage', 'battlefield', 'monastery',
-// 'physick_garden' — all cut. Religious sites (including Christian monasteries
-// like Bom Jesus) fit under 'shrine'; gardens of any tradition fit under
-// 'garden'; palaces/courts already render as in-city palace landmarks.
+// 'physick_garden', 'merchant_guild' — all folded. Religious sites (including
+// Christian monasteries like Bom Jesus) fit under 'shrine'; gardens of any
+// tradition fit under 'garden'; palaces/courts already render as in-city
+// palace landmarks; merchant guilds collapsed into 'naturalist' since the
+// Learn/Converse modal verb is identical.
 export type POIKind =
-  | 'naturalist' | 'merchant_guild'
+  | 'naturalist'
   | 'garden' | 'shrine'
   | 'ruin' | 'wreck' | 'smugglers_cove' | 'caravanserai';
 
@@ -89,7 +94,7 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     kind: 'naturalist',
     class: 'learned',
     port: 'london',
-    location: { kind: 'coords', position: [22, -38] },
+    location: { kind: 'landmark', landmarkId: 'apothecaries-hall' },
     knowledgeDomain: ['Aloes', 'Mumia', 'Cassia Fistula', 'China Root', 'Bezoar Stones', 'Theriac'],
     masteryGoods: ['Mumia', 'Aloes'],
     cost: { type: 'gold', amount: 80 },
@@ -150,10 +155,10 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     id: 'surat-banyan-counting-house',
     name: "Banyan Counting House",
     sub: 'Hira Vora & Sons — Mughlisarai quarter',
-    kind: 'merchant_guild',
+    kind: 'naturalist',
     class: 'mercantile',
     port: 'surat',
-    location: { kind: 'coords', position: [-30, 18] },
+    location: { kind: 'landmark', landmarkId: 'banyan-counting-house' },
     knowledgeDomain: ['Indigo', 'Bhang', 'Hides', 'Iron', 'Opium'],
     masteryGoods: ['Indigo'],
     cost: { type: 'gold', amount: 70 },
@@ -168,7 +173,10 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     kind: 'shrine',
     class: 'religious',
     port: 'surat',
-    location: { kind: 'hinterland', position: [-145, 60] },
+    // Surat openDirection 'W' (sea to west, negative X). Placing the
+    // hinterland khanqah at positive X keeps it inland in the date-palm
+    // groves east of the city, matching the lore.
+    location: { kind: 'hinterland', position: [145, 60] },
     knowledgeDomain: ['Bhang', 'Frankincense', 'Myrrh', 'Cassia Fistula'],
     masteryGoods: ['Bhang'],
     cost: { type: 'commodity', commodityId: 'Frankincense', amount: 1 },
@@ -193,6 +201,57 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     npcRole: 'Servant of the tomb',
     lore: "The shrine of Ali ibn Umar al-Shādhilī, patron saint of coffee — the legend in Mocha holds that he learned of qahwa from goats grazing the ridges of Yemen's interior. Pilgrims drink the bitter brew before midnight prayers; merchants buy it by the camel-load below in the harbor. Shaikh Ali is the saint's namesake and keeper of the boil. He grades beans by smell and grade-roasts a sample on a long iron over coals.",
   },
+  // ── Calicut ───────────────────────────────────────────────────────────────
+  {
+    id: 'calicut-mappila-house',
+    name: 'Mappila Trading House',
+    sub: 'Kuttichira ward — Mappila merchant compound',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'calicut',
+    location: { kind: 'landmark', landmarkId: 'mappila-house' },
+    knowledgeDomain: ['Black Pepper', 'Ginger', 'Cardamom', 'Cinnamon', 'Frankincense', 'Ivory'],
+    masteryGoods: ['Black Pepper', 'Ginger'],
+    cost: { type: 'gold', amount: 75 },
+    npcName: 'Kunhi Marakkar',
+    npcRole: 'Mappila pepper-broker',
+    lore: "The Mappilas of Malabar are descendants of Arab traders who settled the coast over centuries and married into the Nair and fisher castes — Sunni Muslims, Malayalam-speaking, fluent in Arabic for the books and the Friday sermon. For three centuries before the Portuguese arrived they ran the pepper trade between the Malabar hinterland and Aden, Hormuz, and Cairo. The Marakkar family is one of the great Mappila houses — Kunhi grades pepper by sniff and snap, knows the upcountry estate by name for every sack in his godown, and remembers vividly how his grandfather's fleet was burned at Cochin. He'll deal civilly with European captains but considers the Estado da Índia a family enemy.",
+  },
+
+  // ── Macau ─────────────────────────────────────────────────────────────────
+  {
+    id: 'macau-colegio-sao-paulo',
+    name: 'Colégio de São Paulo',
+    sub: 'Jesuit college, gateway of the China mission',
+    kind: 'naturalist',
+    class: 'learned',
+    port: 'macau',
+    location: { kind: 'landmark', landmarkId: 'colegio-sao-paulo' },
+    knowledgeDomain: ['China Root', 'Camphor', 'Rhubarb', 'Mumia', 'Musk', 'Bezoar Stones', 'Tea'],
+    masteryGoods: ['China Root', 'Camphor'],
+    cost: { type: 'gold', amount: 110 },
+    npcName: 'Padre Manuel Dias, S.J.',
+    npcRole: 'Jesuit astronomer and rector',
+    lore: "Founded 1594 on the hill above the Macau peninsula, the Colégio is where new Jesuits to the China mission learn Mandarin, Confucian classics, and the protocols of Beijing before being sent north. Matteo Ricci died in Beijing two years ago (1610) and his successor Niccolò Longobardo runs the inland mission; here in Macau, Padre Manuel Dias the Younger is rector and a competent astronomer. The college keeps a working botanica with Chinese pharmacopoeia texts, a small dispensary of huang-qin, ginseng, and ti-fu-ling (China root), and Ricci's mappa mundi on the wall. Dias is courteous, learned, and cautious — he will trade pharmacological knowledge for European specimens but is wary of revealing too much about the mission's standing in Beijing.",
+  },
+
+  // ── Mombasa ───────────────────────────────────────────────────────────────
+  {
+    id: 'mombasa-fort-apothecary',
+    name: 'Garrison Apothecary',
+    sub: 'Surgeon-barber of Fort Jesus',
+    kind: 'naturalist',
+    class: 'learned',
+    port: 'mombasa',
+    location: { kind: 'landmark', landmarkId: 'fort-jesus' },
+    knowledgeDomain: ['Aloes', 'Frankincense', 'Myrrh', 'Ivory', 'Bezoar Stones', 'Cassia Fistula'],
+    masteryGoods: ['Aloes', 'Ivory'],
+    cost: { type: 'gold', amount: 65 },
+    npcName: 'Mestre Jorge Carneiro',
+    npcRole: 'Cirurgião-barbeiro of the garrison',
+    lore: "Fort Jesus, completed 1593 by the Portuguese on the headland of Mombasa Old Town, holds a permanent garrison of around a hundred soldiers, sailors recovering from scurvy, and a small dispensary in the casamatas where Mestre Carneiro plies the trade of cirurgião-barbeiro — surgeon, blood-letter, tooth-puller, dispenser of Galenic remedies. The Swahili coast supplies aloes, ivory, and Hadhrami gum-resins overland; he buys from Swahili and Hadhrami factors and sells European theriac and quicksilver back. Carneiro has been here eight years, speaks creditable Swahili, lost two fingers to a fever sore, and is bored enough to talk at length to any captain who'll listen.",
+  },
+
   {
     id: 'mocha-aloe-camp',
     name: 'Hadhrami Aloe Camp',
@@ -207,6 +266,177 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     npcName: 'Hakim Saʼid al-Hadhrami',
     npcRole: 'Hadhrami physician, gum-collector',
     lore: "A seasonal camp of Hadhrami collectors who range up the Tihama coast and across to Socotra each year for aloe and the resin tears of frankincense and myrrh. Sa'id is a hakim trained in Yemeni medicine — he reads the qarurah (urine flask), composes electuaries, and grades resin by snap and color. He'll teach a visitor to tell Socotran aloe (clean amber) from inferior Cape aloe (greenish-black) for a fee.",
+  },
+
+  // ── Phase 3 — Bespoke breadth pass (2026-04-29) ────────────────────────────
+  // Eight POIs covering the major ports that previously had none. Each is
+  // placed in the deep hinterland (≥180u from city center) opposite the
+  // port's openDirection so the player has to actually explore inland to
+  // reach it. Bespoke geometry lives in src/components/poi/*.tsx and is
+  // dispatched by BespokePOIs.tsx — POISilhouettes skips these ids so we
+  // don't double-render.
+
+  // ── Socotra ───────────────────────────────────────────────────────────────
+  {
+    id: 'socotra-dragons-blood-grove',
+    name: "Dracaena Cinnabari Grove",
+    sub: 'Diksam plateau — keeper of the dragon trees',
+    kind: 'garden',
+    class: 'learned',
+    port: 'socotra',
+    // Socotra is a Small-scale island (islandCoverage 0.15, aspectRatio 2.5,
+    // orientation 80° → long axis ~E-W). At Small scale the local map only
+    // ~600u across, and harbor is on the N coast (city sits north). Coords
+    // pulled in to (-95, -10) — well west of city center, on the island's
+    // spine, where the real Diksam plateau actually sits. The snapper will
+    // pull this onto land if the seed shifts the island slightly.
+    location: { kind: 'hinterland', position: [-95, -10] },
+    knowledgeDomain: ['Aloes', 'Frankincense', 'Myrrh', 'Bezoar Stones'],
+    masteryGoods: ['Aloes'],
+    cost: { type: 'gold', amount: 45 },
+    npcName: 'Hakim Yusuf bin Ahmad al-Mahri',
+    npcRole: 'Mahri tree-tapper, lay physician',
+    lore: "The dragon's blood tree, dam al-akhawayn — \"the blood of the two brothers\" — is a Dracaena that grows only on Socotra's limestone plateau. Yusuf is from the Mahra coast, comes up to Diksam each spring to slit the bark and collect the dark crimson resin in clay pots. The resin sells across the Indian Ocean as a varnish, a wound-staunch, a tooth-paste, a rumored aphrodisiac. He keeps a small stone hut here with a thatched roof of date-palm leaf, brews qishr coffee for visitors, and considers the Portuguese garrison at Hadibo (down the mountain, to the north coast) a noisy nuisance. He's quietly a Sufi of the Ba ʻAlawi tariqa — the island has a long Hadhrami Sufi history that long predates Islam's arrival here in the 9th century.",
+  },
+
+  // ── Hormuz ────────────────────────────────────────────────────────────────
+  {
+    id: 'hormuz-pearl-divers-bazaar',
+    name: 'Pearl Divers\' Bazaar',
+    sub: "Outer reef of the Strait — Bandar Khun",
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'hormuz',
+    // Hormuz is a tiny salt-dome island; openDirection 'N' → inland south.
+    // Pulled coord in to (50, 90) so it lands on the island even at the
+    // smaller Small-scale local map. The snapper will nudge if needed.
+    location: { kind: 'hinterland', position: [50, 90] },
+    knowledgeDomain: ['Pearls', 'Red Coral', 'Ambergris', 'Bezoar Stones', 'Frankincense'],
+    masteryGoods: ['Pearls'],
+    cost: { type: 'gold', amount: 90 },
+    npcName: 'Sayyid Murad al-Lari',
+    npcRole: 'Lari pearl-broker',
+    lore: "The pearl banks of the Persian Gulf are worked seasonally by Bahraini, Qatari, and Lari divers; in 1612 the trade is administered out of Hormuz under the Portuguese Estado da Índia, which takes a heavy cut. Sayyid Murad's family runs a beachside compound on the south side of Hormuz island — drying yards, a sorting house with brass scales, a pier where the small dhows beach at dusk to land their oysters. He grades pearls by the lamp-light test (\"a true pearl drinks the candle\") and knows every reef and pearl-bed from Bahrain to Cape Mussandam. He'll explain the ranking system — jiwani, danah, badla — for a fee, and grumbles bitterly about the Portuguese pearl-tax.",
+  },
+
+  // ── Masulipatnam ──────────────────────────────────────────────────────────
+  {
+    id: 'masulipatnam-golconda-broker',
+    name: 'Golconda Diamond Brokerage',
+    sub: 'Inland from the delta — agent of the Qutb Shahi mines',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'masulipatnam',
+    // Masulipatnam openDirection 'E' → inland west (-X). The diamond mines
+    // (Kollur, Paritala, etc.) lie west and south of Golconda inland.
+    location: { kind: 'hinterland', position: [-220, -40] },
+    // Diamonds and saltpeter are central to the lore but not in the trade
+    // commodity registry — knowledgeDomain covers the adjacent Coromandel
+    // goods Mir Jumla also handles. Diamonds remain a Converse-only topic.
+    knowledgeDomain: ['Indigo', 'Bhang', 'Opium', 'Quicksilver', 'Mumia'],
+    masteryGoods: ['Indigo', 'Bhang'],
+    cost: { type: 'gold', amount: 140 },
+    npcName: 'Mir Jumla Ardestani',
+    npcRole: 'Persian diamond-broker for the Qutb Shahi crown',
+    lore: "The Golconda mines — Kollur on the Krishna, Paritala, Wajra Karur — are the world's only known source of large diamonds in 1612, decades before Brazilian finds. Stones are graded and certified at brokerage houses around Hyderabad, then escorted overland down to Masulipatnam for shipment. Mir Jumla is one of many Persian Shia merchants the Qutb Shahi sultans favor; his brokerage compound here is a low whitewashed building with grilled windows, an inner courtyard with a fountain, and a strongroom of teak and iron. He grades by water-droplet test and candle-flame refraction, weighs in mangalams (a Telugu unit), and considers most European captains not worth speaking to in person — they get an underling. He handles diamonds primarily but also indigo, bhang and opium from the Coromandel hinterland and Persian quicksilver inbound. To buy his time you pay in gold and patience.",
+  },
+
+  // ── Bantam ────────────────────────────────────────────────────────────────
+  {
+    id: 'bantam-pepper-warehouses',
+    name: 'Sundanese Pepper Warehouses',
+    sub: 'Pasar Karangantu — south of the kraton walls',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'bantam',
+    // Bantam openDirection 'N' → inland south (+Z). The pepper-growing
+    // hinterland of the Banten sultanate is the Sundanese highlands south.
+    location: { kind: 'hinterland', position: [60, 220] },
+    knowledgeDomain: ['Black Pepper', 'Cloves', 'Nutmeg', 'Camphor', 'Tobacco', 'Betel Nut'],
+    masteryGoods: ['Black Pepper', 'Cloves'],
+    cost: { type: 'gold', amount: 85 },
+    npcName: 'Pangeran Wijayakusuma',
+    npcRole: 'Sundanese pepper-syahbandar',
+    lore: "The Sultanate of Banten is the great pepper hub of western Java in 1612 — Sundanese hill-villages send sacks down to the port through a chain of regional collectors, and the syahbandar (harbormaster's commercial agent) controls who buys what. The English EIC and Dutch VOC both have factories on the foreshore but distrust each other so violently that a third party often does better than either. Wijayakusuma's compound is a great bamboo-and-thatch godown south of the kraton, smelling of pepper-dust and clove-smoke. He weighs in pikuls, will sample a bag's pungency by chewing two corns, and considers the European factors quarrelsome children. He has a soft spot for Mappila and Persian merchants, both of whom were here generations before any Dutch arrived.",
+  },
+
+  // ── Nagasaki ──────────────────────────────────────────────────────────────
+  {
+    id: 'nagasaki-jesuit-press',
+    name: 'Jesuit Press at Todos os Santos',
+    sub: 'Hilltop seminary — Christian century, last years',
+    kind: 'naturalist',
+    class: 'learned',
+    port: 'nagasaki',
+    // Nagasaki openDirection 'W' → inland east (+X). Hilltop seminary above
+    // the harbor on the slopes east of the bay.
+    location: { kind: 'hinterland', position: [200, 80] },
+    knowledgeDomain: ['China Root', 'Camphor', 'Mumia', 'Musk', 'Theriac', 'Tea'],
+    masteryGoods: ['Camphor', 'Tea'],
+    cost: { type: 'gold', amount: 130 },
+    npcName: 'Padre João Rodrigues Tçuzu, S.J.',
+    npcRole: 'Jesuit grammarian, court interpreter',
+    lore: "Nagasaki in 1612 is the last great Christian city east of Manila — the Jesuit church of Todos os Santos sits on the hill above the harbor, with a Latin grammar school, a printing press that produces Christian texts in romanized Japanese (rōmaji), and a Tridentine seminary. Padre Rodrigues — \"Tçuzu\" (the interpreter) — was court interpreter to Hideyoshi and Ieyasu, speaks fluent Japanese and Mandarin, has compiled the first Japanese-Portuguese grammar (Arte da Lingoa de Iapam, Nagasaki 1604–08) and dictionary. The shogunate has begun cooling toward foreign clergy; the Edict of Expulsion comes in 1614, and Rodrigues will be exiled to Macau. For now he runs the press, corresponds with the Beijing mission, and trades pharmacological knowledge — Japanese camphor, Chinese ginseng, theriac formulas — for European books. Cautious, learned, melancholy.",
+  },
+
+  // ── Manila ────────────────────────────────────────────────────────────────
+  {
+    id: 'manila-parian-silk-market',
+    name: 'Parián de los Sangleys',
+    sub: 'Chinese silk-and-porcelain quarter, outside the walls',
+    kind: 'naturalist',
+    class: 'mercantile',
+    port: 'manila',
+    // Manila openDirection 'W' → inland east (+X). The historical Parián was
+    // just outside Intramuros' eastern wall; here we push it further inland
+    // to enforce the explore-for-it feel.
+    location: { kind: 'hinterland', position: [220, -40] },
+    knowledgeDomain: ['Chinese Porcelain', 'Tea', 'China Root', 'Musk', 'Camphor', 'Japanese Silver'],
+    masteryGoods: ['Chinese Porcelain', 'Tea'],
+    cost: { type: 'gold', amount: 100 },
+    npcName: 'Don Lim Tiong-co',
+    npcRole: 'Sangley merchant, baptized in 1601',
+    lore: "The Parián is the quarter of the sangleys — the Hokkien Chinese trader community of Manila — who supply the silk, porcelain, and chinaware that the annual Manila Galleon carries across the Pacific to Acapulco. In 1612 there are roughly twenty thousand sangleys to a few thousand Spanish; the Parián sits outside the city walls under suspicious oversight (the Spanish massacred Chinese twice already, in 1603 and at intervals before). Don Lim Tiong-co runs a silk warehouse and porcelain-display hall, takes Spanish baptism without giving up his Fujianese ancestor altars, and trades with anyone — Spaniards, Portuguese from Macau, Dutch interlopers, Japanese, even the occasional Mughal. The compound has a teakwood gallery, a porcelain showroom with Ming pieces under taut silk, and an inner courtyard where he prefers to negotiate.",
+  },
+
+  // ── Aden ──────────────────────────────────────────────────────────────────
+  {
+    id: 'aden-customs-hakim',
+    name: 'Ottoman Customs House',
+    sub: "Inland watchtower — Tawila cisterns hakim",
+    kind: 'naturalist',
+    class: 'learned',
+    port: 'aden',
+    // Aden openDirection 'S' → inland north (-Z). Tawila cisterns sit
+    // inland of the volcanic crater bowl that forms Aden's harbor.
+    location: { kind: 'hinterland', position: [60, -200] },
+    knowledgeDomain: ['Coffee', 'Frankincense', 'Myrrh', 'Aloes', 'Mumia'],
+    masteryGoods: ['Coffee', 'Myrrh'],
+    cost: { type: 'gold', amount: 70 },
+    npcName: 'Hakim Sulayman al-Adani',
+    npcRole: 'Yemeni customs officer and physician',
+    lore: "Aden in 1612 has been Ottoman for nearly seventy years — Yemen Eyalet, ruled out of San'a, with a Janissary garrison and a customs administration that taxes everything moving north up the Red Sea or south toward the Gulf. Sulayman is a hakim from a long Adani family; he runs the customs house at the inland edge of the city by the famous Tawila cisterns (rock-cut reservoirs in the volcanic crater walls) and supplements his salary by grading caravan-borne resins for visiting merchants. He drinks qishr (the husk-and-ginger coffee Yemenis prefer to the Mocha bean), reads the qarurah, and has strong opinions about which Ethiopian coffee is superior to the Yemeni ridge crop (he says none are).",
+  },
+
+  // ── Zanzibar ──────────────────────────────────────────────────────────────
+  {
+    id: 'zanzibar-cinco-chagas-wreck',
+    name: 'Wreck of the Cinco Chagas',
+    sub: 'Reef south of the harbor — broken Portuguese carrack',
+    kind: 'wreck',
+    class: 'civic',
+    port: 'zanzibar',
+    // Zanzibar openDirection 'W'. Wreck sits offshore (west) within the
+    // narrow shallow band — the fringing reef along Zanzibar's west coast
+    // wrecked many ships historically. The snapper will pull onto a
+    // shallow cell within 78u if the authored coord misses the reef.
+    location: { kind: 'hinterland', position: [-110, 40] },
+    knowledgeDomain: ['Ivory', 'Cloves', 'Ambergris'],
+    masteryGoods: ['Ambergris'],
+    cost: { type: 'gold', amount: 0 },
+    npcName: 'The wreck itself',
+    npcRole: 'Sea-rotted ship\'s ledger',
+    lore: "A Portuguese carrack, the Cinco Chagas (\"Five Wounds\") — named for a common Iberian devotion to the wounds of Christ — broke up on the reef south of Unguja sometime in the late 1500s on the run home from Goa. The hull is half-buried in the sand at low tide; a few timbers and the stub of one mast are still visible. Swahili divers stripped most of the cargo years ago, but the captain's small chest is still wedged in the stern, and a sodden ledger inside it can be read by anyone with patience and a candle. There is no NPC here — only the wreck and what it tells.",
   },
 ];
 

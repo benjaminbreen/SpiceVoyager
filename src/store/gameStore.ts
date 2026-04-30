@@ -13,6 +13,10 @@ import type { OceanEncounterDef } from '../utils/oceanEncounters';
 import type { FishType } from '../utils/fishTypes';
 import type { WaterPaletteSetting } from '../utils/waterPalettes';
 import { canDirectlySail, estimateSeaTravel, getWorldPortById, resolveCampaignPortId, MARKET_TRUST } from '../utils/worldPorts';
+import type { Lead, LeadSource, QuestToastEntry } from '../types/leads';
+import { LEAD_CAPS } from '../types/leads';
+import { createStarterLead } from '../utils/seedLeads';
+import { saleResolvesStarterLead, leadsToExpire, formatRewardReveal, type SaleEvent } from '../utils/leadResolution';
 import { nationalityToCulture } from '../utils/portCoords';
 import type { DistrictKey } from '../utils/cityDistricts';
 export type { DistrictKey };
@@ -28,11 +32,13 @@ import {
 import {
   type KnowledgeLevel,
   generateStartingKnowledge,
-  getEffectiveKnowledge,
-  getUnknownBuyDiscount,
-  getMasterySellBonus,
   rollPurchaseOutcome,
 } from '../utils/knowledgeSystem';
+import {
+  quoteBuyCommodity,
+  quoteSellCommodity,
+  settleSellCommodity,
+} from '../utils/tradeQuotes';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { LUT_PRESETS, type LUTParams, type LUTPresetId } from '../utils/proceduralLUT';
 import type { ClimateProfile } from '../utils/portArchetypes';
@@ -904,6 +910,10 @@ interface GameState {
   ports: Port[];
   timeOfDay: number; // 0 to 24
   notifications: Notification[];
+  /** Active and recently-resolved quest leads. See questplan.md. */
+  leads: Lead[];
+  /** Top-center QuestToast queue. Head is shown when no mode banner is up. */
+  questToasts: QuestToastEntry[];
   activePort: Port | null;
   cameraZoom: number;
   cameraRotation: number; // radians, orbits around player on Y axis
@@ -1035,6 +1045,13 @@ interface GameState {
   removeNotification: (id: string) => void;
   addJournalEntry: (category: JournalCategory, message: string, portName?: string) => void;
   addJournalNote: (entryId: string, text: string) => void;
+
+  // Quest leads — see src/types/leads.ts and questplan.md.
+  addLead: (lead: Lead) => void;
+  resolveLead: (leadId: string) => void;
+  failLead: (leadId: string) => void;
+  expireLead: (leadId: string) => void;
+  dismissQuestToast: (toastId: string) => void;
   setActivePort: (port: Port | null) => void;
   buyCommodity: (commodity: Commodity, amount: number) => void;
   sellCommodity: (commodity: Commodity, amount: number) => void;
@@ -1044,6 +1061,7 @@ interface GameState {
   setCameraRotation: (rotation: number) => void;
   setViewMode: (mode: 'default' | 'cinematic' | 'topdown' | 'firstperson') => void;
   setWorldSeed: (seed: number) => void;
+  startNewGame: (opts: { faction: Nationality; portId: string }) => void;
   setWorldSize: (size: number) => void;
   setDevSoloPort: (portId: string | null) => void;
   devRestPreviewPortId: string | null;
@@ -1301,6 +1319,11 @@ function pickSpawnPort(faction: Nationality, fallback: string): string {
   return table[table.length - 1].portId;
 }
 
+function playableStartForFaction(faction: Nationality) {
+  return PLAYABLE_FACTION_STARTS.find((entry) => entry.faction === faction)
+    ?? PLAYABLE_FACTION_STARTS[0];
+}
+
 // Per-hull handling baseline. Speed is 0–25 (kn at top trim), turnSpeed is
 // the existing 0–3 scale Ship.tsx already reads, windward is 0–1 (1.0 =
 // can sail straight into the wind — none of these hulls hit that). Draft
@@ -1483,6 +1506,62 @@ function buildStartingProvenance(cargo: Record<Commodity, number>): CargoStack[]
   return stacks;
 }
 
+function buildNewGameStart(faction: Nationality, portId?: string) {
+  const factionStart = playableStartForFaction(faction);
+  const startingPortId = portId || pickSpawnPort(faction, factionStart.homePortId);
+  const captain = generateStartingCaptain(faction);
+  const captainLuck = captain.stats.luck ?? 10;
+  const luckyStart = captainLuck >= 17;
+  const shipType: ShipInfo['type'] = luckyStart ? factionStart.grand : factionStart.humble;
+  const baseStats = SHIP_BASE_STATS[shipType];
+  const crewRangeSize = baseStats.startMax - baseStats.startMin + 1;
+  const crewSize = baseStats.startMin + Math.floor(Math.random() * crewRangeSize);
+  const crew = generateStartingCrew(faction, crewSize, captain);
+  const shipNamePool = SHIP_NAMES[shipType];
+  const shipName = shipNamePool[Math.floor(Math.random() * shipNamePool.length)];
+  const shipProfile = SHIP_START_PROFILE[shipType];
+  const cargo = generateStartingCargo(faction, shipProfile.cargoCapacity, captainLuck);
+  const armament = buildStartingArmament(shipType, faction);
+  if (armament.includes('fireRocket')) {
+    cargo['War Rockets'] = 10;
+  }
+  const broadsides = armament.filter(w => !WEAPON_DEFS[w].aimable).length;
+  const weather = rollWeatherForPortId(startingPortId);
+
+  return {
+    faction,
+    startingPortId,
+    captain,
+    crew,
+    cargo,
+    cargoProvenance: buildStartingProvenance(cargo),
+    gold: shipProfile.gold,
+    stats: {
+      hull: baseStats.maxHull,
+      maxHull: baseStats.maxHull,
+      sails: 100,
+      maxSails: 100,
+      speed: baseStats.speed,
+      turnSpeed: baseStats.turnSpeed,
+      windward: baseStats.windward,
+      draft: baseStats.draft,
+      maxCrew: baseStats.maxCrew,
+      cargoCapacity: shipProfile.cargoCapacity,
+      cannons: broadsides,
+      armament,
+    } satisfies ShipStats,
+    ship: {
+      name: shipName,
+      type: shipType,
+      flag: faction,
+      armed: true,
+    } satisfies ShipInfo,
+    reputation: buildStartingReputation(faction),
+    knowledgeState: generateStartingKnowledge(faction, crew, armament),
+    weather: { ...weather, intensity: weather.targetIntensity },
+  };
+}
+
 export const useGameStore = create<GameState>((set, get) => ({
   playerPos: [0, 0, 0],
   playerRot: 0,
@@ -1514,6 +1593,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   ports: [],
   timeOfDay: 8, // Start at 8 AM
   notifications: [],
+  leads: [createStarterLead(1, _startingPortId)],
+  questToasts: [],
   activePort: null,
   cameraZoom: 50,
   cameraRotation: 0,
@@ -1839,7 +1920,93 @@ export const useGameStore = create<GameState>((set, get) => ({
         : e
     )
   })),
-  
+
+  // ── Quest leads ────────────────────────────────────────────────────────────
+  // The trunk type lives in src/types/leads.ts; resolution helpers in
+  // src/utils/leadResolution.ts. addLead is the silent accept path — sources
+  // (tavern, crew, POI, governor) own their own "Offer" UX before calling
+  // this. resolve/fail/expire all fire QuestToasts and journal entries so
+  // the panel and toast surfaces update from the same path.
+  addLead: (lead) => set((state) => {
+    const cap = LEAD_CAPS[lead.source as LeadSource];
+    if (cap != null) {
+      const activeOfSource = state.leads.filter(l => l.source === lead.source && l.status === 'active').length;
+      if (activeOfSource >= cap) return {};
+    }
+    return { leads: [...state.leads, lead] };
+  }),
+
+  resolveLead: (leadId) => {
+    const state = get();
+    const lead = state.leads.find(l => l.id === leadId);
+    if (!lead || lead.status !== 'active') return;
+
+    if (lead.reward.gold) {
+      set({ gold: state.gold + lead.reward.gold });
+    }
+    if (lead.reward.rep) {
+      get().adjustReputation(lead.reward.rep.faction as Nationality, lead.reward.rep.amount);
+    }
+
+    const toast: QuestToastEntry = {
+      id: generateId(),
+      variant: 'resolved',
+      leadId: lead.id,
+      title: lead.title,
+      giverName: lead.giverName,
+      template: lead.template,
+      rewardReveal: formatRewardReveal(lead),
+    };
+
+    set((s) => ({
+      leads: s.leads.filter(l => l.id !== leadId),
+      questToasts: [...s.questToasts, toast],
+    }));
+    get().addJournalEntry('encounter', `Resolved: ${lead.title}.`);
+  },
+
+  failLead: (leadId) => {
+    const state = get();
+    const lead = state.leads.find(l => l.id === leadId);
+    if (!lead || lead.status !== 'active') return;
+    const toast: QuestToastEntry = {
+      id: generateId(),
+      variant: 'failed',
+      leadId: lead.id,
+      title: lead.title,
+      giverName: lead.giverName,
+      template: lead.template,
+    };
+    set((s) => ({
+      leads: s.leads.filter(l => l.id !== leadId),
+      questToasts: [...s.questToasts, toast],
+    }));
+    get().addJournalEntry('encounter', `Failed: ${lead.title}.`);
+  },
+
+  expireLead: (leadId) => {
+    const state = get();
+    const lead = state.leads.find(l => l.id === leadId);
+    if (!lead || lead.status !== 'active') return;
+    const toast: QuestToastEntry = {
+      id: generateId(),
+      variant: 'expired',
+      leadId: lead.id,
+      title: lead.title,
+      giverName: lead.giverName,
+      template: lead.template,
+    };
+    set((s) => ({
+      leads: s.leads.filter(l => l.id !== leadId),
+      questToasts: [...s.questToasts, toast],
+    }));
+    get().addJournalEntry('encounter', `Lapsed: ${lead.title}.`);
+  },
+
+  dismissQuestToast: (toastId) => set((state) => ({
+    questToasts: state.questToasts.filter(t => t.id !== toastId),
+  })),
+
   setActivePort: (port) => set({ activePort: port }),
   
   buyCommodity: (commodity, amount) => {
@@ -1847,40 +2014,35 @@ export const useGameStore = create<GameState>((set, get) => ({
     const port = state.activePort;
     if (!port) return;
 
-    // Knowledge-aware pricing
-    const knowledgeLevel = getEffectiveKnowledge(commodity, state.knowledgeState, state.crew);
-
-    // Calculate effective price with supply/demand + crew bonuses
-    const sdMod = supplyDemandModifier(port.inventory[commodity], port.baseInventory[commodity]);
-    const effectiveBase = Math.max(1, Math.round(port.basePrices[commodity] * sdMod));
-    const factorDiscount = getRoleBonus(state, 'Factor', 'charisma');
-    const traitDiscount = captainHasTrait(state, 'Silver Tongue') ? 0.95 : 1.0;
-
-    // Unknown goods are cheap — sellers exploit your ignorance by offering low prices
-    // (they assume you don't know the value and will accept any price)
-    const unknownDiscount = knowledgeLevel === 0 ? getUnknownBuyDiscount() : 1.0;
-
-    const price = Math.max(1, Math.floor(effectiveBase / factorDiscount * traitDiscount * unknownDiscount));
-    const totalCost = price * amount;
-
-    const commodityWeight = COMMODITY_DEFS[commodity].weight;
     const currentCargoWeight = Object.entries(state.cargo).reduce(
       (sum, [c, qty]) => sum + qty * COMMODITY_DEFS[c as Commodity].weight, 0
     );
-    if (currentCargoWeight + amount * commodityWeight > state.stats.cargoCapacity) {
+    const quote = quoteBuyCommodity({
+      commodity,
+      amount,
+      port,
+      cargo: state.cargo,
+      cargoWeight: currentCargoWeight,
+      cargoCapacity: state.stats.cargoCapacity,
+      gold: state.gold,
+      crew: state.crew,
+      knowledgeState: state.knowledgeState,
+    });
+
+    if (quote.blockReason === 'no-space') {
       get().addNotification('Not enough cargo space!', 'warning');
       return;
     }
 
     // War Rockets are bulky and volatile — the hold can only take 20 before
     // the magazine is considered full.
-    if (commodity === 'War Rockets' && (state.cargo['War Rockets'] ?? 0) + amount > 20) {
+    if (quote.blockReason === 'hold-cap') {
       get().addNotification('Magazine full — hold caps at 20 war rockets.', 'warning');
       return;
     }
 
-    if (state.gold >= totalCost && port.inventory[commodity] >= amount) {
-      const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] - amount };
+    if (quote.amount > 0 && state.gold >= quote.total && port.inventory[commodity] >= quote.amount) {
+      const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] - quote.amount };
       // Recalculate prices based on new inventory levels
       const newPrices = { ...port.prices };
       for (const c of ALL_COMMODITIES_FULL) {
@@ -1892,7 +2054,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       // Roll purchase outcome: only blind (Level 0) buys can be fraudulent or
       // serendipitous. Identified buys are always genuine.
-      const outcome = knowledgeLevel === 0
+      const outcome = quote.knowledgeLevel === 0
         ? rollPurchaseOutcome(commodity, port.id, MARKET_TRUST[port.id] ?? 0.5)
         : { kind: 'genuine' as const };
       const actualCommodity = outcome.kind === 'genuine' ? commodity : outcome.actual;
@@ -1901,17 +2063,17 @@ export const useGameStore = create<GameState>((set, get) => ({
         id: generateId(),
         commodity,
         actualCommodity,
-        amount,
+        amount: quote.amount,
         acquiredPort: port.id,
         acquiredPortName: port.name,
         acquiredDay: state.dayCount,
-        purchasePrice: price,
-        knowledgeAtPurchase: knowledgeLevel,
+        purchasePrice: quote.unitPrice,
+        knowledgeAtPurchase: quote.knowledgeLevel,
       };
 
       set({
-        gold: state.gold - totalCost,
-        cargo: { ...state.cargo, [commodity]: state.cargo[commodity] + amount },
+        gold: state.gold - quote.total,
+        cargo: { ...state.cargo, [commodity]: state.cargo[commodity] + quote.amount },
         cargoProvenance: [...state.cargoProvenance, newStack],
         activePort: { ...port, inventory: newInventory, prices: newPrices },
         ports: state.ports.map(p => p.id === port.id
@@ -1920,17 +2082,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         ),
       });
 
-      const displayName = knowledgeLevel >= 1
-        ? commodity
-        : COMMODITY_DEFS[commodity].physicalDescription;
-      get().addNotification(`Bought ${amount} ${displayName} for ${totalCost}g`, 'success');
-      get().addJournalEntry('commerce', commerceBuyTemplate(commodity, amount, totalCost, port.name), port.name);
+      get().addNotification(`Bought ${quote.amount} ${quote.displayName} for ${quote.total}g`, 'success');
+      get().addJournalEntry('commerce', commerceBuyTemplate(commodity, quote.amount, quote.total, port.name), port.name);
       const faction = PORT_FACTION[port.id];
       if (faction) get().adjustReputation(faction, 2);
       const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
       if (factor) {
-        get().addCrewHistory(factor.id, `Negotiated purchase of ${amount} ${displayName} at ${port.name}`);
-        const tradeXp = 3 + Math.floor(totalCost / 100);
+        get().addCrewHistory(factor.id, `Negotiated purchase of ${quote.amount} ${quote.displayName} at ${port.name}`);
+        const tradeXp = 3 + Math.floor(quote.total / 100);
         const r = grantCrewXp(get().crew, factor.id, tradeXp);
         set({ crew: r.crew });
         if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
@@ -1946,80 +2105,36 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!port) return;
     if (state.cargo[commodity] < amount) return;
 
-    const factorBonus = getRoleBonus(state, 'Factor', 'charisma');
-    const traitBonus = captainHasTrait(state, 'Silver Tongue') ? 1.05 : 1.0;
+    const currentCargoWeight = Object.entries(state.cargo).reduce(
+      (sum, [c, qty]) => sum + qty * COMMODITY_DEFS[c as Commodity].weight, 0
+    );
+    const quote = quoteSellCommodity({
+      commodity,
+      amount,
+      port,
+      cargo: state.cargo,
+      cargoWeight: currentCargoWeight,
+      cargoCapacity: state.stats.cargoCapacity,
+      gold: state.gold,
+      crew: state.crew,
+      knowledgeState: state.knowledgeState,
+    });
+    if (quote.amount <= 0) return;
 
-    /** Compute per-unit sell price for any commodity at this port, applying
-     *  the standard factor/trait/mastery modifiers. Used for both the claimed
-     *  good and (on fraud/windfall) the revealed actual good. */
-    const perUnitSellPrice = (c: Commodity): number => {
-      const level = getEffectiveKnowledge(c, state.knowledgeState, state.crew);
-      const portHas = port.basePrices[c] > 0;
-      const sdMod = portHas
-        ? supplyDemandModifier(port.inventory[c], port.baseInventory[c])
-        : 1.0;
-      const base = portHas
-        ? Math.max(1, Math.round(port.basePrices[c] * sdMod))
-        : Math.max(1, Math.round(
-            (COMMODITY_DEFS[c].basePrice[0] + COMMODITY_DEFS[c].basePrice[1]) / 2 * 0.5
-          ));
-      const mastery = level >= 2 ? getMasterySellBonus() : 1.0;
-      return Math.max(1, Math.floor(base * 0.8 * factorBonus * traitBonus * mastery));
-    };
-
-    // Walk provenance stacks FIFO, consume `amount` total units, group by
-    // actualCommodity so reveals can be priced and announced per-revealed-good.
-    const consumed: { stack: CargoStack; taken: number }[] = [];
-    const newProvenance: CargoStack[] = [];
-    let remaining = amount;
-    for (const stack of state.cargoProvenance) {
-      if (stack.commodity !== commodity || remaining <= 0) {
-        newProvenance.push(stack);
-        continue;
-      }
-      const take = Math.min(stack.amount, remaining);
-      consumed.push({ stack, taken: take });
-      remaining -= take;
-      const left = stack.amount - take;
-      if (left > 0) newProvenance.push({ ...stack, amount: left });
-    }
-    // Safety: if provenance is out of sync (shouldn't happen), fall back to
-    // treating the shortfall as genuine at the claimed price.
-    if (remaining > 0) {
-      consumed.push({
-        stack: {
-          id: generateId(), commodity, actualCommodity: commodity,
-          amount: remaining, acquiredPort: 'unknown', acquiredPortName: 'unknown',
-          acquiredDay: 0, purchasePrice: 0, knowledgeAtPurchase: 1,
-        },
-        taken: remaining,
-      });
-      remaining = 0;
-    }
-
-    // Compute actual gain and collect reveal events.
-    let totalGain = 0;
-    type Reveal = { stack: CargoStack; taken: number; claimedUnitPrice: number; actualUnitPrice: number };
-    const reveals: Reveal[] = [];
-    const claimedUnitPrice = perUnitSellPrice(commodity);
-    const newKnowledge = { ...state.knowledgeState };
-    for (const { stack, taken } of consumed) {
-      const actual = stack.actualCommodity;
-      if (actual === commodity) {
-        totalGain += claimedUnitPrice * taken;
-      } else {
-        const actualUnitPrice = perUnitSellPrice(actual);
-        totalGain += actualUnitPrice * taken;
-        reveals.push({ stack, taken, claimedUnitPrice, actualUnitPrice });
-        // A reveal teaches the player what the actual good is.
-        if ((newKnowledge[actual] ?? 0) < 1) newKnowledge[actual] = 1;
-      }
-    }
+    const settlement = settleSellCommodity({
+      commodity,
+      amount: quote.amount,
+      port,
+      crew: state.crew,
+      knowledgeState: state.knowledgeState,
+      cargoProvenance: state.cargoProvenance,
+    });
+    const totalGain = settlement.total;
 
     // Port inventory increases by the CLAIMED commodity — the buyer still
     // thinks that's what they received (the player only learns on sale). This
     // is a small simplification we can tighten later.
-    const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] + amount };
+    const newInventory = { ...port.inventory, [commodity]: port.inventory[commodity] + quote.amount };
     const newPrices = { ...port.prices };
     for (const c of ALL_COMMODITIES_FULL) {
       if (port.basePrices[c] > 0) {
@@ -2030,9 +2145,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     set({
       gold: state.gold + totalGain,
-      cargo: { ...state.cargo, [commodity]: state.cargo[commodity] - amount },
-      cargoProvenance: newProvenance,
-      knowledgeState: newKnowledge,
+      cargo: { ...state.cargo, [commodity]: state.cargo[commodity] - quote.amount },
+      cargoProvenance: settlement.provenanceAfter,
+      knowledgeState: settlement.knowledgeAfter,
       activePort: { ...port, inventory: newInventory, prices: newPrices },
       ports: state.ports.map(p => p.id === port.id
         ? { ...p, inventory: newInventory, prices: newPrices }
@@ -2041,11 +2156,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     });
 
     // Standard sell notification + journal for the honest portion.
-    get().addNotification(`Sold ${amount} ${commodity} for ${totalGain}g`, 'success');
-    get().addJournalEntry('commerce', commerceSellTemplate(commodity, amount, totalGain, port.name), port.name);
+    get().addNotification(`Sold ${quote.amount} ${commodity} for ${totalGain}g`, 'success');
+    get().addJournalEntry('commerce', commerceSellTemplate(commodity, quote.amount, totalGain, port.name), port.name);
 
     // Reveals: one notification + journal entry per mislabeled stack consumed.
-    for (const r of reveals) {
+    for (const r of settlement.reveals) {
       const { stack, taken, claimedUnitPrice, actualUnitPrice } = r;
       const delta = (actualUnitPrice - claimedUnitPrice) * taken;
       if (delta < 0) {
@@ -2078,7 +2193,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (faction) get().adjustReputation(faction, 2);
     const factor = state.crew.find(c => c.role === 'Factor') ?? state.crew.find(c => c.role === 'Captain');
     if (factor) {
-      get().addCrewHistory(factor.id, `Sold ${amount} ${commodity} for ${totalGain}g at ${port.name}`);
+      get().addCrewHistory(factor.id, `Sold ${quote.amount} ${commodity} for ${totalGain}g at ${port.name}`);
       const tradeXp = 3 + Math.floor(totalGain / 80);
       const r = grantCrewXp(get().crew, factor.id, tradeXp);
       set({ crew: r.crew });
@@ -2086,6 +2201,31 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     // Captain reacts to profitable sale
     get().setCaptainExpression(totalGain >= 200 ? 'Smug' : 'Friendly', 3000);
+
+    // Resolve any active leads that match this sale (currently just the
+    // starter quest's "first profit at a foreign port" predicate). One sale
+    // can consume multiple cargo stacks from different acquired ports — any
+    // profitable foreign-acquired stack satisfies the predicate.
+    const claimedUnitPrice = settlement.total > 0
+      ? settlement.total / Math.max(1, quote.amount)
+      : 0;
+    const profitableForeignSale = settlement.consumed.some(({ stack, taken }) => {
+      if (stack.acquiredPort === port.id || stack.acquiredPort === 'unknown') return false;
+      const stackNet = (claimedUnitPrice - stack.purchasePrice) * taken;
+      return stackNet > 0;
+    });
+    if (profitableForeignSale) {
+      const sale: SaleEvent = {
+        commodity,
+        amount: quote.amount,
+        sellPort: port.id,
+        acquiredPort: settlement.consumed[0]?.stack.acquiredPort ?? '',
+        netProfit: 1, // any positive — predicate is binary
+      };
+      for (const lead of get().leads) {
+        if (saleResolvesStarterLead(lead, sale)) get().resolveLead(lead.id);
+      }
+    }
   },
   
   advanceTime: (delta) => {
@@ -2115,6 +2255,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       windSpeed: newWindSpeed,
       weather: { ...weather, intensity: newWeatherIntensity },
     });
+
+    // Daily lead deadline sweep — expire any whose deadline has passed.
+    if (wrapped) {
+      const newDay = state.dayCount + 1;
+      for (const lead of leadsToExpire(state.leads, newDay)) {
+        get().expireLead(lead.id);
+      }
+    }
 
     // ── Daily tick: port restock (goods drift back toward baseline) ──
     if (wrapped) {
@@ -2251,7 +2399,65 @@ export const useGameStore = create<GameState>((set, get) => ({
   setCameraRotation: (rotation) => set({ cameraRotation: rotation }),
   setViewMode: (mode) => set({ viewMode: mode }),
   
-  setWorldSeed: (seed) => set({ worldSeed: seed, currentWorldPortId: null }),
+  setWorldSeed: (seed) => {
+    // Invalidate the snapped-POI cache — terrain shifts with the seed, so
+    // a position that snapped onto land last seed may land in water now.
+    import('../utils/proximityResolution').then((m) => m.clearSnappedCache()).catch(() => {});
+    set({ worldSeed: seed, currentWorldPortId: null });
+  },
+  startNewGame: ({ faction, portId }) => {
+    const start = buildNewGameStart(faction, portId);
+    set({
+      playerPos: [0, 0, 0],
+      playerRot: 0,
+      playerVelocity: 0,
+      gold: start.gold,
+      cargo: start.cargo,
+      cargoProvenance: start.cargoProvenance,
+      stats: start.stats,
+      crew: start.crew,
+      ship: start.ship,
+      timeOfDay: 8,
+      notifications: [],
+      leads: [createStarterLead(1, start.startingPortId)],
+      questToasts: [],
+      activePort: null,
+      cameraZoom: 50,
+      cameraRotation: 0,
+      viewMode: 'default',
+      playerMode: 'ship',
+      walkingPos: [0, 5, 0],
+      walkingRot: 0,
+      interactionPrompt: null,
+      nearestHailableNpc: null,
+      discoveredPorts: [],
+      activePOI: null,
+      discoveredPOIs: [],
+      reputation: start.reputation,
+      npcPositions: [],
+      npcShips: [],
+      oceanEncounters: [],
+      fishShoals: [],
+      deadCrew: null,
+      gameOver: false,
+      gameOverCause: null,
+      paused: false,
+      anchored: false,
+      combatMode: false,
+      activeLandWeapon: 'musket',
+      requestWorldMap: false,
+      currentWorldPortId: start.startingPortId,
+      weather: start.weather,
+      knowledgeState: start.knowledgeState,
+      provisions: 30,
+      dayCount: 1,
+      captainExpression: null,
+      pendingAfterNightMusic: false,
+    });
+    syncLivePlayerMode('ship');
+    syncLiveShipTransform([0, 0, 0], 0, 0);
+    syncLiveWalkingTransform([0, 5, 0], 0);
+  },
   setWorldSize: (size) => set({ worldSize: size }),
   setDevSoloPort: (portId) => set({ devSoloPort: portId }),
   setDevRestPreview: (portId) => set({ devRestPreviewPortId: portId }),

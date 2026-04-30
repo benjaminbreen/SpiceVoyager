@@ -10,8 +10,10 @@ import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { DISTRICT_COLORS, classifyDistrict } from '../utils/cityDistricts';
 import type { DistrictKey } from '../utils/cityDistricts';
 import { buildingSemanticClass, SEMANTIC_STYLE } from '../utils/semanticClasses';
-import { getPOIsForPort, resolvePOIPosition } from '../utils/poiDefinitions';
+import { getPOIsForPort } from '../utils/poiDefinitions';
+import { resolveSnappedPOI } from '../utils/proximityResolution';
 import { POISilhouettes } from './POIArchetypes';
+import { BespokePOIs } from './BespokePOIs';
 import { applyShrineVariant } from '../utils/shrineVariant';
 import {
   ROAD_TIER_STYLE,
@@ -1113,6 +1115,96 @@ export function ProceduralCity() {
             addPart('box', 'wood', -1.8, 0.35, 1.6, 0.7, 0.7, 0.7, wood);
             addPart('box', 'wood', -1.0, 0.30, 1.6, 0.6, 0.6, 0.6, wood);
             addPart('box', 'wood',  1.7, 0.35, 1.8, 0.7, 0.7, 0.7, wood);
+          }
+
+          else if (lm === 'apothecaries-hall') {
+            // London — Tudor courtyard hall in Blackfriars. Two timber-frame
+            // brick-gabled wings around a central archway, steep terracotta
+            // roofs, chimney stack. Reads as English Renaissance institutional.
+            const plaster = varyColor([0.88, 0.83, 0.71], rng, 0.04);
+            const timber: [number, number, number] = [0.20, 0.13, 0.07];
+            const tile: [number, number, number] = [0.52, 0.26, 0.16];
+            const brick = varyColor([0.46, 0.28, 0.20], rng, 0.04);
+            const W = 9, wingD = 3.4, wallH = 3.2;
+            // Front and rear wings
+            for (const sZ of [1, -1]) {
+              addPart('box', 'white', 0, wallH * 0.5, sZ * 2.6, W, wallH, wingD, plaster);
+              // Half-timber uprights — five along the long face
+              for (let i = 0; i < 5; i++) {
+                const t = (i + 0.5) / 5 - 0.5;
+                addPart('box', 'wood', t * W, wallH * 0.5, sZ * (2.6 + wingD * 0.5 + 0.04), 0.20, wallH, 0.06, timber);
+              }
+              // Half-timber horizontal mid-belt
+              addPart('box', 'wood', 0, wallH * 0.55, sZ * (2.6 + wingD * 0.5 + 0.04), W, 0.16, 0.06, timber);
+              // Steep tile roof — single cone gives the right peaked silhouette at this scale
+              addPart('cone', 'terracotta', 0, wallH + 1.0, sZ * 2.6, W * 0.55, 2.0, wingD * 0.7, tile);
+              // Brick gables
+              addPart('box', 'mud', -W * 0.5 + 0.05, wallH + 0.9, sZ * 2.6, 0.12, 1.8, wingD, brick);
+              addPart('box', 'mud',  W * 0.5 - 0.05, wallH + 0.9, sZ * 2.6, 0.12, 1.8, wingD, brick);
+            }
+            // Central gate range — lower, connecting the two wings
+            addPart('box', 'white', 0, wallH * 0.4, 0, 3.6, wallH * 0.8, 5.2 - wingD, plaster);
+            addPart('box', 'dark', 0, wallH * 0.4, (5.2 - wingD) * 0.5 + 0.04, 2.0, wallH * 0.7, 0.10);
+            // Chimney
+            addPart('box', 'mud', W * 0.28, wallH + 2.4, 0, 0.6, 1.6, 0.6, brick);
+            addPart('box', 'mud', W * 0.28, wallH + 3.3, 0, 0.78, 0.20, 0.78, brick);
+          }
+
+          else if (lm === 'banyan-counting-house') {
+            // Surat — Mughal-Gujarati two-storey haveli. Lime-washed walls,
+            // crenellated parapet, jharokha balcony on the front face,
+            // tiled awning over the door. Reads as a private merchant
+            // compound, not a temple or palace.
+            const lime = varyColor([0.92, 0.88, 0.78], rng, 0.04);
+            const limeShade = varyColor([0.78, 0.74, 0.62], rng, 0.04);
+            const teak = varyColor([0.32, 0.18, 0.10], rng, 0.04);
+            const ochre: [number, number, number] = [0.78, 0.55, 0.26];
+            const W = 7, D = 5;
+            // Two storeys
+            addPart('box', 'white', 0, 1.2, 0, W, 2.4, D, lime);
+            addPart('box', 'white', 0, 3.4, 0, W, 2.0, D - 0.4, lime);
+            // Crenellated parapet — six teeth along the front
+            for (let i = 0; i < 6; i++) {
+              const t = (i + 0.5) / 6 - 0.5;
+              addPart('box', 'white', t * W, 4.6, D * 0.5 - 0.15, W * 0.10, 0.30, 0.18, limeShade);
+              addPart('box', 'white', t * W, 4.6, -D * 0.5 + 0.15, W * 0.10, 0.30, 0.18, limeShade);
+            }
+            // Jharokha overhanging balcony
+            addPart('box', 'wood', 0, 3.1, D * 0.5 + 0.4, 2.6, 1.4, 0.8, teak);
+            addPart('box', 'terracotta', 0, 3.9, D * 0.5 + 0.4, 3.0, 0.16, 1.0, [0.60, 0.32, 0.22]);
+            // Front door + awning
+            addPart('box', 'dark', 0, 1.0, D * 0.5 + 0.04, 1.3, 1.8, 0.10);
+            addPart('box', 'stone', 0, 2.1, D * 0.5 + 0.85, 2.0, 0.10, 1.4, ochre);
+            // Side courtyard wall
+            addPart('box', 'white', W * 0.5 + 2.0, 0.9, D * 0.5 - 0.4, 4.0, 1.8, 0.30, lime);
+            addPart('box', 'white', W * 0.5 + 2.0, 0.9, -D * 0.5 + 0.4, 4.0, 1.8, 0.30, lime);
+            addPart('box', 'wood', W * 0.5 + 4.0, 0.9, 0, 0.18, 1.5, 1.3, teak);
+          }
+
+          else if (lm === 'mappila-house') {
+            // Calicut — Malabar coast Mappila Muslim merchant house. Single-
+            // storey nalukettu courtyard plan with steep red-tiled roofs on
+            // all four sides around a central open court. Wood verandas,
+            // whitewashed walls. Distinct from the Mughal flat-roofed style.
+            const wash = varyColor([0.93, 0.90, 0.82], rng, 0.04);
+            const tile: [number, number, number] = [0.62, 0.30, 0.20];
+            const teak = varyColor([0.36, 0.22, 0.12], rng, 0.04);
+            const W = 7, D = 6;
+            // Four wings around an open central court (~2u square)
+            addPart('box', 'white', 0, 1.0, D * 0.5 - 1.0, W, 2.0, 2.0, wash);
+            addPart('box', 'white', 0, 1.0, -D * 0.5 + 1.0, W, 2.0, 2.0, wash);
+            addPart('box', 'white', W * 0.5 - 1.0, 1.0, 0, 2.0, 2.0, D, wash);
+            addPart('box', 'white', -W * 0.5 + 1.0, 1.0, 0, 2.0, 2.0, D, wash);
+            // Steep tile roof — single broad cone covering the whole roofline,
+            // with a notch implied by the central court (visual only).
+            addPart('cone', 'terracotta', 0, 2.6, 0, W * 0.62, 1.6, D * 0.62, tile);
+            // Veranda posts at the four front corners
+            for (const [cx, cz] of [[-W * 0.45, D * 0.5 + 0.15], [W * 0.45, D * 0.5 + 0.15]] as [number, number][]) {
+              addPart('cylinder', 'wood', cx, 1.0, cz, 0.12, 2.0, 0.12, teak);
+            }
+            // Front door
+            addPart('box', 'dark', 0, 0.9, D * 0.5 + 0.15, 1.0, 1.7, 0.10);
+            addPart('box', 'wood', 0, 1.85, D * 0.5 + 0.15, 1.4, 0.18, 0.12, teak);
           }
 
           else if (lm === 'san-agustin-manila') {
@@ -2265,6 +2357,7 @@ export function ProceduralCity() {
       <SacredBuildingMarkers ports={ports} />
       <POIBeacons ports={ports} />
       <POISilhouettes ports={ports} />
+      <BespokePOIs ports={ports} />
       <CityTorches spots={torchSpots} />
       <ChimneySmoke spots={smokeSpots} />
       <BuildingDamageSmoke spots={damageSmokeSpots} />
@@ -3126,16 +3219,21 @@ function SacredBuildingMarkers({ ports }: { ports: PortsProp }) {
       }
       // POIs share the same marker pipeline. Religious POIs (shrines,
       // monasteries, sufi lodges) get the same purple plumbob as in-city
-      // spirituals. Landmark-bound POIs reuse the bound building's marker
-      // implicitly — we skip them here to avoid double-stacking.
+      // spirituals. Skip POIs whose marker is already drawn by the buildings
+      // loop above: landmark-bound POIs (the landmark itself carries the
+      // marker) and procedural shrines (which inject a synthetic spiritual
+      // building with poiId === poi.id, also covered above).
       for (const poi of getPOIsForPort(port)) {
         if (SEMANTIC_STYLE[poi.class].marker !== 'diamond') continue;
         if (poi.location.kind === 'landmark') continue;
-        const resolved = resolvePOIPosition(poi, port);
-        if (!resolved) continue;
-        const terrainY = getTerrainHeight(resolved.x, resolved.z);
+        if (port.buildings.some((b) => b.poiId === poi.id)) continue;
+        // Unified resolver — same snapped position the silhouettes use,
+        // so the purple plumbob can't disagree with the silhouette below.
+        const placed = resolveSnappedPOI(poi, port);
+        if (!placed) continue;
+        const terrainY = getTerrainHeight(placed.x, placed.z);
         const topY = Math.max(terrainY, SEA_LEVEL) + 14;
-        out.push([resolved.x, topY, resolved.z]);
+        out.push([placed.x, topY, placed.z]);
       }
     }
     return out;
@@ -3263,21 +3361,32 @@ function POIBeacons({ ports }: { ports: PortsProp }) {
     const out: { pos: [number, number, number]; topY: number; discovered: boolean }[] = [];
     for (const port of visiblePorts) {
       for (const poi of getPOIsForPort(port)) {
-        const resolved = resolvePOIPosition(poi, port);
-        if (!resolved) continue;
+        // Unified resolver — same snapped position the silhouettes,
+        // bespoke renderers, and minimap all consume. Returns null when
+        // no valid cell exists within 78u, in which case skip the beacon
+        // entirely (matches the silhouette's own skip).
+        const placed = resolveSnappedPOI(poi, port);
+        if (!placed) continue;
         let baseY: number;
-        if (poi.location.kind === 'landmark' && resolved.building) {
+        if (poi.location.kind === 'landmark') {
           // Lift to roofline of the bound landmark so the pillar reads above
           // it instead of clipping through. Buildings carry a [w, h, d] scale
-          // and the y-component is height.
-          const b = resolved.building as { position: [number, number, number]; scale?: [number, number, number] };
+          // and the y-component is height. Look the building back up — the
+          // unified resolver only returns x/z.
+          const lid = poi.location.landmarkId;
+          const b = port.buildings.find((bb) => bb.type === 'landmark' && bb.landmarkId === lid) as
+            | { position: [number, number, number]; scale?: [number, number, number] }
+            | undefined;
+          if (!b) continue;
           baseY = b.position[1] + (b.scale ? b.scale[1] * 2 : 8);
+        } else if (poi.kind === 'wreck') {
+          baseY = SEA_LEVEL;
         } else {
-          baseY = Math.max(getTerrainHeight(resolved.x, resolved.z), SEA_LEVEL);
+          baseY = getTerrainHeight(placed.x, placed.z);
         }
         const topY = baseY + 12;
         out.push({
-          pos: [resolved.x, baseY, resolved.z],
+          pos: [placed.x, baseY, placed.z],
           topY,
           discovered: discoveredPOIs.includes(poi.id),
         });

@@ -35,6 +35,28 @@ export interface TavernLLMResponse {
     nationality: Nationality;
     delta: number;           // small shifts: -2 to +2
   };
+  /** A concrete errand offered in this turn. Null/absent when the NPC
+   *  is just chatting. The TavernTab renders an Accept/Decline card
+   *  inline; on Accept it becomes a Lead via addLead. See questplan.md
+   *  "Source 1 — Tavern". */
+  offer?: TavernOffer;
+}
+
+/** Errand schema emitted by the NPC turn. Validated + clamped before
+ *  conversion to a Lead. Player only sees `rewardHint`; we set the
+ *  numeric reward when building the Lead. */
+export interface TavernOffer {
+  title: string;
+  task: string;
+  template: 'delivery' | 'person' | 'commodity' | 'debt' | 'medical';
+  rewardHint: string;
+  rewardGold: number;          // 50–300, clamped
+  deadlineDays: number;        // 14–90, clamped
+  target?: {
+    port?: string;
+    commodity?: string;
+    person?: string;
+  };
 }
 
 // ── Context Builder ──
@@ -162,19 +184,45 @@ You must respond with valid JSON only (no markdown, no code fences). Use this ex
     {"label": "Another option", "type": "question"}
   ],
   "knowledgeReveal": null,
-  "reputationShift": null
+  "reputationShift": null,
+  "offer": null
 }
 
-For suggestedResponses, always include 2-3 options. Types can be:
+For suggestedResponses, always include 2-3 options. CRITICAL phrasing rules:
+- Each label is a *line the player would actually say*, in the player's voice. First-person where natural.
+- DO NOT prefix labels with bullets, em-dashes, hyphens, asterisks, quote marks, or any decoration. Just the line itself. Examples: GOOD: "Why the long face?"  BAD: "— Why the long face?", "* Why the long face?", "\\u2014 Why...", "> Why..."
+- DO NOT write menu commands like "Continue the conversation", "Ask about trade", "Inquire further". Those break immersion.
+- DO write specific lines like: Why the long face?  /  I sail under English colors, what of it?  /  Tell me of the cinnamon trade.  /  A pity. May better winds find you.
+- Length 4–14 words, period-correct register. No modern phrasing.
+- Each option should be a meaningfully different *direction* — not three rephrasings of the same question.
+
+Types can be:
 - "question": a question or conversational response
 - "show_item": showing a cargo item (include "itemId" field with the commodity name). Only suggest this when the player has actively shown you a physical item. Items you could identify from your expertise: ${unknownCargoInDomain.length > 0 ? unknownCargoInDomain.map(c => `"${c}"`).join(', ') : 'none currently relevant'}
 - "share_info": the player volunteers personal information
-- "farewell": ending the conversation
-- "buy_drink": offering to buy you a drink
+- "farewell": ending the conversation — phrase as a natural parting line, not "Take your leave"
+- "buy_drink": offering to buy you a drink — phrase as the player's offer ("Let me stand you a cup")
 
 For knowledgeReveal, set this ONLY when you have examined a physical specimen and are giving a confident identification. Use the real commodity name as commodityId. Set to null otherwise. Format: {"commodityId": "Black Pepper", "level": 1}
 
-For reputationShift, set this ONLY when the conversation significantly shifts your opinion of this person — if they insult your people, are very generous, share important news, etc. Small shifts only (-2 to +2). Use YOUR nationality. Format: {"nationality": "${npc.nationality}", "delta": 1}. Set to null otherwise.`;
+For reputationShift, set this ONLY when the conversation significantly shifts your opinion of this person — if they insult your people, are very generous, share important news, etc. Small shifts only (-2 to +2). Use YOUR nationality. Format: {"nationality": "${npc.nationality}", "delta": 1}. Set to null otherwise.
+
+For offer, set this ONLY when your dialogue this turn proposes a *concrete, specific errand* the player could take on right now — a delivery, a message to be carried, a person to be found, an item to be procured. NEVER offer something vague like "trade with me sometime." NEVER offer something only YOU would do (the player is a sea captain). Most turns have NO offer — leave it null. Offer at most once per conversation. Reward sizes are modest: a tavern errand is worth 50–300 gold and at most a small reputation nudge. Use this exact format and set to null otherwise:
+{
+  "title": "Short title — 6 words or less",
+  "task": "One-sentence summary of what the player must do.",
+  "template": "delivery" | "person" | "commodity" | "debt" | "medical",
+  "rewardHint": "a small purse" | "a fine introduction" | "goodwill" | "a quiet favor",
+  "rewardGold": 50–300,
+  "deadlineDays": 14–90,
+  "target": { "port": "Calicut" }   // optional; "port" is most common for tavern errands
+}
+- "delivery": carrying letters, parcels, relics, cargo to a destination
+- "person":   finding/escorting/contacting a named individual
+- "commodity": acquiring a specific good for the giver
+- "debt":     collecting a debt or repaying one (rare for tavern)
+- "medical":  procuring a remedy or attending the sick (often points at an apothecary)
+The "target.port" field, if used, must name a real Indian Ocean port (e.g. "Calicut", "Goa", "Aceh", "Mocha", "Surat", "Hormuz"). Do not invent ports. Omit target if the errand resolves wherever the player chooses.`;
 }
 
 // ── Build user message with game context ──
@@ -271,8 +319,8 @@ export async function callGeminiTavern(
     return {
       npcDialogue: '"I have nothing more to say right now." He stares into his drink.',
       suggestedResponses: [
-        { label: 'Ask about trade in the region', type: 'question' },
-        { label: 'Take your leave', type: 'farewell' },
+        { label: 'What is the trade like in these waters?', type: 'question' },
+        { label: 'Good day to you', type: 'farewell' },
       ],
     };
   }
@@ -300,7 +348,9 @@ export async function callGeminiTavern(
       temperature: 1.0,
       topP: 0.95,
       topK: 40,
-      maxOutputTokens: 400,
+      // Bumped from 400 — the offer schema + multi-response payload was
+      // borderline and occasional truncations leaked raw JSON into dialogue.
+      maxOutputTokens: 700,
       responseMimeType: 'application/json',
     },
   };
@@ -363,29 +413,78 @@ function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
 // ── Response Parser ──
 
 function parseGeminiResponse(rawText: string): TavernLLMResponse {
+  // 1. Direct parse (the happy path under responseMimeType: application/json).
   try {
-    // Try direct JSON parse
-    const parsed = JSON.parse(rawText);
-    return validateResponse(parsed);
-  } catch {
-    // Try to extract JSON from markdown fences or surrounding text
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return validateResponse(parsed);
-      } catch { /* fall through */ }
-    }
+    return validateResponse(JSON.parse(rawText));
+  } catch { /* fall through */ }
 
-    // If all parsing fails, use the raw text as dialogue
-    return {
-      npcDialogue: rawText.slice(0, 500),
-      suggestedResponses: [
-        { label: 'Continue the conversation', type: 'question' },
-        { label: 'Take your leave', type: 'farewell' },
-      ],
-    };
+  // 2. Markdown-fence / surrounding-text strip.
+  const fenced = rawText.match(/\{[\s\S]*\}/);
+  if (fenced) {
+    try { return validateResponse(JSON.parse(fenced[0])); } catch { /* fall through */ }
   }
+
+  // 3. Repair attempt — most truncations leave us with an unfinished JSON.
+  //    Close any open string, then balance braces/brackets, then re-parse.
+  const repaired = repairTruncatedJson(rawText);
+  if (repaired) {
+    try { return validateResponse(JSON.parse(repaired)); } catch { /* fall through */ }
+  }
+
+  // 4. Last resort — regex out just the dialogue line. Player sees the NPC
+  //    speak; suggestedResponses fall back to canned options. Crucially we
+  //    NEVER show raw JSON to the player.
+  const dialogue = extractDialogueField(rawText);
+  return {
+    npcDialogue: dialogue ?? 'He starts to say something, then thinks better of it.',
+    suggestedResponses: [
+      { label: 'Wait, and listen', type: 'question' },
+      { label: 'Good day to you', type: 'farewell' },
+    ],
+  };
+}
+
+/**
+ * Best-effort repair of truncated JSON. Closes an open string (last unescaped
+ * quote) and appends matching `]` / `}` for any unclosed bracket/brace. Returns
+ * the repaired string, or null if the input doesn't look like JSON at all.
+ */
+function repairTruncatedJson(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  let s = raw.slice(start);
+
+  // Track brace/bracket balance, ignoring chars inside strings.
+  let inString = false;
+  let escape = false;
+  const stack: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' && stack[stack.length - 1] === '{') stack.pop();
+    else if (ch === ']' && stack[stack.length - 1] === '[') stack.pop();
+  }
+
+  // Close an open string, drop a dangling comma, then close brackets/braces.
+  if (inString) s += '"';
+  s = s.replace(/,\s*$/, '');
+  while (stack.length) {
+    const open = stack.pop();
+    s += open === '{' ? '}' : ']';
+  }
+  return s;
+}
+
+/** Pull just the npcDialogue field out of malformed JSON. */
+function extractDialogueField(raw: string): string | null {
+  const m = raw.match(/"npcDialogue"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (!m) return null;
+  // Unescape standard JSON escape sequences.
+  try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]; }
 }
 
 /**
@@ -407,23 +506,27 @@ function validateResponse(parsed: any): TavernLLMResponse {
     suggestedResponses: [],
   };
 
-  // Validate suggested responses
+  // Validate suggested responses. Sanitize each label: strip leading bullets,
+  // dashes, em-dashes, escaped unicode, quotation marks, and whitespace —
+  // the LLM occasionally adds these as decoration which then renders raw in
+  // the chat (e.g. `— I am a traveler...`).
   if (Array.isArray(parsed.suggestedResponses)) {
     result.suggestedResponses = parsed.suggestedResponses
       .filter((r: any) => r && typeof r.label === 'string')
       .slice(0, 4)
       .map((r: any) => ({
-        label: r.label.slice(0, 120),
+        label: sanitizeLabel(r.label),
         type: ['question', 'show_item', 'share_info', 'farewell', 'buy_drink'].includes(r.type) ? r.type : 'question',
         ...(r.itemId ? { itemId: r.itemId } : {}),
-      }));
+      }))
+      .filter(r => r.label.length > 0);
   }
 
   // Ensure we always have at least a farewell option
   if (result.suggestedResponses.length === 0) {
     result.suggestedResponses = [
-      { label: 'Continue talking', type: 'question' },
-      { label: 'Take your leave', type: 'farewell' },
+      { label: 'Press the matter', type: 'question' },
+      { label: 'Good day to you', type: 'farewell' },
     ];
   }
 
@@ -452,7 +555,76 @@ function validateResponse(parsed: any): TavernLLMResponse {
     }
   }
 
+  const offer = validateOffer(parsed.offer);
+  if (offer) result.offer = offer;
+
   return result;
+}
+
+/** Strip decorative leaders (bullets, dashes, escaped unicode, quotes) from a
+ *  suggestion label. The LLM occasionally adds these as visual flair which
+ *  then renders raw in the chat. Also clamps length and trims whitespace. */
+function sanitizeLabel(raw: string): string {
+  let s = raw;
+  // Convert literal "—" (escaped escape) and similar to actual chars.
+  s = s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  // Strip leading decorations repeatedly. Includes em-dash, en-dash, hyphens,
+  // bullets, chevrons, asterisks, smart quotes, and surrounding whitespace.
+  while (true) {
+    const next = s.replace(/^[\s–—\-•·>*_"'“”]+/, '');
+    if (next === s) break;
+    s = next;
+  }
+  return s.trim().slice(0, 120);
+}
+
+const VALID_TEMPLATES = ['delivery', 'person', 'commodity', 'debt', 'medical'] as const;
+
+function validateOffer(raw: any): TavernOffer | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const title = typeof raw.title === 'string' ? raw.title.trim().slice(0, 80) : '';
+  const task = typeof raw.task === 'string' ? raw.task.trim().slice(0, 200) : '';
+  if (!title || !task) return undefined;
+
+  const template = VALID_TEMPLATES.includes(raw.template) ? raw.template : 'delivery';
+  const rewardHint = typeof raw.rewardHint === 'string'
+    ? raw.rewardHint.trim().slice(0, 40)
+    : 'a small purse';
+
+  const rewardGoldRaw = Number(raw.rewardGold);
+  const rewardGold = Number.isFinite(rewardGoldRaw)
+    ? Math.max(50, Math.min(300, Math.round(rewardGoldRaw)))
+    : 150;
+
+  const deadlineRaw = Number(raw.deadlineDays);
+  const deadlineDays = Number.isFinite(deadlineRaw)
+    ? Math.max(14, Math.min(90, Math.round(deadlineRaw)))
+    : 45;
+
+  let target: TavernOffer['target'];
+  if (raw.target && typeof raw.target === 'object') {
+    const t: TavernOffer['target'] = {};
+    if (typeof raw.target.port === 'string' && raw.target.port.trim()) {
+      t.port = raw.target.port.trim().slice(0, 40);
+    }
+    if (typeof raw.target.commodity === 'string' && raw.target.commodity.trim()) {
+      t.commodity = raw.target.commodity.trim().slice(0, 40);
+    }
+    if (typeof raw.target.person === 'string' && raw.target.person.trim()) {
+      t.person = raw.target.person.trim().slice(0, 60);
+    }
+    if (Object.keys(t).length > 0) target = t;
+  }
+
+  return {
+    title,
+    task,
+    template: template as TavernOffer['template'],
+    rewardHint,
+    rewardGold,
+    deadlineDays,
+    target,
+  };
 }
 
 // ── Build initial greeting context ──

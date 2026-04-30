@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, WEAPON_DESCRIPTIONS, SHIP_UPGRADES, getPortArmory, getPortUpgrades } from '../store/gameStore';
-import type { ShipUpgradeType } from '../store/gameStore';
+import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, WEAPON_DESCRIPTIONS, SHIP_UPGRADES, getPortArmory, getPortUpgrades, lodgingCost, lodgingLabel } from '../store/gameStore';
+import type { ShipUpgradeType, RestSummary } from '../store/gameStore';
+import { SleepOverlay } from './SleepOverlay';
+import { RestSummaryModal } from './RestSummaryModal';
 import type { Commodity } from '../utils/commodities';
 import {
   COMMODITY_DEFS,
@@ -12,6 +14,7 @@ import { getPortBannerCandidates } from '../utils/portAssets';
 import { MarketTabLedger } from './MarketTabLedger';
 import { PortBannerScene } from './PortBannerScene';
 import { TavernTab } from './TavernTab';
+import { LeadResolvePrompt } from './quests/LeadResolvePrompt';
 
 // Ports whose banner image is a magenta-keyed silhouette and should render
 // behind a live time-of-day sky scene rather than as a static `<img>`.
@@ -33,7 +36,7 @@ import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../ut
 import {
   X, Coins, Shield, Anchor, ShoppingBag,
   Wrench, Beer, Building, Sailboat,
-  Package, Wind, Heart, Hammer, Check,
+  Package, Wind, Heart, Hammer, Check, Moon,
 } from 'lucide-react';
 
 export type PlaceTab = 'market' | 'shipyard' | 'tavern' | 'governor';
@@ -565,15 +568,19 @@ function getPortMusicTrack(portId: string) {
 
 export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; initialTab?: PlaceTab }) {
   const {
-    activePort, setActivePort, gold, cargo, stats, ship,
+    activePort, setActivePort, gold, cargo, stats, ship, crew,
     buyCommodity, sellCommodity, repairShip, buyWeapon, sellWeapon, buyUpgrade,
-    shipUpgrades, worldSeed, ports, dayCount
+    shipUpgrades, worldSeed, ports, dayCount, restAtInn
   } = useGameStore();
 
   const handleClose = () => { stopTabAmbientLoop(); sfxClose(); (onDismiss ?? (() => setActivePort(null)))(); };
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [imageError, setImageError] = useState<Record<string, boolean>>({});
   const [showSources, setShowSources] = useState(false);
+  // Inn rest state — moved up from TavernTab so the trigger lives in the
+  // modal footer next to "Set Sail" and works from any tab.
+  const [resting, setResting] = useState(false);
+  const [restSummary, setRestSummary] = useState<RestSummary | null>(null);
 
   // Start/stop tab ambient soundscape (with regional climate layer)
   useEffect(() => {
@@ -608,6 +615,32 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
       }
     };
   }, [activePort?.id]);
+
+  const restCost = activePort ? lodgingCost(activePort.scale) : 0;
+  const lodgingName = activePort ? lodgingLabel(activePort.culture) : '';
+
+  const handleRest = () => {
+    if (!activePort || gold < restCost || resting) return;
+    sfxCoin(restCost);
+    setResting(true);
+    audioManager.startInnMusic();
+    // Same timing dance as the old TavernTab handler — give the SleepOverlay
+    // its fade-in before resolving game state, then a beat before the summary.
+    setTimeout(() => {
+      const summary = restAtInn(activePort);
+      setTimeout(() => {
+        setResting(false);
+        setTimeout(() => {
+          if (summary) setRestSummary(summary);
+        }, 600);
+      }, 3500);
+    }, 5000);
+  };
+
+  const handleDismissSummary = () => {
+    setRestSummary(null);
+    audioManager.stopInnMusic();
+  };
 
   if (!activePort) return null;
 
@@ -748,6 +781,9 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
 
         {/* ═══════ Main Content Area ═══════ */}
         <div className="flex-1 flex flex-col min-w-0">
+          {/* Active-lead arrival prompt — visible across all tabs. Renders
+              nothing if no leads target this port. */}
+          <LeadResolvePrompt />
           {/* Banner */}
           <div className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
             activeTab === 'overview' ? 'h-[20rem] md:h-[24rem] lg:h-[28rem]' : 'h-56 md:h-64 lg:h-72'
@@ -877,8 +913,17 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             </div>
           </div>
 
-          {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-4 md:px-5 py-4">
+          {/* Tab Content. Tavern needs a height-constrained flex column so
+              its inner chat scrolls in place; other tabs keep block flow with
+              their own overflow-y-auto. Without this swap the chat just grew
+              the wrapper and pushed the suggestion/input bar below the fold. */}
+          <div
+            className={`flex-1 min-h-0 px-4 md:px-5 py-4 ${
+              activeTab === 'tavern'
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-y-auto'
+            }`}
+          >
             <AnimatePresence mode="wait">
 
               {/* ── Overview ── */}
@@ -1233,7 +1278,10 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               )}
 
               {/* ── Tavern (always mounted so state persists across tab switches) ── */}
-              <div style={{ display: activeTab === 'tavern' ? 'block' : 'none' }}>
+              <div
+                style={{ display: activeTab === 'tavern' ? 'flex' : 'none' }}
+                className="flex-col flex-1 min-h-0"
+              >
                 <TavernTab port={activePort} />
               </div>
 
@@ -1260,7 +1308,21 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
           </div>
 
           {/* Footer */}
-          <div className="shrink-0 border-t border-white/[0.04] px-5 py-2.5 flex items-center justify-end">
+          <div className="shrink-0 border-t border-white/[0.04] px-5 py-2.5 flex items-center justify-end gap-2">
+            <button
+              onClick={handleRest}
+              disabled={gold < restCost || resting}
+              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-[15px] font-bold tracking-[0.08em] uppercase
+                text-slate-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all active:scale-95
+                disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-300 disabled:hover:border-white/[0.08]"
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+              title={`Sleep at the ${lodgingName} until morning`}
+            >
+              <Moon size={18} /> Rest at {lodgingName}
+              <span className="ml-1 text-[12px] font-normal text-slate-500 tracking-normal normal-case">
+                {restCost}g
+              </span>
+            </button>
             <button
               onClick={handleClose}
               className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-[15px] font-bold tracking-[0.08em] uppercase
@@ -1271,6 +1333,21 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             </button>
           </div>
         </div>
+
+        {/* Inn rest overlay + summary — scoped to the port modal so they
+            cover the modal but not the rest of the canvas. */}
+        <SleepOverlay
+          active={resting}
+          portId={activePort.id}
+          portName={activePort.name}
+          lodgingName={lodgingName}
+          dayCount={dayCount}
+        />
+        <RestSummaryModal
+          summary={restSummary}
+          crew={crew}
+          onDismiss={handleDismissSummary}
+        />
       </motion.div>
     </motion.div>
   );

@@ -1248,6 +1248,20 @@ export function generateCity(
       // on the Tapti. Established 1612, literally the game year.
       // Surat openDirection 'W'.
       'english-factory-surat': { offset: [ 0.3 ,  0.1 ], coastal: true, size: [10, 4, 10] },
+
+      // Apothecaries' Hall — Tudor courtyard hall in Blackfriars (north
+      // bank of the Thames, just upstream of the medieval City).
+      // London openDirection 'E', Thames runs along Z axis.
+      'apothecaries-hall':   { offset: [-0.10, -0.30], size: [9, 4, 8] },
+
+      // Banyan Counting House — Mughal-Gujarati merchant compound in the
+      // Mughlisarai quarter, opposite bank of the Tapti from the English
+      // factory. Surat openDirection 'W'.
+      'banyan-counting-house': { offset: [-0.20,  0.05], bank: 'opposite', size: [9, 4, 7] },
+
+      // Mappila Trading House — Mappila Muslim merchant compound at
+      // Kuttichira, harborside-but-on-land. Calicut openDirection 'W'.
+      'mappila-house':       { offset: [-0.05,  0.30], size: [9, 4, 7] },
     };
 
     const rule = LANDMARK_RULES[landmarkId];

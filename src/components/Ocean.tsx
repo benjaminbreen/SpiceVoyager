@@ -71,10 +71,10 @@ function getReflectionTuning(waterPaletteId: WaterPaletteId): ReflectionTuning {
     case 'temperate':
     default:
       return {
-        reflectanceBase: 0.19,
+        reflectanceBase: 0.04,
         reflectanceBoost: .18,
-        reflectanceCap: 0.42,
-        scatterScale: 0.30,
+        reflectanceCap: 0.22,
+        scatterScale: 0.70,
         distanceFadeFloor: 0.44,
       };
   }

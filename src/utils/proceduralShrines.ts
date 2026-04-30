@@ -30,6 +30,7 @@ import type { Commodity } from './commodities';
 import { faithsForPort } from './portReligions';
 import { getTerrainHeight } from './terrain';
 import { SEA_LEVEL } from '../constants/world';
+import { isPOIOnLand, countBarrierCrossings } from './proximityResolution';
 
 // ── Variant axes ────────────────────────────────────────────────────────────
 
@@ -388,11 +389,14 @@ export function generateShrinesForPort(
   const pois: POIDefinition[] = [];
   const buildings: Building[] = [];
 
-  // Same hinterland-band placement parameters as hinterlandScenes — keeps
-  // shrines visually consistent with other rural sites and avoids placing
-  // them on city footprints.
-  const MIN_DIST = 115;
-  const MAX_DIST = 215;
+  // Hinterland band — sized so shrines cluster in the outer half, where they
+  // reward exploration rather than appearing in the player's first walk loop.
+  // 140u is just past the city silhouette edge; 260u is the readability cap
+  // (silhouette stops being legible from the port edge past that). The
+  // sqrt(rng) bias below pushes ~70% of placements into the outer half of the
+  // band without making the inner half off-limits.
+  const MIN_DIST = 140;
+  const MAX_DIST = 260;
   const BUILDING_CLEAR = 35;
   const SHRINE_SPACING = 60;
 
@@ -401,7 +405,10 @@ export function generateShrinesForPort(
   while (pois.length < target && attempts < 80) {
     attempts++;
     const angle = rng() * Math.PI * 2;
-    const dist = MIN_DIST + rng() * (MAX_DIST - MIN_DIST);
+    // sqrt(rng) biases toward the outer edge of the band — uniform sampling
+    // would over-pick the inner half because it has the same probability per
+    // unit distance but smaller arc length per radius.
+    const dist = MIN_DIST + Math.sqrt(rng()) * (MAX_DIST - MIN_DIST);
     const x = portX + Math.cos(angle) * dist;
     const z = portZ + Math.sin(angle) * dist;
 
@@ -420,9 +427,18 @@ export function generateShrinesForPort(
     }
     if (tooClose) continue;
 
-    // Terrain check — must be on land, not in the ocean
+    // Terrain check — must be on land across the full shrine footprint, not
+    // just the centroid. Footprint sized to the largest scale (pilgrimage)
+    // so smaller variants placed at the same spot are also valid.
+    if (!isPOIOnLand(x, z, 14)) continue;
+
+    // Exploration bias — first 50 attempts only accept candidates with at
+    // least one barrier (river/strait) between port and shrine. After that
+    // we relax to plain land so ports without natural separators (e.g.
+    // landlocked Calicut hinterlands) still place their full shrine count.
+    if (attempts <= 50 && countBarrierCrossings(portX, portZ, x, z) < 2) continue;
+
     const terrainY = getTerrainHeight(x, z);
-    if (terrainY < SEA_LEVEL + 0.4) continue;
 
     // Compose variant
     const faith = pickFaith(faiths, rng);
