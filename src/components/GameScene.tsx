@@ -2953,12 +2953,28 @@ function computeAtmosphere(
   const sunH = Math.sin(angle);
 
   // Climate-conditioned palette lookups. Strings only — cheap.
-  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#2d78a8' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
-  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#78a8bb' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
+  const daySky = waterPaletteId === 'monsoon'
+    ? '#5f9eb2'
+    : waterPaletteId === 'mediterranean'
+      ? '#5faee5'
+      : waterPaletteId === 'temperate'
+        ? '#2d78a8'
+        : waterPaletteId === 'tropical'
+          ? '#5aade6'
+          : '#6ab2dc';
+  const dayFog = waterPaletteId === 'monsoon'
+    ? '#b8c2b6'
+    : waterPaletteId === 'mediterranean'
+      ? '#c7dbe8'
+      : waterPaletteId === 'temperate'
+        ? '#78a8bb'
+        : waterPaletteId === 'tropical'
+          ? '#a0ccde'
+          : '#a8cede';
   const duskSky = waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158';
   const duskFog = waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42';
-  const warmSky = waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b';
-  const warmFog = waterPaletteId === 'monsoon' ? '#bca887' : waterPaletteId === 'temperate' ? '#b5aa99' : '#d9b59a';
+  const warmSky = waterPaletteId === 'monsoon' ? '#d69563' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b';
+  const warmFog = waterPaletteId === 'monsoon' ? '#b9a07e' : waterPaletteId === 'mediterranean' ? '#e0b486' : waterPaletteId === 'temperate' ? '#b5aa99' : '#d9b59a';
   const nightSky = waterPaletteId === 'monsoon' ? '#122b3d' : waterPaletteId === 'temperate' ? '#182832' : '#14284a';
   const nightFog = waterPaletteId === 'monsoon' ? '#142633' : waterPaletteId === 'temperate' ? '#1a2a31' : '#18243a';
 
@@ -3011,9 +3027,9 @@ function computeAtmosphere(
 
   if (sunH > 0.3) {
     out.brightness = 0.01;
-    out.contrast = 0.02;
+    out.contrast = waterPaletteId === 'monsoon' || waterPaletteId === 'mediterranean' ? 0.055 : 0.02;
     out.hue = 0;
-    out.saturation = 0.02;
+    out.saturation = waterPaletteId === 'monsoon' || waterPaletteId === 'mediterranean' ? 0.08 : 0.02;
   } else if (sunH > -0.05) {
     const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
     out.brightness = -0.005 * t;
@@ -3058,7 +3074,7 @@ function AtmosphereSync() {
   const atmosphereOut = useMemo(makeAtmosphereOut, []);
   // Pre-allocated working colors so we don't allocate per frame when lerping
   // toward the rain fog tint. Stored on the closure rather than reassigned.
-  const rainFog = useMemo(() => new THREE.Color(0.58, 0.64, 0.62), []);
+  const rainFog = useMemo(() => new THREE.Color(0.70, 0.73, 0.72), []);
   const tmpFogColor = useMemo(() => new THREE.Color(), []);
   const tmpSkyColor = useMemo(() => new THREE.Color(), []);
 
@@ -3073,8 +3089,8 @@ function AtmosphereSync() {
     // weather.intensity so transitions match the LUT and rain overlay.
     const rainOn = state.renderDebug.rain;
     const wIntensity = rainOn ? Math.max(state.weather.intensity, 1) : state.weather.intensity;
-    const fogTint = wIntensity * 0.7; // cap blend so noon stays recognizable
-    const fogPull = THREE.MathUtils.lerp(1.0, 0.72, wIntensity); // far plane shrink
+    const fogTint = wIntensity * 0.32; // cap blend so rain softens without muddying whitewash
+    const fogPull = THREE.MathUtils.lerp(1.0, 0.84, wIntensity); // far plane shrink
     tmpFogColor.copy(fogColor).lerp(rainFog, fogTint);
     tmpSkyColor.copy(skyColor).lerp(rainFog, fogTint * 0.85);
 
@@ -3204,7 +3220,7 @@ export function GameScene() {
   const effectiveRainIntensity = rainEnabled ? Math.max(weatherIntensity, 1) : weatherIntensity;
   const showRain = effectiveRainIntensity > 0.01;
   const [canvasReadyToMount, setCanvasReadyToMount] = useState(false);
-  const canvasDpr: [number, number] = isMobile ? [1.5, 2] : [1, 2];
+  const canvasDpr: [number, number] = isMobile ? [1.25, 1.5] : [1, 1.5];
 
   useEffect(() => {
     const frameId = requestAnimationFrame(() => setCanvasReadyToMount(true));

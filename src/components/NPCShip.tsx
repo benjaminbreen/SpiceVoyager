@@ -47,6 +47,7 @@ const NPC_FIRE_JITTER = 0.095;
 const NPC_BROADSIDE_STAGGER_MS = 170;
 const NPC_INTENT_LEAD_MS = 550;
 const NPC_INTENT_TEXT_COOLDOWN_MS = 2500;
+const NPC_TORCH_LIGHT_RANGE = 70;
 
 const NPC_HULL_PROBE_POINTS: [number, number][] = [
   [0, 3.5],   // Bow
@@ -495,6 +496,15 @@ export function NPCShip({
   const bowWeapon = useMemo(() => npcBowWeapon(identity), [identity]);
   const broadsideWeapon = useMemo(() => npcBroadsideWeapon(identity), [identity]);
   const broadsideCount = useMemo(() => npcBroadsideCount(identity), [identity]);
+
+  useEffect(() => {
+    const root = group.current;
+    if (!root) return;
+    root.traverse((obj) => {
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+    });
+  }, []);
 
   const setCombatPosture = (posture: NpcCombatPosture, until: number) => {
     combatPosture.current = posture;
@@ -1294,9 +1304,10 @@ export function NPCShip({
     const theta = ((timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(theta);
     const torchIntensity = sunH < 0.15 ? Math.min(1, (0.15 - sunH) * 3) : 0;
+    const torchVisible = torchIntensity > 0.01 && distToPlayer < NPC_TORCH_LIGHT_RANGE;
     if (torchRef.current) {
-      torchRef.current.intensity = torchIntensity * 2;
-      torchRef.current.visible = torchIntensity > 0.01;
+      torchRef.current.intensity = torchVisible ? torchIntensity * 2 : 0;
+      torchRef.current.visible = torchVisible;
     }
     if (torchMeshRef.current) {
       torchMeshRef.current.emissiveIntensity = torchIntensity * 3;

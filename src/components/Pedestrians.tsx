@@ -549,6 +549,7 @@ const HEAD_TURN_MAX_YAW = Math.PI / 3; // ±60°, anything more reads as inhuman
 // Cluster-facing: dwelling peds within this radius pivot to face their nearest dwelling neighbor.
 const CLUSTER_RADIUS = 2.5;
 const CLUSTER_RADIUS_SQ = CLUSTER_RADIUS * CLUSTER_RADIUS;
+const SAILING_ACTIVE_PEDESTRIAN_CAP = 14;
 
 export function Pedestrians() {
   const ports = useGameStore(s => s.ports);
@@ -861,7 +862,11 @@ export function Pedestrians() {
     animAccumRef.current = 0;
 
     const time = state.clock.elapsedTime;
-    const hour = useGameStore.getState().timeOfDay;
+    const storeState = useGameStore.getState();
+    const hour = storeState.timeOfDay;
+    const playerMode = storeState.playerMode;
+    const activeCap = playerMode === 'ship' ? SAILING_ACTIVE_PEDESTRIAN_CAP : undefined;
+    const clusterFacingEnabled = playerMode === 'walking';
 
     // Apply kills from projectile hits before updating positions.
     const kills = consumePendingKills();
@@ -869,7 +874,7 @@ export function Pedestrians() {
       if (idx < system.pedestrians.length) system.pedestrians[idx].dead = true;
     }
 
-    const activeCount = updatePedestrians(system, time, dt, hour);
+    const activeCount = updatePedestrians(system, time, dt, hour, activeCap);
 
     // Publish live positions for Player collision. Only the active slice moves;
     // inactive peds stay parked off-screen so they won't be reached by the scan.
@@ -961,9 +966,11 @@ export function Pedestrians() {
     // CLUSTER_RADIUS, which reads as conversation rather than statues.
     const dwellList = dwellingIdx.current;
     dwellList.length = 0;
-    for (let i = 0; i < activeCount; i++) {
-      const pi = system.pedestrians[i];
-      if (pi.isDwelling && !pi.dead) dwellList.push(i);
+    if (clusterFacingEnabled) {
+      for (let i = 0; i < activeCount; i++) {
+        const pi = system.pedestrians[i];
+        if (pi.isDwelling && !pi.dead) dwellList.push(i);
+      }
     }
 
     const playerPos = getActivePlayerPos();
@@ -1006,7 +1013,7 @@ export function Pedestrians() {
       // ── Cluster facing: when dwelling, pivot toward nearest dwelling neighbor ──
       // Mutating p.angle here is safe because the system reassigns angle from
       // velocity once the ped starts walking again.
-      if (p.isDwelling) {
+      if (clusterFacingEnabled && p.isDwelling) {
         let bestSq = CLUSTER_RADIUS_SQ;
         let bestDx = 0, bestDz = 0;
         for (let k = 0; k < dwellList.length; k++) {
@@ -1230,7 +1237,6 @@ export function Pedestrians() {
           ref={(ref) => { bodyRefs.current[a] = ref; }}
           args={[bodyGeos[a], bodyMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       {TRIM_ARCHETYPES.map(a => (
@@ -1239,7 +1245,6 @@ export function Pedestrians() {
           ref={(ref) => { trimRefs.current[a] = ref; }}
           args={[trimGeos[a], bodyMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       {FIGURE_TYPES.map(f => (
@@ -1248,7 +1253,6 @@ export function Pedestrians() {
           ref={(ref) => { headRefs.current[f] = ref; }}
           args={[headGeos[f], skinMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       {HEADWEAR_TYPES.map(h => (
@@ -1257,7 +1261,6 @@ export function Pedestrians() {
           ref={(ref) => { headwearRefs.current[h] = ref; }}
           args={[headwearGeos[h], headwearMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       {ARM_TYPES.map(a => (
@@ -1266,7 +1269,6 @@ export function Pedestrians() {
           ref={(ref) => { armRefs.current[a] = ref; }}
           args={[armGeos[a], armMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       {PROP_TYPES.map(pp => (
@@ -1275,7 +1277,6 @@ export function Pedestrians() {
           ref={(ref) => { propRefs.current[pp] = ref; }}
           args={[propGeos[pp], propMat, MAX_PER_MESH]}
           frustumCulled={false}
-          castShadow
         />
       ))}
       <instancedMesh

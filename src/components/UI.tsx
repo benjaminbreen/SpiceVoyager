@@ -1093,7 +1093,7 @@ export function UI() {
   const setActivePort = useGameStore((state) => state.setActivePort);
   const dismissedPortRef = useRef<string | null>(null);
   const interactionPrompt = useGameStore((state) => state.interactionPrompt);
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  const timeOfDay = useGameStore((state) => Math.floor(state.timeOfDay * 4) / 4);
   const crew = useGameStore((state) => state.crew);
   const dayCount = useGameStore((state) => state.dayCount);
   const provisions = useGameStore((state) => state.provisions);
@@ -1531,7 +1531,7 @@ export function UI() {
             setActivePort(null);
           }
         }
-        if (!findNearbyPort(playerPos, ports)) dismissedPortRef.current = null;
+        if (!nearest) dismissedPortRef.current = null;
 
         // Ship-accessible POIs (wrecks, smuggler's coves, offshore natural
         // features like Krakatoa) toast in ship mode. findNearestPOI's
@@ -1539,7 +1539,7 @@ export function UI() {
         // camps) naturally can't fire here — the player would never be
         // within ~12u of an inland garden while sailing — so no need to
         // filter by kind here.
-        const shipPoiHit = findNearestPOI(playerPos, ports);
+        const shipPoiHit = nearest || currentActivePort ? findNearestPOI(playerPos, ports) : null;
         if (shipPoiHit) {
           const current = activePOIToastRef.current;
           if (!current || current.poi.id !== shipPoiHit.poi.id) {

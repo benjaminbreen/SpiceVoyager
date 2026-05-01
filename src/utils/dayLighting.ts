@@ -23,16 +23,16 @@ type LightProfile = {
 // sun color, and ambient-to-sun ratio (which controls shadow color/softness).
 const LIGHT_PROFILES: Record<string, LightProfile> = {
   tropical: {
-    ambCol: new THREE.Color(0.42, 0.72, 0.96), groundCol: new THREE.Color(0.30, 0.44, 0.24),
-    ambBase: 0.27, ambScale: 0.08,
+    ambCol: new THREE.Color(0.62, 0.78, 0.96), groundCol: new THREE.Color(0.74, 0.70, 0.56),
+    ambBase: 0.42, ambScale: 0.10,
     sunCol: new THREE.Color(1.0, 0.92, 0.72), sunBase: 1.24, sunScale: 0.88,
     shadowRadius: 4.2,
   },
   monsoon: {
-    ambCol: new THREE.Color(0.42, 0.80, 0.76), groundCol: new THREE.Color(0.28, 0.44, 0.20),
-    ambBase: 0.30, ambScale: 0.07,
-    sunCol: new THREE.Color(0.92, 0.96, 0.76), sunBase: 1.05, sunScale: 0.68,
-    shadowRadius: 5.4,
+    ambCol: new THREE.Color(0.50, 0.66, 0.72), groundCol: new THREE.Color(0.34, 0.36, 0.24),
+    ambBase: 0.24, ambScale: 0.055,
+    sunCol: new THREE.Color(1.0, 0.88, 0.62), sunBase: 1.24, sunScale: 0.82,
+    shadowRadius: 4.3,
   },
   temperate: {
     ambCol: new THREE.Color(0.62, 0.68, 0.78), groundCol: new THREE.Color(0.38, 0.34, 0.28),
@@ -47,10 +47,10 @@ const LIGHT_PROFILES: Record<string, LightProfile> = {
     shadowRadius: 3.6,
   },
   mediterranean: {
-    ambCol: new THREE.Color(0.56, 0.70, 0.92), groundCol: new THREE.Color(0.50, 0.43, 0.30),
-    ambBase: 0.32, ambScale: 0.09,
-    sunCol: new THREE.Color(1.0, 0.91, 0.72), sunBase: 1.18, sunScale: 0.82,
-    shadowRadius: 4.4,
+    ambCol: new THREE.Color(0.66, 0.78, 0.96), groundCol: new THREE.Color(0.78, 0.72, 0.58),
+    ambBase: 0.40, ambScale: 0.10,
+    sunCol: new THREE.Color(1.0, 0.86, 0.58), sunBase: 1.36, sunScale: 0.92,
+    shadowRadius: 3.6,
   },
 };
 

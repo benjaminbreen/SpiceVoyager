@@ -1219,7 +1219,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   postprocessing: true,
   bloom: true,
   vignette: true,
-  ao: true,
+  ao: false,
   brightnessContrast: true,
   hueSaturation: true,
   lutEnabled: false,

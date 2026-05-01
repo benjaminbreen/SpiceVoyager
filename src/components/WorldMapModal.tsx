@@ -571,8 +571,11 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
 
   useEffect(() => {
     if (!passageModal || passageModal.hasIncident || passageModal.swapStarted) return;
-    fastTravel(passageModal.targetPortId, { force: passageModal.force, voyage: passageModal.resolution });
-    setPassageModal({ ...passageModal, swapStarted: true });
+    const id = window.setTimeout(() => {
+      fastTravel(passageModal.targetPortId, { force: passageModal.force, voyage: passageModal.resolution });
+      setPassageModal((current) => current === passageModal ? { ...current, swapStarted: true } : current);
+    }, 450);
+    return () => window.clearTimeout(id);
   }, [fastTravel, passageModal]);
 
   // Keyboard

@@ -10,6 +10,8 @@ import {
   type VoyageEventTone,
 } from '../utils/voyageResolution';
 import { sfxClick, sfxClose, sfxHover, sfxSail } from '../audio/SoundEffects';
+import { parchment } from '../theme/tokens';
+import { getPortBannerCandidates } from '../utils/portAssets';
 
 interface VoyageModalProps {
   fromPort: string;
@@ -59,6 +61,26 @@ const TONE_COLOR: Record<VoyageEventTone, string> = {
   warning: '#e8c872',
   danger: '#e89b9b',
 };
+
+const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
+const SERIF = '"Fraunces", serif';
+const INCIDENT_EASE = [0.2, 0.8, 0.25, 1] as const;
+
+function Corner({ pos }: { pos: 'tl' | 'tr' | 'bl' | 'br' }) {
+  const style: React.CSSProperties = {
+    position: 'absolute',
+    width: 22,
+    height: 16,
+    pointerEvents: 'none',
+    borderColor: `${parchment.gold}99`,
+    filter: `drop-shadow(0 0 5px ${parchment.gold}44)`,
+  };
+  if (pos === 'tl') { style.top = 10; style.left = 10; style.borderTopWidth = 2; style.borderLeftWidth = 2; }
+  if (pos === 'tr') { style.top = 10; style.right = 10; style.borderTopWidth = 2; style.borderRightWidth = 2; }
+  if (pos === 'bl') { style.bottom = 10; style.left = 10; style.borderBottomWidth = 2; style.borderLeftWidth = 2; }
+  if (pos === 'br') { style.bottom = 10; style.right = 10; style.borderBottomWidth = 2; style.borderRightWidth = 2; }
+  return <span style={style} />;
+}
 
 function riskColor(risk: string) {
   if (risk === 'High') return '#e89b9b';
@@ -187,6 +209,148 @@ export default function VoyageModal({
   function finish(skip = false) {
     if (skip) onSkip(resolution);
     else onComplete(resolution);
+  }
+
+  if (initialPhase === 'incident') {
+    const candidates = getPortBannerCandidates(toPortId);
+    return (
+      <AnimatePresence>
+        <motion.div
+          data-testid="voyage-modal"
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          style={{ backgroundColor: 'rgba(6,5,4,0.66)', backdropFilter: 'blur(3px)' }}
+        >
+          <motion.img
+            src={candidates[0]}
+            alt=""
+            initial={{ scale: 1.06 }}
+            animate={{ scale: 1.025 }}
+            onError={(event) => { event.currentTarget.style.display = 'none'; }}
+            transition={{ duration: 1.2, ease: INCIDENT_EASE }}
+            className="absolute inset-0 h-full w-full object-cover"
+            style={{ filter: 'sepia(0.2) contrast(1.04) brightness(0.45) saturate(1.02)' }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{ background: 'radial-gradient(ellipse at center, transparent 22%, rgba(6,5,4,0.62) 72%, rgba(6,5,4,0.94) 100%)' }}
+          />
+          <motion.div
+            className="relative w-full max-w-[560px] overflow-hidden rounded-[10px] px-6 py-6"
+            initial={{ opacity: 0, scale: 0.97, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: 0.32, ease: INCIDENT_EASE }}
+            style={{
+              backgroundColor: 'rgba(12,11,8,0.96)',
+              backgroundImage: 'linear-gradient(115deg, rgba(201,168,76,0.13), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.035), transparent 24%)',
+              border: '1px solid rgba(201,168,76,0.25)',
+              boxShadow: '0 25px 70px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,232,164,0.08), inset 0 0 28px rgba(0,0,0,0.38)',
+              color: parchment.txt,
+              fontFamily: MONO,
+            }}
+          >
+            <div className="pointer-events-none absolute inset-[9px] rounded-[7px] border" style={{ borderColor: 'rgba(201,168,76,0.22)' }} />
+            <Corner pos="tl" />
+            <Corner pos="tr" />
+            <Corner pos="bl" />
+            <Corner pos="br" />
+            <button
+              type="button"
+              onClick={() => { sfxClose(); finish(true); }}
+              onMouseEnter={() => sfxHover()}
+              className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-[4px] border transition-colors hover:bg-white/[0.06]"
+              style={{ borderColor: 'rgba(201,168,76,0.22)', color: parchment.dimGold }}
+              aria-label="Skip incident"
+            >
+              <X size={13} />
+            </button>
+
+            <div className="mx-auto flex max-w-[350px] items-center justify-center gap-3 uppercase text-center" style={{ color: parchment.dimGold, fontSize: 10, letterSpacing: '0.16em' }}>
+              <span className="h-px flex-1" style={{ background: `linear-gradient(to right, transparent, ${parchment.dimGold}70)` }} />
+              <span>At Sea</span>
+              <span className="h-px flex-1" style={{ background: `linear-gradient(to left, transparent, ${parchment.dimGold}70)` }} />
+            </div>
+
+            {phase === 'incident' && (
+              <>
+                <h2
+                  className="mx-auto mt-3 max-w-[430px] text-center text-[30px] font-normal leading-tight sm:text-[38px]"
+                  style={{
+                    color: '#d9cfad',
+                    fontFamily: SERIF,
+                    textShadow: '0 1px 0 rgba(255,238,190,0.16), 0 10px 22px rgba(0,0,0,0.62)',
+                    fontVariantCaps: 'small-caps',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  {resolution.incident.title}
+                </h2>
+                <p className="mx-auto mt-3 max-w-[430px] text-center text-[15px] leading-relaxed" style={{ color: parchment.txt, fontFamily: SERIF }}>
+                  {resolution.incident.text}
+                </p>
+                <div className="mx-auto mt-4 h-px max-w-[300px]" style={{ background: `linear-gradient(to right, transparent, ${parchment.gold}80, transparent)` }} />
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {resolution.incident.choices?.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      onMouseEnter={() => sfxHover()}
+                      onClick={() => chooseIncident(choice.id)}
+                      className="rounded-[5px] border px-4 py-4 text-left transition-all hover:translate-y-[-1px] hover:bg-white/[0.055] active:scale-[0.99]"
+                      style={{ borderColor: 'rgba(201,168,76,0.22)', background: 'rgba(255,255,255,0.025)' }}
+                    >
+                      <div className="text-[17px] font-normal" style={{ color: parchment.gold, fontFamily: SERIF }}>{choice.label}</div>
+                      <div className="mt-1 text-[12px] leading-relaxed" style={{ color: parchment.dimGold }}>{choice.detail}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {(phase === 'log' || phase === 'arrived') && (
+              <>
+                <h2 className="mt-2 text-center text-[26px] font-normal" style={{ color: '#d9cfad', fontFamily: SERIF, fontVariantCaps: 'small-caps' }}>
+                  Passage Log
+                </h2>
+                <div className="mt-4 space-y-3">
+                  {resolution.events.slice(0, shownEvents).map((event) => (
+                    <motion.div
+                      key={`${event.day}:${event.title}`}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="grid grid-cols-[54px_minmax(0,1fr)] gap-3 rounded-[4px] border px-3 py-3"
+                      style={{ borderColor: 'rgba(201,168,76,0.14)', background: 'rgba(255,255,255,0.022)' }}
+                    >
+                      <div className="font-mono text-[12px] font-bold" style={{ color: TONE_COLOR[event.tone] }}>Day {event.day}</div>
+                      <div>
+                        <div className="text-[15px]" style={{ color: parchment.gold, fontFamily: SERIF }}>{event.title}</div>
+                        <div className="mt-1 text-[12px] leading-relaxed" style={{ color: parchment.txt }}>{event.text}</div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+                <div className="mt-5 flex justify-end">
+                  <button
+                    type="button"
+                    data-testid="voyage-landfall"
+                    disabled={phase !== 'arrived'}
+                    onClick={() => finish(false)}
+                    onMouseEnter={() => { if (phase === 'arrived') sfxHover(); }}
+                    className="min-h-10 rounded-[4px] border px-4 text-[10px] font-bold uppercase tracking-[0.15em] transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
+                    style={{ fontFamily: MONO, background: parchment.teal, borderColor: parchment.teal, color: '#04110d' }}
+                  >
+                    Make Landfall
+                  </button>
+                </div>
+              </>
+            )}
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
   }
 
   return (

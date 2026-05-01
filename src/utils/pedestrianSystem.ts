@@ -768,12 +768,16 @@ export function updatePedestrians(
   time: number,
   delta: number,
   hourOfDay: number,
+  activeCap?: number,
 ): number {
   const { corridors, pedestrians, maxActive, roadIndex, sceneNpcCount } = state;
   const density = getCrowdDensity(hourOfDay);
+  const activeBudget = activeCap === undefined
+    ? maxActive
+    : Math.min(maxActive, Math.max(sceneNpcCount, activeCap));
   // Scene NPCs (at the front of the array) are exempt from the density curve —
   // without this floor, night-only scenes render their prop with nobody around.
-  const activeCount = Math.max(1, sceneNpcCount, Math.floor(maxActive * density));
+  const activeCount = Math.max(1, sceneNpcCount, Math.floor(activeBudget * density));
 
   // Clamp delta to avoid huge jumps when tab is backgrounded
   const dt = Math.min(delta, 0.1);

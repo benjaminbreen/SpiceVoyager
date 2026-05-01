@@ -26,6 +26,25 @@ const MOBILE_SPEED_SCALE = 0.55;
 const SHIP_ROOT_Y = -0.3;
 const STORE_SYNC_INTERVAL = 1 / 12;
 const STORE_POS_EPSILON_SQ = 0.0001;
+const SHORE_PROBE_POINTS: [number, number][] = [
+  [0, 3.5],
+  [0, -2],
+  [-1.5, 0],
+  [1.5, 0],
+];
+const SHORE_NORMAL_SAMPLE_INTERVAL = 0.08;
+
+function hideInstancedMesh(mesh: THREE.InstancedMesh | null, count: number) {
+  if (!mesh) return;
+  const dummy = new THREE.Object3D();
+  dummy.position.set(0, -1000, 0);
+  dummy.scale.set(0, 0, 0);
+  dummy.updateMatrix();
+  for (let i = 0; i < count; i++) {
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
 const STORE_ROT_EPSILON = 0.0001;
 const STORE_VEL_EPSILON = 0.0001;
 
@@ -152,6 +171,8 @@ export function Ship() {
   // Recoil state: slow drift away from land after collision
   const recoilVelX = useRef(0);
   const recoilVelZ = useRef(0);
+  const lastShoreNormalAt = useRef(-Infinity);
+  const lastShoreNormal = useRef({ x: 0, z: -1 });
   const edgeWorldMapRequested = useRef(false);
   const windVector = useRef(new THREE.Vector2());
   const shipVelocityVector = useRef(new THREE.Vector2());
@@ -164,6 +185,7 @@ export function Ship() {
 
   // Visual effects state
   const lastDamageTime = useRef(0);
+  const lastCollisionNoticeTime = useRef(0);
   const [showExclamation, setShowExclamation] = useState(false);
   const [showSpeedBoost, setShowSpeedBoost] = useState(false);
   const exclamationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -617,6 +639,10 @@ export function Ship() {
         foam: false,
       });
     }
+    hideInstancedMesh(particlesRef.current, particleCount);
+    hideInstancedMesh(anchorSplashRef.current, ANCHOR_SPLASH_COUNT);
+    hideInstancedMesh(muzzleFlashRef.current, MUZZLE_PARTICLE_COUNT);
+    hideInstancedMesh(spraySideRef.current, SPRAY_COUNT);
   }, []);
 
   useEffect(() => {
@@ -633,9 +659,12 @@ export function Ship() {
     if (now - lastDamageTime.current > 2000) { // 2 second cooldown
       lastDamageTime.current = now;
       damageShip(10);
-      addNotification('Hull damaged!', 'error');
+      if (source === 'ship' || now - lastCollisionNoticeTime.current > 6000) {
+        lastCollisionNoticeTime.current = now;
+        addNotification('Hull damaged!', 'error');
+      }
       if (source === 'shore') sfxShoreCollision(); else sfxShipCollision();
-      setShowExclamation(true);
+      if (source === 'ship' || !showExclamation) setShowExclamation(true);
 
       // Camera punctuation — random shake + a negative FOV kick reads as
       // "the ship just slammed into something." Both decay quickly.
@@ -651,11 +680,11 @@ export function Ship() {
         for (let i = 0; i < particleCount; i++) {
           const p = particleData.current[i];
           if (!p) continue;
-          p.pos.copy(group.current.position).add(new THREE.Vector3(
-            (Math.random() - 0.5) * 2,
-            1 + Math.random(),
-            (Math.random() - 0.5) * 2
-          ));
+          p.pos.set(
+            group.current.position.x + (Math.random() - 0.5) * 2,
+            group.current.position.y + 1 + Math.random(),
+            group.current.position.z + (Math.random() - 0.5) * 2,
+          );
           p.vel.set(
             (Math.random() - 0.5) * 10,
             5 + Math.random() * 5,
@@ -1033,19 +1062,11 @@ export function Ship() {
       const nextX = group.current.position.x + moveX;
       const nextZ = group.current.position.z + moveZ;
       
-      // Check multiple points around the ship to prevent clipping
-      const points = [
-        [0, 3.5],   // Bow
-        [0, -2],    // Stern
-        [-1.5, 0],  // Port
-        [1.5, 0]    // Starboard
-      ];
-      
       const collisionT0 = perfSignals.enabled ? performance.now() : 0;
       let hitLand = false;
       let hitNormalX = 0;
       let hitNormalZ = 0;
-      for (const [px, pz] of points) {
+      for (const [px, pz] of SHORE_PROBE_POINTS) {
         const worldX = nextX + Math.sin(rotation.current) * pz + Math.cos(rotation.current) * px;
         const worldZ = nextZ + Math.cos(rotation.current) * pz - Math.sin(rotation.current) * px;
         const terrainHeight = getTerrainHeight(worldX, worldZ);
@@ -1053,14 +1074,21 @@ export function Ship() {
         // Stop the ship when the seabed rises into the hull's draft.
         if (terrainHeight > -0.15) {
           hitLand = true;
-          // Approximate terrain normal from gradient
-          const sampleDist = 1.5;
-          const hL = getTerrainHeight(worldX - sampleDist, worldZ);
-          const hR = getTerrainHeight(worldX + sampleDist, worldZ);
-          const hF = getTerrainHeight(worldX, worldZ + sampleDist);
-          const hB = getTerrainHeight(worldX, worldZ - sampleDist);
-          hitNormalX += (hL - hR);
-          hitNormalZ += (hB - hF);
+          const now = state.clock.elapsedTime;
+          if (now - lastShoreNormalAt.current >= SHORE_NORMAL_SAMPLE_INTERVAL) {
+            // Approximate terrain normal from gradient. This path is several
+            // terrain samples, so cache it while the ship is scraping shore.
+            const sampleDist = 1.5;
+            const hL = getTerrainHeight(worldX - sampleDist, worldZ);
+            const hR = getTerrainHeight(worldX + sampleDist, worldZ);
+            const hF = getTerrainHeight(worldX, worldZ + sampleDist);
+            const hB = getTerrainHeight(worldX, worldZ - sampleDist);
+            lastShoreNormal.current.x = hL - hR;
+            lastShoreNormal.current.z = hB - hF;
+            lastShoreNormalAt.current = now;
+          }
+          hitNormalX += lastShoreNormal.current.x;
+          hitNormalZ += lastShoreNormal.current.z;
           break;
         }
       }

@@ -94,11 +94,53 @@ const WHALE_COLOR = '#3a4a55';
 const TURTLE_COLOR = '#4a6a3a';
 const WRECKAGE_COLOR = '#5a4530';
 
+const WHALE_NOTICE_DIST = 35;
+const WHALE_AVOID_DIST = 75;
+const WHALE_WARNING_DIST = 30;
+const WHALE_DIVE_DIST = 18;
+const WHALE_DIVE_SECONDS = 8;
+const WHALE_SPOUT_PARTICLES = 18;
+
+type WhaleAiState = {
+  x: number;
+  z: number;
+  heading: number;
+  speed: number;
+  diveUntil: number;
+  spoutUntil: number;
+  spoutCooldownUntil: number;
+};
+
+function SpoutParticles({
+  meshRef,
+  material,
+}: {
+  meshRef: React.RefObject<THREE.InstancedMesh | null>;
+  material: THREE.Material;
+}) {
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, WHALE_SPOUT_PARTICLES]} frustumCulled={false}>
+      <sphereGeometry args={[0.16, 6, 4]} />
+      <primitive object={material} attach="material" />
+    </instancedMesh>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) {
   const group = useRef<THREE.Group>(null);
+  const spoutRef = useRef<THREE.InstancedMesh>(null);
   const [collected, setCollected] = useState(false);
+  const whaleAi = useRef<WhaleAiState>({
+    x: encounter.position[0],
+    z: encounter.position[2],
+    heading: encounter.rotation,
+    speed: 0.025,
+    diveUntil: 0,
+    spoutUntil: 0,
+    spoutCooldownUntil: 0,
+  });
 
   const geometry = encounter.type === 'whale' ? WhaleGeometry()
     : encounter.type === 'turtle' ? TurtleGeometry()
@@ -115,30 +157,101 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
     });
   }, [encounter.type]);
 
+  const spoutMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#d8f4ff',
+    emissive: '#7ec8e3',
+    emissiveIntensity: 0.25,
+    transparent: true,
+    opacity: 0.72,
+    roughness: 0.25,
+    depthWrite: false,
+  }), []);
+
+  const hiddenSpoutMatrix = useMemo(() => new THREE.Matrix4().makeScale(0, 0, 0), []);
+
   // Approach notification (once)
   const notifiedRef = useRef(false);
-  const APPROACH_DIST = 35;
+  const spoutDummy = useMemo(() => new THREE.Object3D(), []);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (!group.current || collected) return;
     const time = state.clock.elapsedTime;
+    const dt = Math.min(delta, 0.05);
     const pos = encounter.position;
+    const player = getLiveShipTransform();
 
     // ── Animation ──
     if (encounter.type === 'whale') {
-      // Slow surface roll + occasional breach
-      const breathCycle = Math.sin(time * 0.15 + encounter.rotation) * 0.5 + 0.5; // 0–1
-      const breachHeight = breathCycle > 0.85 ? (breathCycle - 0.85) * 12 : 0;
+      const ai = whaleAi.current;
+      const dx = ai.x - player.pos[0];
+      const dz = ai.z - player.pos[2];
+      const distSq = dx * dx + dz * dz;
+      const dist = Math.sqrt(distSq) || 1;
+      const awayX = dx / dist;
+      const awayZ = dz / dist;
+      const shipForwardX = Math.sin(player.rot);
+      const shipForwardZ = Math.cos(player.rot);
+      const shipBearingTowardWhale = (shipForwardX * awayX + shipForwardZ * awayZ) > 0.32;
+      const threatened = dist < WHALE_DIVE_DIST || (dist < WHALE_AVOID_DIST && player.vel > 0.04 && shipBearingTowardWhale);
+
+      if (dist < WHALE_WARNING_DIST && time > ai.spoutCooldownUntil) {
+        ai.spoutUntil = time + 1.35;
+        ai.spoutCooldownUntil = time + 6.5;
+      }
+      if (dist < WHALE_DIVE_DIST && ai.diveUntil < time) {
+        ai.diveUntil = time + WHALE_DIVE_SECONDS;
+      }
+
+      const targetHeading = threatened
+        ? Math.atan2(awayX, awayZ)
+        : encounter.rotation + Math.sin(time * 0.08 + encounter.rotation) * 0.65;
+      const turn = Math.atan2(Math.sin(targetHeading - ai.heading), Math.cos(targetHeading - ai.heading));
+      ai.heading += THREE.MathUtils.clamp(turn, -dt * 0.85, dt * 0.85);
+      const targetSpeed = threatened ? 0.18 : 0.035;
+      ai.speed += (targetSpeed - ai.speed) * (threatened ? 0.06 : 0.025);
+      ai.x += Math.sin(ai.heading) * ai.speed;
+      ai.z += Math.cos(ai.heading) * ai.speed;
+
+      const diveProgress = THREE.MathUtils.clamp((ai.diveUntil - time) / WHALE_DIVE_SECONDS, 0, 1);
+      const diving = diveProgress > 0;
+      const diveDepth = diving ? Math.sin(diveProgress * Math.PI) * 5.8 + (dist < WHALE_DIVE_DIST ? 1.4 : 0) : 0;
+      const surfaceRoll = Math.sin(time * 0.45 + encounter.rotation) * 0.08;
       group.current.position.set(
-        pos[0] + Math.sin(time * 0.08) * 3,
-        SEA_LEVEL - 0.5 + Math.sin(time * 0.3) * 0.1 + breachHeight,
-        pos[2] + Math.cos(time * 0.08) * 3,
+        ai.x,
+        SEA_LEVEL - 0.45 + Math.sin(time * 0.5) * 0.08 - diveDepth,
+        ai.z,
       );
       group.current.rotation.set(
-        Math.sin(time * 0.2) * 0.08,
-        encounter.rotation + time * 0.04,
-        breachHeight > 0.1 ? -0.15 : Math.sin(time * 0.25) * 0.05,
+        diving ? -0.18 : surfaceRoll,
+        ai.heading,
+        threatened ? THREE.MathUtils.clamp(turn, -0.22, 0.22) : Math.sin(time * 0.28) * 0.05,
       );
+
+      if (spoutRef.current) {
+        const active = time < ai.spoutUntil && !diving;
+        for (let i = 0; i < WHALE_SPOUT_PARTICLES; i++) {
+          if (!active) {
+            spoutRef.current.setMatrixAt(i, hiddenSpoutMatrix);
+            continue;
+          }
+          const t = (time - (ai.spoutUntil - 1.35)) / 1.35;
+          const seed = i * 12.989 + encounter.rotation * 7.1;
+          const angle = seed % (Math.PI * 2);
+          const spread = 0.15 + (i % 5) * 0.09 + t * 0.6;
+          const rise = Math.sin(Math.min(t, 1) * Math.PI) * (1.8 + (i % 4) * 0.28);
+          const drift = Math.min(t, 1) * 0.65;
+          spoutDummy.position.set(
+            ai.x + Math.cos(angle) * spread + Math.sin(ai.heading) * drift,
+            SEA_LEVEL + 0.55 + rise,
+            ai.z + Math.sin(angle) * spread + Math.cos(ai.heading) * drift,
+          );
+          const s = (0.9 - t * 0.45) * (0.7 + (i % 3) * 0.18);
+          spoutDummy.scale.setScalar(Math.max(0.02, s));
+          spoutDummy.updateMatrix();
+          spoutRef.current.setMatrixAt(i, spoutDummy.matrix);
+        }
+        spoutRef.current.instanceMatrix.needsUpdate = true;
+      }
     } else if (encounter.type === 'turtle') {
       // Gentle drift + flipper paddle — stays below surface
       const turtleY = SEA_LEVEL - 0.7 + Math.sin(time * 0.5) * 0.04;
@@ -168,12 +281,12 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
     }
 
     // ── Approach notification ──
-    const playerPos = getLiveShipTransform().pos;
+    const playerPos = player.pos;
     const dx = group.current.position.x - playerPos[0];
     const dz = group.current.position.z - playerPos[2];
     const dist = Math.sqrt(dx * dx + dz * dz);
 
-    if (dist < APPROACH_DIST && !notifiedRef.current) {
+    if (dist < WHALE_NOTICE_DIST && !notifiedRef.current) {
       notifiedRef.current = true;
       const { addNotification } = useGameStore.getState();
       const label = encounter.type === 'whale' ? 'A whale surfaces nearby!'
@@ -181,7 +294,7 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         : 'Wreckage sighted in the water.';
       addNotification(label, 'info');
     }
-    if (dist > APPROACH_DIST * 1.5) {
+    if (dist > WHALE_NOTICE_DIST * 1.5) {
       notifiedRef.current = false;
     }
   });
@@ -239,6 +352,7 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
         onPointerOut={() => { document.body.style.cursor = ''; }}
       />
+      {encounter.type === 'whale' && <SpoutParticles meshRef={spoutRef} material={spoutMaterial} />}
     </group>
   );
 }

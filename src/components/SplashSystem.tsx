@@ -31,6 +31,18 @@ interface BurstParticle {
   maxLife: number;
 }
 
+function hideInstancedMesh(mesh: THREE.InstancedMesh | null, count: number) {
+  if (!mesh) return;
+  const dummy = new THREE.Object3D();
+  dummy.position.set(0, -1000, 0);
+  dummy.scale.set(0, 0, 0);
+  dummy.updateMatrix();
+  for (let i = 0; i < count; i++) {
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
 export function SplashSystem() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const splinterMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -111,6 +123,13 @@ export function SplashSystem() {
         maxLife: 0,
       });
     }
+    hideInstancedMesh(meshRef.current, SPLASH_PARTICLE_COUNT);
+    hideInstancedMesh(splinterMeshRef.current, SPLINTER_PARTICLE_COUNT);
+    hideInstancedMesh(impactMeshRef.current, IMPACT_PARTICLE_COUNT);
+    hideInstancedMesh(muzzleMeshRef.current, MUZZLE_PARTICLE_COUNT);
+    hideInstancedMesh(rocketTrailMeshRef.current, ROCKET_TRAIL_PARTICLE_COUNT);
+    hideInstancedMesh(rocketFireBurstMeshRef.current, ROCKET_FIRE_BURST_PARTICLE_COUNT);
+    hideInstancedMesh(rocketSmokeBurstMeshRef.current, ROCKET_SMOKE_BURST_PARTICLE_COUNT);
   }, []);
 
   useFrame((state, delta) => {

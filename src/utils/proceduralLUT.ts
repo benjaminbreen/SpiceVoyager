@@ -9,8 +9,7 @@
 // The LUT is sampled by LUT3DEffect after tonemapping, so input/output are
 // treated as sRGB-display [0,1]. Math is intentionally simple: temperature,
 // tint, contrast, luminance-zoned warmth and lift/roll, then saturation.
-// 32³ resolution (= 32K samples × 4 floats) is the sweet spot — visually
-// indistinguishable from 64³ but builds in <2ms.
+// 16³ keeps rebuilds cheap during dawn/dusk and weather transitions.
 
 import { LookupTexture } from 'postprocessing';
 
@@ -85,7 +84,7 @@ export const LUT_NEUTRAL: LUTParams = {
   highlightRoll: 0,
 };
 
-const LUT_SIZE = 32;
+const LUT_SIZE = 16;
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;

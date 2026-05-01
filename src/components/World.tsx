@@ -1305,8 +1305,8 @@ export function World() {
       const w = rainOn ? Math.max(wi, 1) : wi;
       const sun = sunLightRef.current;
       const hemi = hemiLightRef.current;
-      if (sun) sun.intensity = sunIntensity * (1.0 - 0.45 * w);
-      if (hemi) hemi.intensity = ambientIntensity * (1.0 - 0.30 * w);
+      if (sun) sun.intensity = sunIntensity * (1.0 - 0.38 * w);
+      if (hemi) hemi.intensity = ambientIntensity * (1.0 - 0.12 * w);
     }
 
     const cam = light.shadow.camera as THREE.OrthographicCamera;
