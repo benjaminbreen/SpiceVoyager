@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useGameStore, getRoleBonus, captainHasTrait } from '../store/gameStore';
+import { useGameStore, getRoleBonus, captainHasTrait, WEAPON_DEFS } from '../store/gameStore';
 import * as THREE from 'three';
 import { getTerrainHeight, getMeshHalf } from '../utils/terrain';
 import { Billboard, Text } from '@react-three/drei';
@@ -2085,7 +2085,7 @@ export function Ship() {
     }
 
     // ── Broadside arc indicators ──
-    const hasBroadside = store.stats.armament.some(w => w !== 'swivelGun');
+    const hasBroadside = store.stats.armament.some(w => !WEAPON_DEFS[w].aimable);
     const nowMs = Date.now();
     const elevCharge = getCurrentElevationCharge();
     const wingLift = elevCharge * 0.7;

@@ -586,7 +586,7 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
       })()}
 
       {/* Mouth */}
-      {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin, config.hasGoldTooth, config.seed)}
+      {renderMouth(cx, mouthY, mouthWidth, effUpperLip, effLowerLip, mouthCurve, mouthAsym, skin, config.hasGoldTooth, config.seed, config.personality)}
 
       {/* Lower lip specular — wet highlight on the fullest part */}
       <ellipse cx={cx + lightSide * 2} cy={mouthY + effLowerLip * 0.35 + 1}
@@ -1030,6 +1030,7 @@ function renderMouth(
   upperLip: number, lowerLip: number,
   curve: number, asym: number, skin: SkinPalette,
   hasGoldTooth: boolean = false, seed: number = 0,
+  personality: Personality = 'Neutral',
 ): React.ReactNode {
   const leftY = my + curve - asym;
   const rightY = my + curve + asym;
@@ -1043,7 +1044,8 @@ function renderMouth(
   // Teeth visibility — only truly elated grins. Threshold set high enough that
   // a merely Friendly personality at neutral morale doesn't trigger; it takes
   // Friendly + morale ≥ 85, or morale ≥ 95 on an already-smiley base.
-  const showTeeth = curve <= -4;
+  const rageTeeth = personality === 'Rage';
+  const showTeeth = curve <= -4 || rageTeeth;
   const openH = showTeeth ? Math.min(2.8, (-curve - 2) * 0.5) : 0;
   const teethHw = hw * 0.72;
 
@@ -1082,6 +1084,69 @@ function renderMouth(
           outer teeth sit higher and are shorter/fainter (following the lifted corners),
           inner teeth sit lower and are full-height, matching the dip in the lip line. */}
       {showTeeth && (() => {
+        if (rageTeeth) {
+          const clenchedH = 5.2;
+          const clenchedW = hw * 1.12;
+          const topY = my - 2.2;
+          const toothCount = 6;
+          const toothW = (clenchedW * 2) / toothCount;
+          return (
+            <g key="rage-teeth">
+              <path
+                d={`M ${cx - clenchedW - 1} ${topY + 0.5}
+                    C ${cx - clenchedW * 0.45} ${topY - 2.2}, ${cx + clenchedW * 0.45} ${topY - 2.2}, ${cx + clenchedW + 1} ${topY + 0.5}
+                    L ${cx + clenchedW - 1} ${topY + clenchedH}
+                    C ${cx + clenchedW * 0.4} ${topY + clenchedH + 1.5}, ${cx - clenchedW * 0.4} ${topY + clenchedH + 1.5}, ${cx - clenchedW + 1} ${topY + clenchedH}
+                    Z`}
+                fill="#180909"
+                opacity={0.94}
+              />
+              <rect
+                x={cx - clenchedW * 0.86}
+                y={topY + 0.9}
+                width={clenchedW * 1.72}
+                height={clenchedH * 0.72}
+                rx={1.1}
+                fill="#e8ddc2"
+                stroke="rgba(0,0,0,0.28)"
+                strokeWidth={0.45}
+              />
+              <path
+                d={`M ${cx - clenchedW * 0.82} ${topY + clenchedH * 0.48}
+                    L ${cx + clenchedW * 0.82} ${topY + clenchedH * 0.48}`}
+                stroke="rgba(70,35,24,0.34)"
+                strokeWidth={0.55}
+              />
+              {Array.from({ length: toothCount - 1 }).map((_, i) => {
+                const x = cx - clenchedW * 0.86 + toothW * (i + 1);
+                return (
+                  <path
+                    key={`rage-tooth-${i}`}
+                    d={`M ${x} ${topY + 1.2} L ${x + (i % 2 === 0 ? 0.4 : -0.3)} ${topY + clenchedH * 0.72}`}
+                    stroke="rgba(70,35,24,0.24)"
+                    strokeWidth={0.45}
+                  />
+                );
+              })}
+              <path
+                d={`M ${cx - clenchedW} ${topY + 0.5}
+                    C ${cx - clenchedW * 0.35} ${topY - 2.8}, ${cx + clenchedW * 0.35} ${topY - 2.8}, ${cx + clenchedW} ${topY + 0.5}`}
+                stroke="rgba(0,0,0,0.55)"
+                strokeWidth={1.2}
+                fill="none"
+                strokeLinecap="round"
+              />
+              <path
+                d={`M ${cx - clenchedW * 0.92} ${topY + clenchedH}
+                    C ${cx - clenchedW * 0.35} ${topY + clenchedH + 2.2}, ${cx + clenchedW * 0.35} ${topY + clenchedH + 2.2}, ${cx + clenchedW * 0.92} ${topY + clenchedH}`}
+                stroke="rgba(0,0,0,0.45)"
+                strokeWidth={1.1}
+                fill="none"
+                strokeLinecap="round"
+              />
+            </g>
+          );
+        }
         const toothCount = 5;
         const strideX = (teethHw * 2) / toothCount;
         const toothW = strideX * 0.78;
@@ -2728,6 +2793,7 @@ function applyPersonality(p: Personality, rng: () => number, c: ExprCtrl) {
     case 'Melancholy': c.setMouthCurve(2); c.setBrowL(-2, 2); c.setBrowR(-2, 2); break;
     case 'Weathered':  c.setMouthCurve(0.5); c.setBrowL(1, 0); c.setBrowR(1, 0); break;
     case 'Fierce':     c.setMouthCurve(1); c.setMouthAsym(rng() * 1.5); c.setBrowL(4, -3); c.setBrowR(4, -3); break;
+    case 'Rage':       c.setMouthCurve(0.2); c.setMouthAsym((rng() - 0.5) * 1.2); c.setBrowL(7, -5); c.setBrowR(7, -5); break;
     default: break;
   }
 }

@@ -3667,10 +3667,9 @@ export function ClaudeSplashGlobe(props: Props) {
         top: 0,
         left: 0,
         right: 0,
-        // 100dvh follows iOS Safari's collapsing toolbars; the fallback covers
-        // browsers without dynamic-viewport support.
-        height: '100dvh',
-        minHeight: '100vh',
+        // --app-height is fed by visualViewport in Game.tsx so the dock stays
+        // above iOS Safari's bottom bar.
+        height: 'var(--app-height)',
         zIndex: 60,
         overflow: 'hidden',
         pointerEvents: 'auto',

@@ -27,6 +27,7 @@ interface PreviewConfig {
 }
 
 const PREVIEW_MODEL_SCALE = 0.84;
+const PREVIEW_MODEL_MAX_SCALE = 0.4;
 
 const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
   'socotra-dragons-blood-grove': {
@@ -180,6 +181,7 @@ function PreviewScene({
   const groupRef = useRef<THREE.Group>(null);
   const Component = config.Component;
   const target = useMemo(() => new THREE.Vector3(...config.target), [config.target]);
+  const modelScale = Math.min(config.scale * PREVIEW_MODEL_SCALE, PREVIEW_MODEL_MAX_SCALE);
 
   useFrame(({ camera }) => {
     camera.lookAt(target);
@@ -202,7 +204,7 @@ function PreviewScene({
         color="#fff1c7"
       />
       <pointLight position={[5, 4, -6]} intensity={0.55} color="#7fb9c8" />
-      <group ref={groupRef} position={[0, config.y, 0]} scale={config.scale * PREVIEW_MODEL_SCALE}>
+      <group ref={groupRef} position={[0, config.y, 0]} scale={modelScale}>
         <Component poiId={poi.id} position={[0, 0, 0]} rotationY={0} />
       </group>
     </>

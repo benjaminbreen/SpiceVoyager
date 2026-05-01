@@ -556,7 +556,7 @@ export function Opening({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6, ease: 'easeOut' }}
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto pointer-events-auto"
-      style={{ backgroundColor: PALETTE.bg }}
+      style={{ height: 'var(--app-height)', backgroundColor: PALETTE.bg }}
     >
       <motion.div
         initial={{ opacity: 0 }}

@@ -27,6 +27,8 @@ import {
 } from '../utils/livePlayerTransform';
 import { SplashSystem } from './SplashSystem';
 import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
+import { FloatingCombatTextSystem, spawnFloatingCombatText } from './FloatingCombatText';
+import { WreckSalvageSystem } from './WreckSalvage';
 import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
 import { spawnBuildingShake, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
@@ -49,6 +51,7 @@ import {
   wildlifeLivePositions,
   wildlifeKillQueue,
   landWeaponReload,
+  bowWeaponReload,
   fireHeld,
   setFireHeld,
   broadsideQueue,
@@ -171,7 +174,7 @@ const LAND_PROJECTILE_LIFE = 2.5;
 const LAND_MARKER_STEP = 1 / 120;
 // Swivel-gun ballistic constants — match the in-flight physics in
 // ProjectileSystem (gravity 15 for ship weapons, life 2.5s set in spawnProjectile).
-const SHIP_PROJECTILE_GRAVITY = 15;
+const SHIP_PROJECTILE_GRAVITY = 24;
 const SHIP_PROJECTILE_LIFE = 2.5;
 const SWIVEL_VISUAL_PITCH_MIN = -0.55;
 const SWIVEL_VISUAL_PITCH_MAX = 0.7;
@@ -276,6 +279,22 @@ function shipWaterSplashScale(weaponType: WeaponType | LandWeaponType) {
   if (isBroadsideWeapon(weaponType)) return broadsideImpactScale(weaponType);
   const shipWeapon = weaponType in WEAPON_DEFS ? weaponType as WeaponType : null;
   return shipWeapon === 'swivelGun' ? 0.45 : 0.75;
+}
+
+function spawnSplashCombatText(x: number, y: number, z: number) {
+  const now = Date.now();
+  if (now - lastFloatingSplashAt < FLOATING_SPLASH_COOLDOWN_MS) return;
+  lastFloatingSplashAt = now;
+  spawnFloatingCombatText(x, y, z, 'Splash', 'splash');
+}
+
+function shipHitCombatText(weaponType: WeaponType | LandWeaponType, damage: number, sunk: boolean, directRocket = false) {
+  if (sunk) return { label: 'SUNK!', tone: 'sunk' as const };
+  if (directRocket || damage >= 18 || weaponType === 'demiCannon' || weaponType === 'basilisk') {
+    return { label: 'Critical Hit', tone: 'critical' as const };
+  }
+  if (damage <= 4) return { label: 'Glancing Hit', tone: 'glance' as const };
+  return { label: 'Hit', tone: 'hit' as const };
 }
 
 function aimSurfaceHeight(x: number, z: number) {
@@ -1537,18 +1556,24 @@ function tryFireBowWeapon() {
     const rocketsOnHand = state.cargo['War Rockets'] ?? 0;
     if (rocketsOnHand < 1) {
       state.addNotification('No war rockets loaded! Resupply at Macau.', 'warning');
+      lastFireTimeGlobal.current = now;
+      bowWeaponReload[bowWeapon] = now + reloadMs;
       return;
     }
   } else if (bowWeapon === 'falconet') {
     const cannonShot = state.cargo['Cannon Shot'] ?? 0;
     if (cannonShot < 1) {
       state.addNotification('Out of Cannon Shot!', 'warning');
+      lastFireTimeGlobal.current = now;
+      bowWeaponReload[bowWeapon] = now + reloadMs;
       return;
     }
   } else {
     const smallShot = state.cargo['Small Shot'] ?? 0;
     if (smallShot < 1) {
       state.addNotification('Out of Small Shot!', 'warning');
+      lastFireTimeGlobal.current = now;
+      bowWeaponReload[bowWeapon] = now + reloadMs;
       return;
     }
   }
@@ -1573,6 +1598,7 @@ function tryFireBowWeapon() {
   }
 
   lastFireTimeGlobal.current = now;
+  bowWeaponReload[bowWeapon] = now + reloadMs;
   if (bowWeapon === 'fireRocket') {
     const yawDrift = (Math.random() - 0.5) * (Math.PI / 55);
     const pitchDrift = (Math.random() - 0.5) * (Math.PI / 70);
@@ -1653,9 +1679,9 @@ function tryFireBroadside(side: 'port' | 'starboard') {
   broadsideReload[side] = now + maxReload * 1000 * gunnerBonus;
 
   // Elevation charge: hold SPACE in combat mode to loft cannonballs at shore targets.
-  // At charge=0 (default): flat fire good for ships. At charge=1: slow lofted arc
-  // that peaks at ~6 units and lands at ~20-45 units — enough to clear the
-  // waterline and drop onto port buildings.
+  // At charge=0: low, fast, ship-to-ship fire. As charge rises, angle rises and
+  // intended range shortens so misses visibly splash/drop near the fight instead
+  // of sailing out to the horizon.
   const elevCharge = getCurrentElevationCharge();
 
   // Queue rolling broadside — stagger each cannon by ~150ms
@@ -1672,17 +1698,24 @@ function tryFireBroadside(side: 'port' | 'starboard') {
     // Direction: perpendicular + slight random spread (±5°, tightens at elevation)
     const spread = (Math.random() - 0.5) * (0.17 - elevCharge * 0.08);
     const dirAngle = sideAngle + spread;
-    // Elevation: 0.15 base (ship targets) → 0.45 max (shore bombardment arc)
-    const baseUpward = 0.15 + elevCharge * 0.3;
+    const angleDeg = THREE.MathUtils.lerp(5, 48, Math.pow(elevCharge, 0.85));
+    const angleRad = THREE.MathUtils.degToRad(angleDeg + (Math.random() - 0.5) * 2.2);
+    const horizontal = Math.cos(angleRad);
     const dir = new THREE.Vector3(
-      Math.sin(dirAngle),
-      baseUpward + Math.random() * (0.1 - elevCharge * 0.08),
-      Math.cos(dirAngle),
+      Math.sin(dirAngle) * horizontal,
+      Math.sin(angleRad),
+      Math.cos(dirAngle) * horizontal,
     ).normalize();
 
-    // Elevated shots are slower so the arc peaks and lands at shore distance
-    // rather than flying over buildings. At charge=1: range×0.35 ≈ mortar range.
-    const speed = WEAPON_DEFS[weaponType].range * (3.5 - elevCharge * 3.15);
+    const lowRange = WEAPON_DEFS[weaponType].range * THREE.MathUtils.lerp(0.95, 1.18, Math.random());
+    const lobRange = THREE.MathUtils.lerp(24, 42, Math.random());
+    const intendedRange = THREE.MathUtils.lerp(lowRange, lobRange, Math.pow(elevCharge, 0.72));
+    const sin2 = Math.max(0.12, Math.sin(angleRad * 2));
+    const speed = THREE.MathUtils.clamp(
+      Math.sqrt((intendedRange * SHIP_PROJECTILE_GRAVITY) / sin2),
+      24,
+      125,
+    );
 
     broadsideQueue.push({
       fireAt: now + idx * STAGGER_MS,
@@ -1690,6 +1723,7 @@ function tryFireBroadside(side: 'port' | 'starboard') {
       direction: dir,
       speed,
       weaponType,
+      maxDistance: intendedRange * 1.08,
       fired: false,
     });
   });
@@ -1698,7 +1732,7 @@ function tryFireBroadside(side: 'port' | 'starboard') {
   window.dispatchEvent(new CustomEvent('broadside-fired', { detail: { side } }));
   addCameraShake(Math.min(0.62, 0.28 + broadsideWeapons.length * 0.045));
   addCameraFovPulse(-1.4);
-  const elevMsg = elevCharge > 0.15 ? ` — elevated ${Math.round(elevCharge * 30)}°` : '';
+  const elevMsg = elevCharge > 0.15 ? ` — elevated ${Math.round(THREE.MathUtils.lerp(5, 48, Math.pow(elevCharge, 0.85)))}°` : '';
   state.addNotification(
     `${side === 'port' ? 'Port' : 'Starboard'} broadside! (${broadsideWeapons.length} guns)${elevMsg}`,
     'info',
@@ -1975,7 +2009,6 @@ function InteractionController() {
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === ' ') {
-        setFireHeld(false);
         setElevationHoldStart(null);
       }
     };
@@ -1995,6 +2028,8 @@ const NPC_HIT_RADIUS = 4;
 const PROJECTILE_COUNT = 30; // increased for broadsides
 const ROCKET_COUNT = 8;
 const ROCKET_NEAR_MISS_RADIUS = 6.5;
+const FLOATING_SPLASH_COOLDOWN_MS = 260;
+let lastFloatingSplashAt = 0;
 const _rocketBodyUp = new THREE.Vector3(0, 1, 0);
 const _rocketBodyDir = new THREE.Vector3();
 
@@ -2029,6 +2064,7 @@ function ProjectileSystem() {
         spawnProjectile(shot.origin, shot.direction, shot.speed, shot.weaponType, {
           owner: shot.owner,
           ownerId: shot.ownerId,
+          maxDistance: shot.maxDistance,
         });
         spawnMuzzleBurst(shot.origin.x, shot.origin.y, shot.origin.z, shot.direction.x, shot.direction.y, shot.direction.z, 1.35);
         sfxBroadsideCannon();
@@ -2057,7 +2093,11 @@ function ProjectileSystem() {
         : SHIP_PROJECTILE_GRAVITY;
       const g = isLandWeapon ? LAND_PROJECTILE_GRAVITY : shipGravity;
       p.vel.y -= g * delta;
+      const stepDistance = p.vel.length() * delta;
       p.pos.addScaledVector(p.vel, delta);
+      if (p.maxDistance !== undefined) {
+        p.distanceTraveled = (p.distanceTraveled ?? 0) + stepDistance;
+      }
 
       // Continuous smoke trail for rockets — ~20 Hz throttle.
       if (isRocket) {
@@ -2082,6 +2122,20 @@ function ProjectileSystem() {
           spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
           sfxCannonSplash();
         }
+        spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
+        projectiles.splice(i, 1);
+        continue;
+      }
+
+      if (!isLandWeapon && p.maxDistance !== undefined && (p.distanceTraveled ?? 0) >= p.maxDistance) {
+        const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
+        if (surfaceY <= SEA_LEVEL + 0.2) {
+          spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
+          sfxCannonSplash();
+          spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
+        } else {
+          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
+        }
         projectiles.splice(i, 1);
         continue;
       }
@@ -2103,6 +2157,7 @@ function ProjectileSystem() {
           }
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.55 : broadsideImpactScale(p.weaponType) * 0.8);
           damageShip(damage);
+          spawnFloatingCombatText(p.pos.x, p.pos.y + 0.7, p.pos.z, 'Hull Breach', 'player');
           addNotification(`Enemy shot strikes the hull! -${damage} hull`, 'warning');
           projectiles.splice(i, 1);
           continue;
@@ -2145,9 +2200,11 @@ function ProjectileSystem() {
               addNotification(`Killed a ${name}.`, 'success', {
                 subtitle: 'Walk over to harvest.',
               });
+              spawnFloatingCombatText(p.pos.x, p.pos.y + 0.4, p.pos.z, 'Killed', 'critical');
             } else {
               const hpPct = Math.round((w.hp / w.maxHp) * 100);
               addNotification(`Hit the ${w.variant}. (${hpPct}% HP)`, 'warning');
+              spawnFloatingCombatText(p.pos.x, p.pos.y + 0.4, p.pos.z, 'Hit', 'hit');
             }
             projectiles.splice(i, 1);
             hit = true;
@@ -2162,6 +2219,8 @@ function ProjectileSystem() {
           npc.hitAlert = Date.now() + 10000;
           adjustReputation(npc.flag as any, -5);
           const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
+          const combatText = shipHitCombatText(p.weaponType, LAND_SHIP_DAMAGE[p.weaponType as LandWeaponType], npc.hull <= 0);
+          spawnFloatingCombatText(p.pos.x, p.pos.y + 0.5, p.pos.z, combatText.label, combatText.tone);
           addNotification(`Hit the ${npc.shipName}. Hull: ${hullPct}%`, 'warning');
           projectiles.splice(i, 1);
           continue;
@@ -2185,6 +2244,7 @@ function ProjectileSystem() {
           spawnBuildingShake(building.id, impactIntensity);
           const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
           if (portFaction) adjustReputation(portFaction, -20);
+          spawnFloatingCombatText(p.pos.x, p.pos.y + 0.45, p.pos.z, 'Structure Hit', 'structure');
           projectiles.splice(i, 1);
           continue;
         }
@@ -2265,6 +2325,8 @@ function ProjectileSystem() {
           npc.hull = Math.max(0, npc.hull - damage);
           adjustReputation(npc.flag as any, -10);
           const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
+          const combatText = shipHitCombatText(p.weaponType, damage, npc.hull <= 0, npc === directHitNpc);
+          spawnFloatingCombatText(p.pos.x, p.pos.y + 0.5, p.pos.z, combatText.label, combatText.tone);
           if (npc.hull > 0) {
             addNotification(
               npc === directHitNpc
@@ -2309,9 +2371,11 @@ function ProjectileSystem() {
             addNotification(`Killed a ${name}.`, 'success', {
               subtitle: 'Walk over to harvest.',
             });
+            spawnFloatingCombatText(p.pos.x, p.pos.y + 0.4, p.pos.z, 'Killed', 'critical');
           } else {
             const hpPct = Math.round((w.hp / w.maxHp) * 100);
             addNotification(`Hit the ${w.variant}. (${hpPct}% HP)`, 'warning');
+            spawnFloatingCombatText(p.pos.x, p.pos.y + 0.4, p.pos.z, 'Hit', 'hit');
           }
           projectiles.splice(i, 1);
           hit = true;
@@ -2330,6 +2394,7 @@ function ProjectileSystem() {
         const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
         const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
         if (portFaction) adjustReputation(portFaction, isAimable ? -10 : -25);
+        spawnFloatingCombatText(p.pos.x, p.pos.y + 0.45, p.pos.z, 'Structure Hit', 'structure');
         projectiles.splice(i, 1);
         continue;
       }
@@ -2352,6 +2417,7 @@ function ProjectileSystem() {
       const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
       if (p.pos.y <= surfaceY) {
           spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
+        spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
         projectiles.splice(i, 1);
         continue;
       }
@@ -2378,6 +2444,8 @@ function ProjectileSystem() {
           if (npc.hull > 0) {
             addNotification(`Hit the ${npc.shipName}! Hull: ${hullPct}%`, 'warning');
           }
+          const combatText = shipHitCombatText(p.weaponType, damage, npc.hull <= 0);
+          spawnFloatingCombatText(p.pos.x, p.pos.y + 0.5, p.pos.z, combatText.label, combatText.tone);
           npc.hitAlert = Date.now() + 10000;
           projectiles.splice(i, 1);
           hit = true;
@@ -3054,6 +3122,8 @@ export function GameScene() {
             <SwivelAimMarker />
             <SplashSystem />
             <FloatingLootSystem />
+            <FloatingCombatTextSystem />
+            <WreckSalvageSystem />
             <TimeController />
             <AtmosphereSync />
             <PerformanceSampler />

@@ -9,6 +9,7 @@ import { getMeshHalf, getTerrainHeight } from '../utils/terrain';
 import { sfxShipSink } from '../audio/SoundEffects';
 import { spawnSplash } from '../utils/splashState';
 import { addCameraImpulse } from '../utils/cameraShakeState';
+import { spawnWreckSalvage } from './WreckSalvage';
 import { SEA_LEVEL } from '../constants/world';
 import {
   COLLISION_REPUTATION_TARGET,
@@ -666,6 +667,7 @@ export function NPCShip({
         setSinking(true);
         setBubblesActive(true);
         sfxShipSink();
+        spawnWreckSalvage(currentPos.x, currentPos.z, identity.shipName, identity.id, identity.cargo as Partial<Record<Commodity, number>>);
         defeatedNpc(identity.id, identity.shipName, identity.flag as Nationality, identity.cargo as Partial<Record<Commodity, number>>);
         liveEntry.sunk = true;
         return;
@@ -768,6 +770,7 @@ export function NPCShip({
           setSinking(true);
           setBubblesActive(true);
           sfxShipSink();
+          spawnWreckSalvage(currentPos.x, currentPos.z, identity.shipName, identity.id, identity.cargo as Partial<Record<Commodity, number>>);
           defeatedNpc(identity.id, identity.shipName, identity.flag as Nationality, identity.cargo as Partial<Record<Commodity, number>>);
           return;
         }

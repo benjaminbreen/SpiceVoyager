@@ -370,6 +370,11 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     }),
     [npc.id, npc.captainName, npc.flag],
   );
+  const ragePortrait = context !== 'normal' || mood === 'HOSTILE' || effectiveRep <= -25;
+  const displayCaptainPortrait = useMemo(
+    () => ragePortrait ? { ...captainPortrait, personality: 'Rage' as const } : captainPortrait,
+    [captainPortrait, ragePortrait],
+  );
 
   const [used, setUsed] = useState<Record<string, boolean>>({});
   const [result, setResult] = useState<{ tone: 'good' | 'warn' | 'neutral'; text: string; impact?: string } | null>(null);
@@ -893,7 +898,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
               transition: { type: 'spring', stiffness: 260, damping: 18 },
             }}
           >
-            <ConfigPortrait config={captainPortrait} size={isMobile ? 72 : 96} square showBackground />
+            <ConfigPortrait config={displayCaptainPortrait} size={isMobile ? 72 : 96} square showBackground />
           </motion.div>
           <motion.div
             className={isMobile

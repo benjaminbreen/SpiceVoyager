@@ -33,7 +33,7 @@ import { QuestsPanel } from './QuestsPanel';
 import { QuestToast } from './QuestToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
-import { activeBowWeapon, broadsideReload, getCurrentElevationCharge, landWeaponReload } from '../utils/combatState';
+import { activeBowWeapon, bowWeaponReload, broadsideReload, getCurrentElevationCharge, landWeaponReload } from '../utils/combatState';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
@@ -501,7 +501,7 @@ function CombatModeBanner() {
       : `Small Shot: ${smallShot}`;
   const cycleHint = bowWeapons.length > 1 ? ' · [TAB] cycle bow weapon' : '';
 
-  const elevDeg = Math.round(elevCharge * 30);
+  const elevDeg = Math.round(5 + elevCharge * 43);
   const elevLabel = elevCharge < 0.15 ? '' : elevCharge < 0.6 ? 'elevated' : 'shore bombardment';
 
   return (
@@ -529,7 +529,7 @@ function CombatModeBanner() {
             <span className="text-red-400/60">{border}{'═'.repeat(3)}{border}</span>
           </pre>
           <div className="text-center text-red-500/50 text-[9px] font-mono tracking-wider mt-0.5">
-            [LMB] fire{cycleHint} · [Q]/[R] broadside · [HOLD SPACE]+[Q/R] elevate · [F] stand down
+            [LMB] bow gun{cycleHint} · [Q]/[R] broadside · hold [SPACE] before [Q/R] to lob · [F] stand down
           </div>
           <div className="text-center text-red-500/40 text-[9px] font-mono tracking-wider mt-0.5">
             ● {mountedWeaponName} · {mountedAmmo}{cannons > 0 ? ` · Cannon Shot: ${cannonShot}` : ''}
@@ -639,7 +639,7 @@ function CombatChip({ children, tone = 'ship', strong = false }: { children: Rea
   );
 }
 
-function CombatKey({ value, label }: { value: string; label: string }) {
+function CombatKey({ value, label }: { value: string; label: ReactNode }) {
   return (
     <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[#d7c08a]/16 bg-[#090d15]/42 px-2.5 font-mono text-[10px] font-semibold tracking-[0.08em] text-[#c6cbd6]">
       <span className="rounded-[4px] border border-[#d7c08a]/22 bg-[#e8c872]/9 px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-[0.12em] text-[#f3d78a]">{value}</span>
@@ -653,6 +653,23 @@ function ReadinessPip({ state }: { state: 'ready' | 'empty' | 'reload' }) {
     : state === 'reload' ? 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.45)]'
     : 'bg-red-300 shadow-[0_0_10px_rgba(252,165,165,0.55)]';
   return <span className={`h-2 w-2 rounded-full ${color}`} />;
+}
+
+function CombatStatusBadge({ state, label }: { state: 'ready' | 'empty' | 'reload'; label: string }) {
+  return (
+    <span className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.16em] ${state === 'ready' ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200' : state === 'reload' ? 'border-amber-300/25 bg-amber-400/10 text-amber-200' : 'border-red-300/30 bg-red-500/12 text-red-200'}`}>
+      {label}
+    </span>
+  );
+}
+
+function ShipSideIcon({ side }: { side: 'port' | 'starboard' }) {
+  return (
+    <span className="relative inline-flex h-5 w-8 items-center justify-center" aria-hidden>
+      <span className="h-1.5 w-5 rounded-full bg-[#d7c08a]/28" />
+      <span className={`absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-red-200/75 shadow-[0_0_7px_rgba(252,165,165,0.35)] ${side === 'port' ? 'left-1' : 'right-1'}`} />
+    </span>
+  );
 }
 
 function CombatStationRow({
@@ -669,7 +686,7 @@ function CombatStationRow({
   muted?: boolean;
 }) {
   return (
-    <div className={`grid items-center gap-2 border-t border-[#d7c08a]/10 py-2 first:border-t-0 first:pt-0 last:pb-0 ${muted ? 'opacity-60' : ''} ${actions ? 'grid-cols-[5.75rem_minmax(0,1fr)_auto]' : 'grid-cols-[5.75rem_minmax(0,1fr)]'}`}>
+    <div className={`grid items-center gap-2 border-t border-[#d7c08a]/10 py-1.5 first:border-t-0 first:pt-0 last:pb-0 ${muted ? 'opacity-60' : ''} ${actions ? 'grid-cols-[5.75rem_minmax(0,1fr)_auto]' : 'grid-cols-[5.75rem_minmax(0,1fr)]'}`}>
       <div className="font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#d7c08a]/68">{label}</div>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold text-[#f8ead0]">{primary}</div>
@@ -767,17 +784,19 @@ function CombatHud() {
   const ammoCount = cargo[ammoName] ?? 0;
   const cannonShot = cargo['Cannon Shot'] ?? 0;
   const empty = ammoCount <= 0;
+  const bowReloadLeft = Math.max(0, (bowWeaponReload[mountedWeapon] ?? 0) - now);
   const portLeft = Math.max(0, broadsideReload.port - now);
   const starboardLeft = Math.max(0, broadsideReload.starboard - now);
-  const readiness: 'ready' | 'empty' | 'reload' = empty ? 'empty' : 'ready';
-  const readinessLabel = empty ? 'EMPTY' : 'READY';
+  const readiness: 'ready' | 'empty' | 'reload' = empty ? 'empty' : bowReloadLeft > 0 ? 'reload' : 'ready';
+  const readinessLabel = empty ? 'BOW EMPTY' : bowReloadLeft > 0 ? `${(bowReloadLeft / 1000).toFixed(1)}s` : 'BOW READY';
   const elevationVisible = elevCharge > 0.01;
-  const elevationDeg = Math.round(elevCharge * 30);
+  const elevationDeg = Math.round(5 + elevCharge * 43);
   const broadsideSummary = broadsideWeapons.length === 0
     ? 'No cannon mounted'
     : `${broadsideWeapons.length} cannon${broadsideWeapons.length === 1 ? '' : 's'}`;
   const broadsideTypes = Array.from(new Set(broadsideWeapons.map((w) => WEAPON_DEFS[w].name))).join(', ');
   const broadsideNeedsShot = broadsideWeapons.length > 0 && cannonShot < broadsideWeapons.length;
+  const hasBroadside = broadsideWeapons.length > 0;
 
   return (
     <motion.div
@@ -786,19 +805,20 @@ function CombatHud() {
       exit={{ opacity: 0, y: 16, scale: 0.97 }}
       transition={{ type: 'spring', stiffness: 360, damping: 28 }}
       className="absolute left-1/2 z-40 -translate-x-1/2 pointer-events-none"
-      style={{ bottom: isMobile ? 'calc(6.1rem + var(--sai-bottom))' : 'calc(6.15rem + var(--sai-bottom))', width: isMobile ? 'min(23rem, calc(100vw - 1.5rem))' : 'min(45rem, calc(100vw - 2rem))' }}
+      style={{ bottom: isMobile ? 'calc(5.35rem + var(--sai-bottom))' : 'calc(5.15rem + var(--sai-bottom))', width: isMobile ? 'min(23rem, calc(100vw - 1.5rem))' : hasBroadside ? 'min(45rem, calc(100vw - 2rem))' : 'min(39rem, calc(100vw - 2rem))' }}
     >
       <div className="relative overflow-hidden rounded-[10px] border border-[#d7c08a]/18 bg-[#111722]/88 shadow-[0_16px_36px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.075)] backdrop-blur-xl">
         <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-red-200/60 to-transparent" />
-        <div className={`${isMobile ? 'px-3.5 py-3' : 'px-[18px] py-3.5'}`}>
+        <div className={`${isMobile ? 'px-3.5 py-3' : 'px-[18px] py-3'}`}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <ReadinessPip state={readiness} />
               <span className="font-serif text-[12px] font-bold uppercase tracking-[0.2em] text-red-100">Fight Mode</span>
             </div>
-            <span className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.16em] ${readiness === 'ready' ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-200' : 'border-red-300/30 bg-red-500/12 text-red-200'}`}>
-              {readinessLabel}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              {!isMobile && <CombatKey value="F" label="stand down" />}
+              <CombatStatusBadge state={readiness} label={readinessLabel} />
+            </div>
           </div>
           <div className="mt-2">
             <CombatStationRow
@@ -812,22 +832,21 @@ function CombatHud() {
                 </>
               )}
             />
-            <CombatStationRow
-              label="Broadside"
-              primary={broadsideSummary}
-              secondary={broadsideWeapons.length > 0
-                ? `${broadsideNeedsShot ? 'Need' : 'Cannon Shot'} ${cannonShot}/${broadsideWeapons.length} · ${broadsideTypes}`
-                : 'Visit a shipyard to mount guns'}
-              muted={broadsideWeapons.length === 0}
-              actions={!isMobile && broadsideWeapons.length > 0 && (
-                <>
-                  <CombatKey value="Q" label={`port ${portLeft > 0 ? `${(portLeft / 1000).toFixed(1)}s` : 'ready'}`} />
-                  <CombatKey value="R" label={`starboard ${starboardLeft > 0 ? `${(starboardLeft / 1000).toFixed(1)}s` : 'ready'}`} />
-                </>
-              )}
-            />
-            {!isMobile && (
-              <div className="mt-2 flex justify-end">
+            {hasBroadside && (
+              <CombatStationRow
+                label="Broadside"
+                primary={broadsideSummary}
+                secondary={`${broadsideNeedsShot ? 'Need' : 'Cannon Shot'} ${cannonShot}/${broadsideWeapons.length} · ${broadsideTypes}`}
+                actions={!isMobile && (
+                  <>
+                    <CombatKey value="Q" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="port" />{portLeft > 0 ? `${(portLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
+                    <CombatKey value="R" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="starboard" />{starboardLeft > 0 ? `${(starboardLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
+                  </>
+                )}
+              />
+            )}
+            {isMobile && (
+              <div className="mt-1.5 flex justify-end">
                 <CombatKey value="F" label="stand down" />
               </div>
             )}
@@ -1011,6 +1030,23 @@ export function UI() {
   const reputation = useGameStore((state) => state.reputation);
   const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const voyageBegun = useGameStore((state) => state.voyageBegun);
+  const combatHudTone = combatMode
+    ? playerMode === 'ship'
+      ? {
+          ring: '#ef4444',
+          glow: 'rgba(239,68,68,0.58)',
+          border: 'rgba(248,113,113,0.42)',
+          soft: 'rgba(127,29,29,0.18)',
+          label: 'Battle stations',
+        }
+      : {
+          ring: '#f59e0b',
+          glow: 'rgba(245,158,11,0.52)',
+          border: 'rgba(251,191,36,0.38)',
+          soft: 'rgba(120,53,15,0.16)',
+          label: 'Hunting',
+        }
+    : null;
   const leads = useGameStore((state) => state.leads);
   const knowledgeState = useGameStore((state) => state.knowledgeState);
 
@@ -1737,26 +1773,39 @@ export function UI() {
         <motion.div
           animate={hullDamageHudMotion}
           transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
-          className="bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border border-[#2a2d3a]/50 pointer-events-auto
+          className="relative overflow-hidden bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border pointer-events-auto
             shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]"
+          style={{
+            borderColor: combatHudTone?.border ?? 'rgba(42,45,58,0.5)',
+            boxShadow: combatHudTone
+              ? `0 8px 32px rgba(0,0,0,0.42), 0 0 24px ${combatHudTone.soft}, inset 0 1px 0 rgba(255,255,255,0.05)`
+              : '0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)',
+          }}
         >
+          {combatHudTone && (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+              style={{ background: `linear-gradient(90deg, transparent, ${combatHudTone.border}, transparent)` }}
+            />
+          )}
           {/* Top section — portrait on the left, right column holds the
               identity strip over the info row (gold/food · time · crew). */}
           <div className={`flex items-stretch border-b border-[#3a3530]/30 ${isMobile ? 'gap-2 px-2.5 py-2' : 'gap-3 px-4 py-3'}`}>
             {(() => {
               // Ring color reflects captain's current expression/mood
-              const ringColor = captainExpression === 'Friendly' ? '#22c55e'
+              const moodRingColor = captainExpression === 'Friendly' ? '#22c55e'
                 : captainExpression === 'Smug' ? '#eab308'
                 : captainExpression === 'Fierce' ? '#ef4444'
+                : captainExpression === 'Rage' ? '#dc2626'
                 : captainExpression === 'Stern' ? '#f97316'
                 : captainExpression === 'Melancholy' ? '#6366f1'
                 : captainExpression === 'Curious' ? '#06b6d4'
                 : captain && captain.morale >= 85 ? '#22c55e'
                 : captain && captain.morale <= 25 ? '#ef4444'
                 : '#8b7a5e';
-              const glowColor = captainExpression
-                ? ringColor + '60'
-                : 'transparent';
+              const ringColor = combatHudTone?.ring ?? moodRingColor;
+              const glowColor = combatHudTone?.glow ?? (captainExpression ? ringColor + '60' : 'transparent');
+              const idleGlowSize = combatHudTone ? '22px' : captainExpression ? '12px' : '4px';
               return (
                 <button
                   onClick={() => { sfxOpen(); setDashboardState({ tab: 'crew', crewId: captain?.id }); }}
@@ -1770,7 +1819,7 @@ export function UI() {
                   onMouseLeave={(e) => {
                     const btn = e.currentTarget;
                     btn.style.borderColor = ringColor;
-                    btn.style.boxShadow = `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`;
+                    btn.style.boxShadow = `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${idleGlowSize} ${glowColor}`;
                     btn.style.transform = 'scale(1)';
                   }}
                   className="rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden
@@ -1779,12 +1828,16 @@ export function UI() {
                     width: isMobile ? 52 : 72,
                     height: isMobile ? 52 : 72,
                     border: `3px solid ${ringColor}`,
-                    boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${captainExpression ? '12px' : '4px'} ${glowColor}`,
+                    boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${idleGlowSize} ${glowColor}`,
                   }}
                   title={captain ? `${captain.name} — Ship Dashboard` : 'Ship Dashboard'}
                 >
                   {captain ? (
-                    <CrewPortraitSquare member={captain} size={isMobile ? 46 : 64} expressionOverride={captainExpression} />
+                    <CrewPortraitSquare
+                      member={captain}
+                      size={isMobile ? 46 : 64}
+                      expressionOverride={combatMode && playerMode === 'ship' ? 'Rage' : captainExpression}
+                    />
                   ) : (
                     <Users size={22} className="text-amber-400/80" />
                   )}
@@ -1976,7 +2029,10 @@ export function UI() {
             </button>
           </div>
           {minimapEnabled && (
-            <div className="relative group">
+            <div
+              className="relative group rounded-full transition-shadow duration-300"
+              style={combatHudTone ? { boxShadow: `0 0 18px ${combatHudTone.soft}, 0 0 0 1px ${combatHudTone.border}` } : undefined}
+            >
               <Minimap onClick={toggleLocalMap} size={isMobile ? 104 : 172} />
               <div
                 className={`absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap pointer-events-none ${isMobile ? 'px-1.5 py-0 text-[8px]' : 'px-2 py-0.5 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity duration-200'}`}
@@ -2179,6 +2235,7 @@ export function UI() {
                 <span
                   className="h-px w-12 bg-gradient-to-r from-transparent to-slate-300/35
                     group-hover:to-amber-300/55 transition-colors duration-300"
+                  style={combatHudTone ? { background: `linear-gradient(90deg, transparent, ${combatHudTone.border})` } : undefined}
                   aria-hidden
                 />
                 <span
@@ -2191,8 +2248,11 @@ export function UI() {
                     textTransform: 'uppercase',
                     fontVariationSettings: '"opsz" 48',
                     textShadow:
-                      '0 1px 2px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.75), 0 0 24px rgba(0,0,0,0.45)',
+                      combatHudTone
+                        ? `0 1px 2px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.75), 0 0 22px ${combatHudTone.glow}`
+                        : '0 1px 2px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.75), 0 0 24px rgba(0,0,0,0.45)',
                     paddingLeft: '0.26em', // optically center the letter-spaced word
+                    color: combatHudTone ? '#fff2f2' : undefined,
                   }}
                 >
                   {port.name}
@@ -2200,9 +2260,23 @@ export function UI() {
                 <span
                   className="h-px w-12 bg-gradient-to-l from-transparent to-slate-300/35
                     group-hover:to-amber-300/55 transition-colors duration-300"
+                  style={combatHudTone ? { background: `linear-gradient(270deg, transparent, ${combatHudTone.border})` } : undefined}
                   aria-hidden
                 />
               </span>
+              {combatHudTone && (
+                <span
+                  className="rounded-md border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
+                  style={{
+                    borderColor: combatHudTone.border,
+                    background: combatHudTone.soft,
+                    color: combatHudTone.ring,
+                    textShadow: `0 0 8px ${combatHudTone.glow}`,
+                  }}
+                >
+                  {combatHudTone.label}
+                </span>
+              )}
               {/* Meta line — faction · reputation */}
               <span
                 className="flex items-center gap-2 text-[10px] uppercase leading-none"
@@ -2463,7 +2537,7 @@ export function UI() {
 
       {/* Quests Panel — slide-out, sister to Journal. Renders above the
           Quests button. */}
-      <QuestsPanel open={showQuests} onClose={() => setShowQuests(false)} />
+      <QuestsPanel open={showQuests} onClose={() => setShowQuests(false)} dockOffset={!isMobile && showJournal} />
 
       <HelpModal
         open={showHelp}
@@ -2531,7 +2605,10 @@ export function UI() {
       <div
         data-testid="mobile-action-bar"
         className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
-        style={{ bottom: 'calc(0.75rem + var(--sai-bottom))' }}
+        style={{
+          bottom: 'calc(0.75rem + var(--sai-bottom))',
+          maxWidth: 'calc(100vw - var(--sai-left) - var(--sai-right) - 1rem)',
+        }}
       >
         {/* Mobile overflow popover — opens above the action bar */}
         <AnimatePresence>
@@ -2554,10 +2631,10 @@ export function UI() {
         </AnimatePresence>
 
         {/* Semi-transparent rectangular landing pad */}
-        <div className={`relative bg-[#0a0e18]/50 backdrop-blur-md border border-[#2a2d3a]/40 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.4)] ${isMobile ? 'px-3 py-2' : 'px-4 py-2.5'}`}>
+        <div className={`relative bg-[#0a0e18]/50 backdrop-blur-md border border-[#2a2d3a]/40 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.4)] ${isMobile ? 'px-2.5 py-2' : 'px-4 py-2.5'}`}>
           {/* Horizontal connecting rail */}
           <div className="absolute top-1/2 left-5 right-5 h-[2px] -translate-y-1/2 bg-gradient-to-r from-[#2a2520]/30 via-[#3a3530]/50 to-[#2a2520]/30 rounded-full" />
-          <div className={`relative flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}>
+          <div className={`relative flex items-center ${isMobile ? 'gap-1.5' : 'gap-3'}`}>
             {!isMobile && (
               <>
                 {/* Left group: Learn - Help - combat stance */}
@@ -3691,17 +3768,20 @@ const VIEW_MODE_LABELS: Record<string, string> = {
 function ViewModeButton() {
   const viewMode = useGameStore((state) => state.viewMode);
   const cycleViewMode = useGameStore((state) => state.cycleViewMode);
+  const { isMobile } = useIsMobile();
   const accentColor = '#34d399';
   const glowColor = '52,211,153';
+  const sizeClass = isMobile ? 'w-10 h-10' : 'w-8 h-8';
 
   return (
     <button
       onClick={cycleViewMode}
       aria-pressed={viewMode !== 'default'}
-      className="group relative w-8 h-8 rounded-full flex items-center justify-center
+      aria-label={`View: ${VIEW_MODE_LABELS[viewMode]}`}
+      className={`group relative ${sizeClass} rounded-full flex items-center justify-center
         bg-[#1a1e2e] border-2 border-[#3a3530]/50
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_1px_4px_rgba(0,0,0,0.4)]
-        transition-all duration-200 active:scale-95"
+        transition-all duration-200 active:scale-95`}
       style={{
         color: viewMode !== 'default' ? accentColor : '#6a6550',
         borderColor: viewMode !== 'default' ? accentColor + '66' : undefined,
@@ -3749,14 +3829,18 @@ function ActionBarButton({
   nudgeTarget?: string;
   onClick?: () => void;
 }) {
+  const { isMobile } = useIsMobile();
+  const sizeClass = isMobile ? 'w-10 h-10' : 'w-8 h-8';
+
   return (
     <button
       onClick={() => { sfxClick(); onClick?.(); }}
       data-nudge-target={nudgeTarget}
-      className="group relative w-8 h-8 rounded-full flex items-center justify-center
+      aria-label={label}
+      className={`group relative ${sizeClass} rounded-full flex items-center justify-center
         bg-[#1a1e2e] border-2
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_1px_4px_rgba(0,0,0,0.4)]
-        transition-all duration-200 active:scale-95"
+        transition-all duration-200 active:scale-95`}
       style={{
         color: active ? accentColor : '#6a6550',
         borderColor: active ? `${accentColor}99` : 'rgba(58,53,48,0.5)',
@@ -4144,9 +4228,8 @@ function getTrimCueColor(grade: ReturnType<typeof getWindTrimInfo>['grade']): st
 }
 
 function RotatingWindIcon() {
-  // windDirection is in radians with 0 = north (see gameStore). The lucide
-  // Wind glyph reads as flowing east at 0°, so offset by -90° to align the
-  // flow direction with the compass angle.
+  // windDirection is the direction the wind blows toward. The lucide Wind
+  // glyph reads as flowing east at 0°, so offset by -90° to align it.
   const windDirection = useGameStore((state) => state.windDirection);
   const rotation = windDirection * 180 / Math.PI - 90;
   return (
@@ -4248,7 +4331,7 @@ function WindPanel() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-[11px] font-bold text-slate-300">{windLabel}</div>
-          <div className="text-[10px] text-slate-500">Wind from {windCardinal} · {speedKnots} kn</div>
+          <div className="text-[10px] text-slate-500">Wind toward {windCardinal} · {speedKnots} kn</div>
         </div>
       </div>
 

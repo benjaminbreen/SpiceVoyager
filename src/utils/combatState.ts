@@ -17,6 +17,8 @@ export interface Projectile {
   weaponType: ProjectileWeaponType;
   owner: 'player' | 'npc';
   ownerId?: string;
+  distanceTraveled?: number;
+  maxDistance?: number;
   /** Accumulator for rocket-trail spawning — fires a smoke puff every
    *  ~50ms while positive. Only set for fireRocket projectiles. */
   trailClock?: number;
@@ -74,7 +76,7 @@ export function spawnProjectile(
   direction: THREE.Vector3,
   speed: number,
   weaponType: ProjectileWeaponType = 'swivelGun',
-  opts: { owner?: 'player' | 'npc'; ownerId?: string } = {},
+  opts: { owner?: 'player' | 'npc'; ownerId?: string; maxDistance?: number } = {},
 ) {
   // Rockets fly slower but longer — give them more life so they reach the
   // extreme range their damage/reload cost pays for.
@@ -86,6 +88,8 @@ export function spawnProjectile(
     weaponType,
     owner: opts.owner ?? 'player',
     ownerId: opts.ownerId,
+    distanceTraveled: opts.maxDistance ? 0 : undefined,
+    maxDistance: opts.maxDistance,
     trailClock: weaponType === 'fireRocket' ? 0 : undefined,
   };
   if (projectiles.length >= MAX_PROJECTILES) {
@@ -132,6 +136,10 @@ export function setActiveBowWeapon(weapon: WeaponType) {
 export let fireHeld = false;
 export function setFireHeld(held: boolean) { fireHeld = held; }
 
+// Per bow-mounted ship weapon reload timestamps (Date.now() ms). Mirrored for
+// the HUD; firing still uses lastFireTimeGlobal in GameScene as the authority.
+export const bowWeaponReload: Record<string, number> = {};
+
 // Broadside elevation charge — space held in combat ship mode fills this.
 // 0 = flat fire (ship-to-ship); 1 = maximum loft (shore bombardment).
 // Charge builds over 2.5 seconds, resets on key release.
@@ -152,6 +160,7 @@ export interface BroadsideShot {
   weaponType: ProjectileWeaponType;
   owner?: 'player' | 'npc';
   ownerId?: string;
+  maxDistance?: number;
   fired: boolean;
 }
 export const broadsideQueue: BroadsideShot[] = [];

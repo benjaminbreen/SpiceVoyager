@@ -24,8 +24,8 @@ function formatRewardChip(lead: Lead): string {
     }
     return parts.join(' · ');
   }
-  if (lead.reward.gold && lead.reward.gold >= 500) return 'a fat purse';
-  if (lead.reward.gold) return 'a small purse';
+  if (lead.reward.gold && lead.reward.gold >= 500) return `a fat purse (${lead.reward.gold} reales)`;
+  if (lead.reward.gold) return `a small purse (${lead.reward.gold} reales)`;
   if (lead.reward.rep) return 'goodwill';
   return 'a quiet favor';
 }
@@ -63,24 +63,24 @@ export function CommissionCard({ lead, currentDay, onAbandon }: CommissionCardPr
         type="button"
         onClick={() => setExpanded(e => !e)}
         aria-expanded={expanded}
-        className="w-full text-left flex items-start gap-4 p-4"
+        className="w-full text-left flex items-start gap-5 p-5"
       >
         <QuestIcon template={lead.template} size={56} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-3">
             <span
-              className="text-[18px] leading-[1.25] text-amber-50/95"
+              className="text-[24px] leading-[1.2] text-amber-50/95"
               style={{
                 fontFamily: '"Fraunces", serif',
                 fontWeight: 550,
-                letterSpacing: '0.005em',
+                letterSpacing: '-0.01em',
                 fontVariationSettings: '"opsz" 36',
               }}
             >
               {lead.title}
             </span>
-            <span className={`text-[11px] tabular-nums shrink-0 ${deadline.tone}`}
+            <span className={`text-[14px] tabular-nums shrink-0 ${deadline.tone}`}
               style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}
             >
               {deadline.label}
@@ -88,32 +88,31 @@ export function CommissionCard({ lead, currentDay, onAbandon }: CommissionCardPr
           </div>
 
           <div
-            className="mt-1 text-[12px] text-slate-400"
-            style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}
+            className="mt-1 text-[13px] text-slate-400"
+            style={{ fontFamily: '"DM Sans", sans-serif', fontStyle: 'italic' }}
           >
-            told to you by {lead.giverName}
+            from {lead.giverName}
           </div>
 
           <div
-            className={`mt-2 text-[13.5px] leading-[1.55] text-slate-300/90 italic
-              ${expanded ? '' : 'line-clamp-2'}`}
-            style={{ fontFamily: '"Fraunces", serif' }}
+            className={`mt-4 text-[15px] leading-[1.45] text-slate-200/95
+              ${expanded ? '' : 'line-clamp-6'}`}
+            style={{ fontFamily: '"DM Sans", sans-serif', fontWeight: 400 }}
           >
-            {lead.sourceQuote}
+            {lead.task}
           </div>
 
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
+          <div className="mt-4 flex items-center gap-3 flex-wrap">
             <span
-              className="text-[11.5px] text-amber-300/85 italic px-2 py-0.5 rounded
-                border border-amber-700/30 bg-amber-900/[0.08]"
-              style={{ fontFamily: '"Fraunces", serif' }}
+              className="text-[13px] font-medium text-amber-300/90"
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
             >
-              {reward}
+              REWARD: {reward}
             </span>
             {target && (
               <span
                 className="text-[11.5px] text-slate-300/85"
-                style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}
+                style={{ fontFamily: '"DM Sans", sans-serif', fontStyle: 'italic' }}
               >
                 <span className="text-slate-500 not-italic mr-1">→</span>{target}
               </span>
@@ -138,11 +137,11 @@ export function CommissionCard({ lead, currentDay, onAbandon }: CommissionCardPr
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-4 border-t border-white/[0.05] pt-3 space-y-3">
-              <div className="text-[13px] text-slate-300/95 leading-[1.6]"
-                style={{ fontFamily: '"Fraunces", serif' }}
+            <div className="px-5 pb-5 border-t border-white/[0.05] pt-4 space-y-4">
+              <div className="text-[14px] text-slate-400/90 leading-[1.55]"
+                style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}
               >
-                {lead.task}
+                "{lead.sourceQuote}"
               </div>
               <div className="flex justify-end">
                 <button

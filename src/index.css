@@ -3,9 +3,17 @@
 /* ── Mobile / touch baseline ──────────────────────────────────────────────
  * Touch-action: none on html/body stops iOS Safari from interpreting
  * drags as pull-to-refresh or page-scroll while the finger is on the 3D
- * canvas. Game.tsx sets h-screen on the root wrapper — overscroll-behavior
- * belt-and-braces against the rubber-band bounce.
+ * canvas. Game.tsx sizes the root wrapper to the visual viewport —
+ * overscroll-behavior belt-and-braces against the rubber-band bounce.
  */
+html,
+body,
+#root {
+  width: 100%;
+  height: var(--app-height);
+  overflow: hidden;
+}
+
 html,
 body {
   touch-action: none;
@@ -20,10 +28,23 @@ body {
  * `className="pb-[var(--sai-bottom)]"` etc. The fallbacks are 0 on
  * browsers that don't support env(). */
 :root {
+  --app-height: 100vh;
   --sai-top: env(safe-area-inset-top, 0px);
   --sai-right: env(safe-area-inset-right, 0px);
   --sai-bottom: env(safe-area-inset-bottom, 0px);
   --sai-left: env(safe-area-inset-left, 0px);
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
+}
+
+@media (max-width: 900px) {
+  body > a[href="https://vibej.am/"] {
+    display: none !important;
+  }
 }
 
 /* ── Design tokens — mirrored in src/theme/tokens.ts ───────────────────── */

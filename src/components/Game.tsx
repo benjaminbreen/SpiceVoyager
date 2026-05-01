@@ -24,6 +24,25 @@ const MOBILE_RENDER_PRESET = {
   wildlifeMotion: false,
 } as const;
 
+function installVisualViewportHeight() {
+  const setAppHeight = () => {
+    const height = window.visualViewport?.height ?? window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${height}px`);
+  };
+
+  setAppHeight();
+  window.visualViewport?.addEventListener('resize', setAppHeight);
+  window.visualViewport?.addEventListener('scroll', setAppHeight);
+  window.addEventListener('resize', setAppHeight);
+
+  return () => {
+    window.visualViewport?.removeEventListener('resize', setAppHeight);
+    window.visualViewport?.removeEventListener('scroll', setAppHeight);
+    window.removeEventListener('resize', setAppHeight);
+    document.documentElement.style.removeProperty('--app-height');
+  };
+}
+
 export function Game() {
   const testMode = getTestModeConfig();
   const { isMobile } = useIsMobile();
@@ -31,6 +50,8 @@ export function Game() {
   const [performanceStats, setPerformanceStats] = useState<PerformanceStats | null>(null);
   const showPerformanceRef = useRef(testMode.showPerformance);
   const mobilePresetAppliedRef = useRef(false);
+
+  useEffect(() => installVisualViewportHeight(), []);
 
   useEffect(() => {
     if (!isMobile || mobilePresetAppliedRef.current) return;
@@ -78,8 +99,8 @@ export function Game() {
       className="w-full bg-black overflow-hidden relative"
       // 100dvh — dynamic viewport height — tracks iOS Safari's URL bar
       // show/hide so the game doesn't get cropped when the bar appears.
-      // 100vh fallback for browsers that don't support dvh.
-      style={{ height: '100dvh', minHeight: '100vh', transform: 'translateZ(0)' }}
+      // --app-height is updated from visualViewport for Safari's bottom bar.
+      style={{ height: 'var(--app-height)', transform: 'translateZ(0)' }}
     >
       {transitionsDisabled && (
         <style>{`* { transition: none !important; animation: none !important; }`}</style>

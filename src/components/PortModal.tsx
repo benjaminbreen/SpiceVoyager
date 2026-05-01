@@ -15,6 +15,7 @@ import { MarketTabLedger } from './MarketTabLedger';
 import { PortBannerScene } from './PortBannerScene';
 import { TavernTab } from './TavernTab';
 import { LeadResolvePrompt } from './quests/LeadResolvePrompt';
+import { useIsMobile } from '../utils/useIsMobile';
 
 // Ports whose banner image is a magenta-keyed silhouette and should render
 // behind a live time-of-day sky scene rather than as a static `<img>`.
@@ -56,6 +57,13 @@ const PLACE_TABS: { id: PlaceTab; icon: typeof ShoppingBag; label: string; actio
   { id: 'tavern', icon: Beer, label: 'Tavern', action: 'Buy rounds and gather rumors' },
   { id: 'governor', icon: Building, label: 'Governor', action: 'Seek favor and permissions' },
 ];
+
+const MOBILE_TAB_LABEL: Record<PlaceTab, string> = {
+  market: 'Market',
+  shipyard: 'Yard',
+  tavern: 'Tavern',
+  governor: 'Gov',
+};
 
 const PORT_MUSIC_TRACKS = {
   mena: { src: '/music/portmusic/MENA%20tavern.mp3', gain: 0.32 },
@@ -581,6 +589,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
   // modal footer next to "Set Sail" and works from any tab.
   const [resting, setResting] = useState(false);
   const [restSummary, setRestSummary] = useState<RestSummary | null>(null);
+  const { isMobile } = useIsMobile();
 
   // Start/stop tab ambient soundscape (with regional climate layer)
   useEffect(() => {
@@ -661,6 +670,13 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
 
   // Image fallback chain: prefer jpg, then png, before falling back to gradients/text.
   const bannerSrc = getPortBannerCandidates(activePort.id, activeTab).find(src => !imageError[src]) ?? null;
+  const bannerHeightClass = isMobile
+    ? activeTab === 'overview'
+      ? 'h-36'
+      : 'h-28'
+    : activeTab === 'overview'
+      ? 'h-[14rem] md:h-[24rem] lg:h-[28rem] max-h-[38vh]'
+      : 'h-44 md:h-64 lg:h-72 max-h-[32vh]';
   const markImageError = (src: string | null) => {
     if (!src) return;
     setImageError(prev => ({ ...prev, [src]: true }));
@@ -669,14 +685,18 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
   return (
     <motion.div
       {...modalBackdropMotion}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-2 md:p-4 pointer-events-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4 pointer-events-auto"
       onClick={handleClose}
     >
       <motion.div
         data-testid="port-modal"
         onClick={(e) => e.stopPropagation()}
         {...modalPanelMotion}
-        className="w-full max-w-7xl h-full max-h-[92vh] bg-[#0c1019]/95 backdrop-blur-xl border border-[#2a2d3a]/50 rounded-2xl overflow-hidden flex shadow-[0_16px_64px_rgba(0,0,0,0.6)]"
+        className={`w-full bg-[#0c1019]/95 backdrop-blur-xl border border-[#2a2d3a]/50 overflow-hidden flex shadow-[0_16px_64px_rgba(0,0,0,0.6)] ${
+          isMobile
+            ? 'h-[var(--app-height)] max-h-none rounded-none'
+            : 'max-w-7xl h-full max-h-[92vh] rounded-2xl'
+        }`}
       >
         {/* ═══════ Left Sidebar (desktop) ═══════ */}
         <div className="hidden md:flex flex-col w-[88px] shrink-0 border-r border-white/[0.04] bg-[#080c14] items-center">
@@ -785,9 +805,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               nothing if no leads target this port. */}
           <LeadResolvePrompt />
           {/* Banner */}
-          <div data-testid="port-modal-banner" className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${
-            activeTab === 'overview' ? 'h-[14rem] md:h-[24rem] lg:h-[28rem] max-h-[38vh]' : 'h-44 md:h-64 lg:h-72 max-h-[32vh]'
-          }`}>
+          <div data-testid="port-modal-banner" className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${bannerHeightClass}`}>
             {(() => {
               const animated = activeTab === 'overview' ? ANIMATED_BANNER_PORTS[activePort.id] : undefined;
               if (animated) {
@@ -825,7 +843,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             </button>
 
             {/* Banner content — left: historical info, bottom: tab title and description */}
-            <div className="absolute inset-0 flex flex-col justify-between p-4 pb-14 md:p-6 z-10">
+            <div className="absolute inset-0 flex flex-col justify-end p-4 md:justify-between md:p-6 z-10">
               {/* Historical info panel (desktop — top-left of banner) */}
               {info && (
                 <div className="hidden md:flex items-start gap-5 text-[13px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
@@ -856,36 +874,39 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
                   {activePort.name} · {activePort.culture}
                 </div>
-                <h3 className="text-3xl md:text-4xl font-bold text-white/90 leading-tight"
+                <h3 className="text-2xl md:text-4xl font-bold text-white/90 leading-tight"
                   style={{ fontFamily: '"Fraunces", serif' }}>
                   {bannerTitle}
                 </h3>
                 {bannerText && (
-                  <p className="text-base md:text-lg text-white/55 mt-2 leading-relaxed"
+                  <p className="text-sm md:text-lg text-white/55 mt-1.5 md:mt-2 leading-relaxed overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] md:[display:block]"
                     style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
                     {bannerText}
                   </p>
                 )}
               </div>
             </div>
+          </div>
 
-            {/* Mobile tab bar overlapping banner bottom */}
-            <div className="absolute bottom-0 left-0 right-0 md:hidden flex items-center gap-1 px-3 pb-2 pt-8 overflow-x-auto
-              bg-gradient-to-t from-[#080c14]/70 to-transparent z-20">
+          {/* Mobile place switcher — outside the image so it remains readable
+              and does not compete with the hero copy. */}
+          <div className="md:hidden shrink-0 border-b border-white/[0.06] bg-[#080c14]/96 px-2.5 py-2">
+            <div className="grid grid-cols-5 gap-1">
               <button
                 type="button"
                 onClick={() => { sfxTab(); setActiveTab('overview'); }}
                 aria-selected={activeTab === 'overview'}
                 title="Overview"
-                className={`h-7 w-7 shrink-0 rounded-full border flex items-center justify-center overflow-hidden transition-all active:scale-95 ${
+                className={`flex h-11 flex-col items-center justify-center gap-0.5 rounded-lg border transition-all active:scale-95 ${
                   activeTab === 'overview'
-                    ? 'border-[#c9a84c]/60 bg-[#c9a84c]/10 text-[#c9a84c]'
-                    : 'border-white/[0.12] bg-white/[0.04] text-white/45 hover:text-white/75'
+                    ? 'border-[#c9a84c]/70 bg-[#c9a84c]/12 text-[#c9a84c] shadow-[0_0_12px_rgba(201,168,76,0.18)]'
+                    : 'border-white/[0.12] bg-white/[0.04] text-white/48'
                 }`}
               >
-                <span className="text-[11px] font-bold" style={{ fontFamily: '"Fraunces", serif' }}>
+                <span className="text-[13px] font-bold leading-none" style={{ fontFamily: '"Fraunces", serif' }}>
                   {activePort.name[0]}
                 </span>
+                <span className="text-[8px] font-bold uppercase tracking-[0.08em]" style={{ fontFamily: '"DM Sans", sans-serif' }}>Info</span>
               </button>
               {TABS.map(tab => {
                 const Icon = tab.icon;
@@ -896,21 +917,32 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                     data-testid={`port-tab-mobile-${tab.id}`}
                     onClick={() => { sfxTab(); setActiveTab(tab.id); }}
                     aria-selected={isActive}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold tracking-wider transition-all whitespace-nowrap
-                      ${isActive ? 'text-white bg-white/[0.12]' : 'text-white/40 hover:text-white/70'}`}
+                    className={`flex h-11 flex-col items-center justify-center gap-0.5 rounded-lg border text-[9px] font-bold uppercase tracking-[0.08em] transition-all active:scale-95 ${
+                      isActive
+                        ? 'border-white/[0.16] bg-white/[0.12] text-white'
+                        : 'border-white/[0.07] bg-white/[0.035] text-white/50'
+                    }`}
                     style={{ fontFamily: '"DM Sans", sans-serif' }}
                   >
-                    <Icon size={11} />
-                    {tab.label}
+                    <Icon size={13} style={{ color: isActive ? tab.accent : undefined }} />
+                    {MOBILE_TAB_LABEL[tab.id]}
                   </button>
                 );
               })}
-              <div className="ml-auto flex items-center gap-2 text-[9px]">
-                <span className="flex items-center gap-1 text-white/40">
-                  <Coins size={8} className="text-[#fbbf24]" />
-                  <span className="font-bold font-mono text-white/60">{gold.toLocaleString()}</span>
-                </span>
-              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[10px] text-white/45" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              <span className="flex items-center gap-1">
+                <Coins size={10} className="text-[#fbbf24]" />
+                <span className="font-bold font-mono text-white/70">{gold.toLocaleString()}</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <Anchor size={10} className="text-slate-500" />
+                <span className={`font-bold font-mono ${isFull ? 'text-red-300' : 'text-white/60'}`}>{currentCargo}/{stats.cargoCapacity}</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <Shield size={10} className={stats.hull < stats.maxHull * 0.3 ? 'text-red-300' : 'text-blue-300'} />
+                <span className="font-bold font-mono text-white/60">{stats.hull}/{stats.maxHull}</span>
+              </span>
             </div>
           </div>
 
@@ -919,7 +951,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               their own overflow-y-auto. Without this swap the chat just grew
               the wrapper and pushed the suggestion/input bar below the fold. */}
           <div
-            className={`flex-1 min-h-0 px-4 md:px-5 py-4 ${
+            className={`flex-1 min-h-0 px-3 md:px-5 py-3 md:py-4 ${
               activeTab === 'tavern'
                 ? 'flex flex-col overflow-hidden'
                 : 'overflow-y-auto'
@@ -939,7 +971,7 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                       style={{ fontFamily: '"DM Sans", sans-serif' }}>
                       Port Places
                     </div>
-                    <div className="grid grid-cols-2 gap-2 md:gap-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:gap-3">
                       {PLACE_TABS.map(place => {
                         const Icon = place.icon;
                         const placeInfo = info?.tabDescriptions[place.id];
@@ -950,10 +982,10 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                             key={place.id}
                             onMouseEnter={() => sfxHover()}
                             onClick={() => { sfxTab(); setActiveTab(place.id); }}
-                            className="group min-h-[140px] rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-3 text-left transition-all hover:bg-white/[0.055] hover:border-white/[0.11] active:scale-[0.99]"
+                            className="group min-h-[76px] rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-2.5 text-left transition-all hover:bg-white/[0.055] hover:border-white/[0.11] active:scale-[0.99] md:min-h-[140px] md:py-3"
                           >
-                            <div className="flex items-center gap-4">
-                              <div className="h-[110px] w-[110px] shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-[#111827] flex items-center justify-center">
+                            <div className="flex items-center gap-3 md:gap-4">
+                              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-white/[0.08] bg-[#111827] flex items-center justify-center md:h-[110px] md:w-[110px]">
                                 {placeImage ? (
                                   <img
                                     key={placeImage}
@@ -967,11 +999,11 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <div className="text-[16px] md:text-[17px] font-bold text-slate-200 leading-tight"
+                                <div className="text-[15px] md:text-[17px] font-bold text-slate-200 leading-tight"
                                   style={{ fontFamily: '"Fraunces", serif' }}>
                                   {placeInfo?.title ?? place.label}
                                 </div>
-                                <div className="mt-1.5 text-[11px] md:text-[12px] uppercase tracking-[0.14em] text-slate-600 group-hover:text-slate-500 transition-colors"
+                                <div className="mt-1 text-[10px] md:mt-1.5 md:text-[12px] uppercase tracking-[0.14em] text-slate-600 group-hover:text-slate-500 transition-colors"
                                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
                                   {place.action}
                                 </div>
@@ -1309,24 +1341,27 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
           </div>
 
           {/* Footer */}
-          <div className="shrink-0 border-t border-white/[0.04] px-5 py-2.5 flex items-center justify-end gap-2">
+          <div
+            className="shrink-0 border-t border-white/[0.04] px-3 py-2 md:px-5 md:py-2.5 flex items-center justify-end gap-2"
+            style={isMobile ? { paddingBottom: 'calc(0.5rem + var(--sai-bottom))' } : undefined}
+          >
             <button
               onClick={handleRest}
               disabled={gold < restCost || resting}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-[15px] font-bold tracking-[0.08em] uppercase
+              className="flex min-h-11 flex-1 items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] md:flex-none md:px-6 md:text-[15px] font-bold tracking-[0.08em] uppercase
                 text-slate-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all active:scale-95
                 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-300 disabled:hover:border-white/[0.08]"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
               title={`Sleep at the ${lodgingName} until morning`}
             >
-              <Moon size={18} /> Rest at {lodgingName}
+              <Moon size={17} /> <span className="truncate">Rest</span><span className="hidden md:inline"> at {lodgingName}</span>
               <span className="ml-1 text-[12px] font-normal text-slate-500 tracking-normal normal-case">
                 {restCost}g
               </span>
             </button>
             <button
               onClick={handleClose}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-[15px] font-bold tracking-[0.08em] uppercase
+              className="flex min-h-11 flex-1 items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] md:flex-none md:px-6 md:text-[15px] font-bold tracking-[0.08em] uppercase
                 text-slate-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all active:scale-95"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
             >

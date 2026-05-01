@@ -10,9 +10,10 @@ import { CommissionCard } from './quests/CommissionCard';
 interface QuestsPanelProps {
   open: boolean;
   onClose: () => void;
+  dockOffset?: boolean;
 }
 
-export function QuestsPanel({ open, onClose }: QuestsPanelProps) {
+export function QuestsPanel({ open, onClose, dockOffset = false }: QuestsPanelProps) {
   const leads = useGameStore(s => s.leads);
   const dayCount = useGameStore(s => s.dayCount);
   const failLead = useGameStore(s => s.failLead);
@@ -33,9 +34,9 @@ export function QuestsPanel({ open, onClose }: QuestsPanelProps) {
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: -20, scale: 0.97 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.25, 1] }}
-          className="absolute bottom-[4.5rem] left-4 w-[620px] max-h-[640px] flex flex-col
+          className={`absolute bottom-[4.5rem] ${dockOffset ? 'left-[21.5rem]' : 'left-4'} w-[620px] max-w-[calc(100vw-2rem)] max-h-[640px] flex flex-col
             bg-[#0a0e18]/74 backdrop-blur-xl border border-[#2a2d3a]/55 rounded-xl
-            shadow-[0_8px_32px_rgba(0,0,0,0.55)] pointer-events-auto z-30 overflow-hidden"
+            shadow-[0_8px_32px_rgba(0,0,0,0.55)] pointer-events-auto z-30 overflow-hidden`}
         >
           {/* Header — Fraunces title to mirror the period-correspondence
               register; matches the "Captain's Log" cadence of the Journal. */}
@@ -43,15 +44,10 @@ export function QuestsPanel({ open, onClose }: QuestsPanelProps) {
             <div className="flex items-center gap-3">
               <Scroll size={15} className="text-amber-400/85" strokeWidth={1.6} />
               <span
-                className="text-[15px] text-amber-50/95 leading-none"
-                style={{
-                  fontFamily: '"Fraunces", serif',
-                  fontWeight: 550,
-                  letterSpacing: '0.02em',
-                  fontVariationSettings: '"opsz" 36',
-                }}
+                className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-300 leading-none"
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
               >
-                Standing Errands
+                Commissions
               </span>
             </div>
             <button

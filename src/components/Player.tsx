@@ -40,6 +40,8 @@ const WALK_GAIT_RATE = 10;
 const RUN_GAIT_RATE = 15;
 const WALK_STRIDE = 0.5;
 const RUN_STRIDE = 0.72;
+const TORCH_NIGHT_START = 19;
+const TORCH_NIGHT_END = 5.5;
 
 // ── Rig measurements (single source of truth — change here to scale the figure) ──
 const RIG = {
@@ -82,11 +84,16 @@ export function Player() {
   const weaponPivot = useRef<THREE.Group>(null);
   const musketGroup = useRef<THREE.Group>(null);
   const bowGroup = useRef<THREE.Group>(null);
+  const torchGroup = useRef<THREE.Group>(null);
+  const torchFlameMat = useRef<THREE.MeshStandardMaterial>(null);
+  const torchHaloMat = useRef<THREE.MeshBasicMaterial>(null);
+  const torchLight = useRef<THREE.PointLight>(null);
 
   const setWalkingTransform = useGameStore((state) => state.setWalkingTransform);
   const playerMode = useGameStore((state) => state.playerMode);
   const paused = useGameStore((state) => state.paused);
   const viewMode = useGameStore((state) => state.viewMode);
+  const timeOfDay = useGameStore((state) => state.timeOfDay);
 
   // Build a spatial index of the current port's roads once per port load.
   // The useFrame loop hits this for every ground-height query; bucketing by
@@ -124,6 +131,13 @@ export function Player() {
   const _camForward = useRef(new THREE.Vector3());
   const _camRight = useRef(new THREE.Vector3());
   const rimPatchedFrames = useRef(0);
+
+  const torchNightFactor = useMemo(() => {
+    const h = ((timeOfDay % 24) + 24) % 24;
+    const afterDusk = THREE.MathUtils.smoothstep(h, TORCH_NIGHT_START, TORCH_NIGHT_START + 1.25);
+    const beforeDawn = 1 - THREE.MathUtils.smoothstep(h, TORCH_NIGHT_END, TORCH_NIGHT_END + 1.0);
+    return h >= TORCH_NIGHT_START ? afterDusk : beforeDawn;
+  }, [timeOfDay]);
 
   useEffect(() => {
     const movementKeyFor = (e: KeyboardEvent): keyof typeof keys.current | null => {
@@ -209,6 +223,22 @@ export function Player() {
       rimPatchedFrames.current += 1;
     }
     updateRimFromFog(state.scene);
+    if (torchGroup.current && torchFlameMat.current && torchHaloMat.current && torchLight.current) {
+      const showWeapon = useGameStore.getState().combatMode;
+      const visible = torchNightFactor > 0.02 && !showWeapon;
+      torchGroup.current.visible = visible;
+      if (visible) {
+        const flicker = 0.82
+          + Math.sin(state.clock.elapsedTime * 18.0) * 0.10
+          + Math.sin(state.clock.elapsedTime * 31.0) * 0.06;
+        const intensity = torchNightFactor * flicker;
+        torchFlameMat.current.emissiveIntensity = 2.7 * intensity;
+        torchHaloMat.current.opacity = Math.min(0.45, 0.28 * intensity);
+        torchLight.current.intensity = 1.35 * intensity;
+        torchLight.current.distance = 9 + intensity * 4;
+        torchGroup.current.scale.setScalar(0.95 + Math.sin(state.clock.elapsedTime * 23.0) * 0.045);
+      }
+    }
     if (playerMode !== 'walking' || !group.current || paused) return;
     const store = useGameStore.getState();
     const walking = getLiveWalkingTransform();
@@ -705,6 +735,52 @@ export function Player() {
                 <sphereGeometry args={[RIG.handR, 8, 6]} />
                 <meshStandardMaterial color={skin} roughness={0.85} />
               </mesh>
+              <group
+                ref={torchGroup}
+                position={[0.02, -RIG.forearmLen - RIG.handR * 0.9, 0.13]}
+                rotation={[0.25, 0, -0.15]}
+                visible={torchNightFactor > 0.02}
+              >
+                <mesh position={[0, -0.11, 0]} rotation={[0, 0, 0.12]} castShadow>
+                  <cylinderGeometry args={[0.024, 0.03, 0.45, 7]} />
+                  <meshStandardMaterial color="#3a2112" roughness={0.95} />
+                </mesh>
+                <mesh position={[0, 0.13, 0]} castShadow>
+                  <cylinderGeometry args={[0.04, 0.033, 0.08, 7]} />
+                  <meshStandardMaterial color="#1c120c" roughness={0.85} />
+                </mesh>
+                <mesh position={[0, 0.21, 0]}>
+                  <sphereGeometry args={[0.075, 10, 8]} />
+                  <meshStandardMaterial
+                    ref={torchFlameMat}
+                    color="#ff8a24"
+                    emissive="#ff5a16"
+                    emissiveIntensity={torchNightFactor * 2.4}
+                    roughness={0.35}
+                    toneMapped={false}
+                  />
+                </mesh>
+                <mesh position={[0, 0.21, 0]}>
+                  <sphereGeometry args={[0.22, 12, 8]} />
+                  <meshBasicMaterial
+                    ref={torchHaloMat}
+                    color="#ff9a3a"
+                    transparent
+                    opacity={torchNightFactor * 0.25}
+                    depthWrite={false}
+                    blending={THREE.AdditiveBlending}
+                    toneMapped={false}
+                  />
+                </mesh>
+                <pointLight
+                  ref={torchLight}
+                  position={[0, 0.18, 0]}
+                  color="#ff8a24"
+                  intensity={torchNightFactor * 1.1}
+                  distance={10}
+                  decay={2}
+                />
+              </group>
             </group>
           </group>
 

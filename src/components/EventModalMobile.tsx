@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { Sailboat } from 'lucide-react';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, type Nationality } from '../store/gameStore';
 import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import { parchment } from '../theme/tokens';
 import { FACTIONS } from '../constants/factions';
-import { FactionFlag } from './FactionFlag';
 
 const CHARTING_MESSAGES = [
   'Charting harbors…',
@@ -21,6 +20,19 @@ const CHARTING_MESSAGES = [
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 const SERIF = '"Fraunces", serif';
 const COMMISSION_EASE = [0.2, 0.8, 0.25, 1] as const;
+const SEAL_GRID_SRC = '/icons/seal icon grid.png';
+
+const SEAL_GRID_POSITION: Partial<Record<Nationality, [number, number]>> = {
+  English: [0, 0],
+  Portuguese: [1, 0],
+  Dutch: [2, 0],
+  Spanish: [0, 1],
+  Venetian: [1, 1],
+  Omani: [2, 1],
+  Chinese: [0, 2],
+  Pirate: [1, 2],
+  Gujarati: [2, 2],
+};
 
 const panelMotion: Variants = {
   hidden: { opacity: 0, scale: 0.965, y: 14 },
@@ -117,7 +129,7 @@ function StatMeter({ value, max, color }: { value: number; max: number; color: s
 function Corner({ pos }: { pos: 'tl' | 'tr' | 'bl' | 'br' }) {
   const style: React.CSSProperties = {
     position: 'absolute',
-    width: 18,
+    width: 24,
     height: 18,
     pointerEvents: 'none',
     borderColor: `${parchment.gold}99`,
@@ -149,61 +161,31 @@ function ManifestRow({ children, last = false }: { children: React.ReactNode; la
   );
 }
 
-function FactionSeal({ factionId }: { factionId: typeof FACTIONS[keyof typeof FACTIONS]['id'] }) {
+function FactionSeal({ factionId }: { factionId: Nationality }) {
   const faction = FACTIONS[factionId];
-  const [field, device, accent] = faction.colors;
-  const sealColor = factionId === 'Pirate' ? '#1b1714' : field;
-  const readableDevice = /^#f+$/i.test(device.replace('#', '')) ? parchment.bright : device;
+  const pos = SEAL_GRID_POSITION[factionId];
+  if (!faction || !pos) return null;
+
+  const [col, row] = pos;
+  const bgX = col * 50;
+  const bgY = row * 50;
 
   return (
     <motion.div
       variants={revealMotion}
-      className="absolute right-7 top-7 z-20 hidden select-none sm:block"
+      className="absolute right-1 rotate-10 top-2 z-20 hidden h-[120px] w-[120px] select-none sm:block"
       title={faction.displayName}
-      whileHover={{ rotate: -2, scale: 1.035 }}
+      whileHover={{ rotate: -5, scale: 1.035 }}
       transition={{ duration: 0.18 }}
-      style={{ filter: 'drop-shadow(0 12px 18px rgba(0,0,0,0.48))' }}
+      style={{
+        backgroundImage: `url("${SEAL_GRID_SRC}")`,
+        backgroundSize: '300% 300%',
+        backgroundPosition: `${bgX}% ${bgY}%`,
+        backgroundRepeat: 'no-repeat',
+        filter: 'drop-shadow(0 10px 18px rgba(0,0,0,0.96))',
+      }}
     >
-      <div
-        className="relative grid h-[82px] w-[82px] place-items-center rounded-full"
-        style={{
-          background: `radial-gradient(circle at 34% 28%, rgba(255,236,190,0.36), transparent 22%), radial-gradient(circle at 50% 54%, ${sealColor} 0%, ${sealColor} 44%, #4c261e 72%, #1a0d0a 100%)`,
-          boxShadow: `inset 0 3px 5px rgba(255,231,176,0.24), inset 0 -10px 14px rgba(0,0,0,0.46), 0 0 0 1px rgba(255,218,138,0.18), 0 0 0 4px rgba(87,42,28,0.82)`,
-        }}
-      >
-        <div
-          className="absolute inset-[7px] rounded-full border"
-          style={{ borderColor: `${accent}99`, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.42)' }}
-        />
-        <div
-          className="absolute inset-[13px] rounded-full"
-          style={{
-            background: 'radial-gradient(circle at 40% 28%, rgba(255,240,190,0.18), transparent 42%), rgba(6,5,4,0.28)',
-            boxShadow: 'inset 0 4px 10px rgba(0,0,0,0.58)',
-          }}
-        />
-        <div className="relative z-10 flex flex-col items-center gap-1">
-          <div
-            className="grid h-7 w-10 place-items-center rounded-[2px]"
-            style={{ boxShadow: '0 2px 5px rgba(0,0,0,0.45)' }}
-          >
-            <FactionFlag nationality={factionId} size={34} />
-          </div>
-          <div
-            className="max-w-[58px] truncate uppercase"
-            style={{
-              color: readableDevice,
-              fontFamily: MONO,
-              fontSize: 8,
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              textShadow: '0 1px 2px rgba(0,0,0,0.8)',
-            }}
-          >
-            {faction.shortName}
-          </div>
-        </div>
-      </div>
+      <span className="sr-only">{faction.displayName}</span>
     </motion.div>
   );
 }
@@ -356,10 +338,10 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
               <div
                 className="relative z-10 uppercase"
                 style={{
-                  fontSize: 'clamp(18px, 4.8vw, 31px)',
-                  fontWeight: 650,
+                  fontSize: 'clamp(18px, 4.8vw, 32px)',
+                  fontWeight: 200,
                   lineHeight: 1.05,
-                  letterSpacing: '0.24em',
+                  letterSpacing: '0.23em',
                   fontVariantCaps: 'small-caps',
                   fontVariationSettings: '"opsz" 48, "SOFT" 18, "WONK" 1',
                 }}
@@ -367,13 +349,13 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
                 Commission
               </div>
               <div className="mt-2 flex items-center justify-center gap-3">
-                <span className="h-px w-[19%]" style={{ background: `linear-gradient(to right, transparent, ${parchment.gold}95)` }} />
+                <span className="h-px w-[17%]" style={{ background: `linear-gradient(to right, transparent, ${parchment.gold}95)` }} />
                 <span
                   style={{
                     color: parchment.gold,
                     fontSize: 'clamp(14px, 3.5vw, 19px)',
                     fontStyle: 'italic',
-                    fontWeight: 520,
+                    fontWeight: 300,
                     lineHeight: 1,
                     letterSpacing: 0,
                     fontVariationSettings: '"opsz" 48, "SOFT" 42, "WONK" 1',
@@ -385,9 +367,9 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
                   className="uppercase"
                   style={{
                     fontSize: 'clamp(26px, 7vw, 45px)',
-                    fontWeight: 680,
-                    lineHeight: 0.92,
-                    letterSpacing: '0.08em',
+                    fontWeight: 400,
+                    lineHeight: 0.8,
+                    letterSpacing: '0.1em',
                     fontVariantCaps: 'small-caps',
                     fontVariationSettings: '"opsz" 72, "SOFT" 24, "WONK" 1',
                   }}

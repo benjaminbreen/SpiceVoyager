@@ -107,6 +107,7 @@ export function TouchControls() {
 const JOY_RADIUS = 52;       // knob travel in px
 const JOY_BASE = 120;        // total base diameter in px
 const JOY_INSET = 24;        // distance from viewport corner
+const ACTION_BAR_CLEARANCE = 76;
 
 function VirtualJoystick({ target }: { target: 'walk' | 'ship' }) {
   const baseRef = useRef<HTMLDivElement>(null);
@@ -170,7 +171,7 @@ function VirtualJoystick({ target }: { target: 'walk' | 'ship' }) {
       className="absolute rounded-full border-2 border-amber-900/60 bg-[#0a0e18]/30 backdrop-blur-sm pointer-events-auto"
       style={{
         left: JOY_INSET,
-        bottom: JOY_INSET + 60, // sit above action bar (~60px tall)
+        bottom: JOY_INSET + ACTION_BAR_CLEARANCE,
         width: JOY_BASE,
         height: JOY_BASE,
         touchAction: 'none',
@@ -245,7 +246,7 @@ function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offset
 
   // Base bottom offset: clear the action bar. Shift further up when the sail
   // button or combat cluster is present so zoom out sits immediately above.
-  const baseBottom = 24 + 60;
+  const baseBottom = 24 + ACTION_BAR_CLEARANCE;
   let zoomOutBottom = baseBottom;
   if (offsetSail) zoomOutBottom = baseBottom + 96;
   else if (offsetCombat) zoomOutBottom = baseBottom + 180; // combat cluster is taller
@@ -330,7 +331,7 @@ function CombatTouchPanel({ playerMode }: { playerMode: 'ship' | 'walking' }) {
 
         {/* Starboard broadside — below fire */}
         <CombatButton
-          bottom={32}
+          bottom={72}
           right={54}
           size={52}
           label="STBD"

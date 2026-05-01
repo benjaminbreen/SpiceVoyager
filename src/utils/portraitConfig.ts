@@ -199,7 +199,7 @@ const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
 
 // ── Portrait config type ─────────────────────────────────
 
-export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce';
+export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce' | 'Rage';
 export type AgeRange = '20s' | '30s' | '40s' | '50s' | '60s';
 export type Gender = 'Male' | 'Female';
 export type SocialClass = 'Working' | 'Merchant' | 'Noble';

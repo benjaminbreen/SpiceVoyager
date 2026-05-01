@@ -89,6 +89,8 @@ export interface POIDefinition {
   cost: POICost;
   npcName: string;
   npcRole: string;
+  /** Plain first-look description shown before the player enters. */
+  arrivalDescription?: string;
   /** Free-form context fed to the LLM in the Converse tab. */
   lore: string;
   /** Optional: visiting unlocks knowledge of another port. */
@@ -322,6 +324,7 @@ export const POI_DEFINITIONS: POIDefinition[] = [
     cost: { type: 'gold', amount: 45 },
     npcName: 'Hakim Yusuf bin Ahmad al-Mahri',
     npcRole: 'Mahri tree-tapper, lay physician',
+    arrivalDescription: "You come onto a dry limestone shelf dotted with dragon's blood trees. Their pale trunks fork into flat green crowns, and a small stone hut stands inside a low wall. Clay pots near the trees hold dark red resin.",
     lore: "The dragon's blood tree, dam al-akhawayn — \"the blood of the two brothers\" — is a Dracaena that grows only on Socotra's limestone plateau. Yusuf is from the Mahra coast, comes up to Diksam each spring to slit the bark and collect the dark crimson resin in clay pots. The resin sells across the Indian Ocean as a varnish, a wound-staunch, a tooth-paste, a rumored aphrodisiac. He keeps a small stone hut here with a thatched roof of date-palm leaf, brews qishr coffee for visitors, and considers the Portuguese garrison at Hadibo (down the mountain, to the north coast) a noisy nuisance. He's quietly a Sufi of the Ba ʻAlawi tariqa — the island has a long Hadhrami Sufi history that long predates Islam's arrival here in the 9th century.",
   },
 

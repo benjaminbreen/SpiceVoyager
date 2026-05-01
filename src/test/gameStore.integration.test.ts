@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALL_COMMODITIES_FULL, type Commodity } from '../utils/commodities';
 import { estimateSeaTravel } from '../utils/worldPorts';
 import { useGameStore, type CargoStack, type CrewMember, type Port } from '../store/gameStore';
+import type { POIDefinition, POIReward } from '../utils/poiDefinitions';
 
 type StoreState = ReturnType<typeof useGameStore.getState>;
 
@@ -57,6 +58,26 @@ function makePort(overrides: Partial<Port> & Pick<Port, 'id' | 'name'>): Port {
     prices: { ...basePrices },
     buildings: [],
     ...overrides,
+  };
+}
+
+function makeGeneratedPOI(reward: POIReward, id = 'goa-proc-0-test'): POIDefinition {
+  return {
+    id,
+    name: 'Test Site',
+    kind: 'wreck',
+    class: 'civic',
+    port: 'goa',
+    location: { kind: 'hinterland', position: [40, 40] },
+    knowledgeDomain: [],
+    masteryGoods: [],
+    cost: { type: 'gold', amount: 0 },
+    npcName: 'The site itself',
+    npcRole: 'unattended place',
+    lore: 'A test site beyond the road.',
+    generated: true,
+    hasKeeper: false,
+    reward,
   };
 }
 
@@ -295,5 +316,90 @@ describe('gameStore integration', () => {
     expect(state.knowledgeState.Tea).toBe(1);
     expect(state.notifications.at(-1)?.message).toBe('Identified: Tea');
     expect(state.journalEntries.at(-1)?.message).toContain('Through a dockside broker');
+  });
+
+  it('claims a generated journal POI reward only once', () => {
+    const poi = makeGeneratedPOI({ type: 'journal', entryKey: 'test-site' });
+    useGameStore.setState({
+      claimedPOIRewards: [],
+      poiRewardResults: {},
+      journalEntries: [],
+      notifications: [],
+    } as Partial<StoreState>);
+
+    const first = useGameStore.getState().claimPOIReward(poi);
+    const second = useGameStore.getState().claimPOIReward(poi);
+    const state = useGameStore.getState();
+
+    expect(first.status).toBe('journal');
+    expect(second.status).toBe('journal');
+    expect(state.claimedPOIRewards).toEqual([poi.id]);
+    expect(state.journalEntries).toHaveLength(1);
+  });
+
+  it('claims a generated cargo reward with deterministic amount and provenance', () => {
+    const poi = makeGeneratedPOI({ type: 'cargo', commodityId: 'Black Pepper', min: 1, max: 3, chance: 1 }, 'goa-proc-0-cargo');
+    useGameStore.setState({
+      cargo: makeCommodityRecord(0),
+      cargoProvenance: [],
+      claimedPOIRewards: [],
+      poiRewardResults: {},
+      stats: { ...useGameStore.getState().stats, cargoCapacity: 10 },
+      journalEntries: [],
+      notifications: [],
+    } as Partial<StoreState>);
+
+    const first = useGameStore.getState().claimPOIReward(poi);
+    const amount = first.status === 'cargo' ? first.amount : 0;
+    const second = useGameStore.getState().claimPOIReward(poi);
+    const state = useGameStore.getState();
+
+    expect(first.status).toBe('cargo');
+    expect(second).toEqual(first);
+    expect(amount).toBeGreaterThanOrEqual(1);
+    expect(amount).toBeLessThanOrEqual(3);
+    expect(state.cargo['Black Pepper']).toBe(amount);
+    expect(state.cargoProvenance).toMatchObject([
+      { commodity: 'Black Pepper', actualCommodity: 'Black Pepper', amount, acquiredPort: `poi:${poi.id}` },
+    ]);
+  });
+
+  it('does not claim a generated cargo reward when the hold lacks weight capacity', () => {
+    const poi = makeGeneratedPOI({ type: 'cargo', commodityId: 'Hides', min: 1, max: 1, chance: 1 }, 'goa-proc-0-heavy-cargo');
+    useGameStore.setState({
+      cargo: makeCommodityRecord(0),
+      cargoProvenance: [],
+      claimedPOIRewards: [],
+      poiRewardResults: {},
+      stats: { ...useGameStore.getState().stats, cargoCapacity: 1 },
+      notifications: [],
+    } as Partial<StoreState>);
+
+    const result = useGameStore.getState().claimPOIReward(poi);
+    const state = useGameStore.getState();
+
+    expect(result).toEqual({ status: 'full', commodityId: 'Hides' });
+    expect(state.claimedPOIRewards).toEqual([]);
+    expect(state.cargo.Hides).toBe(0);
+    expect(state.cargoProvenance).toEqual([]);
+  });
+
+  it('claims generated knowledge rewards without downgrading known commodities', () => {
+    const poi = makeGeneratedPOI({ type: 'knowledge', commodityId: 'Indigo', level: 1 }, 'goa-proc-0-knowledge');
+    useGameStore.setState({
+      knowledgeState: { Indigo: 2 },
+      claimedPOIRewards: [],
+      poiRewardResults: {},
+      journalEntries: [],
+      notifications: [],
+    } as Partial<StoreState>);
+
+    const result = useGameStore.getState().claimPOIReward(poi);
+    const state = useGameStore.getState();
+
+    expect(result).toEqual({ status: 'knowledge', commodityId: 'Indigo', learned: false });
+    expect(state.knowledgeState.Indigo).toBe(2);
+    expect(state.claimedPOIRewards).toEqual([poi.id]);
+    expect(state.journalEntries.at(-1)?.message).toContain('already knew');
   });
 });

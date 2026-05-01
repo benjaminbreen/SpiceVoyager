@@ -17,6 +17,7 @@ import {
   PORT_FACTION,
   useGameStore,
   type Port,
+  type POIRewardClaimResult,
 } from '../store/gameStore';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import type { POIDefinition } from '../utils/poiDefinitions';
@@ -98,6 +99,8 @@ export function POIModalV2({
   );
   const markPOIDiscovered = useGameStore((state) => state.markPOIDiscovered);
   const claimPOIReward = useGameStore((state) => state.claimPOIReward);
+  const claimedPOIRewards = useGameStore((state) => state.claimedPOIRewards);
+  const rewardResult = useGameStore((state) => state.poiRewardResults[poi.id]);
   const [entered, setEntered] = useState(false);
   const [tab, setTab] = useState<Tab>('learn');
   const [npcStanding, setNpcStanding] = useState<NpcStanding>(0);
@@ -135,6 +138,7 @@ export function POIModalV2({
 
   const hasRecordView = !hasLearnTab && !hasConverseTab;
   const activeTab = hasLearnTab ? tab : hasConverseTab ? 'converse' : 'learn';
+  const rewardClaimed = claimedPOIRewards.includes(poi.id);
 
   return (
     <AnimatePresence>
@@ -159,7 +163,7 @@ export function POIModalV2({
           exit={{ opacity: 0, scale: 0.97, y: 10 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.25, 1] }}
           className="relative grid w-[min(820px,calc(100vw-1.5rem))] max-h-[min(780px,calc(100vh-1.5rem))]
-            grid-cols-1 overflow-hidden rounded-xl md:grid-cols-[190px_minmax(0,1fr)] md:overflow-visible
+            grid-cols-1 overflow-hidden rounded-xl md:min-h-[min(660px,calc(100vh-3rem))] md:w-[min(1040px,calc(100vw-3rem))] md:grid-cols-[210px_minmax(0,1fr)] md:overflow-visible lg:grid-cols-[230px_minmax(0,1fr)]
             border bg-[#0c0b08]/96 shadow-[0_22px_70px_rgba(0,0,0,0.72),inset_0_1px_0_rgba(255,232,164,0.08)]"
           style={{
             borderColor: shell.accentSoft,
@@ -184,7 +188,7 @@ export function POIModalV2({
           <section className="relative min-w-0 flex max-h-[min(780px,calc(100vh-1.5rem))] flex-col">
             {hasModelPreview && (
               <div
-                className="pointer-events-auto absolute -right-6 top-3 z-30 hidden h-44 w-[20rem] md:block lg:-right-8 lg:h-48 lg:w-[23rem] xl:h-52 xl:w-[25rem]"
+                className="pointer-events-auto absolute right-3 top-3 z-30 hidden h-44 w-[18rem] overflow-hidden md:block lg:h-48 lg:w-[21rem] xl:h-52 xl:w-[24rem]"
                 aria-label={`${poi.name} model preview. Drag to rotate.`}
               >
                 <div
@@ -201,7 +205,7 @@ export function POIModalV2({
 
             {!hasModelPreview && <CroppedMedallionOverlay shell={shell} asset={medallionAsset} />}
 
-            <header className={`relative border-b border-white/[0.08] px-5 py-4 md:px-8 md:py-6 ${hasModelPreview ? 'md:pr-[13.5rem] lg:pr-[15rem] xl:pr-[16.5rem]' : ''}`}>
+            <header className={`relative border-b border-white/[0.08] px-5 py-4 md:px-8 md:py-6 ${hasModelPreview ? 'md:pr-[19rem] lg:pr-[22rem] xl:pr-[25rem]' : ''}`}>
               <button
                 onClick={() => { sfxClose(); onDismiss(); }}
                 onMouseEnter={() => sfxHover()}
@@ -268,8 +272,16 @@ export function POIModalV2({
                 </nav>
 
                 <div className="min-h-0 flex-1 overflow-hidden">
+                  {poi.generated && !hasRecordView && (
+                    <GeneratedRewardNotice
+                      poi={poi}
+                      shell={shell}
+                      rewardResult={rewardResult}
+                      rewardClaimed={rewardClaimed}
+                    />
+                  )}
                   {activeTab === 'learn' && hasLearnTab && <LearnTab poi={poi} shell={shell} />}
-                  {hasRecordView && <RecordTab poi={poi} shell={shell} />}
+                  {hasRecordView && <RecordTab poi={poi} shell={shell} rewardResult={rewardResult} rewardClaimed={rewardClaimed} />}
                   {activeTab === 'converse' && port && hasConverseTab && (
                     <ConverseTab
                       poi={poi}
@@ -290,6 +302,43 @@ export function POIModalV2({
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+function GeneratedRewardNotice({
+  poi,
+  shell,
+  rewardResult,
+  rewardClaimed,
+}: {
+  poi: POIDefinition;
+  shell: POIShell;
+  rewardResult?: POIRewardClaimResult;
+  rewardClaimed: boolean;
+}) {
+  const rewardCopy = describePOIRewardResult(poi, rewardResult, rewardClaimed);
+  return (
+    <div className="border-b px-5 py-3 md:px-8" style={{ borderColor: shell.accentSoft }}>
+      <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3">
+        <div
+          className="grid h-[34px] w-[34px] place-items-center rounded-full text-[12px] font-bold text-[#211707]"
+          style={{
+            background: shell.medallion,
+            boxShadow: 'inset 0 1px 1px rgba(255,242,190,0.42), inset 0 -2px 4px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28)',
+          }}
+        >
+          ✓
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-[560] text-[#e8ddbf]" style={{ fontFamily: '"Fraunces", serif' }}>
+            {rewardCopy.title}
+          </div>
+          <div className="mt-0.5 text-[12px] leading-[1.4] text-[#8e856f]">
+            {rewardCopy.detail}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -800,7 +849,18 @@ function CommodityLessonIcon({
   );
 }
 
-function RecordTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
+function RecordTab({
+  poi,
+  shell,
+  rewardResult,
+  rewardClaimed,
+}: {
+  poi: POIDefinition;
+  shell: POIShell;
+  rewardResult?: POIRewardClaimResult;
+  rewardClaimed: boolean;
+}) {
+  const rewardCopy = describePOIRewardResult(poi, rewardResult, rewardClaimed);
   return (
     <div className="h-full overflow-y-auto px-5 py-5 md:px-8">
       <p
@@ -821,15 +881,64 @@ function RecordTab({ poi, shell }: { poi: POIDefinition; shell: POIShell }) {
         </div>
         <div>
           <div className="text-[15px] font-[560] text-[#e8ddbf]" style={{ fontFamily: '"Fraunces", serif' }}>
-            Recorded in the journal
+            {rewardCopy.title}
           </div>
           <div className="mt-1 text-[12.5px] leading-[1.45] text-[#8e856f]">
-            This site has no keeper; its value is in observation and local memory.
+            {rewardCopy.detail}
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function describePOIRewardResult(
+  poi: POIDefinition,
+  result: POIRewardClaimResult | undefined,
+  rewardClaimed: boolean,
+): { title: string; detail: string } {
+  if (!poi.generated) {
+    return {
+      title: 'Recorded in the journal',
+      detail: 'This site has no keeper; its value is in observation and local memory.',
+    };
+  }
+  if (result?.status === 'cargo') {
+    return {
+      title: `Recovered ${result.amount} ${result.commodityId}`,
+      detail: 'The find has been stowed with this site as its provenance.',
+    };
+  }
+  if (result?.status === 'empty') {
+    return {
+      title: 'Already inspected',
+      detail: 'The place has been searched and recorded. No usable salvage was found.',
+    };
+  }
+  if (result?.status === 'full') {
+    return {
+      title: 'Hold full',
+      detail: `There may be ${result.commodityId} here, but the ship has no room for it.`,
+    };
+  }
+  if (result?.status === 'knowledge') {
+    return {
+      title: result.learned ? `Identified ${result.commodityId}` : `Confirmed ${result.commodityId}`,
+      detail: result.learned
+        ? 'The observation has been added to your working knowledge.'
+        : 'The signs matched what your crew already knew.',
+    };
+  }
+  if (result?.status === 'journal' || rewardClaimed) {
+    return {
+      title: 'Already inspected',
+      detail: 'The observation has been added to the journal.',
+    };
+  }
+  return {
+    title: 'Site inspected',
+    detail: 'The observation has been added to your record.',
+  };
 }
 
 function ConverseTab({
@@ -1081,6 +1190,7 @@ function thresholdBody(poi: POIDefinition, kind: AccessKind): string {
   if (kind === 'offering') {
     return `The threshold has its own custom. Before conversation or instruction, ${poi.npcName} expects the proper offering.`;
   }
+  if (poi.arrivalDescription) return poi.arrivalDescription;
   return `${poi.npcName} receives visitors here. You may enter, speak, and ask for instruction if you can pay for the lessons.`;
 }
 

@@ -53,6 +53,11 @@ export interface WeatherState {
   targetIntensity: number;
 }
 
+interface WindState {
+  direction: number;
+  speed: number;
+}
+
 // Per-climate odds of arriving to rain. Monsoon climates roll high because
 // every port flagged 'monsoon' (Surat in Aug, Cochin Jun-Sep, Masulipatnam) is
 // already location/season-coded for wet weather; arid coasts almost never.
@@ -74,6 +79,23 @@ function rollWeatherForPortId(portId: string | null): WeatherState {
     return { kind: 'rain', intensity: 0, targetIntensity: target };
   }
   return { kind: 'clear', intensity: 0, targetIntensity: 0 };
+}
+
+function rollWindForPortId(portId: string | null, weather: WeatherState): WindState {
+  const port = getWorldPortById(portId);
+  const climate: ClimateProfile = port?.climate ?? 'temperate';
+  const climateBase: Record<ClimateProfile, number> = {
+    monsoon: 0.58,
+    tropical: 0.48,
+    temperate: 0.52,
+    mediterranean: 0.44,
+    arid: 0.42,
+  };
+  const rainBoost = weather.targetIntensity * 0.25;
+  return {
+    direction: Math.random() * Math.PI * 2,
+    speed: Math.max(0.12, Math.min(1, climateBase[climate] + (Math.random() - 0.5) * 0.28 + rainBoost)),
+  };
 }
 
 export type { Commodity } from '../utils/commodities';
@@ -251,6 +273,15 @@ export interface Building {
     };
   };
 }
+
+export type POIRewardClaimResult =
+  | { status: 'none' }
+  | { status: 'already_claimed' }
+  | { status: 'journal' }
+  | { status: 'knowledge'; commodityId: Commodity; learned: boolean }
+  | { status: 'cargo'; commodityId: Commodity; amount: number }
+  | { status: 'empty' }
+  | { status: 'full'; commodityId: Commodity };
 
 export type RoadTier = 'path' | 'road' | 'avenue' | 'bridge';
 
@@ -816,7 +847,7 @@ export type CaptainAbility =
   | 'Chart Reader';      // reveals hidden ports
 
 // Captain portrait expression (mirrors portraitConfig.Personality)
-export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce';
+export type Personality = 'Friendly' | 'Stern' | 'Curious' | 'Smug' | 'Melancholy' | 'Neutral' | 'Weathered' | 'Fierce' | 'Rage';
 
 export type NotificationTier = 'port' | 'event' | 'ticker';
 
@@ -962,6 +993,8 @@ interface GameState {
   discoveredPOIs: string[];
   // POI ids whose one-time generated reward has been claimed.
   claimedPOIRewards: string[];
+  // Last resolved outcome for a generated POI reward, used by the modal when reopened.
+  poiRewardResults: Record<string, POIRewardClaimResult>;
 
   // Reputation per nationality (-100 to +100, starts at 0)
   reputation: Partial<Record<Nationality, number>>;
@@ -976,7 +1009,7 @@ interface GameState {
   dayCount: number;
 
   // Wind
-  windDirection: number; // radians, 0 = north, PI/2 = east
+  windDirection: number; // radians wind blows toward; 0 = north, PI/2 = east
   windSpeed: number;     // 0-1 normalized
 
   // Weather — rolled per port arrival, climate-driven. Drives RainOverlay
@@ -1054,7 +1087,7 @@ interface GameState {
   setNearestHailableNpc: (npc: NPCShipIdentity | null) => void;
   setActivePOI: (poi: import('../utils/poiDefinitions').POIDefinition | null) => void;
   markPOIDiscovered: (id: string) => void;
-  claimPOIReward: (poi: import('../utils/poiDefinitions').POIDefinition) => void;
+  claimPOIReward: (poi: import('../utils/poiDefinitions').POIDefinition) => POIRewardClaimResult;
   adjustReputation: (nationality: Nationality, delta: number) => void;
   getReputation: (nationality: Nationality) => number;
   discoverPort: (id: string) => void;
@@ -1513,6 +1546,16 @@ function tunePirateStartingCargo(cargo: Record<Commodity, number>, cargoCapacity
   cargo['Cannon Shot'] = Math.max(cargo['Cannon Shot'] ?? 0, Math.max(4, Math.floor(cargoCapacity / 22)));
 }
 
+function seedStartingAmmunition(cargo: Record<Commodity, number>, armament: WeaponType[]) {
+  const broadsideCount = armament.filter(w => !WEAPON_DEFS[w].aimable).length;
+  if (broadsideCount > 0) {
+    cargo['Cannon Shot'] = Math.max(cargo['Cannon Shot'] ?? 0, 60);
+  }
+  if (armament.includes('fireRocket')) {
+    cargo['War Rockets'] = Math.max(cargo['War Rockets'] ?? 0, 10);
+  }
+}
+
 // Per-ship starting hold (tons) and purse (reals). Humble ships reflect a
 // minor merchant's capital; grand ships imply investor/state backing and a
 // fuller hold. Dhow/Baghla (Omani) and Junk/Jong (Chinese) are the
@@ -1605,9 +1648,9 @@ if (_startingFaction === 'Pirate') {
 // Seed the hold with 10 war rockets if the starting ship mounts a rocket rack
 // (Junk / Jong). Without this the Chinese-start player would have an inert
 // weapon until reaching Macau.
-if (_startingArmament.includes('fireRocket')) {
-  _startingCargo['War Rockets'] = 10;
-}
+seedStartingAmmunition(_startingCargo, _startingArmament);
+const _startingWeather = rollWeatherForPortId(_startingPortId);
+const _startingWind = rollWindForPortId(_startingPortId, _startingWeather);
 
 /** Build provenance stacks matching starting cargo. Treated as genuine goods
  *  taken on before the voyage began — no acquisition port, no fraud roll. */
@@ -1653,11 +1696,10 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
   if (faction === 'Pirate') {
     tunePirateStartingCargo(cargo, shipProfile.cargoCapacity);
   }
-  if (armament.includes('fireRocket')) {
-    cargo['War Rockets'] = 10;
-  }
   const broadsides = armament.filter(w => !WEAPON_DEFS[w].aimable).length;
+  seedStartingAmmunition(cargo, armament);
   const weather = rollWeatherForPortId(startingPortId);
+  const wind = rollWindForPortId(startingPortId, weather);
 
   return {
     faction,
@@ -1690,6 +1732,8 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
     reputation: buildStartingReputation(faction),
     knowledgeState: generateStartingKnowledge(faction, crew, armament),
     weather: { ...weather, intensity: weather.targetIntensity },
+    windDirection: wind.direction,
+    windSpeed: wind.speed,
   };
 }
 
@@ -1724,7 +1768,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   ports: [],
   timeOfDay: 8, // Start at 8 AM
   notifications: [],
-  leads: [createStarterLead(1, _startingPortId)],
+  leads: [createStarterLead(1, _startingPortId, _startingFaction)],
   questToasts: [],
   activePort: null,
   cameraZoom: 50,
@@ -1744,6 +1788,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   activePOI: null,
   discoveredPOIs: [],
   claimedPOIRewards: [],
+  poiRewardResults: {},
   reputation: buildStartingReputation(_startingFaction),
   npcPositions: [],
   npcShips: [],
@@ -1753,14 +1798,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   shipUpgrades: [],
   journalEntries: [],
   dayCount: 1,
-  windDirection: Math.PI * 0.75, // start SW
-  windSpeed: 0.5,
-  // Roll initial weather for the starting port. Snap intensity to target so
-  // the opening scene doesn't fade in mid-conversation.
-  weather: (() => {
-    const w = rollWeatherForPortId(_startingPortId);
-    return { ...w, intensity: w.targetIntensity };
-  })(),
+  windDirection: _startingWind.direction,
+  windSpeed: _startingWind.speed,
+  // Snap initial weather intensity to target so the opening scene doesn't
+  // fade in mid-conversation.
+  weather: { ..._startingWeather, intensity: _startingWeather.targetIntensity },
   knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew, _startingArmament),
   provisions: 30, // starting food supply
   worldSeed: Math.floor(Math.random() * 100000),
@@ -1859,43 +1901,60 @@ export const useGameStore = create<GameState>((set, get) => ({
   claimPOIReward: (poi) => {
     const reward = poi.reward;
     const state = get();
-    if (!reward || reward.type === 'none' || state.claimedPOIRewards.includes(poi.id)) return;
+    if (!reward || reward.type === 'none') return { status: 'none' };
+    if (state.claimedPOIRewards.includes(poi.id)) {
+      return state.poiRewardResults[poi.id] ?? { status: 'already_claimed' };
+    }
 
-    const markClaimed = () => set((s) => ({ claimedPOIRewards: [...s.claimedPOIRewards, poi.id] }));
+    const markClaimed = (result: POIRewardClaimResult) => set((s) => ({
+      claimedPOIRewards: s.claimedPOIRewards.includes(poi.id)
+        ? s.claimedPOIRewards
+        : [...s.claimedPOIRewards, poi.id],
+      poiRewardResults: { ...s.poiRewardResults, [poi.id]: result },
+    }));
 
     if (reward.type === 'journal') {
-      markClaimed();
+      const result: POIRewardClaimResult = { status: 'journal' };
+      markClaimed(result);
       get().addJournalEntry('encounter', `${poi.name}: ${poi.lore}`);
       get().addNotification(`Recorded ${poi.name}.`, 'success', { subtitle: 'SITE RECORDED' });
-      return;
+      return result;
     }
 
     if (reward.type === 'knowledge') {
       const current = (state.knowledgeState[reward.commodityId] as 0 | 1 | 2 | undefined) ?? 0;
-      markClaimed();
+      const learned = reward.level > current;
+      const result: POIRewardClaimResult = { status: 'knowledge', commodityId: reward.commodityId, learned };
+      markClaimed(result);
       if (reward.level > current) {
         get().learnAboutCommodity(reward.commodityId, reward.level, poi.name);
       } else {
         get().addJournalEntry('encounter', `${poi.name}: the signs confirmed what we already knew of ${reward.commodityId}.`);
       }
       get().addNotification(`Recorded signs of ${reward.commodityId}.`, 'success', { subtitle: 'FIELD OBSERVATION' });
-      return;
+      return result;
     }
 
     const roll = deterministicRewardRoll(poi.id);
-    markClaimed();
     if (roll > reward.chance) {
+      const result: POIRewardClaimResult = { status: 'empty' };
+      markClaimed(result);
       get().addJournalEntry('encounter', `${poi.name}: ${poi.lore}`);
       get().addNotification(`Inspected ${poi.name}.`, 'info', { subtitle: 'NO SALVAGE FOUND' });
-      return;
+      return result;
     }
 
     const amount = reward.min + Math.floor(deterministicRewardRoll(`${poi.id}:amount`) * (reward.max - reward.min + 1));
-    const currentCargo = Object.values(state.cargo).reduce((sum, qty) => sum + qty, 0);
-    const taken = Math.max(0, Math.min(amount, state.stats.cargoCapacity - currentCargo));
+    const unitWeight = COMMODITY_DEFS[reward.commodityId].weight;
+    const currentCargoWeight = Object.entries(state.cargo).reduce(
+      (sum, [commodity, qty]) => sum + qty * COMMODITY_DEFS[commodity as Commodity].weight,
+      0
+    );
+    const availableWeight = state.stats.cargoCapacity - currentCargoWeight;
+    const taken = Math.max(0, Math.min(amount, Math.floor(availableWeight / unitWeight)));
     if (taken <= 0) {
       get().addNotification(`No cargo space for ${reward.commodityId}.`, 'warning', { subtitle: 'HOLD FULL' });
-      return;
+      return { status: 'full', commodityId: reward.commodityId };
     }
 
     const stack: CargoStack = {
@@ -1909,12 +1968,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       purchasePrice: 0,
       knowledgeAtPurchase: 1,
     };
+    const result: POIRewardClaimResult = { status: 'cargo', commodityId: reward.commodityId, amount: taken };
+    markClaimed(result);
     set((s) => ({
       cargo: { ...s.cargo, [reward.commodityId]: (s.cargo[reward.commodityId] ?? 0) + taken },
       cargoProvenance: [...s.cargoProvenance, stack],
     }));
     get().addJournalEntry('encounter', `${poi.name}: recovered ${taken} ${reward.commodityId}.`);
     get().addNotification(`Recovered ${taken} ${reward.commodityId}.`, 'success', { subtitle: 'FIELD FIND' });
+    return result;
   },
   adjustReputation: (nationality, delta) => {
     const state = get();
@@ -2432,10 +2494,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newTime = state.timeOfDay + delta;
     const wrapped = newTime >= 24;
 
-    // Wind drifts slowly over time using sine waves at different frequencies
+    // Wind drifts over time using sine waves at different frequencies.
     const t = state.dayCount + newTime / 24;
     const dirDrift = Math.sin(t * 0.7) * 0.3 + Math.sin(t * 1.9) * 0.15 + Math.sin(t * 4.3) * 0.05;
-    const newWindDir = (state.windDirection + dirDrift * delta * 0.02) % (Math.PI * 2);
+    const newWindDir = (state.windDirection + dirDrift * delta * 0.12) % (Math.PI * 2);
     const speedBase = 0.55 + Math.sin(t * 0.5) * 0.25 + Math.sin(t * 1.7) * 0.1 + Math.sin(t * 3.1) * 0.05;
     // Heavy rain bumps the wind so streaks slant harder and trees thrash.
     const stormBoost = state.weather.intensity * 0.35;
@@ -2618,7 +2680,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       ship: start.ship,
       timeOfDay: 8,
       notifications: [],
-      leads: [createStarterLead(1, start.startingPortId)],
+      leads: [createStarterLead(1, start.startingPortId, start.faction)],
       questToasts: [],
       activePort: null,
       cameraZoom: 50,
@@ -2633,6 +2695,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       activePOI: null,
       discoveredPOIs: [],
       claimedPOIRewards: [],
+      poiRewardResults: {},
       reputation: start.reputation,
       npcPositions: [],
       npcShips: [],
@@ -2648,6 +2711,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       requestWorldMap: false,
       currentWorldPortId: start.startingPortId,
       weather: start.weather,
+      windDirection: start.windDirection,
+      windSpeed: start.windSpeed,
       knowledgeState: start.knowledgeState,
       provisions: 30,
       dayCount: 1,
@@ -2673,7 +2738,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   setWeather: (patch) => set((state) => ({ weather: { ...state.weather, ...patch } })),
   rerollWeather: () => {
     const state = get();
-    set({ weather: rollWeatherForPortId(state.currentWorldPortId) });
+    const weather = rollWeatherForPortId(state.currentWorldPortId);
+    const wind = rollWindForPortId(state.currentWorldPortId, weather);
+    set({ weather, windDirection: wind.direction, windSpeed: wind.speed });
   },
   learnAboutCommodity: (commodityId, newLevel, source) => {
     const state = get();
@@ -2751,6 +2818,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     // intensity at 0 so the rain (if any) fades in over a few seconds rather
     // than snapping on the moment the arrival curtain lifts.
     const arrivalWeather = rollWeatherForPortId(portId);
+    const arrivalWind = rollWindForPortId(portId, arrivalWeather);
     set({
       currentWorldPortId: portId,
       playerVelocity: 0,
@@ -2762,6 +2830,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       timeOfDay: 8,
       provisions: newProvisions,
       weather: arrivalWeather,
+      windDirection: arrivalWind.direction,
+      windSpeed: arrivalWind.speed,
     });
     syncLiveShipTransform(state.playerPos, state.playerRot, 0);
     const provWarn = newProvisions === 0 ? ' Provisions exhausted!' : newProvisions <= state.crew.length * 2 ? ` Provisions low (${newProvisions}).` : '';
@@ -2972,37 +3042,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   defeatedNpc: (npcId, shipName, flag, npcCargo) => {
     const state = get();
-    // Gold reward based on cargo value
-    const goldReward = 50 + Math.floor(Math.random() * 100);
-    // Transfer salvageable cargo (30-60% of each commodity)
-    const currentCargo = { ...state.cargo };
-    const currentTotal = Object.values(currentCargo).reduce((a, b) => a + b, 0);
-    const capacity = state.stats.cargoCapacity;
-    const salvaged: string[] = [];
-    const salvageProvenance: CargoStack[] = [];
-    for (const [comm, qty] of Object.entries(npcCargo)) {
-      if (qty && qty > 0) {
-        const salvageAmt = Math.max(1, Math.floor(qty * (0.3 + Math.random() * 0.3)));
-        const spaceLeft = capacity - (currentTotal + salvaged.length);
-        const taken = Math.min(salvageAmt, spaceLeft);
-        if (taken > 0) {
-          currentCargo[comm as Commodity] = (currentCargo[comm as Commodity] || 0) + taken;
-          salvaged.push(`${taken} ${comm}`);
-          // Salvaged goods are always genuine — the player sees what was in the hold.
-          salvageProvenance.push({
-            id: generateId(),
-            commodity: comm as Commodity,
-            actualCommodity: comm as Commodity,
-            amount: taken,
-            acquiredPort: `wreck:${npcId}`,
-            acquiredPortName: `the ${shipName}`,
-            acquiredDay: state.dayCount,
-            purchasePrice: 0,
-            knowledgeAtPurchase: 1,
-          });
-        }
-      }
-    }
+    void npcCargo;
     // XP reward — captain and gunner both gain combat XP, all crew get a small share
     const captainXp = 20 + Math.floor(Math.random() * 30);
     const combatXp = 15 + Math.floor(Math.random() * 20);
@@ -3033,22 +3073,18 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     set({
-      gold: state.gold + goldReward,
-      cargo: currentCargo,
-      cargoProvenance: [...state.cargoProvenance, ...salvageProvenance],
       crew: updatedCrew,
     });
     // Remove from npcShips
     set((s) => ({ npcShips: s.npcShips.filter(n => n.id !== npcId) }));
     // Notifications
-    const salvagedStr = salvaged.length > 0 ? ` Salvaged: ${salvaged.join(', ')}.` : '';
-    get().addNotification(`Sank the ${shipName}! +${goldReward} gold.${salvagedStr}`, 'success', { size: 'grand', subtitle: 'SHIP DEFEATED' });
+    get().addNotification(`Sank the ${shipName}! Watch for floating salvage.`, 'success', { size: 'grand', subtitle: 'SHIP DEFEATED' });
     for (const lu of levelUps) get().addNotification(`${lu} leveled up!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
     // Captain savors victory
     get().setCaptainExpression('Smug', 5000);
     // Journal
     get().addJournalEntry('encounter',
-      `After a fierce exchange, the ${flag} vessel ${shipName} slipped beneath the waves. We recovered ${goldReward} gold${salvagedStr ? ' and' + salvagedStr.toLowerCase() : ''}.`);
+      `After a fierce exchange, the ${flag} vessel ${shipName} slipped beneath the waves. Some cargo may still be afloat, if we can reach it before the sea takes it.`);
     // Major reputation hit with that faction
     get().adjustReputation(flag, -25);
     // Crew history
