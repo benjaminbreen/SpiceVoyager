@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Anchor, Coins, Package, ShipWheel } from 'lucide-react';
+import { Anchor, Coins } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
 import type { Commodity } from '../utils/commodities';
 import {
@@ -15,6 +15,7 @@ import { getEffectiveKnowledge, type KnowledgeLevel } from '../utils/knowledgeSy
 import { MARKET_TRUST } from '../utils/worldPorts';
 import { ValueFlash } from './ValueFlash';
 import { quoteBuyCommodity, quoteSellCommodity } from '../utils/tradeQuotes';
+import { cargoUnitWeight } from '../utils/cargoWeight';
 
 export interface MarketTabLedgerProps {
   port: NonNullable<ReturnType<typeof useGameStore.getState>['activePort']>;
@@ -28,6 +29,7 @@ export interface MarketTabLedgerProps {
 }
 
 type TradeSignal = 'low' | 'fair' | 'high';
+type MarketFilter = 'all' | 'sell' | 'buy' | 'wanted' | 'unknown';
 
 interface MarketRow {
   commodity: Commodity;
@@ -47,6 +49,14 @@ interface MarketRow {
 }
 
 const TIERS: CommodityTier[] = [1, 2, 3, 4, 5];
+
+const FILTERS: { key: MarketFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'sell', label: 'Sell' },
+  { key: 'buy', label: 'Buy' },
+  { key: 'wanted', label: 'Wanted' },
+  { key: 'unknown', label: 'Unknown' },
+];
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -87,6 +97,11 @@ function commodityTestId(commodity: Commodity) {
   return commodity.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
+function marketPrice(row: MarketRow, side: 'buy' | 'sell') {
+  if (side === 'buy') return row.portInv > 0 && row.price > 0 ? formatPrice(row.price) : '--';
+  return row.playerInv > 0 && row.sellPrice > 0 ? formatPrice(row.sellPrice) : '--';
+}
+
 export function MarketTabLedger({
   port,
   cargo,
@@ -99,6 +114,7 @@ export function MarketTabLedger({
 }: MarketTabLedgerProps) {
   const [selectedCommodity, setSelectedCommodity] = useState<Commodity | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [filter, setFilter] = useState<MarketFilter>('all');
 
   const knowledgeState = useGameStore(s => s.knowledgeState);
   const crew = useGameStore(s => s.crew);
@@ -173,28 +189,42 @@ export function MarketTabLedger({
     });
   }, [cargo, gold, port, port.id, port.inventory, port.prices, ports, cargoWeight, cargoCapacity, knowledgeState, crew]);
 
+  const visibleRows = useMemo(() => {
+    return rows.filter((row) => {
+      if (filter === 'sell') return row.maxSell > 0;
+      if (filter === 'buy') return row.portInv > 0 && row.price > 0;
+      if (filter === 'wanted') return row.role === 'demands';
+      if (filter === 'unknown') return row.knowledgeLevel === 0;
+      return true;
+    });
+  }, [filter, rows]);
+
   const rowsByTier = useMemo(() => {
     const grouped = new Map<CommodityTier, MarketRow[]>();
-    for (const row of rows) {
+    for (const row of visibleRows) {
       const list = grouped.get(row.tier) ?? [];
       list.push(row);
       grouped.set(row.tier, list);
     }
     return grouped;
-  }, [rows]);
+  }, [visibleRows]);
 
   useEffect(() => {
-    if (rows.length === 0) {
+    if (visibleRows.length === 0 && rows.length > 0 && filter !== 'all') {
+      setFilter('all');
+      return;
+    }
+    if (visibleRows.length === 0) {
       setSelectedCommodity(null);
       return;
     }
-    if (!selectedCommodity || !rows.some(row => row.commodity === selectedCommodity)) {
-      setSelectedCommodity(rows[0].commodity);
+    if (!selectedCommodity || !visibleRows.some(row => row.commodity === selectedCommodity)) {
+      setSelectedCommodity(visibleRows[0].commodity);
       setQuantity(1);
     }
-  }, [rows, selectedCommodity]);
+  }, [filter, rows.length, visibleRows, selectedCommodity]);
 
-  const selected = rows.find(row => row.commodity === selectedCommodity) ?? rows[0];
+  const selected = visibleRows.find(row => row.commodity === selectedCommodity) ?? visibleRows[0];
   const maxSelectedQuantity = selected ? Math.max(selected.maxBuy, selected.maxSell, 1) : 1;
   const clampedQuantity = clamp(quantity, 1, maxSelectedQuantity);
 
@@ -206,8 +236,9 @@ export function MarketTabLedger({
   const sellQty = selected ? Math.min(clampedQuantity, selected.maxSell) : 0;
   const buyTotal = selected ? buyQty * selected.price : 0;
   const sellTotal = selected ? sellQty * selected.sellPrice : 0;
-  const holdAfterBuy = selected ? cargoWeight + buyQty * COMMODITY_DEFS[selected.commodity].weight : cargoWeight;
-  const holdAfterSell = selected ? cargoWeight - sellQty * COMMODITY_DEFS[selected.commodity].weight : cargoWeight;
+  const selectedCargoWeight = selected ? cargoUnitWeight(selected.commodity) : 0;
+  const holdAfterBuy = selected ? cargoWeight + buyQty * selectedCargoWeight : cargoWeight;
+  const holdAfterSell = selected ? cargoWeight - sellQty * selectedCargoWeight : cargoWeight;
 
   const executeTrade = (isBuy: boolean) => {
     if (!selected) return;
@@ -250,31 +281,16 @@ export function MarketTabLedger({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[8px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              {selected.knowledgeLevel === 0 ? 'Unknown Goods' : 'Selected Good'}
-            </div>
             <div
-              className={`mt-0.5 truncate text-[17px] font-bold leading-tight ${
+              className={`truncate text-[17px] font-bold leading-tight ${
                 selected.knowledgeLevel === 0 ? 'italic text-amber-200/75' : selected.knowledgeLevel >= 2 ? 'text-emerald-200' : 'text-slate-100'
               }`}
               style={{ fontFamily: '"Fraunces", serif' }}
             >
               {selected.displayName}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full border px-2 py-[3px] text-[9px] font-bold uppercase tracking-[0.12em] ${
-                selected.knowledgeLevel === 0 ? 'border-amber-400/20 bg-amber-400/[0.08] text-amber-300' : selectedRole.className
-              }`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                {selected.knowledgeLevel === 0 ? 'Unidentified' : selectedRole.label}
-              </span>
-              {selected.knowledgeLevel >= 1 && (
-                <span className={`rounded-full border px-2 py-[3px] text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                  {selectedSignal.label}
-                </span>
-              )}
-              <span className="font-mono text-[11px] text-slate-400">
-                {selected.price > 0 ? formatPrice(selected.price) : 'n/a'}
-              </span>
+            <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              {selected.knowledgeLevel === 0 ? 'Unidentified' : `${selectedRole.label} · ${selectedSignal.label}`}
             </div>
           </div>
           <div className="shrink-0 text-right font-mono text-[13px] text-slate-400">
@@ -316,6 +332,25 @@ export function MarketTabLedger({
           </button>
         </div>
 
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div>
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Sell</div>
+            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">
+              {sellQty > 0 ? `${sellQty} for ${formatPrice(sellTotal)}` : 'Unavailable'}
+            </div>
+            <div className="mt-0.5 font-mono text-slate-500">After sale {holdAfterSell}/{cargoCapacity}</div>
+          </div>
+          <div>
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Buy</div>
+            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">
+              {buyQty > 0 ? `${buyQty} for ${formatPrice(buyTotal)}` : 'Unavailable'}
+            </div>
+            <div className={holdAfterBuy > cargoCapacity ? 'mt-0.5 font-mono text-red-400' : 'mt-0.5 font-mono text-slate-500'}>
+              After purchase {holdAfterBuy}/{cargoCapacity}
+            </div>
+          </div>
+        </div>
+
         <div className="mt-2 grid grid-cols-2 gap-2">
           <button
             data-testid="mobile-market-sell-button"
@@ -339,21 +374,6 @@ export function MarketTabLedger({
           </button>
         </div>
 
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-2.5 py-2">
-            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Buy Cost</div>
-            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">{formatPrice(buyTotal)}</div>
-            <div className={holdAfterBuy > cargoCapacity ? 'mt-0.5 font-mono text-red-400' : 'mt-0.5 font-mono text-slate-500'}>
-              Hold {holdAfterBuy}/{cargoCapacity}
-            </div>
-          </div>
-          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-2.5 py-2">
-            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Sell Gain</div>
-            <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">{formatPrice(sellTotal)}</div>
-            <div className="mt-0.5 font-mono text-slate-500">Hold {holdAfterSell}/{cargoCapacity}</div>
-          </div>
-        </div>
-
         <div className="mt-2 flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-700" style={{ fontFamily: '"DM Sans", sans-serif' }}>
           <span>{selected.knowledgeLevel >= 1 ? `Avg ${Math.round(selected.avg)}g` : 'Fair price unknown'}</span>
           <span>{selected.knowledgeLevel >= 1 ? selectedSignal.label : 'Unknown risk'}</span>
@@ -366,49 +386,59 @@ export function MarketTabLedger({
       </div>
 
       <section className="min-w-0">
-        <div className="mb-2 flex flex-wrap items-end justify-between gap-2 px-1">
-          <div>
-            <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              Market Ledger
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3 px-1" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-slate-500">
+              Market
             </div>
-            <div className="mt-1 text-[12px] text-slate-500" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-              Choose a good, set a quantity, then commit the bargain.
+            <div className="flex overflow-hidden rounded-md border border-white/[0.06] bg-white/[0.018]">
+              {FILTERS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { sfxClick(); setFilter(key); }}
+                  className={`border-r border-white/[0.05] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.11em] transition-colors last:border-r-0 ${
+                    filter === key
+                      ? 'bg-[#c9a84c]/12 text-[#f2d37a]'
+                      : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
-          <div className="flex items-center gap-2" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-            <span className="flex items-center gap-2 rounded-lg border border-[#c9a84c]/15 bg-white/[0.025] px-3 py-2">
-              <Coins size={15} className="text-[#c9a84c]" />
-              <span>
-                <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Gold</span>
-                <span className="block font-mono text-[17px] font-bold leading-none text-[#d8c47a]">
-                  <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
-                    {gold.toLocaleString()}
-                  </ValueFlash>
-                  g
-                </span>
+          <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600">
+            <span className="flex items-center gap-1.5">
+              <Coins size={12} className="text-[#c9a84c]" />
+              <span>Gold</span>
+              <span className="font-mono text-[13px] text-[#d8c47a]">
+                <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
+                  {gold.toLocaleString()}
+                </ValueFlash>
+                g
               </span>
             </span>
-            <span className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-3 py-2">
-              <Anchor size={15} className={cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-400'} />
-              <span>
-                <span className="block text-[8px] font-bold uppercase tracking-[0.14em] text-slate-600">Hold</span>
-                <span className={`block font-mono text-[17px] font-bold leading-none ${cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-200'}`}>
-                  <ValueFlash value={cargoWeight} upColor="#fbbf24" downColor="#38bdf8">
-                    {cargoWeight}
-                  </ValueFlash>
-                  <span className="text-slate-600">/{cargoCapacity}</span>
-                </span>
+            <span className="flex items-center gap-1.5">
+              <Anchor size={12} className={cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-500'} />
+              <span>Hold</span>
+              <span className={`font-mono text-[13px] ${cargoWeight >= cargoCapacity ? 'text-red-400' : 'text-slate-300'}`}>
+                <ValueFlash value={cargoWeight} upColor="#fbbf24" downColor="#38bdf8">
+                  {cargoWeight}
+                </ValueFlash>
+                <span className="text-slate-600">/{cargoCapacity}</span>
               </span>
             </span>
           </div>
         </div>
 
         <div className="pr-1">
-          <div className="sticky top-0 z-10 hidden grid-cols-[minmax(220px,1.7fr)_64px_80px_68px_68px] gap-3 rounded-t-lg border border-white/[0.05] bg-[#080c14]/95 px-3 py-2 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600 backdrop-blur md:grid" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div className="sticky top-0 z-10 hidden grid-cols-[minmax(220px,1.7fr)_58px_58px_78px_62px_62px] gap-3 rounded-t-md border border-white/[0.045] bg-[#080c14]/95 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600 backdrop-blur md:grid" style={{ fontFamily: '"DM Sans", sans-serif' }}>
             <span>Ware</span>
             <span className="text-right">Buy</span>
+            <span className="text-right">Sell</span>
             <span>Market</span>
-            <span className="text-right">Hold</span>
+            <span className="text-right">You</span>
             <span className="text-right">Port</span>
           </div>
 
@@ -445,7 +475,7 @@ export function MarketTabLedger({
                           setSelectedCommodity(row.commodity);
                           setQuantity(Math.min(Math.max(quantity, 1), Math.max(row.maxBuy, row.maxSell, 1)));
                         }}
-                        className={`group grid min-h-[72px] w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-white/[0.04] px-3 py-2 text-left transition-all last:border-b-0 md:grid-cols-[minmax(220px,1.7fr)_64px_80px_68px_68px] md:items-center ${
+                        className={`group grid min-h-[72px] w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-white/[0.04] px-3 py-2 text-left transition-all last:border-b-0 md:grid-cols-[minmax(220px,1.7fr)_58px_58px_78px_62px_62px] md:items-center ${
                           isSelected ? 'bg-white/[0.045] shadow-[inset_2px_0_0_rgba(201,168,76,0.7)]' : 'bg-transparent hover:bg-white/[0.03]'
                         }`}
                       >
@@ -499,11 +529,11 @@ export function MarketTabLedger({
                                 </span>
                               ) : (
                                 <>
-                                  <span className={`rounded-full border px-2 py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] ${role.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
                                     {role.label}
                                   </span>
                                   {isMastered && (
-                                    <span className="rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-2 py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                    <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
                                       Mastered
                                     </span>
                                   )}
@@ -516,8 +546,16 @@ export function MarketTabLedger({
                           </span>
                         </span>
 
-                        <span className="text-right font-mono text-[15px] font-bold text-slate-200">
-                          {row.price > 0 ? formatPrice(row.price) : 'n/a'}
+                        <span className="text-right font-mono text-[13px] font-bold text-slate-200 md:text-[15px]">
+                          <span className="md:hidden">
+                            <span className="block">Buy {marketPrice(row, 'buy')}</span>
+                            <span className="mt-0.5 block text-slate-500">Sell {marketPrice(row, 'sell')}</span>
+                          </span>
+                          <span className="hidden md:inline">{marketPrice(row, 'buy')}</span>
+                        </span>
+
+                        <span className="hidden text-right font-mono text-[15px] font-bold text-slate-200 md:block">
+                          {marketPrice(row, 'sell')}
                         </span>
 
                         <span className="hidden md:block">
@@ -531,12 +569,12 @@ export function MarketTabLedger({
 
                         <span className="hidden text-right md:block">
                           <span className="font-mono text-[15px] font-bold text-slate-300">{row.playerInv}</span>
-                          <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>aboard</span>
+                          <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>you</span>
                         </span>
 
                         <span className="hidden text-right md:block">
                           <span className="font-mono text-[15px] font-bold text-slate-300">{row.portInv}</span>
-                          <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>quay</span>
+                          <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400" style={{ fontFamily: '"DM Sans", sans-serif' }}>port</span>
                         </span>
                       </button>
                     );
@@ -581,32 +619,19 @@ export function MarketTabLedger({
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              {selected.knowledgeLevel === 0 ? 'Unknown Goods' : 'Trade Ticket'}
-            </div>
             <h3 className={`mt-1 text-xl font-bold leading-tight ${selected.knowledgeLevel === 0 ? 'italic text-amber-200/70' : selected.knowledgeLevel >= 2 ? 'text-emerald-200' : 'text-slate-100'}`} style={{ fontFamily: '"Fraunces", serif' }}>
               {selected.displayName}
             </h3>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {selected.knowledgeLevel === 0 ? (
-                <span className="rounded-full border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                  Unidentified
-                </span>
-              ) : (
-                <>
-                  <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedRole.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                    {selectedRole.label}
-                  </span>
-                  <span className={`rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${selectedSignal.className}`} style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                    {selectedSignal.label}
-                  </span>
-                  {selected.knowledgeLevel >= 2 && (
-                    <span className="rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-emerald-300" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                      Mastered
-                    </span>
-                  )}
-                </>
-              )}
+            <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+              {selected.knowledgeLevel === 0
+                ? 'Unidentified'
+                : `${selectedRole.label} · ${selectedSignal.label}${selected.knowledgeLevel >= 2 ? ' · Mastered' : ''}`}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[12px] text-slate-400">
+              <span>Buy {marketPrice(selected, 'buy')}</span>
+              <span>Sell {marketPrice(selected, 'sell')}</span>
+              <span>You {selected.playerInv}</span>
+              <span>Port {selected.portInv}</span>
             </div>
           </div>
         </div>
@@ -621,7 +646,7 @@ export function MarketTabLedger({
         </p>
         {selected.knowledgeLevel === 0 && (MARKET_TRUST[port.id] ?? 0.5) < 0.5 && (
           <p className="mt-2 text-[12px] leading-relaxed text-amber-500/80" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-            The traders here have a reputation for passing counterfeits — unknown goods carry added risk, though the occasional hidden bargain is also said to surface.
+            Risk: counterfeits reported in this market.
           </p>
         )}
 
@@ -637,17 +662,17 @@ export function MarketTabLedger({
           <span>Dear</span>
         </div>
 
-        <div className="mt-4 grid grid-cols-[40px_minmax(0,1fr)_40px_56px] gap-2">
+        <div className="mt-4 grid grid-cols-[36px_minmax(0,1fr)_36px_50px] gap-2">
           <button
             type="button"
             aria-label="Decrease quantity"
             disabled={clampedQuantity <= 1}
             onClick={() => { sfxClick(); setQuantity(q => clamp(q - 1, 1, maxSelectedQuantity)); }}
-            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+            className="h-9 rounded-md border border-white/[0.06] bg-white/[0.025] text-base font-bold text-slate-300 transition-colors hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:bg-white/[0.025]"
           >
             -
           </button>
-          <div className="flex h-10 items-center justify-center rounded-lg border border-[#fbbf24]/15 bg-white/[0.035] text-center font-mono text-[15px] font-bold text-slate-100">
+          <div className="flex h-9 items-center justify-center rounded-md border border-white/[0.07] bg-white/[0.025] text-center font-mono text-[15px] font-bold text-slate-100">
             {clampedQuantity} {quantityUnit(clampedQuantity)}
           </div>
           <button
@@ -655,7 +680,7 @@ export function MarketTabLedger({
             aria-label="Increase quantity"
             disabled={clampedQuantity >= maxSelectedQuantity}
             onClick={() => { sfxClick(); setQuantity(q => clamp(q + 1, 1, maxSelectedQuantity)); }}
-            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-base font-bold text-slate-300 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+            className="h-9 rounded-md border border-white/[0.06] bg-white/[0.025] text-base font-bold text-slate-300 transition-colors hover:bg-white/[0.055] disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:bg-white/[0.025]"
           >
             +
           </button>
@@ -663,40 +688,39 @@ export function MarketTabLedger({
             type="button"
             disabled={clampedQuantity >= maxSelectedQuantity}
             onClick={() => { sfxClick(); setQuantity(maxSelectedQuantity); }}
-            className="h-10 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400 transition-colors hover:border-[#fbbf24]/30 hover:bg-[#fbbf24]/[0.08] hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:border-white/[0.06] disabled:hover:bg-white/[0.03]"
+            className="h-9 rounded-md border border-white/[0.06] bg-white/[0.025] text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 transition-colors hover:bg-white/[0.055] hover:text-slate-200 disabled:cursor-not-allowed disabled:text-slate-700 disabled:hover:bg-white/[0.025]"
             style={{ fontFamily: '"DM Sans", sans-serif' }}
           >
             Max
           </button>
         </div>
 
+        <div className="mt-4 grid grid-cols-2 gap-4 text-[11px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+          <div>
+            <div className="font-bold uppercase tracking-[0.14em] text-slate-600">Sell</div>
+            <div className="mt-1 font-mono text-[14px] font-bold text-slate-200">
+              {sellQty > 0 ? `${sellQty} ${quantityUnit(sellQty)} for ${formatPrice(sellTotal)}` : 'Unavailable'}
+            </div>
+            <div className="mt-1 font-mono text-slate-500">After sale {holdAfterSell}/{cargoCapacity}</div>
+          </div>
+          <div>
+            <div className="font-bold uppercase tracking-[0.14em] text-slate-600">Buy</div>
+            <div className="mt-1 font-mono text-[14px] font-bold text-slate-200">
+              {buyQty > 0 ? `${buyQty} ${quantityUnit(buyQty)} for ${formatPrice(buyTotal)}` : 'Unavailable'}
+            </div>
+            <div className={holdAfterBuy > cargoCapacity ? 'mt-1 font-mono text-red-400' : 'mt-1 font-mono text-slate-500'}>
+              After purchase {holdAfterBuy}/{cargoCapacity}
+            </div>
+          </div>
+        </div>
+
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-2">
-            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <Package size={11} /> Buy Cost
-            </div>
-            <div className="mt-1 font-mono text-[15px] font-bold text-slate-200">{formatPrice(buyTotal)}</div>
-          </div>
-          <div className="rounded-lg border border-white/[0.05] bg-white/[0.025] px-3 py-2">
-            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-              <ShipWheel size={11} /> Sell Gain
-            </div>
-            <div className="mt-1 font-mono text-[15px] font-bold text-slate-200">{formatPrice(sellTotal)}</div>
-          </div>
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-          <div>After buy: <span className={holdAfterBuy > cargoCapacity ? 'font-mono text-red-400' : 'font-mono text-slate-400'}>{holdAfterBuy}/{cargoCapacity}</span></div>
-          <div>After sell: <span className="font-mono text-slate-400">{holdAfterSell}/{cargoCapacity}</span></div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2">
           <button
             data-testid="market-sell-button"
             type="button"
             disabled={sellQty <= 0}
             onClick={() => executeTrade(false)}
-            className="h-11 rounded-lg border border-amber-300/30 bg-amber-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200/90 transition-all hover:border-amber-300/45 hover:bg-amber-400/[0.15] hover:text-amber-100 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:border-white/[0.04] disabled:hover:bg-white/[0.015] disabled:hover:text-slate-700"
+            className="h-10 rounded-md border border-amber-300/25 bg-amber-300/[0.08] text-[11px] font-bold uppercase tracking-[0.14em] text-amber-100/85 transition-colors hover:bg-amber-300/[0.12] active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:bg-white/[0.015]"
             style={{ fontFamily: '"DM Sans", sans-serif' }}
           >
             Sell {sellQty}
@@ -706,15 +730,11 @@ export function MarketTabLedger({
             type="button"
             disabled={buyQty <= 0}
             onClick={() => executeTrade(true)}
-            className="h-11 rounded-lg border border-emerald-300/30 bg-emerald-400/[0.10] text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200/90 transition-all hover:border-emerald-300/45 hover:bg-emerald-400/[0.15] hover:text-emerald-100 active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:border-white/[0.04] disabled:hover:bg-white/[0.015] disabled:hover:text-slate-700"
+            className="h-10 rounded-md border border-emerald-300/25 bg-emerald-300/[0.08] text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-100/85 transition-colors hover:bg-emerald-300/[0.12] active:scale-[0.99] disabled:cursor-not-allowed disabled:border-white/[0.04] disabled:bg-white/[0.015] disabled:text-slate-700 disabled:hover:bg-white/[0.015]"
             style={{ fontFamily: '"DM Sans", sans-serif' }}
           >
             Buy {buyQty}
           </button>
-        </div>
-
-        <div className="mt-3 rounded-lg border border-white/[0.04] bg-white/[0.018] px-3 py-2 text-[10px] leading-relaxed text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-          Quantity buttons stage the order only. The trade happens when you choose Sell or Buy.
         </div>
       </aside>
     </div>

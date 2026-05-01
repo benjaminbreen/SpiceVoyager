@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Anchor, Check, Gauge, HeartPulse, Package, Sailboat, Shield, Waves, Wind, X } from 'lucide-react';
 import { useGameStore } from '../store/gameStore';
@@ -17,6 +17,8 @@ interface VoyageModalProps {
   totalDays: number;
   fromPortId: string;
   toPortId: string;
+  initialPhase?: 'briefing' | 'incident';
+  onResolutionReady?: (resolution: VoyageResolution) => void;
   onComplete: (resolution: VoyageResolution) => void;
   onSkip: (resolution: VoyageResolution) => void;
 }
@@ -98,6 +100,8 @@ export default function VoyageModal({
   totalDays,
   fromPortId,
   toPortId,
+  initialPhase = 'briefing',
+  onResolutionReady,
   onComplete,
   onSkip,
 }: VoyageModalProps) {
@@ -109,7 +113,7 @@ export default function VoyageModal({
   const windSpeed = useGameStore(s => s.windSpeed);
   const chartedRoutes = useGameStore(s => s.chartedRoutes);
   const [stance, setStance] = useState<VoyageStance>('standard');
-  const [phase, setPhase] = useState<'briefing' | 'incident' | 'log' | 'arrived'>('briefing');
+  const [phase, setPhase] = useState<'briefing' | 'incident' | 'log' | 'arrived'>(initialPhase);
   const [shownEvents, setShownEvents] = useState(0);
   const [choiceId, setChoiceId] = useState<string | null>(null);
 
@@ -132,6 +136,16 @@ export default function VoyageModal({
 
   const canDepart = stats.hull > 0 && crew.length > 0;
   const rationShortfall = Math.max(0, resolution.provisionCost - provisions);
+
+  useEffect(() => {
+    if (initialPhase !== 'incident' || !canDepart || !baseResolution.incident.autoResult) return;
+    const nextResolution = applyVoyageIncidentChoice(baseResolution, baseResolution.incident.autoResult.id);
+    const id = window.setTimeout(() => {
+      setChoiceId(baseResolution.incident.autoResult?.id ?? null);
+      playLog(nextResolution);
+    }, 1050);
+    return () => window.clearTimeout(id);
+  }, [baseResolution, canDepart, initialPhase]);
 
   function playLog(nextResolution: VoyageResolution) {
     setPhase('log');
@@ -166,6 +180,7 @@ export default function VoyageModal({
     sfxClick();
     setChoiceId(choice);
     const chosenResolution = applyVoyageIncidentChoice(baseResolution, choice);
+    onResolutionReady?.(chosenResolution);
     playLog(chosenResolution);
   }
 

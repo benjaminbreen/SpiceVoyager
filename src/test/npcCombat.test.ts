@@ -7,6 +7,7 @@ import {
   npcBowWeapon,
   npcBroadsideCount,
   npcBroadsideWeapon,
+  shouldStayHostile,
   shouldBreakOff,
 } from '../utils/npcCombat';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
@@ -81,6 +82,36 @@ describe('npcCombat', () => {
       provoked: true,
       hullFraction: 1,
     })).toBe('engage');
+  });
+
+  it('keeps aggressive armed ships hostile after provocation', () => {
+    expect(shouldStayHostile(ship({ role: 'privateer', armed: true, morale: 55, shipType: 'Pinnace' }), {
+      reputation: 0,
+      hullFraction: 1,
+    })).toBe(true);
+    expect(shouldStayHostile(ship({ role: 'armed patrol', armed: true, morale: 50, shipType: 'Patacher' }), {
+      reputation: 0,
+      hullFraction: 1,
+    })).toBe(true);
+    expect(shouldStayHostile(ship({ role: 'blue-water merchant', armed: true, morale: 72, shipType: 'Armed Merchantman' }), {
+      reputation: -30,
+      hullFraction: 1,
+    })).toBe(true);
+  });
+
+  it('does not keep weak or civilian ships permanently hostile', () => {
+    expect(shouldStayHostile(ship({ role: 'coastal trader', armed: false, morale: 80, shipType: 'Dhow' }), {
+      reputation: -100,
+      hullFraction: 1,
+    })).toBe(false);
+    expect(shouldStayHostile(ship({ role: 'blue-water merchant', armed: true, morale: 50, shipType: 'Patacher' }), {
+      reputation: -30,
+      hullFraction: 1,
+    })).toBe(false);
+    expect(shouldStayHostile(ship({ role: 'privateer', armed: true, morale: 80, shipType: 'Pinnace' }), {
+      reputation: -100,
+      hullFraction: 0.18,
+    })).toBe(false);
   });
 
   it('breaks off badly damaged ships unless morale and role justify staying', () => {

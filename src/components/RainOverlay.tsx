@@ -5,13 +5,13 @@ import { SEA_LEVEL } from '../constants/world';
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { windUniforms } from '../utils/windSway';
 
-const STREAK_COUNT = 500;
+const STREAK_COUNT = 700;
 const STREAK_RADIUS = 55;
 const STREAK_HEIGHT = 50;
 const STREAK_SPEED = 34;
 const STREAK_SLANT = 0.06;
-const STREAK_WIDTH = 0.045;
-const STREAK_LENGTH = 0.9;
+const STREAK_WIDTH = 0.09;
+const STREAK_LENGTH = 1.8;
 
 const RIPPLE_COUNT = 160;
 const RIPPLE_RADIUS = 30;
@@ -85,6 +85,8 @@ const STREAK_VERTEX = /* glsl */ `
   uniform float uSlant;
   uniform float uIntensity;
   uniform vec2 uWindDir;
+  uniform vec3 uCameraRight;
+  uniform vec3 uCameraUp;
   varying float vAlpha;
   varying vec2 vUv;
 
@@ -108,15 +110,11 @@ const STREAK_VERTEX = /* glsl */ `
     // Instance origin in world space (mesh tracks the camera each frame).
     vec3 instanceWorld = (modelMatrix * vec4(worldOff, 1.0)).xyz;
 
-    // Y-axis billboard: 'right' faces the camera horizontally.
-    vec3 toCam = cameraPosition - instanceWorld;
-    vec2 fwdXZ = normalize(vec2(toCam.x, toCam.z) + vec2(1e-4, 0.0));
-    vec3 rightWS = vec3(fwdXZ.y, 0.0, -fwdXZ.x);
     vec3 windWS = vec3(uWindDir.x, 0.0, uWindDir.y);
 
     vec3 vertexWS = instanceWorld
-      + rightWS * local.x
-      + vec3(0.0, local.y, 0.0)
+      + uCameraRight * local.x
+      + uCameraUp * local.y
       + windWS * (local.y * uSlant);
 
     gl_Position = projectionMatrix * viewMatrix * vec4(vertexWS, 1.0);
@@ -140,8 +138,8 @@ const STREAK_FRAGMENT = /* glsl */ `
     // Brighter at the leading (bottom) end, fades along the length so the
     // trail dissolves into the air rather than ending in a solid bar.
     float head = smoothstep(0.0, 0.55, vUv.y) * (0.55 + 0.45 * vUv.y);
-    float a = vAlpha * edge * head * 0.16 * uIntensity;
-    gl_FragColor = vec4(0.66, 0.74, 0.84, a);
+    float a = vAlpha * edge * head * 0.62 * uIntensity;
+    gl_FragColor = vec4(0.82, 0.90, 1.0, a);
   }
 `;
 
@@ -203,13 +201,15 @@ export function RainOverlay({ intensity = 1 }: RainOverlayProps = {}) {
       // trees bend. Magnitude scales with windSpeed via a separate uniform path
       // (kept here as a Vector2 ref to windUniforms.uWindDir).
       uWindDir: windUniforms.uWindDir,
+      uCameraRight: { value: new THREE.Vector3(1, 0, 0) },
+      uCameraUp: { value: new THREE.Vector3(0, 1, 0) },
       uIntensity: { value: intensity },
     },
     vertexShader: STREAK_VERTEX,
     fragmentShader: STREAK_FRAGMENT,
     transparent: true,
     depthWrite: false,
-    depthTest: true,
+    depthTest: false,
     side: THREE.DoubleSide,
   }), [intensity]);
 
@@ -244,6 +244,9 @@ export function RainOverlay({ intensity = 1 }: RainOverlayProps = {}) {
     rippleMat.uniforms.uIntensity.value = intensity;
     // Slant grows with wind speed — calm rain falls nearly vertical, gusts lash.
     streakMat.uniforms.uSlant.value = STREAK_SLANT * (0.4 + windUniforms.uWindSpeed.value * 1.6);
+    const cameraMatrix = camera.matrixWorld.elements;
+    streakMat.uniforms.uCameraRight.value.set(cameraMatrix[0], cameraMatrix[1], cameraMatrix[2]);
+    streakMat.uniforms.uCameraUp.value.set(cameraMatrix[4], cameraMatrix[5], cameraMatrix[6]);
     if (streakRef.current) {
       streakRef.current.position.copy(camera.position);
     }

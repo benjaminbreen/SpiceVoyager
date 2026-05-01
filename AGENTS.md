@@ -157,6 +157,42 @@ src/
 
 **Planned/deferred:** Veracruz + Pernambuco (per project memory — completing the 1612 Atlantic). Manila, Nagasaki, Masulipatnam queued for further work per Venice rollout pattern.
 
+### 1612 Port Authority Reference
+
+Use `src/utils/portAuthorities.ts` as the data source for the Governor/Authority tab, authority credit patrons, and authority building labels. The important design rule: this is the official or practical authority a spice trader would petition in 1612, not a generic "governor." Historical basis is a synthesis of the existing project bibliography and port notes; where exact officeholders are not implemented, treat the label as the office/contact, not a named NPC.
+
+| Port | Authority figure/contact | Authority building |
+|---|---|---|
+| Goa | Viceroy of Estado da India, D. Jeronimo de Azevedo from 1612 | Viceroy's Palace |
+| Lisbon | Casa da India officials at the Ribeira Palace | Casa da India |
+| Diu | Portuguese Captain of Diu | Captain's Fortress |
+| Hormuz | Portuguese Captain of Hormuz / fortress customs officers | Fortress of Hormuz |
+| Muscat | Portuguese Captain of Muscat at al-Mirani / al-Jalali | Captain's Fort |
+| Malacca | Portuguese Captain-major of Malacca | A Famosa |
+| Macau | Leal Senado, with the Captain-major of the Japan voyage as a trade contact | Leal Senado |
+| Mombasa | Portuguese Captain of Fort Jesus | Fort Jesus Captaincy |
+| Elmina | Captain-factor of Sao Jorge da Mina | Sao Jorge da Mina |
+| Luanda | Portuguese Governor of Angola; Bento Banha Cardoso in 1612 | Governor's Fortress |
+| Salvador da Bahia | Governor-General of Brazil | Palacio do Governo |
+| Seville | Casa de Contratacion | Casa de Contratacion |
+| Havana | Governor / Captain-General of Cuba | Captain-General's House |
+| Cartagena de Indias | Governor of Cartagena plus royal treasury/customs officers | Governor's Palace |
+| Manila | Governor and Captain-General Juan de Silva plus the Real Audiencia | Palacio del Gobernador |
+| Calicut | Zamorin as sovereign; practical trade interface is the Shahbandar/Koya broker | Shahbandar's House |
+| Surat | Mughal mutasaddi / port governor and customs officials | Mughal Custom House |
+| Masulipatnam | Qutb Shahi Golconda port officials | Golconda Custom House |
+| Aden | Ottoman pasha/garrison and customs authority | Ottoman Custom House |
+| Mocha | Customs farmer and local Yemeni port authority under Ottoman suzerainty | Mocha Custom House |
+| Socotra | Mahra sheikh / local Mahri authority | Mahra Sheikh's House |
+| Bantam | Sultan Abulmafakhir's court, with regents and shahbandars handling trade | Sultan's Court |
+| Nagasaki | Nagasaki bugyo and local daikan Murayama Toan | Nagasaki Magistrate |
+| Amsterdam | VOC Amsterdam Chamber / Heeren XVII | VOC Chamber |
+| London | East India Company governor Sir Thomas Smythe and Court of Committees | East India House |
+| Venice | Cinque Savi alla Mercanzia and spice brokers | Savi alla Mercanzia |
+| Cape of Good Hope | Khoikhoi trading intermediaries; no European governor before 1652 | Table Bay Trading Camp |
+| Zanzibar | Mwinyi Mkuu / local Swahili ruler under nominal Portuguese pressure | Sultan's Residence |
+| Jamestown | Virginia Company marshal/deputy governor Sir Thomas Dale in 1612 | Virginia Company Storehouse |
+
 ## Current systems
 
 ### Reputation
@@ -687,6 +723,30 @@ Loot tables exist and basic hit detection works. Still rough: animal scatter sho
 
 ### Sound effects for wildlife scatter
 Hoofbeats, bird wingbeats, splashing — not yet in `SoundEffects.ts`.
+
+### Crew trouble system — planned archetypes
+Crew trouble is the high-salience intervention layer above ambient `crewRelations`: rare modal events where the captain/player must decide. It should use POI-modal-like structure, but with a distinct deep red / amber / blackened-brass palette and archetype medallions. Ambient roster statuses remain lightweight; trouble modals are reserved for illness, morale breaking points, and relation tension that needs captain intervention.
+
+| Archetype | Trigger | Systems touched | Beneficial path |
+|---|---|---|---|
+| Fever Below Deck | sickness worsens / `fevered` persists | health, hearts, surgeon XP, morale | surgeon care can heal + create loyalty |
+| Scurvy Signs | low provisions + scurvy risk | provisions, health, morale | opening stores restores trust |
+| Wounded Hand | combat/storm/hunting injury | health, role performance, relations | assign help → care bond |
+| Desertion Talk | morale < 25, especially near port | morale, gold, crew removal | hear them out / advance pay preserves crew |
+| Refusal of Duty | morale < 10 or repeated low-morale events | discipline, captain charisma, role | fair intervention restores work + authority |
+| Ration Quarrel | `rations` relation tag + scarce stores | provisions, tension, injury risk | public rationing lowers crew-wide anxiety |
+| Religious Dispute | `faith` tension, worship/prayer conflict | faith inference/canonical faith, morale, relations | separate watches/accommodations stabilize mixed crew |
+| Professional Rivalry | same-role ambition / skill competition | roles, XP, relations | trial of skill grants XP and clarifies role fit |
+| Captain's Authority Challenged | repeated trouble + weak morale/captain authority | captain role, morale, mutiny precursor | successful address gives crew-wide morale |
+| Secret Attachment | `secret`/fondness relation grows | relations, watch assignment, jealousy risk | paired watches can boost morale/bond |
+| Homesickness | long voyage + melancholic/far from home | morale, ports, journal, gold | letters/shore-leave promise builds loyalty |
+| Blame After Damage | hull/sail damage after storm/combat | ship damage, roles, relations | investigation gives role XP, lowers repeat blame |
+| Shared Discovery | port/POI/commodity knowledge discovery | knowledge, journal, crew domains | public credit grants XP/knowledge/morale |
+| Lucky Catch | fishing/wildlife/provision pressure + lucky crew | provisions, morale, luck | shared food gives crew-wide morale |
+| Port Windfall | profitable trade + factor/reputation | commerce, factor XP, gold, morale | bonus or reinvestment creates loyalty |
+| Night Watch Omen | night/storm + perceptive/curious witness | weather, navigation, POI/encounter hooks | trusting/logging clue can reveal future opportunity |
+
+Implementation order: start with data definitions and modal plumbing; wire triggers from daily health/morale ticks, voyage resolution, inn rest, and high-tension `crewRelations`; then add per-archetype medallion assets and richer outcome trees. Keep frequency gated: one active modal, 3+ day global cooldown, 10+ day per-crew cooldown, severe events can bypass.
 
 ## Gotchas
 

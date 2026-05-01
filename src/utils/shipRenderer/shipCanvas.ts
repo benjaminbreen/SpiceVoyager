@@ -32,6 +32,7 @@ export const COLORS = {
   galley: '#EA580C',
   captain: '#FBBF24',
   labelDim: '#9CA3AF',
+  labelBright: '#D1D5DB',
 };
 
 export const LUMA_CHARS =

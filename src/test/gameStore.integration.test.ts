@@ -218,6 +218,67 @@ describe('gameStore integration', () => {
     expect(state.getReputation('Portuguese')).toBeLessThan(0);
   });
 
+  it('tightens rations as a captain order and reduces the next daily provision consumption', () => {
+    useGameStore.setState({
+      crew: [
+        makeCrewMember({ id: 'cap', role: 'Captain', morale: 60 }),
+        makeCrewMember({ id: 'sailor', role: 'Sailor', morale: 60 }),
+      ],
+      provisions: 10,
+      rationingDays: 0,
+      dayCount: 1,
+      timeOfDay: 8,
+      notifications: [],
+      journalEntries: [],
+      lastCrewTroubleDay: 1,
+      crewTroubleCooldowns: {},
+    } as Partial<StoreState>);
+
+    useGameStore.getState().issueCaptainOrder('tighten-rations');
+    expect(useGameStore.getState().rationingDays).toBe(5);
+    expect(useGameStore.getState().crew.every(member => member.morale === 56)).toBe(true);
+
+    useGameStore.getState().advanceTime(24);
+    const state = useGameStore.getState();
+    expect(state.provisions).toBe(9);
+    expect(state.rationingDays).toBe(4);
+  });
+
+  it('public punishment can raise wider morale when the punished hand is disliked', () => {
+    useGameStore.setState({
+      crew: [
+        makeCrewMember({ id: 'cap', name: 'Captain', role: 'Captain', morale: 60 }),
+        makeCrewMember({ id: 'target', name: 'Target', role: 'Sailor', morale: 60, hearts: { current: 3, max: 3 } }),
+        makeCrewMember({ id: 'mate', name: 'Mate', role: 'Sailor', morale: 60 }),
+      ],
+      crewRelations: [{
+        id: 'mate:target',
+        aId: 'mate',
+        bId: 'target',
+        affinity: -20,
+        tension: 90,
+        tags: ['rations'],
+        lastEventDay: 1,
+      }],
+      crewStatuses: [],
+      notifications: [],
+      journalEntries: [],
+      dayCount: 5,
+      lastCrewTroubleDay: 5,
+      crewTroubleCooldowns: {},
+    } as Partial<StoreState>);
+
+    useGameStore.getState().issueCaptainOrder('punish-publicly', 'target');
+    const state = useGameStore.getState();
+    const target = state.crew.find(member => member.id === 'target')!;
+    const mate = state.crew.find(member => member.id === 'mate')!;
+
+    expect(target.morale).toBe(42);
+    expect(target.hearts.current).toBe(2);
+    expect(mate.morale).toBe(63);
+    expect(state.crewStatuses.some(status => status.crewId === 'target')).toBe(true);
+  });
+
   it('damages the ship, lowers crew morale, and triggers game over on destruction', () => {
     const crew = [
       makeCrewMember({ id: 'captain', role: 'Captain', morale: 8 }),

@@ -23,9 +23,10 @@ describe('POI placement', () => {
 
     reseedTerrain(1612);
     setMeshHalf(450);
-    setPlacedArchetypes([{ def: portDef, cx: 0, cz: 0 }]);
+    const portPosition: [number, number, number] = [170, 0.5, -90];
+    setPlacedArchetypes([{ def: portDef, cx: portPosition[0], cz: portPosition[2] }]);
     clearSnappedCache();
-    const placed = resolveSnappedPOI(poi, { id: portId, buildings: [] });
+    const placed = resolveSnappedPOI(poi, { id: portId, position: portPosition, buildings: [] });
 
     expect(placed).not.toBeNull();
     expect(isPOIOnLand(placed!.x, placed!.z, getPOIFootprint(poi.kind))).toBe(true);

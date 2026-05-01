@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, WEAPON_DESCRIPTIONS, SHIP_UPGRADES, getPortArmory, getPortUpgrades, lodgingCost, lodgingLabel } from '../store/gameStore';
+import { useGameStore, Culture, WEAPON_DEFS, WEAPON_PRICES, WEAPON_DESCRIPTIONS, SHIP_UPGRADES, PORT_FACTION, getPortArmory, getPortUpgrades, lodgingCost, lodgingLabel } from '../store/gameStore';
 import type { ShipUpgradeType, RestSummary } from '../store/gameStore';
 import { SleepOverlay } from './SleepOverlay';
 import { RestSummaryModal } from './RestSummaryModal';
@@ -8,6 +8,7 @@ import type { Commodity } from '../utils/commodities';
 import {
   COMMODITY_DEFS,
 } from '../utils/commodities';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 import { audioManager } from '../audio/AudioManager';
 import { sfxTab, sfxCoin, sfxClose, sfxHover, startTabAmbient, stopTabAmbientLoop } from '../audio/SoundEffects';
 import { getPortBannerCandidates } from '../utils/portAssets';
@@ -15,6 +16,7 @@ import { MarketTabLedger } from './MarketTabLedger';
 import { PortBannerScene } from './PortBannerScene';
 import { TavernTab } from './TavernTab';
 import { LeadResolvePrompt } from './quests/LeadResolvePrompt';
+import { authorityForPort } from '../utils/portAuthorities';
 import { useIsMobile } from '../utils/useIsMobile';
 
 // Ports whose banner image is a magenta-keyed silhouette and should render
@@ -578,7 +580,8 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
   const {
     activePort, setActivePort, gold, cargo, stats, ship, crew,
     buyCommodity, sellCommodity, repairShip, buyWeapon, sellWeapon, buyUpgrade,
-    shipUpgrades, worldSeed, ports, dayCount, restAtInn
+    shipUpgrades, worldSeed, ports, dayCount, restAtInn,
+    obligations, drawCredit, repayObligation, settleObligation
   } = useGameStore();
 
   const handleClose = () => { stopTabAmbientLoop(); sfxClose(); (onDismiss ?? (() => setActivePort(null)))(); };
@@ -653,20 +656,34 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
 
   if (!activePort) return null;
 
-  const currentCargo = Object.entries(cargo).reduce(
-    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-  );
+  const currentCargo = calculateCargoWeight(cargo);
   const isFull = currentCargo >= stats.cargoCapacity;
   const info = PORT_INFO[activePort.id];
   const overview = getPortOverview(activePort.id);
+  const portFaction = PORT_FACTION[activePort.id];
+  const portAuthority = authorityForPort(activePort.id);
+  const localObligations = obligations.filter((obligation) =>
+    obligation.status === 'active' &&
+    (obligation.portIds.includes(activePort.id) || obligation.faction === portFaction)
+  );
+  const activeDebt = obligations
+    .filter((obligation) => obligation.status === 'active' && obligation.type === 'credit' && obligation.faction === portFaction)
+    .reduce((sum, obligation) => sum + Math.max(0, obligation.amountDue - obligation.settledGold), 0);
+  const creditLimit = portFaction ? Math.max(80, 220 + (useGameStore.getState().reputation[portFaction] ?? 0) * 4) : 0;
+  const creditAvailable = Math.max(0, creditLimit - activeDebt);
   const tabInfo = info && isPlaceTab(activeTab) ? info.tabDescriptions[activeTab] : null;
   const bannerTitle = activeTab === 'overview'
     ? activePort.name
-    : tabInfo?.title || activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+    : activeTab === 'governor'
+      ? portAuthority?.buildingLabel ?? tabInfo?.title ?? 'Authority'
+      : tabInfo?.title || activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
   const bannerText = activeTab === 'overview' ? overview.text : tabInfo?.text;
   const season = getSeason(dayCount);
   const harborNews = getSeasonalNews(activePort.id, season);
   const gradient = CULTURE_GRADIENT[activePort.culture] || CULTURE_GRADIENT['Indian Ocean'];
+  const activePlaceTab = isPlaceTab(activeTab) ? TABS.find(tab => tab.id === activeTab) : null;
+  const bannerAccent = activePlaceTab?.accent ?? '#c9a84c';
+  const bannerGlow = activePlaceTab?.glow ?? '201,168,76';
 
   // Image fallback chain: prefer jpg, then png, before falling back to gradients/text.
   const bannerSrc = getPortBannerCandidates(activePort.id, activeTab).find(src => !imageError[src]) ?? null;
@@ -782,21 +799,6 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             })}
           </nav>
 
-          {/* Sidebar Stats */}
-          <div className="pb-3 pt-2 border-t border-white/[0.04] w-full flex flex-col items-center gap-1.5 text-[9px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
-            <div className="flex items-center gap-1">
-              <Coins size={9} className="text-[#fbbf24]" />
-              <span className="font-bold text-slate-300 font-mono">{gold.toLocaleString()}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Anchor size={9} className="text-slate-500" />
-              <span className={`font-bold font-mono ${isFull ? 'text-red-400' : 'text-slate-400'}`}>{currentCargo}/{stats.cargoCapacity}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Shield size={9} className={stats.hull < stats.maxHull * 0.3 ? 'text-red-400' : 'text-blue-400'} />
-              <span className="font-bold text-slate-400 font-mono">{stats.hull}/{stats.maxHull}</span>
-            </div>
-          </div>
         </div>
 
         {/* ═══════ Main Content Area ═══════ */}
@@ -805,7 +807,14 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               nothing if no leads target this port. */}
           <LeadResolvePrompt />
           {/* Banner */}
-          <div data-testid="port-modal-banner" className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${bannerHeightClass}`}>
+          <div
+            data-testid="port-modal-banner"
+            className={`relative shrink-0 overflow-hidden bg-[#0a0e18] ${bannerHeightClass}`}
+            style={{
+              '--banner-accent': bannerAccent,
+              '--banner-glow': bannerGlow,
+            } as React.CSSProperties}
+          >
             {(() => {
               const animated = activeTab === 'overview' ? ANIMATED_BANNER_PORTS[activePort.id] : undefined;
               if (animated) {
@@ -830,9 +839,10 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             })()}
             {/* Gradient overlays */}
             <div className={`absolute inset-0 bg-gradient-to-t ${gradient}`} />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#080c14]/55 via-[#080c14]/12 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#080c14]/62 via-[#080c14]/14 to-transparent" />
             {/* Left-side darkening for info readability */}
-            <div className="absolute inset-0 bg-gradient-to-r from-[#080c14]/35 via-[#080c14]/10 to-transparent hidden md:block" />
+            <div className="absolute inset-0 hidden md:block bg-[radial-gradient(ellipse_at_19%_11%,rgba(8,12,20,0.54)_0%,rgba(8,12,20,0.28)_34%,rgba(8,12,20,0.07)_58%,transparent_78%)]" />
+            <div className="absolute inset-x-0 bottom-0 h-[70%] bg-[radial-gradient(ellipse_at_22%_88%,rgba(var(--banner-glow),0.07)_0%,rgba(var(--banner-glow),0.032)_28%,transparent_58%),linear-gradient(to_top,rgba(8,12,20,0.78)_0%,rgba(8,12,20,0.42)_42%,rgba(8,12,20,0.08)_78%,transparent_100%)]" />
 
             {/* Close button */}
             <button
@@ -846,23 +856,26 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
             <div className="absolute inset-0 flex flex-col justify-end p-4 md:justify-between md:p-6 z-10">
               {/* Historical info panel (desktop — top-left of banner) */}
               {info && (
-                <div className="hidden md:flex items-start gap-5 text-[13px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                <div
+                  className="hidden md:flex max-w-4xl items-start gap-6 px-1 py-0.5 text-[13px] drop-shadow-[0_2px_10px_rgba(0,0,0,0.55)]"
+                  style={{ fontFamily: '"DM Sans", sans-serif' }}
+                >
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Sovereign</div>
-                    <div className="text-white/100 mt-0.5">{info.sovereign}</div>
-                    <div className="text-white/60">{info.sovereignType}</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/72 text-[10px]">Sovereign</div>
+                    <div className="mt-0.5 font-semibold text-white/88">{info.sovereign}</div>
+                    <div className="text-white/66">{info.sovereignType}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Population</div>
-                    <div className="text-white/60 font-mono mt-0.5">{info.population}</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/72 text-[10px]">Population</div>
+                    <div className="mt-0.5 font-mono text-white/70">{info.population}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Language</div>
-                    <div className="text-white/60 mt-0.5">{info.languages}</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/72 text-[10px]">Language</div>
+                    <div className="mt-0.5 text-white/70">{info.languages}</div>
                   </div>
                   <div>
-                    <div className="font-semibold tracking-[0.15em] uppercase text-white/70 text-[10px]">Religion</div>
-                    <div className="text-white/60 mt-0.5">{info.religions}</div>
+                    <div className="font-semibold tracking-[0.15em] uppercase text-white/72 text-[10px]">Religion</div>
+                    <div className="mt-0.5 text-white/70">{info.religions}</div>
                   </div>
                 </div>
               )}
@@ -874,12 +887,13 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
                   style={{ fontFamily: '"DM Sans", sans-serif' }}>
                   {activePort.name} · {activePort.culture}
                 </div>
-                <h3 className="text-2xl md:text-4xl font-bold text-white/90 leading-tight"
+                <h3
+                  className="text-2xl md:text-4xl font-bold text-white/92 leading-tight drop-shadow-[0_2px_7px_rgba(0,0,0,0.68)]"
                   style={{ fontFamily: '"Fraunces", serif' }}>
                   {bannerTitle}
                 </h3>
                 {bannerText && (
-                  <p className="text-sm md:text-lg text-white/55 mt-1.5 md:mt-2 leading-relaxed overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] md:[display:block]"
+                  <p className="text-sm md:text-lg text-white/64 mt-1.5 md:mt-2 leading-relaxed overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] md:[display:block] drop-shadow-[0_2px_7px_rgba(0,0,0,0.72)]"
                     style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
                     {bannerText}
                   </p>
@@ -1321,18 +1335,120 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               {/* ── Governor ── */}
               {activeTab === 'governor' && (
                 <motion.div key="governor" {...modalContentMotion}>
-                  <div className="px-4 py-6 rounded-lg border border-white/[0.04] bg-white/[0.015] text-center">
-                    <Building size={20} className="mx-auto text-slate-700 mb-3" />
-                    <div className="text-[10px] font-bold tracking-[0.12em] uppercase text-slate-600 mb-1.5"
-                      style={{ fontFamily: '"DM Sans", sans-serif' }}>
-                      No Audience Granted
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.025] p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-violet-300/20 bg-violet-300/[0.08] text-violet-300">
+                          <Building size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-bold tracking-[0.14em] uppercase text-violet-300/80"
+                            style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                            {portAuthority?.buildingLabel ?? info?.tabDescriptions.governor.title ?? 'Authority'}
+                          </div>
+                          {portAuthority && (
+                            <div className="mt-1 text-[12px] font-semibold text-slate-300"
+                              style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                              {portAuthority.label} · {portAuthority.office}
+                            </div>
+                          )}
+                          <p className="mt-1 text-[13px] leading-relaxed text-slate-400"
+                            style={{ fontFamily: '"Fraunces", serif' }}>
+                            {portAuthority?.note ?? info?.tabDescriptions.governor.text ?? 'Local authority hears petitions from captains with accounts to settle.'}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-slate-600 max-w-sm mx-auto leading-relaxed"
-                      style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
-                      {info
-                        ? `The guards note your approach. "${info.sovereign === 'Portuguese Crown' ? 'The Governor' : 'The ' + info.sovereign} does not grant audiences to unknown captains. Perhaps if your reputation preceded you..."`
-                        : 'The guards cross their halberds. "Return later, Captain."'}
-                    </p>
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-lg border border-white/[0.05] bg-black/10 p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>Cash</div>
+                        <div className="mt-1 font-mono text-lg font-bold text-amber-200">{gold.toLocaleString()}g</div>
+                      </div>
+                      <div className="rounded-lg border border-white/[0.05] bg-black/10 p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>Credit Available</div>
+                        <div className="mt-1 font-mono text-lg font-bold text-violet-200">{creditAvailable.toLocaleString()}g</div>
+                      </div>
+                      <div className="rounded-lg border border-white/[0.05] bg-black/10 p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-600" style={{ fontFamily: '"DM Sans", sans-serif' }}>Open Accounts</div>
+                        <div className="mt-1 font-mono text-lg font-bold text-slate-200">{localObligations.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                            Draw Credit
+                          </div>
+                          <p className="mt-1 text-[12px] leading-relaxed text-slate-500" style={{ fontFamily: '"Fraunces", serif' }}>
+                            Advances are due in sixty days and sour your standing if left unpaid.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={creditAvailable <= 0}
+                          onClick={() => { sfxCoin(Math.min(100, creditAvailable)); drawCredit(100); }}
+                          className="min-h-10 rounded-lg border border-violet-300/25 bg-violet-300/[0.08] px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-violet-200 transition-all hover:bg-violet-300/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                          style={{ fontFamily: '"DM Sans", sans-serif' }}
+                        >
+                          Draw 100g
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {localObligations.length === 0 ? (
+                        <div className="rounded-lg border border-white/[0.04] bg-white/[0.015] px-4 py-5 text-center text-[12px] text-slate-600" style={{ fontFamily: '"Fraunces", serif', fontStyle: 'italic' }}>
+                          No accounts are open with this authority.
+                        </div>
+                      ) : localObligations.map((obligation) => {
+                        const remaining = Math.max(0, obligation.amountDue - obligation.settledGold);
+                        const ready = remaining <= 0;
+                        const overdue = dayCount > obligation.dueDay;
+                        return (
+                          <div key={obligation.id} className="rounded-lg border border-white/[0.06] bg-black/10 p-4">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500" style={{ fontFamily: '"DM Sans", sans-serif' }}>
+                                  {obligation.type === 'credit' ? 'Credit Account' : 'Commission Cargo'}
+                                </div>
+                                <div className="mt-1 text-[15px] font-bold text-slate-200" style={{ fontFamily: '"Fraunces", serif' }}>
+                                  {obligation.patron}
+                                </div>
+                                <p className="mt-1 text-[12px] leading-relaxed text-slate-500" style={{ fontFamily: '"Fraunces", serif' }}>
+                                  {obligation.note}
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-2 font-mono text-[11px] text-slate-400">
+                                  <span>{obligation.settledGold}/{obligation.amountDue}g reserved</span>
+                                  <span className={overdue ? 'text-red-300' : 'text-slate-500'}>Due Day {obligation.dueDay}</span>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={remaining <= 0 || gold <= 0}
+                                  onClick={() => { sfxCoin(Math.min(gold, remaining)); repayObligation(obligation.id); }}
+                                  className="min-h-10 rounded-lg border border-white/[0.08] px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-300 transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                                  style={{ fontFamily: '"DM Sans", sans-serif' }}
+                                >
+                                  Pay
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!ready}
+                                  onClick={() => settleObligation(obligation.id)}
+                                  className="min-h-10 rounded-lg border border-emerald-300/25 bg-emerald-300/[0.08] px-3 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-200 transition-all hover:bg-emerald-300/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                                  style={{ fontFamily: '"DM Sans", sans-serif' }}
+                                >
+                                  Settle
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </motion.div>
               )}

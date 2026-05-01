@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, WEAPON_DEFS, PORT_FACTION, type Nationality, type CrewRole, type CrewMember, type CrewQuality, type Humours } from '../store/gameStore';
+import type { CrewRelation, CrewRelationshipStatus } from '../utils/crewRelations';
 import { VitalityHeart } from './VitalityHeart';
 import { sfxTab, sfxClose, sfxHover } from '../audio/SoundEffects';
 import { FactionFlag } from './FactionFlag';
@@ -17,6 +18,7 @@ import {
   BaroqueBorder,
 } from './ascii-ui-kit';
 import { ShipView } from './ShipView';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ASCII Dashboard — baroque-framed game UI with tabbed panels
@@ -210,12 +212,118 @@ const CREW_DIALOGUE: Record<string, Record<MoraleBand, Record<RegionKey, string[
   },
 };
 
-function getCrewDialogue(member: CrewMember): string {
+function pickDialogueLine(member: CrewMember, salt: string, lines: string[]): string {
+  if (lines.length === 0) return 'I have nothing to say.';
+  return lines[strHash(`${member.id}:${salt}:${member.history.length}`) % lines.length];
+}
+
+function otherCrewName(status: CrewRelationshipStatus, crew: CrewMember[]): string {
+  return crew.find(c => c.id === status.otherCrewId)?.name ?? 'that hand';
+}
+
+function strongestRelation(member: CrewMember, relations: CrewRelation[]): CrewRelation | null {
+  const ranked = relations
+    .filter(relation => relation.aId === member.id || relation.bId === member.id)
+    .sort((a, b) => Math.max(b.tension, b.affinity) - Math.max(a.tension, a.affinity));
+  return ranked[0] ?? null;
+}
+
+function relationPartner(member: CrewMember, relation: CrewRelation, crew: CrewMember[]): CrewMember | null {
+  const otherId = relation.aId === member.id ? relation.bId : relation.aId;
+  return crew.find(c => c.id === otherId) ?? null;
+}
+
+function recentHistoryMatch(member: CrewMember, test: (event: string) => boolean): boolean {
+  return member.history.slice(-5).some(entry => test(entry.event.toLowerCase()));
+}
+
+function getCrewDialogue(
+  member: CrewMember,
+  context?: {
+    crew: CrewMember[];
+    relations: CrewRelation[];
+    statuses: CrewRelationshipStatus[];
+    dayCount: number;
+  },
+): string {
   const band: MoraleBand = member.morale > 60 ? 'high' : member.morale > 30 ? 'mid' : 'low';
   const region = NATIONALITY_REGION[member.nationality] ?? 'european';
+  const crew = context?.crew ?? [member];
+  const activeStatuses = (context?.statuses ?? [])
+    .filter(status => status.crewId === member.id && status.expiresDay >= (context?.dayCount ?? 0))
+    .sort((a, b) => b.severity - a.severity);
+  const activeStatus = activeStatuses[0];
+
+  if (activeStatus) {
+    const other = otherCrewName(activeStatus, crew);
+    if (activeStatus.tone === 'tension') {
+      return pickDialogueLine(member, activeStatus.id, [
+        `${other} and I should not be put on the same watch.`,
+        `There is talk below decks, and ${other} is near the middle of it.`,
+        `If the captain wants quiet, he should keep ${other} away from me.`,
+      ]);
+    }
+    if (activeStatus.tone === 'care') {
+      return pickDialogueLine(member, activeStatus.id, [
+        `${other} has done right by me. I will not forget it.`,
+        `There is still decency aboard. ${other} proved that much.`,
+        `I can work another watch if ${other} is beside me.`,
+      ]);
+    }
+    if (activeStatus.tone === 'secret') {
+      return pickDialogueLine(member, activeStatus.id, [
+        `Some matters aboard are best kept between two souls. Ask ${other}, if you must.`,
+        `${other} knows my mind better than most, but I would not have it shouted about.`,
+        `There are loyalties on this ship that do not show in the muster book.`,
+      ]);
+    }
+    return pickDialogueLine(member, activeStatus.id, [
+      `${other} is a steady hand. I trust that much.`,
+      `A hard voyage is easier when ${other} is near the work.`,
+      `Not every bond aboard needs naming. Some are proved by the watch.`,
+    ]);
+  }
+
+  const relation = context ? strongestRelation(member, context.relations) : null;
+  const partner = relation ? relationPartner(member, relation, crew) : null;
+  if (relation && partner && relation.tension >= 65) {
+    return pickDialogueLine(member, relation.id, [
+      `${partner.name} watches me as if I were bad cargo.`,
+      `The deck goes quiet when ${partner.name} and I pass each other.`,
+      `There is trouble coming if ${partner.name} keeps needling me.`,
+    ]);
+  }
+  if (relation && partner && relation.affinity >= 70 && member.morale > 30) {
+    return pickDialogueLine(member, relation.id, [
+      `${partner.name} is worth two ordinary hands in bad weather.`,
+      `If I am sent aloft, send ${partner.name} with me.`,
+      `${partner.name} keeps faith when the rest of us are tired.`,
+    ]);
+  }
+
+  if (recentHistoryMatch(member, event => event.includes('punished publicly'))) {
+    return pickDialogueLine(member, 'punished', member.morale < 35 ? [
+      'I heard the captain clearly enough. So did every man aboard.',
+      'A public lesson does not make a loyal hand.',
+      'I will do the work. Do not ask me to thank the captain for it.',
+    ] : [
+      'The captain made an example of me. I have had worse days.',
+      'The deck has a long memory when a man is punished before them.',
+      'I keep my head down now. That seems to be the lesson.',
+    ]);
+  }
+
+  if (recentHistoryMatch(member, event => event.includes('light duty'))) {
+    return pickDialogueLine(member, 'light-duty', [
+      'The captain spared me the hard watch. Some aboard noticed.',
+      'Light duty helped my body, though it did not make me popular.',
+      'I can stand a watch again, if the others will let the matter rest.',
+    ]);
+  }
+
   const lines = CREW_DIALOGUE[member.role]?.[band]?.[region];
   if (!lines || lines.length === 0) return 'I have nothing to say.';
-  return lines[Math.floor(Math.random() * lines.length)];
+  return pickDialogueLine(member, `${band}:${region}`, lines);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -569,9 +677,7 @@ function OverviewTab() {
   const hullPct = Math.round((stats.hull / stats.maxHull) * 100);
   const sailsPct = Math.round((stats.sails / stats.maxSails) * 100);
   const avgMorale = Math.round(crew.reduce((a, c) => a + c.morale, 0) / (crew.length || 1));
-  const currentCargo = Object.entries(cargo).reduce(
-    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-  );
+  const currentCargo = calculateCargoWeight(cargo);
   const cargoPct = Math.round((currentCargo / stats.cargoCapacity) * 100);
   const sickCrew = crew.filter(c => c.health !== 'healthy');
 
@@ -1312,14 +1418,46 @@ const ROLE_SORT_ORDER: Record<string, number> = {
   Captain: 0, Navigator: 1, Gunner: 2, Factor: 3, Surgeon: 4, Sailor: 5,
 };
 
+type CrewSortKey = 'role' | 'name' | 'skill' | 'health' | 'morale';
+type CrewSortDirection = 'asc' | 'desc';
+
+const HEALTH_SORT_ORDER: Record<string, number> = {
+  healthy: 0, injured: 1, sick: 2, fevered: 3, scurvy: 4,
+};
+
 function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: string) => void }) {
   const setCrewRole = useGameStore(s => s.setCrewRole);
+  const issueCaptainOrder = useGameStore(s => s.issueCaptainOrder);
   const dayCount = useGameStore(s => s.dayCount);
+  const provisions = useGameStore(s => s.provisions);
+  const rationingDays = useGameStore(s => s.rationingDays);
+  const crewStatuses = useGameStore(s => s.crewStatuses);
+  const [sortKey, setSortKey] = useState<CrewSortKey>('role');
+  const [sortDirection, setSortDirection] = useState<CrewSortDirection>('asc');
   const avgSkill = Math.round(crew.reduce((a, c) => a + c.skill, 0) / (crew.length || 1));
   const avgMorale = Math.round(crew.reduce((a, c) => a + c.morale, 0) / (crew.length || 1));
-  const healthyCrew = crew.filter(c => c.health === 'healthy').length;
   const sickCrew = crew.filter(c => c.health !== 'healthy');
-  const sortedCrew = [...crew].sort((a, b) => (ROLE_SORT_ORDER[a.role] ?? 9) - (ROLE_SORT_ORDER[b.role] ?? 9));
+  const sortedCrew = [...crew].sort((a, b) => {
+    let value = 0;
+    if (sortKey === 'name') value = a.name.localeCompare(b.name);
+    if (sortKey === 'role') value = (ROLE_SORT_ORDER[a.role] ?? 9) - (ROLE_SORT_ORDER[b.role] ?? 9);
+    if (sortKey === 'skill') value = a.skill - b.skill;
+    if (sortKey === 'health') value = (HEALTH_SORT_ORDER[a.health] ?? 9) - (HEALTH_SORT_ORDER[b.health] ?? 9);
+    if (sortKey === 'morale') value = a.morale - b.morale;
+    if (value === 0) value = (ROLE_SORT_ORDER[a.role] ?? 9) - (ROLE_SORT_ORDER[b.role] ?? 9);
+    if (value === 0) value = a.name.localeCompare(b.name);
+    return sortDirection === 'asc' ? value : -value;
+  });
+
+  const handleSort = (key: CrewSortKey) => {
+    sfxClick();
+    if (sortKey === key) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === 'skill' || key === 'morale' ? 'desc' : 'asc');
+  };
 
   return (
     <motion.div
@@ -1353,47 +1491,56 @@ function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: str
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.1 }}
-        className="mt-3 w-full max-w-2xl"
+        className="mt-3 w-full max-w-4xl"
       >
         <WaveDivider width={60} />
       </motion.div>
+
+      {/* Summary strip */}
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, delay: 0.12 }}
+        className="mt-3 w-full max-w-4xl px-2 md:px-4"
+      >
+        <div
+          className="grid grid-cols-2 md:grid-cols-4 gap-2 rounded-md px-3 py-2"
+          style={{ backgroundColor: CLR.rule + '10', border: `1px solid ${CLR.rule}24` }}
+        >
+          <SummaryStat label="Hands" value={`${crew.length}`} color={CLR.tabCrew} />
+          <SummaryStat label="Avg Skill" value={avgSkill.toString()} color={CLR.cyan} />
+          <SummaryStat label="Morale" value={`${avgMorale}%`} color={moraleColor(avgMorale)} />
+          <SummaryStat label="Condition" value={sickCrew.length ? `${sickCrew.length} ailing` : 'All fit'} color={sickCrew.length ? CLR.yellow : CLR.green} />
+        </div>
+      </motion.div>
+
+      <CaptainOrdersPanel
+        crew={crew}
+        provisions={provisions}
+        rationingDays={rationingDays}
+        onOrder={(order, targetCrewId) => issueCaptainOrder(order, targetCrewId)}
+      />
 
       {/* Column headers */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.2, delay: 0.12 }}
-        className="mt-3 w-full max-w-2xl px-3 md:px-5"
+        className="mt-4 hidden md:block w-full max-w-4xl px-2 md:px-4"
       >
-        <div className="flex items-center gap-3 px-3 pb-1.5" style={{ borderBottom: `1px solid ${CLR.rule}30` }}>
-          {/* Portrait spacer */}
-          <div className="w-[48px] shrink-0" />
-          {/* Name */}
-          <span className="flex-1 text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Name
-          </span>
-          {/* Role */}
-          <span className="w-[78px] shrink-0 text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Role
-          </span>
-          {/* Skill */}
-          <span className="hidden md:block w-[72px] shrink-0 text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Skill
-          </span>
-          {/* Health */}
-          <span className="w-[48px] shrink-0 text-right text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Health
-          </span>
-          {/* Morale */}
-          <span className="w-[52px] shrink-0 text-right text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Morale
-          </span>
-          {/* Days */}
-          <span className="hidden md:block w-[36px] shrink-0 text-right text-[9px] tracking-[0.2em] uppercase" style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
-            Days
-          </span>
-          {/* Chevron spacer */}
-          <div className="w-[14px] shrink-0" />
+        <div
+          className="grid items-center gap-4 px-4 pb-2 md:[grid-template-columns:72px_minmax(210px,1.5fr)_128px_120px_86px_126px_18px]"
+          style={{
+            borderBottom: `1px solid ${CLR.rule}30`,
+          }}
+        >
+          <div />
+          <CrewSortHeader label="Name" sortKey="name" activeKey={sortKey} direction={sortDirection} onSort={handleSort} />
+          <CrewSortHeader label="Role" sortKey="role" activeKey={sortKey} direction={sortDirection} onSort={handleSort} />
+          <CrewSortHeader label="Skill" sortKey="skill" activeKey={sortKey} direction={sortDirection} onSort={handleSort} />
+          <CrewSortHeader label="Health" sortKey="health" activeKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+          <CrewSortHeader label="Morale" sortKey="morale" activeKey={sortKey} direction={sortDirection} onSort={handleSort} align="right" />
+          <div />
         </div>
       </motion.div>
 
@@ -1402,13 +1549,14 @@ function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: str
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.15 }}
-        className="mt-1 w-full max-w-2xl px-3 md:px-5"
+        className="mt-1 w-full max-w-4xl px-2 md:px-4"
       >
         <div>
           {sortedCrew.map((m, i) => (
             <CrewRosterRow
               key={m.id}
               member={m}
+              status={crewStatuses.find(status => status.crewId === m.id && status.expiresDay >= dayCount)}
               index={i}
               dayCount={dayCount}
               onClick={() => onSelect(m.id)}
@@ -1419,34 +1567,240 @@ function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: str
         </div>
       </motion.div>
 
-      {/* Summary footer */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.4 }}
-        className="mt-4 w-full max-w-2xl px-3 md:px-5 mb-4"
+      <div className="h-4" />
+    </motion.div>
+  );
+}
+
+function CaptainOrdersPanel({ crew, provisions, rationingDays, onOrder }: {
+  crew: CrewMember[];
+  provisions: number;
+  rationingDays: number;
+  onOrder: (order: 'tighten-rations' | 'extra-rations' | 'hold-council' | 'punish-publicly', targetCrewId?: string) => void;
+}) {
+  const [punishMode, setPunishMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const crewCount = crew.length;
+  const extraRationCost = Math.max(1, crewCount);
+  const eligibleCrew = crew.filter(member => member.role !== 'Captain');
+  const selectedCrew = eligibleCrew.filter(member => selectedIds.includes(member.id));
+  const handleOrder = (order: 'tighten-rations' | 'extra-rations' | 'hold-council') => {
+    sfxClick();
+    onOrder(order);
+  };
+  const toggleSelected = (id: string) => {
+    sfxClick();
+    setSelectedIds(ids => ids.includes(id) ? ids.filter(existing => existing !== id) : [...ids, id]);
+  };
+  const cancelPunish = () => {
+    sfxClose();
+    setPunishMode(false);
+    setSelectedIds([]);
+  };
+  const confirmPunish = () => {
+    if (selectedIds.length === 0) return;
+    sfxClick();
+    selectedIds.forEach(id => onOrder('punish-publicly', id));
+    setPunishMode(false);
+    setSelectedIds([]);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: 0.14 }}
+      className="mt-3 w-full max-w-4xl px-2 md:px-4"
+    >
+      <div
+        className="rounded-md px-4 py-3"
+        style={{
+          background: 'linear-gradient(180deg, rgba(24,22,18,0.74), rgba(12,11,9,0.88))',
+          border: `1px solid ${CLR.rule}30`,
+          boxShadow: '0 8px 28px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.045)',
+        }}
       >
-        <div
-          className="p-3 rounded-lg flex items-center justify-between flex-wrap gap-2"
-          style={{ backgroundColor: CLR.rule + '15', border: `1px solid ${CLR.rule}25` }}
-        >
-          <div className="flex items-center gap-4">
-            <SummaryStat label="Avg Skill" value={avgSkill.toString()} color={CLR.cyan} />
-            <SummaryStat label="Avg Morale" value={`${avgMorale}%`} color={moraleColor(avgMorale)} />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[11px]" style={{ color: CLR.green, fontFamily: SANS }}>
-              {healthyCrew} fit
-            </span>
-            {sickCrew.length > 0 && (
-              <span className="text-[11px]" style={{ color: CLR.yellow, fontFamily: SANS }}>
-                {sickCrew.length} ailing
-              </span>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: CLR.dimGold, fontFamily: MONO, fontWeight: 700 }}>
+              Captain's Orders
+            </div>
+            <div className="mt-1 text-[12px] leading-5" style={{ color: CLR.txt, fontFamily: SANS }}>
+              {punishMode
+                ? 'Select the hand or hands to punish, then confirm the order.'
+                : 'Issue a standing order for stores, morale, or discipline.'}
+            </div>
+            {rationingDays > 0 && (
+              <div className="mt-1 text-[11px] tabular-nums" style={{ color: CLR.yellow, fontFamily: MONO }}>
+                Tight rations active: {rationingDays} day{rationingDays === 1 ? '' : 's'} left
+              </div>
             )}
           </div>
+          {!punishMode && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <CaptainOrderButton
+              label="Tighten Rations"
+              detail="5 days"
+              onClick={() => handleOrder('tighten-rations')}
+            />
+            <CaptainOrderButton
+              label="Extra Rations"
+              detail={`${extraRationCost} prov.`}
+              disabled={provisions < extraRationCost}
+              onClick={() => handleOrder('extra-rations')}
+            />
+            <CaptainOrderButton
+              label="Hold Council"
+              detail="surface trouble"
+              onClick={() => handleOrder('hold-council')}
+            />
+            <CaptainOrderButton
+              label="Punish"
+              detail="select crew"
+              onClick={() => { sfxClick(); setPunishMode(true); }}
+            />
+          </div>
+          )}
         </div>
-      </motion.div>
+        <AnimatePresence initial={false}>
+          {punishMode && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 border-t pt-3" style={{ borderColor: CLR.rule + '24' }}>
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
+                  {eligibleCrew.map(member => {
+                    const selected = selectedIds.includes(member.id);
+                    const roleColor = ROLE_COLOR[member.role] ?? CLR.txt;
+                    return (
+                      <button
+                        key={member.id}
+                        type="button"
+                        onMouseEnter={() => sfxHover()}
+                        onClick={() => toggleSelected(member.id)}
+                        className="grid grid-cols-[38px_minmax(0,1fr)] items-center gap-2 rounded-md px-2.5 py-2 text-left transition-all hover:bg-white/[0.045]"
+                        style={{
+                          backgroundColor: selected ? CLR.red + '12' : 'rgba(255,255,255,0.025)',
+                          border: `1px solid ${selected ? CLR.red + '65' : CLR.rule + '20'}`,
+                          boxShadow: selected ? `inset 0 0 0 1px ${CLR.red}22` : undefined,
+                        }}
+                      >
+                        <span
+                          className="overflow-hidden rounded-full"
+                          style={{
+                            width: 38,
+                            height: 38,
+                            border: `1.5px solid ${selected ? CLR.red + '90' : roleColor + '55'}`,
+                            backgroundColor: roleColor + '0b',
+                          }}
+                        >
+                          <CrewPortraitSquare member={member} size={38} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[12px] font-semibold" style={{ color: selected ? CLR.bright : CLR.txt, fontFamily: SANS }}>
+                            {member.name}
+                          </span>
+                          <span className="mt-0.5 flex items-center gap-1.5 text-[10px]" style={{ color: CLR.dim, fontFamily: MONO }}>
+                            <span style={{ color: roleColor }}>{member.role}</span>
+                            <span>{member.morale}% morale</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: CLR.rule + '20' }}>
+                  <div className="text-[11px] leading-5" style={{ color: selectedCrew.length ? CLR.txt : CLR.dim, fontFamily: SANS }}>
+                    {selectedCrew.length
+                      ? `${selectedCrew.length} selected: -18 morale and -1 vitality each. Wider crew reaction depends on whether they resent the target.`
+                      : 'No crew selected.'}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelPunish}
+                      onMouseEnter={() => sfxHover()}
+                      className="rounded-md px-3 py-2 text-[11px] uppercase tracking-[0.12em] transition-colors hover:bg-white/[0.04]"
+                      style={{ color: CLR.dim, border: `1px solid ${CLR.rule}24`, fontFamily: MONO }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedIds.length === 0}
+                      onClick={confirmPunish}
+                      onMouseEnter={() => { if (selectedIds.length > 0) sfxHover(); }}
+                      className="rounded-md px-3 py-2 text-[11px] uppercase tracking-[0.12em] transition-all hover:bg-white/[0.045] disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{ color: CLR.red, border: `1px solid ${CLR.red}45`, backgroundColor: CLR.red + '08', fontFamily: MONO, fontWeight: 700 }}
+                    >
+                      Confirm Punishment
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </motion.div>
+  );
+}
+
+function CaptainOrderButton({ label, detail, disabled, onClick }: {
+  label: string;
+  detail: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onMouseEnter={() => { if (!disabled) sfxHover(); }}
+      onClick={onClick}
+      className="rounded-md px-3 py-2 text-left transition-all hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-40"
+      style={{
+        minWidth: 118,
+        color: CLR.txt,
+        backgroundColor: 'rgba(255,255,255,0.025)',
+        border: `1px solid ${CLR.rule}2c`,
+        fontFamily: SANS,
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.035)',
+      }}
+    >
+      <div className="text-[12px] font-semibold">{label}</div>
+      <div className="mt-0.5 text-[9px] uppercase tracking-[0.14em]" style={{ color: CLR.dim, fontFamily: MONO }}>
+        {detail}
+      </div>
+    </button>
+  );
+}
+
+function CrewSortHeader({ label, sortKey, activeKey, direction, onSort, align = 'left' }: {
+  label: string;
+  sortKey: CrewSortKey;
+  activeKey: CrewSortKey;
+  direction: CrewSortDirection;
+  onSort: (key: CrewSortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sortKey === activeKey;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`flex items-center gap-1.5 text-[11px] tracking-[0.18em] uppercase transition-colors ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+      style={{ color: active ? CLR.tabCrew : CLR.dim, fontFamily: SANS, fontWeight: active ? 700 : 600 }}
+    >
+      <span>{label}</span>
+      <span className="text-[9px]" style={{ opacity: active ? 0.9 : 0.25 }}>
+        {active ? (direction === 'asc' ? '▲' : '▼') : '↕'}
+      </span>
+    </button>
   );
 }
 
@@ -2056,8 +2410,8 @@ function HistoryLog({ history, maxEntries = 5 }: { history: import('../store/gam
 
 // ── Crew roster row (clickable, navigates to detail) ────────────────────
 
-function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }: {
-  member: CrewMember; index: number; dayCount: number; onClick: () => void;
+function CrewRosterRow({ member, status, index, dayCount, onClick, onRoleChange, delay }: {
+  member: CrewMember; status?: CrewRelationshipStatus; index: number; dayCount: number; onClick: () => void;
   onRoleChange: (role: CrewRole) => void; delay: number;
 }) {
   const [roleOpen, setRoleOpen] = useState(false);
@@ -2066,9 +2420,17 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
   const qs = QUALITY_STYLE[member.quality];
   const moraleColor_ = member.morale > 60 ? CLR.green : member.morale > 30 ? CLR.yellow : CLR.red;
   const isCaptain = member.role === 'Captain';
-  const daysServed = Math.max(1, dayCount - member.hireDay);
   const isOdd = index % 2 === 1;
   const stripeBg = isOdd && !isCaptain ? CLR.bright + '03' : 'transparent';
+  const daysServed = Math.max(1, dayCount - member.hireDay);
+  const portraitSize = isCaptain ? 72 : 64;
+  const statusColor = status?.tone === 'tension'
+    ? CLR.yellow
+    : status?.tone === 'secret'
+      ? CLR.purple
+      : status?.tone === 'care'
+        ? CLR.green
+        : CLR.teal;
 
   return (
     <motion.div
@@ -2077,15 +2439,12 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
       transition={{ duration: 0.25, delay }}
     >
       {/* Separator after captain */}
-      {index === 1 && (
-        <div className="mx-3 mb-1" style={{ borderTop: `1px solid ${CLR.rule}25` }} />
-      )}
       <div
-        className={`w-full rounded-lg transition-all duration-150 cursor-pointer group ${isCaptain ? 'px-3 pt-3 pb-2 mb-0.5' : 'px-3 py-2.5'}`}
+        className="w-full rounded-md transition-all duration-150 cursor-pointer group px-3 md:px-4 py-2.5"
         style={{
           backgroundColor: isCaptain ? CLR.gold + '0a' : stripeBg,
-          border: `1px solid ${isCaptain ? CLR.gold + '22' : 'transparent'}`,
-          boxShadow: isCaptain ? `0 2px 12px ${CLR.gold}08` : undefined,
+          border: `1px solid ${isCaptain ? CLR.gold + '28' : CLR.rule + '10'}`,
+          boxShadow: isCaptain ? `0 2px 12px ${CLR.gold}08, inset 3px 0 0 ${CLR.gold}66` : undefined,
         }}
         onMouseEnter={(e) => {
           sfxHover();
@@ -2095,12 +2454,16 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
         onClick={onClick}
       >
         {/* Main row */}
-        <div className="flex items-center gap-3">
+        <div
+          className="grid grid-cols-[72px_minmax(0,1fr)_18px] md:[grid-template-columns:72px_minmax(0,1.5fr)_128px_120px_86px_126px_18px] items-center gap-4"
+        >
           {/* Portrait */}
           <div
-            className={`${isCaptain ? 'w-[88px] h-[88px]' : 'w-[64px] h-[64px]'} rounded-full shrink-0 overflow-hidden flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.08]`}
+            className="rounded-full shrink-0 overflow-hidden flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.04]"
             style={{
-              border: `${isCaptain ? '3' : '2.5'}px solid ${isCaptain ? CLR.gold + '80' : roleColor + '50'}`,
+              width: portraitSize,
+              height: portraitSize,
+              border: `${isCaptain ? '2.5' : '2'}px solid ${isCaptain ? CLR.gold + '85' : roleColor + '50'}`,
               backgroundColor: (isCaptain ? CLR.gold : roleColor) + '0a',
               boxShadow: isCaptain
                 ? `inset 0 2px 6px rgba(0,0,0,0.4), 0 0 16px ${CLR.gold}18`
@@ -2112,43 +2475,52 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
                 : `inset 0 2px 4px rgba(0,0,0,0.35)`,
             }}
           >
-            <CrewPortraitSquare member={member} size={isCaptain ? 88 : 64} />
+            <CrewPortraitSquare member={member} size={portraitSize} />
           </div>
 
           {/* Name + flag + quality */}
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span
-              className={`${isCaptain ? 'text-[17px]' : 'text-[15px]'} truncate`}
-              style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: SANS, fontWeight: isCaptain ? 600 : 500 }}
-            >
-              {member.name}
-            </span>
-            <FactionFlag nationality={member.nationality} size={isCaptain ? 22 : 18} />
-            {(
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <span
-                className={`${isCaptain ? 'text-[9px]' : 'text-[8px]'} tracking-wider uppercase px-1.5 py-0.5 rounded shrink-0`}
+                className={`${isCaptain ? 'text-[18px]' : 'text-[16px]'} truncate`}
+                style={{ color: isCaptain ? CLR.gold : CLR.bright, fontFamily: SANS, fontWeight: isCaptain ? 650 : 500 }}
+              >
+                {member.name}
+              </span>
+              <FactionFlag nationality={member.nationality} size={20} />
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 min-w-0">
+              <span
+                className="text-[9px] tracking-wider uppercase px-1.5 py-0.5 rounded shrink-0"
                 style={{ color: qs.color, backgroundColor: qs.bg, border: `1px solid ${qs.border}`, fontFamily: SANS, fontWeight: 600 }}
               >
                 {qs.label}
               </span>
-            )}
-            {isCaptain && (
-              <span className="text-[10px] tabular-nums shrink-0" style={{ color: CLR.dimGold, fontFamily: MONO }}>
-                Lvl {member.level}
-              </span>
-            )}
+              {isCaptain && (
+                <span className="text-[9px] tabular-nums shrink-0" style={{ color: CLR.dimGold, fontFamily: MONO }}>
+                  Lvl {member.level}
+                </span>
+              )}
+            </div>
+            <div className="mt-1 flex md:hidden items-center gap-2 text-[11px]">
+              <span style={{ color: roleColor, fontFamily: SANS, fontWeight: 600 }}>{member.role}</span>
+              <span style={{ color: CLR.dim }}>|</span>
+              <span style={{ color: hs.color, fontFamily: SANS }}>{hs.label}</span>
+              <span style={{ color: CLR.dim }}>|</span>
+              <span className="tabular-nums" style={{ color: moraleColor_, fontFamily: MONO }}>{member.morale}%</span>
+            </div>
           </div>
 
           {/* Role — clickable dropdown */}
-          <div className="relative w-[78px] shrink-0">
+          <div className="relative hidden md:block">
             {isCaptain ? (
-              <span className="text-[13px] tracking-wide" style={{ color: roleColor, fontFamily: SANS, fontWeight: 700 }}>
+              <span className="text-[15px] tracking-wide" style={{ color: roleColor, fontFamily: SANS, fontWeight: 700 }}>
                 Captain
               </span>
             ) : (
               <button
                 onClick={(e) => { e.stopPropagation(); sfxClick(); setRoleOpen(!roleOpen); }}
-                className="text-[12px] hover:underline underline-offset-2 transition-colors flex items-center gap-1"
+                className="text-[14px] hover:underline underline-offset-2 transition-colors flex items-center gap-1"
                 style={{ color: roleColor, fontFamily: SANS, fontWeight: 500 }}
               >
                 {member.role}
@@ -2187,45 +2559,35 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
           </div>
 
           {/* Skill mini bar */}
-          <div className="hidden md:flex items-center gap-1.5 w-[72px] shrink-0">
+          <div className="hidden md:flex items-center gap-2">
             <div className="flex-1 h-[4px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
               <div className="h-full rounded-full" style={{ width: `${member.skill}%`, backgroundColor: CLR.cyan }} />
             </div>
-            <span className="text-[11px] tabular-nums w-[22px] text-right" style={{ color: CLR.txt, fontFamily: MONO }}>{member.skill}</span>
+            <span className="text-[13px] tabular-nums w-[26px] text-right" style={{ color: CLR.txt, fontFamily: MONO }}>{member.skill}</span>
           </div>
 
           {/* Health */}
-          <span
-            className="text-[11px] w-[48px] text-right shrink-0"
-            style={{ color: hs.color, fontFamily: SANS, fontWeight: 600 }}
-          >
-            {hs.label}
-          </span>
-
-          {/* Vitality */}
-          <div className="hidden md:flex shrink-0">
-            <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={16} />
+          <div className="hidden md:flex items-center justify-end gap-2">
+            <span
+              className="text-[13px] text-right"
+              style={{ color: hs.color, fontFamily: SANS, fontWeight: 600 }}
+            >
+              {hs.label}
+            </span>
+            <VitalityHeart current={member.hearts.current} max={member.hearts.max} size={17} />
           </div>
 
           {/* Morale bar + value */}
-          <div className="flex items-center gap-1.5 w-[52px] shrink-0 justify-end">
-            <div className="w-[28px] h-[4px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
+          <div className="hidden md:flex items-center gap-2 justify-end">
+            <div className="w-[58px] h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
               <div className="h-full rounded-full" style={{ width: `${member.morale}%`, backgroundColor: moraleColor_ }} />
             </div>
-            <span className="text-[10px] tabular-nums" style={{ color: moraleColor_, fontFamily: MONO }}>{member.morale}</span>
+            <span className="text-[13px] tabular-nums w-[24px] text-right" style={{ color: moraleColor_, fontFamily: MONO }}>{member.morale}</span>
           </div>
-
-          {/* Days served */}
-          <span
-            className="hidden md:block text-[10px] tabular-nums w-[36px] text-right shrink-0"
-            style={{ color: CLR.dim, fontFamily: MONO }}
-          >
-            {daysServed}
-          </span>
 
           {/* Navigate chevron — slides on hover */}
           <span
-            className="text-[11px] shrink-0 opacity-25 group-hover:opacity-70 group-hover:translate-x-0.5 transition-all duration-150"
+            className="text-[12px] shrink-0 opacity-25 group-hover:opacity-70 group-hover:translate-x-0.5 transition-all duration-150"
             style={{ color: CLR.bright }}
           >
             ▸
@@ -2234,7 +2596,10 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
 
         {/* Captain extras: traits + XP bar */}
         {isCaptain && (
-          <div className="mt-2 ml-[100px] flex items-center gap-3 flex-wrap">
+          <div className="mt-2 md:ml-[88px] flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] tracking-wider uppercase" style={{ color: CLR.dim, fontFamily: SANS }}>
+              {daysServed} days aboard
+            </span>
             {/* Traits */}
             {member.traits.map(t => (
               <span
@@ -2255,7 +2620,7 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
               </span>
             ))}
             {/* XP bar */}
-            <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1.5 md:ml-auto">
               <div className="w-[60px] h-[3px] rounded-full overflow-hidden" style={{ backgroundColor: CLR.rule + '40' }}>
                 <div
                   className="h-full rounded-full transition-all duration-700"
@@ -2270,6 +2635,22 @@ function CrewRosterRow({ member, index, dayCount, onClick, onRoleChange, delay }
                 {member.xp}/{member.xpToNext}
               </span>
             </div>
+          </div>
+        )}
+        {status && (
+          <div
+            className={`${isCaptain ? 'mt-2' : 'mt-1.5'} md:ml-[88px] flex items-center gap-2 text-[11px]`}
+            style={{ color: statusColor, fontFamily: SANS }}
+          >
+            <span
+              className="text-[9px] tracking-[0.18em] uppercase"
+              style={{ color: statusColor, opacity: 0.78, fontFamily: MONO }}
+            >
+              {status.tone === 'tension' ? 'Tension' : status.tone === 'secret' ? 'Private' : status.tone === 'care' ? 'Care' : 'Bond'}
+            </span>
+            <span className="min-w-0 truncate" style={{ color: CLR.txt }}>
+              {status.text}
+            </span>
           </div>
         )}
       </div>
@@ -2289,6 +2670,11 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
   const [portraitModalOpen, setPortraitModalOpen] = useState(false);
   const [dialogue, setDialogue] = useState<string | null>(null);
   const [portraitEnlarged, setPortraitEnlarged] = useState(false);
+  const issueCaptainOrder = useGameStore(s => s.issueCaptainOrder);
+  const crew = useGameStore(s => s.crew);
+  const crewRelations = useGameStore(s => s.crewRelations);
+  const crewStatuses = useGameStore(s => s.crewStatuses);
+  const dayCount = useGameStore(s => s.dayCount);
   const sparkle = useSparkle();
 
   // Arrow key navigation between crew members
@@ -2410,7 +2796,8 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
                 onClick={(e) => {
                   e.stopPropagation();
                   sfxClick();
-                  const line = getCrewDialogue(member);
+                  const liveMember = crew.find(c => c.id === member.id) ?? member;
+                  const line = getCrewDialogue(liveMember, { crew, relations: crewRelations, statuses: crewStatuses, dayCount });
                   setDialogue(line);
                   setPortraitEnlarged(true);
                   setTimeout(() => setPortraitEnlarged(false), 600);
@@ -2654,6 +3041,53 @@ function CrewDetailView({ member, onBack, onRoleChange, onPrev, onNext }: {
           <AbilityBlock stats={member.stats} />
         </div>
       </motion.div>
+
+      {!isCaptain && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.24 }}
+          className="mt-4 w-full max-w-xl px-2 md:px-4"
+        >
+          <div
+            className="p-3 rounded-lg"
+            style={{
+              background: 'linear-gradient(135deg, rgba(70,38,17,0.34), rgba(17,13,9,0.72))',
+              border: `1px solid ${CLR.gold}28`,
+            }}
+          >
+            <span className="text-[10px] tracking-[0.15em] uppercase block mb-2" style={{ color: CLR.gold, fontFamily: SANS, fontWeight: 700 }}>
+              Captain's Orders
+            </span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onMouseEnter={() => sfxHover()}
+                onClick={() => { sfxClick(); issueCaptainOrder('punish-publicly', member.id); }}
+                className="rounded-md px-3 py-2 text-left transition-all hover:translate-y-[-1px]"
+                style={{ color: CLR.yellow, backgroundColor: CLR.yellow + '10', border: `1px solid ${CLR.yellow}40`, fontFamily: SANS }}
+              >
+                <div className="text-[12px] font-bold">Punish Publicly</div>
+                <div className="mt-0.5 text-[10px]" style={{ color: CLR.dim }}>
+                  Raises discipline pressure; morale outcome depends on whether the crew resents this hand.
+                </div>
+              </button>
+              <button
+                type="button"
+                onMouseEnter={() => sfxHover()}
+                onClick={() => { sfxClick(); issueCaptainOrder('light-duty', member.id); }}
+                className="rounded-md px-3 py-2 text-left transition-all hover:translate-y-[-1px]"
+                style={{ color: CLR.green, backgroundColor: CLR.green + '10', border: `1px solid ${CLR.green}40`, fontFamily: SANS }}
+              >
+                <div className="text-[12px] font-bold">Light Duty</div>
+                <div className="mt-0.5 text-[10px]" style={{ color: CLR.dim }}>
+                  Improves morale and vitality, but makes favoritism visible.
+                </div>
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Divider */}
       <motion.div
@@ -2948,7 +3382,11 @@ function ConditionStripe({ hullPct, sailsPct, avgMorale, crewHealthPct }: {
   return (
     <div
       className="flex items-center justify-center gap-1 py-2 px-4 rounded-lg"
-      style={{ backgroundColor: active.color + '0a', border: `1px solid ${active.color}25` }}
+      style={{
+        backgroundColor: 'rgba(8, 7, 5, 0.86)',
+        border: `1px solid ${active.color}35`,
+        boxShadow: `0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 ${active.color}18`,
+      }}
     >
       {tiers.map(t => {
         const isActive = t.label === active.label;
@@ -2980,7 +3418,7 @@ function ConditionStripe({ hullPct, sailsPct, avgMorale, crewHealthPct }: {
 
 // ── Ship tab main ────────────────────────────────────────────────────────
 
-function ShipTab() {
+function ShipTab({ onCrewSelect }: { onCrewSelect?: (crewId: string) => void }) {
   const ship = useGameStore(s => s.ship);
   const stats = useGameStore(s => s.stats);
   const crew = useGameStore(s => s.crew);
@@ -2996,9 +3434,7 @@ function ShipTab() {
   const crewHealthPct = Math.round((healthyCrew / (crew.length || 1)) * 100);
   const shipDesc = SHIP_DESCRIPTIONS[ship.type] ?? SHIP_DESCRIPTIONS.Carrack;
 
-  const cargoUsed = Object.entries(cargo).reduce(
-    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-  );
+  const cargoUsed = calculateCargoWeight(cargo);
   // Rough estimate: a crew berth for each hired crew member plus a few spares.
   const berthsMax = Math.max(crew.length + 2, 6);
   // Powder fill scales with how armed the ship is.
@@ -3052,9 +3488,9 @@ function ShipTab() {
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, delay: 0.12 }}
-        className="mt-4 w-full flex justify-center"
+        className="mt-2 w-full flex justify-center"
       >
-        <div className="w-full max-w-4xl px-2">
+        <div className="w-full max-w-6xl px-2">
           <ShipView
             shipType={ship.type}
             hull={stats.hull}
@@ -3066,12 +3502,18 @@ function ShipTab() {
             cargoUsed={cargoUsed}
             cargoMax={stats.cargoCapacity}
             crewCount={crew.length}
+            crew={crew}
             berthsMax={berthsMax}
             powderPct={powderPct}
             provisions={provisions}
             provisionsMax={60}
             size="large"
             showToggle
+            onCrewSelect={onCrewSelect}
+            cropTopRows={0}
+            cropBottomRows={1}
+            minRows={72}
+            contentOffsetPct={-0.08}
           />
         </div>
       </motion.div>
@@ -3081,7 +3523,8 @@ function ShipTab() {
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.22 }}
-        className="mt-3 flex items-center gap-3 md:gap-5"
+        className="mt-6 flex items-center gap-3 md:gap-5 rounded-lg px-4 py-2"
+        style={{ backgroundColor: 'rgba(8, 7, 5, 0.78)', border: `1px solid ${CLR.rule}20` }}
       >
         <DamageSegment label="Bow" pct={bowPct} />
         <DamageSegment label="Midship" pct={midPct} />
@@ -3093,7 +3536,7 @@ function ShipTab() {
         initial={{ opacity: 0, scaleX: 0.8 }}
         animate={{ opacity: 1, scaleX: 1 }}
         transition={{ duration: 0.35, delay: 0.28 }}
-        className="mt-3 w-full max-w-lg px-2 md:px-4"
+        className="mt-4 w-full max-w-lg px-2 md:px-4"
       >
         <ConditionStripe hullPct={hullPct} sailsPct={sailsPct} avgMorale={avgMorale} crewHealthPct={crewHealthPct} />
       </motion.div>
@@ -3103,7 +3546,7 @@ function ShipTab() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.32 }}
-        className="mt-4 w-full max-w-lg"
+        className="mt-5 w-full max-w-lg"
       >
         <WaveDivider width={52} />
       </motion.div>
@@ -3113,7 +3556,7 @@ function ShipTab() {
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.36 }}
-        className="mt-4 w-full max-w-xl px-2 md:px-4"
+        className="mt-10 w-full max-w-3xl px-2 md:px-4"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Ship stats */}
@@ -3135,41 +3578,50 @@ function ShipTab() {
 
           {/* Armament */}
           <div
-            className="p-3 rounded-lg"
-            style={{ backgroundColor: CLR.red + '05', border: `1px solid ${CLR.red}15` }}
+            className="p-4 rounded-lg"
+            style={{ backgroundColor: CLR.red + '05', border: `1px solid ${CLR.red}18` }}
           >
-            <h3 className="text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
-              Armament
-            </h3>
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <h3 className="text-[10px] tracking-[0.18em] uppercase" style={{ color: CLR.dimGold, fontFamily: SANS, fontWeight: 600 }}>
+                Armament
+              </h3>
+              <span className="text-[9px] tracking-[0.12em] uppercase" style={{ color: CLR.dim, fontFamily: SANS }}>
+                Bow + broadside guns
+              </span>
+            </div>
             {Object.entries(weaponCounts).length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {Object.entries(weaponCounts).map(([name, { count, weapon }]) => (
-                  <div key={name}>
+                  <div
+                    key={name}
+                    className="rounded-md px-3 py-2"
+                    style={{ backgroundColor: 'rgba(0,0,0,0.18)', border: `1px solid ${CLR.rule}18` }}
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-[13px]" style={{ color: CLR.bright, fontFamily: SANS }}>
-                        {count > 1 && <span style={{ color: CLR.dim }}>{count}\u00d7 </span>}
+                        {count > 1 && <span style={{ color: CLR.dim }}>{count}{'x '}</span>}
                         {name}
                       </span>
                       <span className="text-[9px] uppercase tracking-wider" style={{ color: weapon.aimable ? CLR.teal : CLR.dim, fontFamily: SANS }}>
-                        {weapon.aimable ? 'Aimable' : 'Broadside'}
+                        {weapon.aimable ? 'Aimed bow shot' : 'Broadside'}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px]" style={{ color: CLR.red, fontFamily: MONO }}>
-                        DMG {weapon.damage}
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      <span className="text-[10px]" style={{ color: CLR.red, fontFamily: SANS }}>
+                        Damage <span style={{ fontFamily: MONO }}>{weapon.damage}</span>
                       </span>
-                      <span className="text-[10px]" style={{ color: CLR.cyan, fontFamily: MONO }}>
-                        RNG {weapon.range}
+                      <span className="text-[10px]" style={{ color: CLR.cyan, fontFamily: SANS }}>
+                        Range <span style={{ fontFamily: MONO }}>{weapon.range}</span>
                       </span>
-                      <span className="text-[10px]" style={{ color: CLR.dim, fontFamily: MONO }}>
-                        RLD {weapon.reloadTime}s
+                      <span className="text-[10px]" style={{ color: CLR.dim, fontFamily: SANS }}>
+                        Reload <span style={{ fontFamily: MONO }}>{weapon.reloadTime}s</span>
                       </span>
                     </div>
                   </div>
                 ))}
                 {stats.cannons > 0 && (
-                  <p className="text-[10px] mt-1" style={{ color: CLR.dim, fontFamily: SANS }}>
-                    {stats.cannons} broadside gun{stats.cannons > 1 ? 's' : ''} mounted
+                  <p className="text-[10px] leading-relaxed" style={{ color: CLR.dim, fontFamily: SANS }}>
+                    {stats.cannons} mounted broadside gun{stats.cannons > 1 ? 's' : ''}; broadsides fire from port or starboard.
                   </p>
                 )}
               </div>
@@ -3315,9 +3767,7 @@ function CargoManifest({ onSelect, nearPort }: {
   const provisions = useGameStore(s => s.provisions);
   const crew = useGameStore(s => s.crew);
 
-  const currentCargo = Object.entries(cargo).reduce(
-    (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-  );
+  const currentCargo = calculateCargoWeight(cargo);
   const freeCargo = stats.cargoCapacity - currentCargo;
   const usedPct = Math.round((currentCargo / stats.cargoCapacity) * 100);
   const isEmpty = currentCargo === 0;
@@ -4070,6 +4520,7 @@ function ASCIITabBar({ active, onChange }: { active: DashTab; onChange: (tab: Da
 
 export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId, initialCommodity }: { open: boolean; onClose: () => void; initialTab?: string; initialCrewId?: string; initialCommodity?: string }) {
   const [tab, setTab] = useState<DashTab>('overview');
+  const [focusedCrewId, setFocusedCrewId] = useState<string | undefined>(initialCrewId);
   const activeAccent = TABS.find(t => t.id === tab)?.accent ?? CLR.tabOverview;
 
   // Escape to close
@@ -4087,8 +4538,9 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId, initi
     if (open) {
       const valid: DashTab[] = ['overview', 'ship', 'crew', 'cargo', 'reputation'];
       setTab(valid.includes(initialTab as DashTab) ? (initialTab as DashTab) : 'overview');
+      setFocusedCrewId(initialCrewId);
     }
-  }, [open, initialTab]);
+  }, [open, initialTab, initialCrewId]);
 
   if (!open) return null;
 
@@ -4166,8 +4618,16 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId, initi
           <div className="relative z-10 flex-1 overflow-y-auto px-4 md:px-8 py-4 scrollbar-thin">
             <AnimatePresence mode="wait">
               {tab === 'overview' && <OverviewTab />}
-              {tab === 'ship' && <ShipTab />}
-              {tab === 'crew' && <CrewTab initialCrewId={initialCrewId} />}
+              {tab === 'ship' && (
+                <ShipTab
+                  onCrewSelect={(crewId) => {
+                    sfxClick();
+                    setFocusedCrewId(crewId);
+                    setTab('crew');
+                  }}
+                />
+              )}
+              {tab === 'crew' && <CrewTab initialCrewId={focusedCrewId} />}
               {tab === 'cargo' && <CargoTab initialCommodity={initialCommodity} />}
               {tab === 'reputation' && <ReputationTab />}
             </AnimatePresence>

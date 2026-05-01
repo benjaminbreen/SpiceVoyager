@@ -17,6 +17,7 @@ import type { Lead, LeadSource, QuestToastEntry } from '../types/leads';
 import { LEAD_CAPS } from '../types/leads';
 import { createStarterLead } from '../utils/seedLeads';
 import { saleResolvesStarterLead, leadsToExpire, formatRewardReveal, type SaleEvent } from '../utils/leadResolution';
+import { authorityForPort } from '../utils/portAuthorities';
 import type { VoyageResolution } from '../utils/voyageResolution';
 import { nationalityToCulture } from '../utils/portCoords';
 import type { DistrictKey } from '../utils/cityDistricts';
@@ -40,6 +41,9 @@ import {
   quoteSellCommodity,
   settleSellCommodity,
 } from '../utils/tradeQuotes';
+import { calculateCargoWeight, cargoUnitWeight } from '../utils/cargoWeight';
+import { rollCrewRelationshipEvent, type CrewRelation, type CrewRelationshipStatus } from '../utils/crewRelations';
+import { maybeCreateCrewTroubleEvent, type CrewTroubleChoice, type CrewTroubleEvent } from '../utils/crewTrouble';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { LUT_PRESETS, type LUTParams, type LUTPresetId } from '../utils/proceduralLUT';
 import type { ClimateProfile } from '../utils/portArchetypes';
@@ -225,7 +229,7 @@ export interface Building {
   setback?: number;          // 0..1; render-time jitter multiplier
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
-  palaceStyle?: string;      // for type === 'palace'; keys render geometry (iberian-colonial, mughal, malay-istana…)
+  palaceStyle?: string;      // for type === 'palace'; keys render authority-building geometry from palaceStyles.ts
   /** Crop type for farmhouses — drives both the label and the field renderer.
    *  Only set when the picked label corresponds to a crop we have geometry
    *  for. Other farmhouses fall back to plain labels with no rendered field.
@@ -396,16 +400,16 @@ export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
 // ── Weapon prices & availability ──
 // Prices in gold. Not every port sells every weapon.
 export const WEAPON_PRICES: Record<WeaponType, number> = {
-  swivelGun:    40,
-  lantaka:      40,
-  cetbang:      40,
-  falconet:     560,
-  fireRocket:   180,
-  minion:       80,
-  saker:        120,
-  demiCulverin: 200,
-  demiCannon:   350,
-  basilisk:     500,
+  swivelGun:    60,
+  lantaka:      60,
+  cetbang:      60,
+  falconet:     420,
+  fireRocket:   240,
+  minion:       180,
+  saker:        320,
+  demiCulverin: 650,
+  demiCannon:   1100,
+  basilisk:     1600,
 };
 
 // Which weapon types each port sells (by port id).
@@ -556,7 +560,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Copper Sheathing',
     description: 'Thin copper plates nailed to the hull below the waterline to ward off shipworm and barnacles.',
     effect: '+20 max hull',
-    price: 200,
+    price: 500,
     apply: (s) => ({ maxHull: s.maxHull + 20 }),
   },
   reinforcedPlanking: {
@@ -564,7 +568,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Reinforced Planking',
     description: 'Extra layer of teak or oak planking along the waterline for added protection.',
     effect: '+30 max hull',
-    price: 350,
+    price: 850,
     apply: (s) => ({ maxHull: s.maxHull + 30 }),
   },
   newCanvas: {
@@ -572,7 +576,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'New Canvas Sails',
     description: 'Fresh sailcloth from local weavers replaces worn and patched canvas.',
     effect: '+2 sailing speed',
-    price: 150,
+    price: 300,
     apply: (s) => ({ speed: s.speed + 2 }),
   },
   lateenRigging: {
@@ -580,7 +584,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Lateen Rigging',
     description: 'Triangular fore-and-aft sails for tacking against the wind.',
     effect: '+0.4 maneuverability',
-    price: 220,
+    price: 380,
     apply: (s) => ({ turnSpeed: s.turnSpeed + 0.4 }),
   },
   expandedHold: {
@@ -588,7 +592,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Expanded Hold',
     description: 'Carpenters reconfigure the lower deck to fit more cargo.',
     effect: '+12 cargo capacity',
-    price: 280,
+    price: 650,
     apply: (s) => ({ cargoCapacity: s.cargoCapacity + 12 }),
   },
   surgeonsChest: {
@@ -596,7 +600,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: "Surgeon's Chest",
     description: 'A locked chest of medicines: theriac, mercury salve, laudanum, and surgical tools.',
     effect: 'Crew heal faster at sea',
-    price: 160,
+    price: 220,
     apply: () => ({}), // effect handled by crew health system
   },
   ironKnees: {
@@ -604,7 +608,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Iron Knee Braces',
     description: 'Wrought-iron brackets reinforcing the joints between ribs and deck beams.',
     effect: '+15 max hull, +4 cargo capacity',
-    price: 300,
+    price: 700,
     apply: (s) => ({ maxHull: s.maxHull + 15, cargoCapacity: s.cargoCapacity + 4 }),
   },
   betterProvisions: {
@@ -612,7 +616,7 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
     name: 'Improved Provisions',
     description: 'Sealed casks, dried fruits, and salted fish — better stores mean longer voyages.',
     effect: '+25 provisions',
-    price: 100,
+    price: 80,
     apply: () => ({}), // handled specially — adds provisions
   },
 };
@@ -863,7 +867,17 @@ export interface Notification {
   timestamp: number;
 }
 
+export type CaptainOrderType =
+  | 'tighten-rations'
+  | 'extra-rations'
+  | 'hold-council'
+  | 'punish-publicly'
+  | 'light-duty';
+
 export type JournalCategory = 'navigation' | 'commerce' | 'ship' | 'crew' | 'encounter';
+export type CargoOwnership = 'owned' | 'commission' | 'pledged' | 'spoils' | 'suspect';
+export type ObligationStatus = 'active' | 'settled' | 'defaulted';
+export type ObligationType = 'investorCargo' | 'credit';
 
 export interface JournalNote {
   id: string;
@@ -896,6 +910,24 @@ export interface CargoStack {
   acquiredDay: number;
   purchasePrice: number;       // per-unit gold paid
   knowledgeAtPurchase: KnowledgeLevel;
+  ownership?: CargoOwnership;
+  obligationId?: string;
+}
+
+export interface Obligation {
+  id: string;
+  type: ObligationType;
+  patron: string;
+  faction: Nationality;
+  portIds: string[];
+  dueDay: number;
+  principal: number;
+  amountDue: number;
+  settledGold: number;
+  playerShare: number;
+  status: ObligationStatus;
+  cargoStackIds?: string[];
+  note: string;
 }
 
 export interface FishShoalEntry {
@@ -936,6 +968,8 @@ export interface RenderDebugSettings {
   reefCaustics: boolean;
   wildlifeMotion: boolean;
   cloudShadows: boolean;
+  /** City-local packed earth / damp mud tint around roads and buildings. */
+  cityGroundWear: boolean;
   animalMarkers: boolean;
   disableTransitions: boolean;
   worldMapChart: boolean;
@@ -961,8 +995,14 @@ interface GameState {
   gold: number;
   cargo: Record<Commodity, number>;
   cargoProvenance: CargoStack[];
+  obligations: Obligation[];
   stats: ShipStats;
   crew: CrewMember[];
+  crewRelations: CrewRelation[];
+  crewStatuses: CrewRelationshipStatus[];
+  activeCrewTrouble: CrewTroubleEvent | null;
+  lastCrewTroubleDay: number;
+  crewTroubleCooldowns: Record<string, number>;
   ship: ShipInfo;
   ports: Port[];
   timeOfDay: number; // 0 to 24
@@ -1027,6 +1067,7 @@ interface GameState {
 
   // Provisions (food/supplies for crew)
   provisions: number;
+  rationingDays: number;
 
   // Crew death modal
   deadCrew: CrewMember | null; // set when a crew member dies, cleared when modal dismissed
@@ -1104,6 +1145,11 @@ interface GameState {
   repairShip: (amount: number, cost: number) => void;
   setCrewRole: (crewId: string, role: CrewRole) => void;
   addCrewHistory: (crewId: string, event: string) => void;
+  issueCaptainOrder: (order: CaptainOrderType, targetCrewId?: string) => void;
+  rollCrewRelations: (trigger?: 'daily' | 'voyage' | 'rest' | 'combat') => void;
+  maybeTriggerCrewTrouble: (trigger?: 'daily' | 'voyage' | 'rest' | 'relations' | 'combat' | 'commerce' | 'discovery') => void;
+  resolveCrewTrouble: (choice: CrewTroubleChoice) => void;
+  dismissCrewTrouble: () => void;
 
   addNotification: (message: string, type?: Notification['type'], opts?: { size?: 'normal' | 'grand'; tier?: NotificationTier; subtitle?: string; imageCandidates?: string[]; openPortId?: string }) => void;
   removeNotification: (id: string) => void;
@@ -1119,6 +1165,9 @@ interface GameState {
   setActivePort: (port: Port | null) => void;
   buyCommodity: (commodity: Commodity, amount: number) => void;
   sellCommodity: (commodity: Commodity, amount: number) => void;
+  drawCredit: (amount: number) => void;
+  repayObligation: (obligationId: string) => void;
+  settleObligation: (obligationId: string) => void;
   advanceTime: (delta: number) => void;
   restAtInn: (port: Port) => RestSummary | null;
   setCameraZoom: (zoom: number) => void;
@@ -1185,6 +1234,7 @@ const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   reefCaustics: false,
   wildlifeMotion: true,
   cloudShadows: true,
+  cityGroundWear: true,
   animalMarkers: true,
   disableTransitions: false,
   worldMapChart: true,
@@ -1564,17 +1614,17 @@ function seedStartingAmmunition(cargo: Record<Commodity, number>, armament: Weap
 // fuller hold. Dhow/Baghla (Omani) and Junk/Jong (Chinese) are the
 // non-European playable tiers.
 const SHIP_START_PROFILE: Record<ShipInfo['type'], { cargoCapacity: number; gold: number }> = {
-  Pinnace:  { cargoCapacity: 50,  gold: 600  },
-  Caravel:  { cargoCapacity: 65,  gold: 700  },
-  Pattamar: { cargoCapacity: 65,  gold: 650  },
-  Fluyt:    { cargoCapacity: 120, gold: 1050 },
-  Carrack:  { cargoCapacity: 140, gold: 1400 },
-  Galleon:  { cargoCapacity: 130, gold: 1500 },
-  Dhow:     { cargoCapacity: 60,  gold: 600  },
-  Baghla:   { cargoCapacity: 110, gold: 1200 },
-  Ghurab:   { cargoCapacity: 115, gold: 1250 },
-  Junk:     { cargoCapacity: 95,  gold: 800  },
-  Jong:     { cargoCapacity: 150, gold: 1400 },
+  Pinnace:  { cargoCapacity: 50,  gold: 120 },
+  Caravel:  { cargoCapacity: 65,  gold: 160 },
+  Pattamar: { cargoCapacity: 65,  gold: 140 },
+  Fluyt:    { cargoCapacity: 120, gold: 220 },
+  Carrack:  { cargoCapacity: 140, gold: 300 },
+  Galleon:  { cargoCapacity: 130, gold: 360 },
+  Dhow:     { cargoCapacity: 60,  gold: 120 },
+  Baghla:   { cargoCapacity: 110, gold: 240 },
+  Ghurab:   { cargoCapacity: 115, gold: 260 },
+  Junk:     { cargoCapacity: 95,  gold: 180 },
+  Jong:     { cargoCapacity: 150, gold: 340 },
 };
 
 // Per-faction starting reputation. Most captains begin neutral with everyone;
@@ -1677,6 +1727,77 @@ function buildStartingProvenance(cargo: Record<Commodity, number>): CargoStack[]
   return stacks;
 }
 
+const _startingProvenance = buildStartingProvenance(_startingCargo);
+const _startingObligationStart = buildStartingObligations(
+  _startingFaction,
+  _startingPortId,
+  _startingCargo,
+  _startingProvenance,
+);
+
+function patronForFaction(faction: Nationality, portId?: string): string {
+  const authority = portId ? authorityForPort(portId) : null;
+  if (authority) return authority.creditPatron;
+
+  if (faction === 'Portuguese') return 'Casa da India';
+  if (faction === 'Dutch') return 'VOC directors';
+  if (faction === 'English') return 'East India Company';
+  if (faction === 'Spanish') return 'Casa de Contratacion';
+  if (faction === 'Venetian') return 'Venetian spice syndics';
+  if (faction === 'Gujarati') return 'Surat merchant house';
+  if (faction === 'Omani') return 'Muscat broker';
+  if (faction === 'Chinese') return 'Macau comprador';
+  return 'private backers';
+}
+
+function buildStartingObligations(
+  faction: Nationality,
+  portId: string,
+  cargo: Record<Commodity, number>,
+  cargoProvenance: CargoStack[],
+): { cargoProvenance: CargoStack[]; obligations: Obligation[] } {
+  const ownedProvenance = cargoProvenance.map((stack) => ({ ...stack, ownership: 'owned' as const }));
+  if (faction === 'Pirate') return { cargoProvenance: ownedProvenance, obligations: [] };
+  const commissionStacks = cargoProvenance.filter((stack) =>
+    stack.amount > 0 &&
+    stack.commodity !== 'Rice' &&
+    stack.commodity !== 'Small Shot' &&
+    stack.commodity !== 'Cannon Shot' &&
+    stack.commodity !== 'War Rockets'
+  );
+  if (commissionStacks.length === 0) return { cargoProvenance: ownedProvenance, obligations: [] };
+
+  const obligationId = generateId();
+  const principal = commissionStacks.reduce((sum, stack) => {
+    const def = COMMODITY_DEFS[stack.commodity];
+    const avg = Math.round((def.basePrice[0] + def.basePrice[1]) / 2);
+    return sum + avg * stack.amount;
+  }, 0);
+  const amountDue = Math.max(40, Math.round(principal * 0.7));
+  const patron = patronForFaction(faction, portId);
+  return {
+    cargoProvenance: cargoProvenance.map((stack) => commissionStacks.some((s) => s.id === stack.id)
+      ? { ...stack, ownership: 'commission' as const, obligationId }
+      : { ...stack, ownership: 'owned' as const }
+    ),
+    obligations: [{
+      id: obligationId,
+      type: 'investorCargo',
+      patron,
+      faction,
+      portIds: [portId],
+      dueDay: 90,
+      principal,
+      amountDue,
+      settledGold: 0,
+      playerShare: 0.3,
+      status: 'active',
+      cargoStackIds: commissionStacks.map((stack) => stack.id),
+      note: `${patron} expects settlement on the cargo advanced at departure.`,
+    }],
+  };
+}
+
 function buildNewGameStart(faction: Nationality, portId?: string) {
   const factionStart = playableStartForFaction(faction);
   const startingPortId = portId || pickSpawnPort(faction, factionStart.homePortId);
@@ -1701,6 +1822,8 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
   }
   const broadsides = armament.filter(w => !WEAPON_DEFS[w].aimable).length;
   seedStartingAmmunition(cargo, armament);
+  const startingProvenance = buildStartingProvenance(cargo);
+  const obligationStart = buildStartingObligations(faction, startingPortId, cargo, startingProvenance);
   const weather = rollWeatherForPortId(startingPortId);
   const wind = rollWindForPortId(startingPortId, weather);
 
@@ -1709,8 +1832,14 @@ function buildNewGameStart(faction: Nationality, portId?: string) {
     startingPortId,
     captain,
     crew,
+    crewRelations: [],
+    crewStatuses: [],
+    activeCrewTrouble: null,
+    lastCrewTroubleDay: -999,
+    crewTroubleCooldowns: {},
     cargo,
-    cargoProvenance: buildStartingProvenance(cargo),
+    cargoProvenance: obligationStart.cargoProvenance,
+    obligations: obligationStart.obligations,
     gold: faction === 'Pirate' ? pirateStartingGold(shipProfile.gold) : shipProfile.gold,
     stats: {
       hull: baseStats.maxHull,
@@ -1746,7 +1875,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   playerVelocity: 0,
   gold: _startingGold,
   cargo: _startingCargo,
-  cargoProvenance: buildStartingProvenance(_startingCargo),
+  cargoProvenance: _startingObligationStart.cargoProvenance,
+  obligations: _startingObligationStart.obligations,
   stats: {
     hull: _baseStats.maxHull,
     maxHull: _baseStats.maxHull,
@@ -1762,6 +1892,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     armament: _startingArmament,
   },
   crew: _startingCrew,
+  crewRelations: [],
+  crewStatuses: [],
+  activeCrewTrouble: null,
+  lastCrewTroubleDay: -999,
+  crewTroubleCooldowns: {},
   ship: {
     name: _startingShipName,
     type: _startingShipType,
@@ -1809,6 +1944,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   weather: { ..._startingWeather, intensity: _startingWeather.targetIntensity },
   knowledgeState: generateStartingKnowledge(_startingFaction, _startingCrew, _startingArmament),
   provisions: 30, // starting food supply
+  rationingDays: 0,
   worldSeed: Math.floor(Math.random() * 100000),
   worldSize: 150,
   devSoloPort: null,
@@ -1949,13 +2085,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     const amount = reward.min + Math.floor(deterministicRewardRoll(`${poi.id}:amount`) * (reward.max - reward.min + 1));
-    const unitWeight = COMMODITY_DEFS[reward.commodityId].weight;
-    const currentCargoWeight = Object.entries(state.cargo).reduce(
-      (sum, [commodity, qty]) => sum + qty * COMMODITY_DEFS[commodity as Commodity].weight,
-      0
-    );
+    const unitWeight = cargoUnitWeight(reward.commodityId);
+    const currentCargoWeight = calculateCargoWeight(state.cargo);
     const availableWeight = state.stats.cargoCapacity - currentCargoWeight;
-    const taken = Math.max(0, Math.min(amount, Math.floor(availableWeight / unitWeight)));
+    const taken = unitWeight > 0
+      ? Math.max(0, Math.min(amount, Math.floor(availableWeight / unitWeight)))
+      : amount;
     if (taken <= 0) {
       get().addNotification(`No cargo space for ${reward.commodityId}.`, 'warning', { subtitle: 'HOLD FULL' });
       return { status: 'full', commodityId: reward.commodityId };
@@ -2051,6 +2186,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (newHull <= 0) {
       get().triggerGameOver('The ship has been destroyed and sank beneath the waves.');
     }
+    get().maybeTriggerCrewTrouble('combat');
   },
 
   repairShip: (amount, cost) => {
@@ -2093,6 +2229,291 @@ export const useGameStore = create<GameState>((set, get) => ({
     )
   })),
 
+  issueCaptainOrder: (order, targetCrewId) => {
+    const state = get();
+    const crew = state.crew;
+    if (crew.length === 0) return;
+    const target = targetCrewId ? crew.find(c => c.id === targetCrewId) : null;
+    const captain = getCaptain(state);
+    const addStatus = (status: CrewRelationshipStatus) => {
+      set((s) => ({ crewStatuses: [...s.crewStatuses, status].sort((a, b) => b.severity - a.severity).slice(0, 6) }));
+    };
+    const notifyLevelUp = (result: { levelledUp: string | null; newLevel: number }) => {
+      if (result.levelledUp) get().addNotification(`${result.levelledUp} leveled up to Lvl ${result.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
+    };
+
+    if (order === 'tighten-rations') {
+      const updated = crew.map(member => ({ ...member, morale: Math.max(0, member.morale - 4) }));
+      set({ crew: updated, rationingDays: Math.max(state.rationingDays, 5) });
+      if (captain) {
+        const result = grantCrewXp(get().crew, captain.id, 4);
+        set({ crew: result.crew });
+        notifyLevelUp(result);
+      }
+      get().addJournalEntry('crew', 'The captain ordered tight rations for five days. The stores will last longer; the crew noticed.');
+      get().addNotification('Rations tightened for five days.', 'warning', { tier: 'event', subtitle: 'CAPTAIN ORDER' });
+      get().maybeTriggerCrewTrouble('relations');
+      return;
+    }
+
+    if (order === 'extra-rations') {
+      const cost = Math.max(1, crew.length);
+      if (state.provisions < cost) {
+        get().addNotification('Not enough provisions for extra rations.', 'warning');
+        return;
+      }
+      const updated = crew.map(member => ({ ...member, morale: Math.min(100, member.morale + 6) }));
+      set({
+        provisions: state.provisions - cost,
+        crew: updated,
+        crewStatuses: state.crewStatuses.filter(status => !status.text.toLowerCase().includes('ration')),
+      });
+      get().addJournalEntry('crew', `The captain issued extra rations, spending ${cost} provisions to quiet the deck.`);
+      get().addNotification(`Extra rations issued (${cost} provisions).`, 'success', { tier: 'event', subtitle: 'CAPTAIN ORDER' });
+      return;
+    }
+
+    if (order === 'hold-council') {
+      const worst = [...state.crewRelations].sort((a, b) => b.tension - a.tension)[0];
+      if (worst) {
+        set({
+          crewStatuses: [...state.crewStatuses, {
+            id: generateId(),
+            crewId: worst.aId,
+            otherCrewId: worst.bId,
+            text: 'Called before the captain to speak grievances',
+            tone: 'tension',
+            severity: Math.max(62, worst.tension),
+            createdDay: state.dayCount,
+            expiresDay: state.dayCount + 6,
+          }],
+        });
+      }
+      const updated = crew.map(member => ({ ...member, morale: Math.min(100, member.morale + (member.morale < 35 ? 5 : 1)) }));
+      set({ crew: updated });
+      get().addJournalEntry('crew', 'The captain called council and heard grievances before the watch.');
+      get().addNotification('The crew was called to speak grievances.', 'info', { tier: 'event', subtitle: 'CAPTAIN ORDER' });
+      get().maybeTriggerCrewTrouble('relations');
+      return;
+    }
+
+    if (!target) return;
+
+    if (order === 'punish-publicly') {
+      const relations = state.crewRelations.filter(relation => relation.aId === target.id || relation.bId === target.id);
+      const disliked = relations.length > 0 && relations.reduce((sum, relation) => sum + relation.tension - relation.affinity, 0) / relations.length > 55;
+      let updated = crew.map(member => {
+        if (member.id === target.id) {
+          return {
+            ...member,
+            morale: Math.max(0, member.morale - 18),
+            hearts: { ...member.hearts, current: Math.max(0, member.hearts.current - 1) },
+          };
+        }
+        return { ...member, morale: Math.max(0, Math.min(100, member.morale + (disliked ? 3 : -3))) };
+      });
+      for (const member of updated) {
+        if (member.id === target.id) continue;
+        const result = grantCrewXp(updated, member.id, disliked ? 3 : 1);
+        updated = result.crew;
+        notifyLevelUp(result);
+      }
+      set({ crew: updated });
+      addStatus({
+        id: generateId(),
+        crewId: target.id,
+        otherCrewId: captain?.id ?? target.id,
+        text: disliked ? 'Punished before a crew that had little love for him' : 'Punished publicly by the captain',
+        tone: 'tension',
+        severity: disliked ? 58 : 72,
+        createdDay: state.dayCount,
+        expiresDay: state.dayCount + 12,
+      });
+      get().addCrewHistory(target.id, disliked ? 'Punished publicly; several hands approved' : 'Punished publicly by the captain');
+      get().addJournalEntry('crew', `${target.name} was punished publicly. ${disliked ? 'The deck grew quieter, and not unhappier.' : 'The deck grew quiet, but not loyal.'}`);
+      get().addNotification(`${target.name} was punished publicly.`, disliked ? 'info' : 'warning', { tier: 'event', subtitle: disliked ? 'DISCIPLINE ACCEPTED' : 'HARSH DISCIPLINE' });
+      get().maybeTriggerCrewTrouble('relations');
+      return;
+    }
+
+    if (order === 'light-duty') {
+      const updated = crew.map(member => member.id === target.id
+        ? {
+            ...member,
+            morale: Math.min(100, member.morale + 8),
+            hearts: { ...member.hearts, current: Math.min(member.hearts.max, member.hearts.current + 1) },
+          }
+        : member
+      );
+      set({ crew: updated });
+      addStatus({
+        id: generateId(),
+        crewId: target.id,
+        otherCrewId: captain?.id ?? target.id,
+        text: 'Given light duty by the captain',
+        tone: 'care',
+        severity: 36,
+        createdDay: state.dayCount,
+        expiresDay: state.dayCount + 8,
+      });
+      get().addCrewHistory(target.id, 'Given light duty by the captain');
+      get().addJournalEntry('crew', `${target.name} was put on light duty.`);
+      get().addNotification(`${target.name} put on light duty.`, 'success', { tier: 'event', subtitle: 'CAPTAIN ORDER' });
+    }
+  },
+
+  rollCrewRelations: (trigger = 'daily') => {
+    const state = get();
+    const result = rollCrewRelationshipEvent(state.crew, state.crewRelations, state.crewStatuses, {
+      dayCount: state.dayCount,
+      provisions: state.provisions,
+      starving: state.provisions === 0,
+      trigger,
+    });
+    set({ crewRelations: result.relations, crewStatuses: result.statuses });
+    if (result.publicEvent) {
+      get().addNotification(result.publicEvent.text, result.publicEvent.type, {
+        tier: 'event',
+        subtitle: result.publicEvent.title,
+      });
+      get().addJournalEntry('crew', result.publicEvent.text);
+    }
+    get().maybeTriggerCrewTrouble('relations');
+  },
+
+  maybeTriggerCrewTrouble: (trigger = 'daily') => {
+    const state = get();
+    if (state.activeCrewTrouble) return;
+    const event = maybeCreateCrewTroubleEvent({
+      crew: state.crew,
+      relations: state.crewRelations,
+      statuses: state.crewStatuses,
+      dayCount: state.dayCount,
+      provisions: state.provisions,
+      gold: state.gold,
+      trigger,
+      lastTroubleDay: state.lastCrewTroubleDay,
+      crewTroubleCooldowns: state.crewTroubleCooldowns,
+    });
+    if (!event) return;
+    const cooldowns = { ...state.crewTroubleCooldowns };
+    for (const crewId of event.crewIds) cooldowns[crewId] = state.dayCount + 12;
+    set({
+      activeCrewTrouble: event,
+      lastCrewTroubleDay: state.dayCount,
+      crewTroubleCooldowns: cooldowns,
+      paused: true,
+    });
+  },
+
+  resolveCrewTrouble: (choice) => {
+    const state = get();
+    const event = state.activeCrewTrouble;
+    if (!event) return;
+    const outcome = choice.outcome;
+    if ((outcome.goldCost ?? 0) > state.gold) {
+      get().addNotification('Not enough coin for that decision.', 'warning');
+      return;
+    }
+    if ((outcome.provisionCost ?? 0) > state.provisions) {
+      get().addNotification('Not enough provisions for that decision.', 'warning');
+      return;
+    }
+
+    const leaving = new Set(outcome.crewLeaves ?? []);
+    let nextCrew = state.crew
+      .filter(member => !leaving.has(member.id))
+      .map(member => {
+        const moraleDelta = outcome.moraleDelta?.[member.id] ?? 0;
+        const health = outcome.healthChange?.[member.id] ?? member.health;
+        const heartsDelta = outcome.heartsDelta?.[member.id] ?? 0;
+        const role = outcome.roleChange?.crewId === member.id ? outcome.roleChange.role : member.role;
+        return {
+          ...member,
+          role,
+          morale: Math.max(0, Math.min(100, member.morale + moraleDelta)),
+          health,
+          hearts: {
+            ...member.hearts,
+            current: Math.max(0, Math.min(member.hearts.max, member.hearts.current + heartsDelta)),
+          },
+        };
+      });
+
+    if (outcome.roleChange?.role === 'Captain') {
+      nextCrew = nextCrew.map(member =>
+        member.id !== outcome.roleChange!.crewId && member.role === 'Captain'
+          ? { ...member, role: 'Sailor' as CrewRole }
+          : member
+      );
+    }
+
+    let nextRelations = state.crewRelations.filter(relation => !leaving.has(relation.aId) && !leaving.has(relation.bId));
+    if (outcome.relationDelta) {
+      const { aId, bId, affinity = 0, tension = 0, tag } = outcome.relationDelta;
+      const id = [aId, bId].sort().join(':');
+      const existing = nextRelations.find(relation => relation.id === id);
+      const relation: CrewRelation = existing
+        ? {
+            ...existing,
+            affinity: Math.max(-100, Math.min(100, existing.affinity + affinity)),
+            tension: Math.max(0, Math.min(100, existing.tension + tension)),
+            tags: tag && !existing.tags.includes(tag) ? [...existing.tags, tag].slice(-4) : existing.tags,
+            lastEventDay: state.dayCount,
+          }
+        : {
+            id,
+            aId,
+            bId,
+            affinity: Math.max(-100, Math.min(100, affinity)),
+            tension: Math.max(0, Math.min(100, tension)),
+            tags: tag ? [tag] : [],
+            lastEventDay: state.dayCount,
+          };
+      nextRelations = [...nextRelations.filter(r => r.id !== id), relation];
+    }
+
+    let nextStatuses = state.crewStatuses.filter(status => !leaving.has(status.crewId) && !leaving.has(status.otherCrewId));
+    if (outcome.addStatus) {
+      const status = outcome.addStatus;
+      nextStatuses = [...nextStatuses, {
+        id: generateId(),
+        crewId: status.crewId,
+        otherCrewId: status.otherCrewId,
+        text: status.text,
+        tone: status.tone,
+        severity: status.severity,
+        createdDay: state.dayCount,
+        expiresDay: state.dayCount + status.durationDays,
+      }].sort((a, b) => b.severity - a.severity).slice(0, 6);
+    }
+
+    set({
+      gold: state.gold - (outcome.goldCost ?? 0),
+      provisions: Math.max(0, state.provisions - (outcome.provisionCost ?? 0)),
+      crew: nextCrew,
+      crewRelations: nextRelations,
+      crewStatuses: nextStatuses,
+      activeCrewTrouble: null,
+      paused: false,
+    });
+
+    if (outcome.journalEntry) get().addJournalEntry('crew', outcome.journalEntry);
+    if (leaving.size > 0) {
+      const names = state.crew.filter(member => leaving.has(member.id)).map(member => member.name).join(', ');
+      get().addNotification(`${names} left the crew.`, 'warning', { tier: 'event', subtitle: event.title });
+    } else {
+      get().addNotification(choice.label, 'info', { tier: 'event', subtitle: event.title });
+    }
+    if (nextCrew.length === 0) {
+      get().triggerGameOver('The last of your crew has left the ship.');
+    }
+  },
+
+  dismissCrewTrouble: () => {
+    set({ activeCrewTrouble: null, paused: false });
+  },
+
   discoverPort: (id) => {
     const state = get();
     if (!state.discoveredPorts.includes(id)) {
@@ -2118,6 +2539,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
         }
         set({ crew });
+        get().maybeTriggerCrewTrouble('discovery');
       }
     }
   },
@@ -2279,9 +2701,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const port = state.activePort;
     if (!port) return;
 
-    const currentCargoWeight = Object.entries(state.cargo).reduce(
-      (sum, [c, qty]) => sum + qty * COMMODITY_DEFS[c as Commodity].weight, 0
-    );
+    const currentCargoWeight = calculateCargoWeight(state.cargo);
     const quote = quoteBuyCommodity({
       commodity,
       amount,
@@ -2334,6 +2754,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         acquiredDay: state.dayCount,
         purchasePrice: quote.unitPrice,
         knowledgeAtPurchase: quote.knowledgeLevel,
+        ownership: 'owned',
       };
 
       set({
@@ -2357,8 +2778,9 @@ export const useGameStore = create<GameState>((set, get) => ({
         const tradeXp = 3 + Math.floor(quote.total / 100);
         const r = grantCrewXp(get().crew, factor.id, tradeXp);
         set({ crew: r.crew });
-        if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
+      if (r.levelledUp) get().addNotification(`${r.levelledUp} leveled up to Lvl ${r.newLevel}!`, 'success', { tier: 'event', subtitle: 'LEVEL UP' });
       }
+      get().maybeTriggerCrewTrouble('commerce');
     } else {
       get().addNotification('Not enough gold or port inventory!', 'error');
     }
@@ -2370,9 +2792,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!port) return;
     if (state.cargo[commodity] < amount) return;
 
-    const currentCargoWeight = Object.entries(state.cargo).reduce(
-      (sum, [c, qty]) => sum + qty * COMMODITY_DEFS[c as Commodity].weight, 0
-    );
+    const currentCargoWeight = calculateCargoWeight(state.cargo);
     const quote = quoteSellCommodity({
       commodity,
       amount,
@@ -2395,6 +2815,21 @@ export const useGameStore = create<GameState>((set, get) => ({
       cargoProvenance: state.cargoProvenance,
     });
     const totalGain = settlement.total;
+    const claimedUnitPrice = settlement.total > 0
+      ? settlement.total / Math.max(1, quote.amount)
+      : 0;
+    let reservedForPatrons = 0;
+    const obligationReceipts: Record<string, number> = {};
+    for (const { stack, taken } of settlement.consumed) {
+      if (stack.ownership !== 'commission' || !stack.obligationId) continue;
+      const obligation = state.obligations.find((o) => o.id === stack.obligationId && o.status === 'active');
+      if (!obligation) continue;
+      const stackGross = Math.round(claimedUnitPrice * taken);
+      const reserve = Math.min(stackGross, Math.round(stackGross * (1 - obligation.playerShare)));
+      reservedForPatrons += reserve;
+      obligationReceipts[obligation.id] = (obligationReceipts[obligation.id] ?? 0) + reserve;
+    }
+    const playerGain = Math.max(0, totalGain - reservedForPatrons);
 
     // Port inventory increases by the CLAIMED commodity — the buyer still
     // thinks that's what they received (the player only learns on sale). This
@@ -2409,10 +2844,16 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     set({
-      gold: state.gold + totalGain,
+      gold: state.gold + playerGain,
       cargo: { ...state.cargo, [commodity]: state.cargo[commodity] - quote.amount },
       cargoProvenance: settlement.provenanceAfter,
       knowledgeState: settlement.knowledgeAfter,
+      obligations: Object.keys(obligationReceipts).length === 0
+        ? state.obligations
+        : state.obligations.map((obligation) => obligationReceipts[obligation.id]
+          ? { ...obligation, settledGold: obligation.settledGold + obligationReceipts[obligation.id] }
+          : obligation
+        ),
       activePort: { ...port, inventory: newInventory, prices: newPrices },
       ports: state.ports.map(p => p.id === port.id
         ? { ...p, inventory: newInventory, prices: newPrices }
@@ -2421,8 +2862,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     });
 
     // Standard sell notification + journal for the honest portion.
-    get().addNotification(`Sold ${quote.amount} ${commodity} for ${totalGain}g`, 'success');
-    get().addJournalEntry('commerce', commerceSellTemplate(commodity, quote.amount, totalGain, port.name), port.name);
+    get().addNotification(`Sold ${quote.amount} ${commodity} for ${playerGain}g`, 'success', reservedForPatrons > 0 ? { subtitle: `${reservedForPatrons}g reserved for patrons` } : undefined);
+    get().addJournalEntry('commerce', commerceSellTemplate(commodity, quote.amount, playerGain, port.name), port.name);
 
     // Reveals: one notification + journal entry per mislabeled stack consumed.
     for (const r of settlement.reveals) {
@@ -2471,9 +2912,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     // starter quest's "first profit at a foreign port" predicate). One sale
     // can consume multiple cargo stacks from different acquired ports — any
     // profitable foreign-acquired stack satisfies the predicate.
-    const claimedUnitPrice = settlement.total > 0
-      ? settlement.total / Math.max(1, quote.amount)
-      : 0;
     const profitableForeignSale = settlement.consumed.some(({ stack, taken }) => {
       if (stack.acquiredPort === port.id || stack.acquiredPort === 'unknown') return false;
       const stackNet = (claimedUnitPrice - stack.purchasePrice) * taken;
@@ -2491,8 +2929,92 @@ export const useGameStore = create<GameState>((set, get) => ({
         if (saleResolvesStarterLead(lead, sale)) get().resolveLead(lead.id);
       }
     }
+    get().maybeTriggerCrewTrouble('commerce');
   },
-  
+
+  drawCredit: (amount) => {
+    const state = get();
+    const port = state.activePort;
+    if (!port || amount <= 0) return;
+    const faction = PORT_FACTION[port.id];
+    if (!faction) return;
+    const reputation = state.reputation[faction] ?? 0;
+    const existingDebt = state.obligations
+      .filter((o) => o.status === 'active' && o.type === 'credit' && o.faction === faction)
+      .reduce((sum, o) => sum + Math.max(0, o.amountDue - o.settledGold), 0);
+    const limit = Math.max(80, 220 + reputation * 4);
+    const available = Math.max(0, limit - existingDebt);
+    const borrowed = Math.min(amount, available);
+    if (borrowed <= 0) {
+      get().addNotification('No further credit is offered here.', 'warning');
+      return;
+    }
+    const patron = patronForFaction(faction, port.id);
+    const due = Math.round(borrowed * 1.18);
+    const obligation: Obligation = {
+      id: generateId(),
+      type: 'credit',
+      patron,
+      faction,
+      portIds: [port.id],
+      dueDay: state.dayCount + 60,
+      principal: borrowed,
+      amountDue: due,
+      settledGold: 0,
+      playerShare: 1,
+      status: 'active',
+      note: `${patron} advanced ${borrowed}g against your reputation and cargo.`,
+    };
+    set({ gold: state.gold + borrowed, obligations: [...state.obligations, obligation] });
+    get().addNotification(`Drew ${borrowed}g in credit.`, 'success', { subtitle: `${due}g due by Day ${obligation.dueDay}` });
+    get().addJournalEntry('commerce', `${patron} extended ${borrowed}g in credit at ${port.name}; ${due}g is due by Day ${obligation.dueDay}.`, port.name);
+  },
+
+  repayObligation: (obligationId) => {
+    const state = get();
+    const obligation = state.obligations.find((o) => o.id === obligationId);
+    if (!obligation || obligation.status !== 'active') return;
+    const remaining = Math.max(0, obligation.amountDue - obligation.settledGold);
+    if (remaining <= 0) {
+      get().settleObligation(obligationId);
+      return;
+    }
+    const payment = Math.min(state.gold, remaining);
+    if (payment <= 0) {
+      get().addNotification('No coin available for repayment.', 'warning');
+      return;
+    }
+    set({
+      gold: state.gold - payment,
+      obligations: state.obligations.map((o) => o.id === obligationId
+        ? { ...o, settledGold: o.settledGold + payment }
+        : o
+      ),
+    });
+    get().addNotification(`Paid ${payment}g toward ${obligation.patron}.`, 'success');
+  },
+
+  settleObligation: (obligationId) => {
+    const state = get();
+    const obligation = state.obligations.find((o) => o.id === obligationId);
+    if (!obligation || obligation.status !== 'active') return;
+    if (obligation.settledGold < obligation.amountDue) {
+      get().addNotification(`${obligation.patron} still expects ${obligation.amountDue - obligation.settledGold}g.`, 'warning');
+      return;
+    }
+    const portName = state.activePort?.name ?? 'port';
+    set({
+      obligations: state.obligations.map((o) => o.id === obligationId ? { ...o, status: 'settled' } : o),
+      cargoProvenance: state.cargoProvenance.map((stack) => stack.obligationId === obligationId
+        ? { ...stack, ownership: 'owned', obligationId: undefined }
+        : stack
+      ),
+    });
+    get().adjustReputation(obligation.faction, 4);
+    get().addNotification(`Settled account with ${obligation.patron}.`, 'success');
+    get().addJournalEntry('commerce', `Settled account with ${obligation.patron} at ${portName}.`, portName);
+  },
+
   advanceTime: (delta) => {
     const state = get();
     const newTime = state.timeOfDay + delta;
@@ -2526,6 +3048,24 @@ export const useGameStore = create<GameState>((set, get) => ({
       const newDay = state.dayCount + 1;
       for (const lead of leadsToExpire(state.leads, newDay)) {
         get().expireLead(lead.id);
+      }
+      const defaulted = state.obligations.filter((obligation) =>
+        obligation.status === 'active' &&
+        obligation.settledGold < obligation.amountDue &&
+        newDay > obligation.dueDay + 30
+      );
+      if (defaulted.length > 0) {
+        set((s) => ({
+          obligations: s.obligations.map((obligation) =>
+            defaulted.some((d) => d.id === obligation.id)
+              ? { ...obligation, status: 'defaulted' as const }
+              : obligation
+          ),
+        }));
+        for (const obligation of defaulted) {
+          get().adjustReputation(obligation.faction, -12);
+          get().addJournalEntry('commerce', `Defaulted on account with ${obligation.patron}; their factors have marked the debt against us.`);
+        }
       }
     }
 
@@ -2567,8 +3107,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     // ── Daily tick: provisions & crew health (runs once per game-day) ──
     if (wrapped && state.crew.length > 0) {
       const crewCount = state.crew.length;
-      // Each crew member eats ~0.5 provisions per day
-      const dailyConsumption = Math.ceil(crewCount * 0.5);
+      const rationing = state.rationingDays > 0;
+      const dailyConsumption = Math.max(1, Math.ceil(crewCount * (rationing ? 0.25 : 0.5)));
       const hasSurgeon = state.crew.some(c => c.role === 'Surgeon' && c.health === 'healthy');
       const newProvisions = Math.max(0, state.provisions - dailyConsumption);
       const starving = newProvisions === 0;
@@ -2584,14 +3124,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         let heartsCurrent = c.hearts.current;
         const heartsMax = c.hearts.max;
 
-        // Starvation effects
-        if (starving) {
-          morale = Math.max(0, morale - 3);
+        // Starvation and tight-ration effects
+        if (starving || rationing) {
+          morale = Math.max(0, morale - (starving ? 3 : 1));
           // Healthy crew get scurvy; already-sick crew worsen
-          if (health === 'healthy' && Math.random() < 0.15) {
+          const scurvyChance = starving ? 0.15 : 0.035;
+          if (health === 'healthy' && Math.random() < scurvyChance) {
             health = 'scurvy';
             heartsCurrent = Math.max(0, heartsCurrent - 1);
-          } else if (health === 'scurvy' && Math.random() < 0.12) {
+          } else if (health === 'scurvy' && Math.random() < (starving ? 0.12 : 0.035)) {
             health = 'fevered';
             heartsCurrent = Math.max(0, heartsCurrent - 1);
           }
@@ -2633,7 +3174,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         return { ...c, health, morale, hearts: { current: heartsCurrent, max: heartsMax } };
       });
 
-      set({ provisions: newProvisions, crew: updatedCrew });
+      set({ provisions: newProvisions, crew: updatedCrew, rationingDays: Math.max(0, state.rationingDays - 1) });
 
       // Surgeon gains XP for healing
       if (healedBySurgeon) {
@@ -2657,6 +3198,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         // Use setTimeout to avoid nested set() issues
         setTimeout(() => get().killCrewMember(deadCrewId!, deadCause), 0);
       }
+      get().rollCrewRelations('daily');
     }
   },
   
@@ -2679,8 +3221,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       gold: start.gold,
       cargo: start.cargo,
       cargoProvenance: start.cargoProvenance,
+      obligations: start.obligations,
       stats: start.stats,
       crew: start.crew,
+      crewRelations: start.crewRelations,
+      crewStatuses: start.crewStatuses,
+      activeCrewTrouble: null,
+      lastCrewTroubleDay: -999,
+      crewTroubleCooldowns: {},
       ship: start.ship,
       timeOfDay: 8,
       notifications: [],
@@ -2720,6 +3268,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       windSpeed: start.windSpeed,
       knowledgeState: start.knowledgeState,
       provisions: 30,
+      rationingDays: 0,
       dayCount: 1,
       captainExpression: null,
       pendingAfterNightMusic: false,
@@ -2864,6 +3413,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (newHull <= 0) {
       get().triggerGameOver('The ship foundered during the passage and sank before landfall.');
     }
+    get().rollCrewRelations('voyage');
   },
   restAtInn: (port) => {
     const state = get();
@@ -2965,6 +3515,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       port.name,
     );
     get().addNotification(`Rested at the ${lodgingName}. Crew morale restored.`, 'success');
+    get().rollCrewRelations('rest');
 
     return {
       portId: port.id,

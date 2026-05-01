@@ -124,19 +124,20 @@ export interface InteriorLayout {
  * types override this via getInterior() below.
  */
 const DEFAULT_LAYOUT: InteriorLayout = {
-  decks: [0.45, 0.75],
+  decks: [0.42, 0.72],
   compartments: [
-    // Top deck (0 – 0.45): structures above main deck are drawn by the hull outline itself
-    // Main deck → second deck (0.45 – 0.75)
-    { kind: 'captainCabin', xStart: 0.0, xEnd: 0.2, yStart: 0.0, yEnd: 0.45, label: "CAPT'N" },
-    { kind: 'berths', xStart: 0.2, xEnd: 0.45, yStart: 0.45, yEnd: 0.75, label: 'BERTHS' },
-    { kind: 'cargoHold', xStart: 0.2, xEnd: 0.75, yStart: 0.45, yEnd: 0.75, label: 'HOLD' },
-    { kind: 'galley', xStart: 0.75, xEnd: 0.9, yStart: 0.45, yEnd: 0.75, label: 'GALLEY' },
-    { kind: 'forecastle', xStart: 0.85, xEnd: 1.0, yStart: 0.0, yEnd: 0.45, label: 'FORE' },
-    // Lower hold (0.75 – 1.0)
-    { kind: 'powder', xStart: 0.0, xEnd: 0.2, yStart: 0.75, yEnd: 1.0, label: 'POWDER' },
-    { kind: 'lowerHold', xStart: 0.2, xEnd: 0.8, yStart: 0.75, yEnd: 1.0, label: 'LOWER HOLD' },
-    { kind: 'bilge', xStart: 0.8, xEnd: 1.0, yStart: 0.75, yEnd: 1.0, label: 'BILGE' },
+    // Upper works.
+    { kind: 'captainCabin', xStart: 0.0, xEnd: 0.22, yStart: 0.0, yEnd: 0.42, label: "CAPT'N" },
+    { kind: 'gunDeck', xStart: 0.22, xEnd: 0.77, yStart: 0.0, yEnd: 0.42, label: 'GUNS' },
+    { kind: 'forecastle', xStart: 0.77, xEnd: 1.0, yStart: 0.0, yEnd: 0.42, label: 'FORE' },
+    // Main working deck.
+    { kind: 'powder', xStart: 0.0, xEnd: 0.18, yStart: 0.42, yEnd: 0.72, label: 'POWDER' },
+    { kind: 'berths', xStart: 0.18, xEnd: 0.45, yStart: 0.42, yEnd: 0.72, label: 'BERTHS' },
+    { kind: 'cargoHold', xStart: 0.45, xEnd: 0.78, yStart: 0.42, yEnd: 0.72, label: 'CARGO' },
+    { kind: 'galley', xStart: 0.78, xEnd: 0.94, yStart: 0.42, yEnd: 0.72, label: 'GALLEY' },
+    // Lower hold and bilge.
+    { kind: 'lowerHold', xStart: 0.18, xEnd: 0.78, yStart: 0.72, yEnd: 1.0, label: 'LOWER HOLD' },
+    { kind: 'bilge', xStart: 0.78, xEnd: 1.0, yStart: 0.72, yEnd: 1.0, label: 'BILGE' },
   ],
 };
 
@@ -154,18 +155,19 @@ const SINGLE_DECK_LAYOUT: InteriorLayout = {
 
 // Junks traditionally have watertight bulkheads dividing the cargo hold into cells.
 const JUNK_LAYOUT: InteriorLayout = {
-  decks: [0.5],
+  decks: [0.38, 0.66],
   compartments: [
-    { kind: 'captainCabin', xStart: 0.0, xEnd: 0.22, yStart: 0.0, yEnd: 0.5, label: "CAPT'N" },
-    { kind: 'berths', xStart: 0.22, xEnd: 0.45, yStart: 0.0, yEnd: 0.5, label: 'BERTHS' },
-    { kind: 'galley', xStart: 0.78, xEnd: 0.92, yStart: 0.0, yEnd: 0.5, label: 'GALLEY' },
-    { kind: 'forecastle', xStart: 0.92, xEnd: 1.0, yStart: 0.0, yEnd: 0.5, label: 'FORE' },
+    { kind: 'captainCabin', xStart: 0.0, xEnd: 0.22, yStart: 0.0, yEnd: 0.38, label: "CAPT'N" },
+    { kind: 'berths', xStart: 0.22, xEnd: 0.46, yStart: 0.0, yEnd: 0.38, label: 'BERTHS' },
+    { kind: 'gunDeck', xStart: 0.46, xEnd: 0.78, yStart: 0.0, yEnd: 0.38, label: 'GUNS' },
+    { kind: 'galley', xStart: 0.78, xEnd: 0.92, yStart: 0.0, yEnd: 0.38, label: 'GALLEY' },
+    { kind: 'forecastle', xStart: 0.92, xEnd: 1.0, yStart: 0.0, yEnd: 0.38, label: 'FORE' },
     // Five watertight cargo cells
-    { kind: 'cargoHold', xStart: 0.1, xEnd: 0.28, yStart: 0.5, yEnd: 1.0 },
-    { kind: 'cargoHold', xStart: 0.28, xEnd: 0.46, yStart: 0.5, yEnd: 1.0 },
-    { kind: 'cargoHold', xStart: 0.46, xEnd: 0.64, yStart: 0.5, yEnd: 1.0, label: 'CARGO' },
-    { kind: 'cargoHold', xStart: 0.64, xEnd: 0.82, yStart: 0.5, yEnd: 1.0 },
-    { kind: 'cargoHold', xStart: 0.82, xEnd: 0.95, yStart: 0.5, yEnd: 1.0 },
+    { kind: 'cargoHold', xStart: 0.08, xEnd: 0.26, yStart: 0.38, yEnd: 1.0 },
+    { kind: 'cargoHold', xStart: 0.26, xEnd: 0.44, yStart: 0.38, yEnd: 1.0 },
+    { kind: 'cargoHold', xStart: 0.44, xEnd: 0.62, yStart: 0.38, yEnd: 1.0, label: 'CARGO' },
+    { kind: 'cargoHold', xStart: 0.62, xEnd: 0.8, yStart: 0.38, yEnd: 1.0 },
+    { kind: 'cargoHold', xStart: 0.8, xEnd: 0.96, yStart: 0.38, yEnd: 1.0 },
   ],
 };
 

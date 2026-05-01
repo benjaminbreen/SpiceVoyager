@@ -9,7 +9,6 @@ import { SEA_LEVEL } from '../constants/world';
 import { getResolvedWaterPalette } from './waterPalettes';
 import { reseedLandCharacter } from './landCharacter';
 import type { CanalLayout } from './canalLayout';
-import { distanceToNearestCanal, signedDistanceToNearestCanal } from './canalLayout';
 
 // Seeded random number generator (Mulberry32)
 function mulberry32(a: number) {
@@ -78,24 +77,70 @@ interface ActiveCanal {
   cz: number;
   /** Furthest point of any canal segment from (cx,cz), plus halfWidth + slack. */
   bboxRadius: number;
+  segments: ActiveCanalSegment[];
+}
+interface ActiveCanalSegment {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  halfWidth: number;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 let _activeCanals: ActiveCanal[] = [];
+const CANAL_DREDGE_BAND = 3.0;
 
 export function setActiveCanals(entries: { layout: CanalLayout; cx: number; cz: number }[]) {
   _activeCanals = entries.map(({ layout, cx, cz }) => {
     let maxR = 0;
+    const segments: ActiveCanalSegment[] = [];
     for (const seg of layout.canals) {
       for (const [px, pz] of seg.polyline) {
         const d = Math.hypot(px - cx, pz - cz) + seg.halfWidth;
         if (d > maxR) maxR = d;
       }
+      for (let i = 0; i < seg.polyline.length - 1; i++) {
+        const [ax, az] = seg.polyline[i];
+        const [bx, bz] = seg.polyline[i + 1];
+        const pad = seg.halfWidth + CANAL_DREDGE_BAND;
+        segments.push({
+          ax, az, bx, bz,
+          halfWidth: seg.halfWidth,
+          minX: Math.min(ax, bx) - pad,
+          maxX: Math.max(ax, bx) + pad,
+          minZ: Math.min(az, bz) - pad,
+          maxZ: Math.max(az, bz) + pad,
+        });
+      }
     }
-    return { layout, cx, cz, bboxRadius: maxR + 4 };
+    return { layout, cx, cz, bboxRadius: maxR + CANAL_DREDGE_BAND + 1, segments };
   });
 }
 
 export function getActiveCanals() {
   return _activeCanals;
+}
+
+function signedDistanceToActiveCanal(x: number, z: number, canal: ActiveCanal): number {
+  let best = Infinity;
+  for (const seg of canal.segments) {
+    if (x < seg.minX || x > seg.maxX || z < seg.minZ || z > seg.maxZ) continue;
+    const dx = seg.bx - seg.ax;
+    const dz = seg.bz - seg.az;
+    const len2 = dx * dx + dz * dz;
+    if (len2 < 1e-6) continue;
+    let t = ((x - seg.ax) * dx + (z - seg.az) * dz) / len2;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const cx = seg.ax + dx * t;
+    const cz = seg.az + dz * t;
+    const dist = Math.hypot(x - cx, z - cz) - seg.halfWidth;
+    if (dist < best) best = dist;
+  }
+  return best;
 }
 
 // ── Natural-feature POI islands (volcanoes, etc.) ────────────────────────────
@@ -345,12 +390,11 @@ function getHeightOnly(x: number, z: number): number {
   // sharp cliff at the canal edge while the visual mesh has a gradual ramp.
   if (_activeCanals.length > 0 && height > SEA_LEVEL - 1.0) {
     const CANAL_TROUGH_Y = SEA_LEVEL - 1.6;
-    const CANAL_DREDGE_BAND = 3.0;
     for (const ac of _activeCanals) {
       const dx = x - ac.cx;
       const dz = z - ac.cz;
       if (dx * dx + dz * dz > ac.bboxRadius * ac.bboxRadius) continue;
-      const signed = signedDistanceToNearestCanal(x, z, ac.layout);
+      const signed = signedDistanceToActiveCanal(x, z, ac);
       if (signed <= 0) {
         height = CANAL_TROUGH_Y;
         break;
@@ -720,12 +764,11 @@ export function getTerrainData(x: number, z: number): TerrainData {
   // cost negligible outside canal cities.
   if (_activeCanals.length > 0 && finalHeight > SEA_LEVEL - 1.0) {
     const CANAL_TROUGH_Y = SEA_LEVEL - 1.6;
-    const CANAL_DREDGE_BAND = 3.0; // world units of smooth blend beyond the canal edge
     for (const ac of _activeCanals) {
       const dx = x - ac.cx;
       const dz = z - ac.cz;
       if (dx * dx + dz * dz > ac.bboxRadius * ac.bboxRadius) continue;
-      const signed = signedDistanceToNearestCanal(x, z, ac.layout);
+      const signed = signedDistanceToActiveCanal(x, z, ac);
       if (signed <= 0) {
         // Inside the canal water strip — full trough depth.
         finalHeight = CANAL_TROUGH_Y;
@@ -1074,21 +1117,34 @@ export function getTerrainData(x: number, z: number): TerrainData {
 
   if (finalHeight >= SEA_LEVEL && biome !== 'waterfall' && biome !== 'river') {
     const tropicalCoast = sandyClimate;
+    const temperateCoast = nearbyClimate === 'temperate';
+    const mediterraneanCoast = nearbyClimate === 'mediterranean';
     const coralSand: TerrainColor = [0.96, 0.93, 0.78];
+    const mediterraneanSand: TerrainColor = [0.86, 0.80, 0.64];
     const tropicalSandBlend = tropicalCoast ? 0.58 * (1 - coastSteepness * 0.55) : 0;
+    const mediterraneanSandBlend = mediterraneanCoast ? 0.36 * (1 - coastSteepness * 0.45) : 0;
     const drySandColor = mixColor(
-      mixColor(DRY_SAND_COLOR, coralSand, tropicalSandBlend),
+      mixColor(
+        mixColor(DRY_SAND_COLOR, coralSand, tropicalSandBlend),
+        mediterraneanSand,
+        mediterraneanSandBlend,
+      ),
       ROCKY_SHORE_COLOR,
       coastSteepness * 0.34,
     );
     const wetSandColor = mixColor(
-      mixColor(WET_SAND_COLOR, coralSand, tropicalSandBlend * 0.42),
+      mixColor(
+        mixColor(WET_SAND_COLOR, coralSand, tropicalSandBlend * 0.42),
+        [0.58, 0.55, 0.45],
+        mediterraneanSandBlend * 0.38,
+      ),
       ROCKY_SHORE_COLOR,
       coastSteepness * 0.46,
     );
     const washColor = mixColor(surfZoneColor, wetSandColor, coastSteepness * 0.30);
     const lowCoast = finalHeight < SEA_LEVEL + wetSandHeight + 0.9;
     const shelteredCoast = coastSteepness < 0.42;
+    const tidalFlatBias = temperateCoast ? 0.12 : 0;
 
     color = inlandColor;
     color = mixColor(color, drySandColor, beachFactor);
@@ -1114,16 +1170,32 @@ export function getTerrainData(x: number, z: number): TerrainData {
         color = mixColor(color, wetSandColor, wetSandFactor * 0.35);
         color = mixColor(color, rootShadow, smoothstep(-0.18, -0.44, patch1) * 0.30);
         color = mixColor(color, reedFringe, smoothstep(0.24, 0.52, patch2) * 0.22);
-      } else if (shelteredCoast && lowCoast && wetSandFactor + surfFactor > 0.24 && beachFactor < 0.45) {
+      } else if (shelteredCoast && lowCoast && wetSandFactor + surfFactor + tidalFlatBias > 0.24 && beachFactor < (temperateCoast ? 0.58 : 0.45)) {
         biome = 'tidal_flat';
-        const siltColor: TerrainColor = [0.54, 0.49, 0.39];
-        const slickMud: TerrainColor = [0.38, 0.42, 0.38];
-        const paleSilt: TerrainColor = [0.66, 0.61, 0.48];
-        const waterStreak: TerrainColor = [0.30, 0.44, 0.46];
+        const siltColor: TerrainColor = temperateCoast
+          ? [0.38, 0.42, 0.34]
+          : mediterraneanCoast
+          ? [0.60, 0.55, 0.43]
+          : [0.54, 0.49, 0.39];
+        const slickMud: TerrainColor = temperateCoast
+          ? [0.24, 0.31, 0.28]
+          : mediterraneanCoast
+          ? [0.42, 0.42, 0.34]
+          : [0.38, 0.42, 0.38];
+        const paleSilt: TerrainColor = temperateCoast
+          ? [0.50, 0.53, 0.42]
+          : mediterraneanCoast
+          ? [0.72, 0.66, 0.50]
+          : [0.66, 0.61, 0.48];
+        const waterStreak: TerrainColor = temperateCoast
+          ? [0.22, 0.36, 0.38]
+          : mediterraneanCoast
+          ? [0.36, 0.48, 0.48]
+          : [0.30, 0.44, 0.46];
         color = mixColor(siltColor, slickMud, smoothstep(0.35, 0.75, moisture));
-        color = mixColor(color, washColor, surfFactor * 0.45);
-        color = mixColor(color, paleSilt, smoothstep(0.22, 0.54, patch1) * 0.26);
-        color = mixColor(color, waterStreak, smoothstep(-0.16, -0.42, patch2) * wetSandFactor * 0.32);
+        color = mixColor(color, washColor, surfFactor * (temperateCoast ? 0.26 : 0.45));
+        color = mixColor(color, paleSilt, smoothstep(0.22, 0.54, patch1) * (temperateCoast ? 0.18 : 0.26));
+        color = mixColor(color, waterStreak, smoothstep(-0.16, -0.42, patch2) * wetSandFactor * (temperateCoast ? 0.44 : 0.32));
       } else {
         biome = 'beach';
         const wrackLine: TerrainColor = [0.44, 0.34, 0.20];

@@ -16,7 +16,7 @@ import { spawnSplash } from '../utils/splashState';
 import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { useIsMobile } from '../utils/useIsMobile';
 import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
-import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 import { perfSignals, reportCollisionMs } from '../utils/performanceStats';
 
 // Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
@@ -134,10 +134,7 @@ export function Ship() {
   // which is tuned so water laps the deck on the dhow).
   const cargo = useGameStore((state) => state.cargo);
   const cargoDraftLift = useMemo(() => {
-    const weight = Object.entries(cargo).reduce(
-      (sum, [c, qty]) => sum + (qty as number) * COMMODITY_DEFS[c as Commodity].weight,
-      0,
-    );
+    const weight = calculateCargoWeight(cargo);
     const frac = Math.min(1, weight / Math.max(1, stats.cargoCapacity));
     return (1 - frac) * 0.22;
   }, [cargo, stats.cargoCapacity]);

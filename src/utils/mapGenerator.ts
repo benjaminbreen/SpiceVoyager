@@ -364,6 +364,7 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           faithsForPort(override.id),
           palaceStyleForPort(override.id),
           getPOIsForPort(override.id),
+          override.id,
         );
         const hinterland = generateHinterland(
           portX, portZ,

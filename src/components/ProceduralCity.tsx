@@ -130,6 +130,141 @@ function lerpColor(a: [number, number, number], b: [number, number, number], t: 
   ];
 }
 
+type BuildingMaterialKind = Exclude<Part['mat'], 'dark'>;
+
+const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
+  grain: number;
+  lowerShade: number;
+  topLift: number;
+  shadeLift: number;
+  warmLift: [number, number, number];
+  roughnessVariation: number;
+}> = {
+  white: {
+    grain: 0.015,
+    lowerShade: 0.006,
+    topLift: 0.26,
+    shadeLift: 0.18,
+    warmLift: [1.12, 1.08, 1.00],
+    roughnessVariation: 0.02,
+  },
+  mud: {
+    grain: 0.090,
+    lowerShade: 0.090,
+    topLift: 0.025,
+    shadeLift: 0.0,
+    warmLift: [1.02, 0.99, 0.94],
+    roughnessVariation: 0.07,
+  },
+  wood: {
+    grain: 0.120,
+    lowerShade: 0.070,
+    topLift: 0.015,
+    shadeLift: 0.0,
+    warmLift: [1.03, 0.98, 0.90],
+    roughnessVariation: 0.08,
+  },
+  terracotta: {
+    grain: 0.105,
+    lowerShade: 0.025,
+    topLift: 0.070,
+    shadeLift: 0.0,
+    warmLift: [1.08, 0.98, 0.88],
+    roughnessVariation: 0.06,
+  },
+  stone: {
+    grain: 0.070,
+    lowerShade: 0.060,
+    topLift: 0.025,
+    shadeLift: 0.0,
+    warmLift: [1.02, 1.00, 0.96],
+    roughnessVariation: 0.05,
+  },
+  straw: {
+    grain: 0.095,
+    lowerShade: 0.045,
+    topLift: 0.050,
+    shadeLift: 0.0,
+    warmLift: [1.08, 1.03, 0.88],
+    roughnessVariation: 0.08,
+  },
+};
+
+function addBuildingMaterialLighting(
+  mat: THREE.MeshStandardMaterial,
+  kind: BuildingMaterialKind,
+): THREE.MeshStandardMaterial {
+  const t = BUILDING_MATERIAL_TUNING[kind];
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `#include <common>
+      varying vec3 vBuildingLocalPos;
+      varying vec3 vBuildingWorldPos;`
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      `#include <worldpos_vertex>
+      vBuildingLocalPos = position;
+      vBuildingWorldPos = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+      varying vec3 vBuildingLocalPos;
+      varying vec3 vBuildingWorldPos;
+
+      float buildingHash(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      float buildingNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = buildingHash(i);
+        float b = buildingHash(i + vec2(1.0, 0.0));
+        float c = buildingHash(i + vec2(0.0, 1.0));
+        float d = buildingHash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+      {
+        vec2 wp = vBuildingWorldPos.xz;
+        float broad = buildingNoise(wp * 0.19);
+        float fine = buildingNoise(wp * 1.25 + vBuildingLocalPos.xz * 2.7);
+        float grain = (broad * 0.65 + fine * 0.35) * 2.0 - 1.0;
+        diffuseColor.rgb *= 1.0 + grain * ${t.grain.toFixed(3)};
+
+        float lowerBand = 1.0 - smoothstep(-0.46, -0.16, vBuildingLocalPos.y);
+        float topBand = smoothstep(0.12, 0.50, vBuildingLocalPos.y);
+        float verticalBreakup = 0.72 + fine * 0.28;
+        diffuseColor.rgb *= 1.0 - lowerBand * verticalBreakup * ${t.lowerShade.toFixed(3)};
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.985, 0.92), ${t.shadeLift.toFixed(3)});
+        diffuseColor.rgb = mix(
+          diffuseColor.rgb,
+          min(diffuseColor.rgb * vec3(${t.warmLift[0].toFixed(3)}, ${t.warmLift[1].toFixed(3)}, ${t.warmLift[2].toFixed(3)}), vec3(1.0)),
+          topBand * ${t.topLift.toFixed(3)}
+        );
+      }`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <roughnessmap_fragment>',
+      `#include <roughnessmap_fragment>
+      {
+        float surfaceVar = buildingNoise(vBuildingWorldPos.xz * 0.72 + vBuildingLocalPos.xz * 3.1) - 0.5;
+        roughnessFactor = clamp(roughnessFactor + surfaceVar * ${t.roughnessVariation.toFixed(3)}, 0.55, 1.0);
+      }`
+    );
+  };
+  return mat;
+}
+
 function ruinedColor(base: [number, number, number]): [number, number, number] {
   return lerpColor(base, [0.025, 0.022, 0.018], 0.9);
 }
@@ -360,8 +495,8 @@ const NORTHERN_SHUTTERS: [number, number, number][] = [
 const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
   'iberian': {
     wallPalette: [
-      [0.94, 0.92, 0.88], [0.94, 0.92, 0.88], [0.94, 0.92, 0.88],
-      [0.95, 0.90, 0.78], [0.93, 0.86, 0.74],
+      [0.99, 0.985, 0.95], [0.99, 0.985, 0.95], [0.99, 0.985, 0.95],
+      [0.98, 0.955, 0.88], [0.965, 0.925, 0.82],
     ],
     roofPalette: [
       { color: [0.80, 0.36, 0.36], geo: 'cone', h: 1.1 },
@@ -387,8 +522,9 @@ const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
       { color: [0.38, 0.30, 0.26], geo: 'cone', h: 1.6 },
     ],
     houseVariants: [
-      { weight: 0.65, scaleMul: [0.7, 1.35, 0.75] },
-      { weight: 0.35 },
+      { weight: 0.46, scaleMul: [0.95, 1.30, 0.98] },
+      { weight: 0.34, scaleMul: [1.12, 1.05, 1.10] },
+      { weight: 0.20, scaleMul: [1.25, 0.92, 1.20] },
     ],
     shutterPalette: NORTHERN_SHUTTERS,
     wallMatHint: 'mud',
@@ -418,11 +554,11 @@ const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> = {
     // Variety matters at Huge scale: cramped tall City rowhouses, standard
     // two-bay cottages, and squat outer-parish dwellings.
     houseVariants: [
-      { weight: 0.30, scaleMul: [0.75, 1.45, 0.85] },                    // tall narrow jettied rowhouse
-      { weight: 0.30 },                                                  // standard two-bay
-      { weight: 0.20, scaleMul: [1.15, 1.05, 1.10] },                    // larger merchant house
+      { weight: 0.22, scaleMul: [0.95, 1.42, 1.00] },                    // tall jettied rowhouse
+      { weight: 0.28, scaleMul: [1.08, 1.00, 1.08] },                    // standard two-bay
+      { weight: 0.25, scaleMul: [1.28, 1.02, 1.22] },                    // larger merchant house
       { weight: 0.15, scaleMul: [1.30, 0.80, 1.30] },                    // squat outer-parish cottage
-      { weight: 0.05, scaleMul: [0.90, 1.70, 1.00] },                    // landmark-tall (church/inn read)
+      { weight: 0.10, scaleMul: [1.05, 1.62, 1.08] },                    // landmark-tall (church/inn read)
     ],
     shutterPalette: NORTHERN_SHUTTERS,
     wallMatHint: 'white',
@@ -753,7 +889,11 @@ export function ProceduralCity() {
         const stories = b.stories ?? 1;
         if (stories > 1) {
           h *= 1 + (stories - 1) * 0.55;
-          const footprintGrowth = 1 + (stories - 1) * 0.12;
+          const northernUrbanCore =
+            (port.buildingStyle === 'dutch-brick' || port.buildingStyle === 'english-tudor') &&
+            b.district === 'urban-core' &&
+            (b.type === 'house' || b.type === 'estate');
+          const footprintGrowth = 1 + (stories - 1) * (northernUrbanCore ? 0.23 : 0.12);
           w *= footprintGrowth;
           d *= footprintGrowth;
         }
@@ -1675,6 +1815,98 @@ export function ProceduralCity() {
             addPart('box', 'straw', 0, 4.8, 4.05, 2.4, 1.6, 0.15, palm);
           }
 
+          else if (style === 'ottoman-customs') {
+            const stone = varyColor([0.68, 0.62, 0.52], rng, 0.05);
+            const plaster = varyColor([0.84, 0.78, 0.66], rng, 0.04);
+            const blue: [number, number, number] = [0.30, 0.42, 0.56];
+            addPart('box', 'stone', 0, 2.3, 0, 10, 4.6, 8, stone);
+            addPart('box', 'white', 0, 3.0, 4.2, 7.2, 3.0, 0.5, plaster);
+            addPart('box', 'dark', 0, 2.0, 4.55, 1.8, 2.8, 0.15);
+            addPart('dome', 'white', 0, 5.2, 0, 2.0, 1.1, 2.0, blue);
+            addPart('box', 'stone', -4.0, 3.5, -2.8, 1.6, 7.0, 1.6, stone);
+            addPart('cone', 'stone', -4.0, 7.3, -2.8, 0.9, 1.0, 0.9, plaster);
+            for (const ax of [-3, -1, 1, 3]) addPart('box', 'dark', ax, 2.8, 4.6, 0.7, 1.2, 0.12);
+          }
+
+          else if (style === 'swahili-coral') {
+            const coral = varyColor([0.78, 0.72, 0.60], rng, 0.06);
+            const lime = varyColor([0.88, 0.84, 0.74], rng, 0.04);
+            const wood = varyColor([0.28, 0.18, 0.12], rng, 0.04);
+            addPart('box', 'stone', 0, 2.1, 0, 10, 4.2, 8, coral);
+            addPart('box', 'white', 0, 4.35, 0, 10.4, 0.35, 8.4, lime);
+            addPart('box', 'white', 0, 2.0, 4.25, 8.8, 2.6, 0.35, lime);
+            addPart('box', 'dark', 0, 1.55, 4.55, 1.6, 2.7, 0.15);
+            addPart('box', 'wood', 0, 1.0, 5.15, 8.2, 0.35, 1.2, wood);
+            for (const ax of [-3.6, -1.2, 1.2, 3.6]) addPart('cylinder', 'wood', ax, 1.8, 5.2, 0.16, 2.2, 0.16, wood);
+            addPart('box', 'wood', 0, 3.0, 5.2, 8.8, 0.2, 1.4, wood);
+          }
+
+          else if (style === 'omani-fort-house') {
+            const plaster = varyColor([0.82, 0.76, 0.62], rng, 0.05);
+            const stone = varyColor([0.54, 0.48, 0.38], rng, 0.04);
+            addPart('box', 'mud', 0, 2.4, 0, 9.5, 4.8, 8.5, plaster);
+            addPart('box', 'stone', 0, 0.5, 0, 10, 1.0, 9, stone);
+            addPart('box', 'dark', 0, 1.55, 4.35, 1.4, 2.5, 0.15);
+            for (const [cx, cz] of [[4.2, 3.6], [-4.2, 3.6], [4.2, -3.6], [-4.2, -3.6]] as [number, number][]) {
+              addPart('cylinder', 'mud', cx, 3.0, cz, 0.9, 6.0, 0.9, plaster);
+              addPart('box', 'mud', cx, 6.3, cz, 1.8, 0.5, 1.8, plaster);
+            }
+            addPart('box', 'mud', 0, 5.1, 0, 9.8, 0.6, 8.8, plaster);
+          }
+
+          else if (style === 'malabar-court') {
+            const timber = varyColor([0.36, 0.22, 0.14], rng, 0.05);
+            const laterite = varyColor([0.66, 0.34, 0.24], rng, 0.04);
+            const tile: [number, number, number] = [0.50, 0.22, 0.16];
+            addPart('box', 'stone', 0, 0.45, 0, 10, 0.9, 9, laterite);
+            addPart('box', 'wood', 0, 2.2, 0, 8.8, 3.2, 7.8, timber);
+            addPart('cone', 'terracotta', 0, 4.5, 0, 5.7, 1.6, 5.2, tile);
+            addPart('box', 'wood', 0, 1.5, 4.65, 9.6, 2.0, 0.5, timber);
+            for (const ax of [-4, -2, 0, 2, 4]) addPart('cylinder', 'wood', ax, 1.5, 4.95, 0.14, 2.0, 0.14, timber);
+            addPart('box', 'dark', 0, 1.45, 4.95, 1.4, 2.2, 0.15);
+          }
+
+          else if (style === 'japanese-magistracy') {
+            const plaster = varyColor([0.86, 0.84, 0.76], rng, 0.035);
+            const timber = varyColor([0.24, 0.16, 0.10], rng, 0.04);
+            const tile: [number, number, number] = [0.18, 0.20, 0.22];
+            addPart('box', 'wood', 0, 0.5, 0, 10, 1.0, 8.5, timber);
+            addPart('box', 'white', 0, 2.3, 0, 9.2, 3.2, 7.5, plaster);
+            addPart('cone', 'stone', 0, 4.45, 0, 5.6, 1.3, 4.6, tile);
+            addPart('box', 'wood', 0, 2.3, 3.95, 9.4, 0.22, 0.18, timber);
+            addPart('box', 'dark', 0, 1.5, 4.0, 1.6, 2.2, 0.12);
+            for (const ax of [-3.4, -1.7, 1.7, 3.4]) addPart('box', 'wood', ax, 2.3, 4.05, 0.16, 2.8, 0.12, timber);
+          }
+
+          else if (style === 'company-office') {
+            const brick = varyColor([0.55, 0.24, 0.18], rng, 0.05);
+            const stone = varyColor([0.72, 0.68, 0.58], rng, 0.035);
+            const slate: [number, number, number] = [0.20, 0.22, 0.25];
+            addPart('box', 'stone', 0, 0.45, 0, 10.2, 0.9, 8.2, stone);
+            addPart('box', 'mud', 0, 3.0, 0, 9.5, 5.2, 7.5, brick);
+            addPart('cone', 'stone', 0, 6.15, 0, 5.1, 1.2, 4.1, slate);
+            addPart('box', 'stone', 0, 1.65, 3.85, 2.0, 2.4, 0.2, stone);
+            addPart('box', 'dark', 0, 1.45, 4.0, 1.2, 2.0, 0.12);
+            for (const ax of [-3.2, -1.6, 1.6, 3.2]) {
+              addPart('box', 'dark', ax, 3.2, 4.0, 0.7, 1.1, 0.12);
+              addPart('box', 'stone', ax, 3.2, 4.05, 0.85, 0.12, 0.12, stone);
+            }
+          }
+
+          else if (style === 'venetian-magistracy') {
+            const brick = varyColor([0.62, 0.30, 0.22], rng, 0.05);
+            const istrian = varyColor([0.88, 0.84, 0.74], rng, 0.035);
+            const tile: [number, number, number] = [0.45, 0.20, 0.16];
+            addPart('box', 'mud', 0, 3.0, 0, 9.6, 5.6, 7.6, brick);
+            addPart('box', 'white', 0, 1.4, 4.0, 9.8, 1.0, 0.25, istrian);
+            addPart('cone', 'terracotta', 0, 6.35, 0, 5.1, 1.25, 4.1, tile);
+            addPart('box', 'dark', 0, 1.7, 4.15, 1.4, 2.5, 0.12);
+            for (const ax of [-3.4, -1.7, 0, 1.7, 3.4]) {
+              addPart('box', 'white', ax, 3.5, 4.15, 0.85, 1.6, 0.12, istrian);
+              addPart('box', 'dark', ax, 3.45, 4.22, 0.55, 1.15, 0.08);
+            }
+          }
+
           return; // skip generic per-type render
         }
 
@@ -2410,12 +2642,12 @@ export function ProceduralCity() {
 
   // Materials
   const mats = useMemo(() => ({
-    white: new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.9 }),
-    mud: new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0 }),
-    wood: new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.8 }),
-    terracotta: new THREE.MeshStandardMaterial({ color: '#cd5c5c', roughness: 0.7 }),
-    stone: new THREE.MeshStandardMaterial({ color: '#888888', roughness: 0.9 }),
-    straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0 }),
+    white: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94 }), 'white'),
+    mud: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0 }), 'mud'),
+    wood: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.86 }), 'wood'),
+    terracotta: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c85a4c', roughness: 0.84 }), 'terracotta'),
+    stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#909090', roughness: 0.94 }), 'stone'),
+    straw: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0 }), 'straw'),
     dark: darkMat,
   }), [darkMat]);
 
@@ -2424,12 +2656,12 @@ export function ProceduralCity() {
   // depth tie against coplanar terrain and water-overlay layers, mirroring
   // the trick already used by roads and field overlays.
   const overlayMats = useMemo(() => ({
-    white: new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    mud: new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    wood: new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    terracotta: new THREE.MeshStandardMaterial({ color: '#cd5c5c', roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    stone: new THREE.MeshStandardMaterial({ color: '#888888', roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    straw: new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    white: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'white'),
+    mud: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'mud'),
+    wood: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.86, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'wood'),
+    terracotta: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c85a4c', roughness: 0.84, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'terracotta'),
+    stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#909090', roughness: 0.94, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'stone'),
+    straw: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'straw'),
     dark: darkMat,
   }), [darkMat]);
 
@@ -2611,21 +2843,26 @@ function addRoadSurfaceGrain(
   mat: THREE.MeshStandardMaterial,
   strength = 0.10,
   scale = 1.0,
+  edgeFeather = 0.35,
 ): THREE.MeshStandardMaterial {
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
       `#include <common>
+      attribute float aRoadAcross;
+      varying float vRoadAcross;
       varying vec3 vRoadWorldPos;`
     );
     shader.vertexShader = shader.vertexShader.replace(
       '#include <worldpos_vertex>',
       `#include <worldpos_vertex>
+      vRoadAcross = aRoadAcross;
       vRoadWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <common>',
       `#include <common>
+      varying float vRoadAcross;
       varying vec3 vRoadWorldPos;
 
       float roadHash(vec2 p) {
@@ -2659,6 +2896,9 @@ function addRoadSurfaceGrain(
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.08, 1.04, 0.96), worn * ${(
           strength * 0.55
         ).toFixed(2)});
+        float edge = abs(vRoadAcross - 0.5) * 2.0;
+        float feather = 1.0 - smoothstep(0.76, 1.0, edge);
+        diffuseColor.a *= mix(1.0, feather, ${edgeFeather.toFixed(2)});
       }`
     );
   };
@@ -2734,6 +2974,7 @@ function buildRoadRibbon(
   }
 
   const verts: number[] = [];
+  const acrosses: number[] = [];
   // When sampleEdgeY is provided, the two ribbon edges use that callback's
   // Y instead of inheriting the centerline polyline Y. This lets a road
   // bank with the cross-slope on a hillside instead of cutting horizontally
@@ -2760,18 +3001,26 @@ function buildRoadRibbon(
         ly = Math.max(ly, py);
         ry = Math.max(ry, py);
       } else {
+        const roadBaseY = Math.max(py, centerTerrainY);
         // Riverbanks, canal lips, and steep terrain can put one sampled edge
         // far above/below the road centerline. A flat ribbon twisted across
         // that height gap creates the torn brown patches visible at some
         // ports. Keep mild banking, but clamp cliff/shore samples back toward
         // the centerline so roads read as ground decals rather than draped
         // terrain strips.
-        ly = THREE.MathUtils.clamp(ly, py - RIBBON_EDGE_MAX_DELTA, py + RIBBON_EDGE_MAX_DELTA);
-        ry = THREE.MathUtils.clamp(ry, py - RIBBON_EDGE_MAX_DELTA, py + RIBBON_EDGE_MAX_DELTA);
+        ly = Math.max(
+          roadBaseY,
+          THREE.MathUtils.clamp(ly, roadBaseY - RIBBON_EDGE_MAX_DELTA, roadBaseY + RIBBON_EDGE_MAX_DELTA),
+        );
+        ry = Math.max(
+          roadBaseY,
+          THREE.MathUtils.clamp(ry, roadBaseY - RIBBON_EDGE_MAX_DELTA, roadBaseY + RIBBON_EDGE_MAX_DELTA),
+        );
       }
     }
     verts.push(lx, ly + yLift, lz);
     verts.push(rx, ry + yLift, rz);
+    acrosses.push(0, 1);
     return idx;
   };
 
@@ -2835,6 +3084,7 @@ function buildRoadRibbon(
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('aRoadAcross', new THREE.BufferAttribute(new Float32Array(acrosses), 1));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;

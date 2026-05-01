@@ -3,6 +3,7 @@ import { motion, type Variants } from 'framer-motion';
 import { Sailboat } from 'lucide-react';
 import { useGameStore, type Nationality } from '../store/gameStore';
 import { ALL_COMMODITIES_FULL, COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 import { parchment } from '../theme/tokens';
 import { FACTIONS } from '../constants/factions';
 
@@ -210,9 +211,7 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
   );
 
   const totalWeight = useMemo(
-    () => Object.entries(cargo).reduce(
-      (sum, [c, qty]) => sum + qty * (COMMODITY_DEFS[c as Commodity]?.weight ?? 1), 0
-    ),
+    () => calculateCargoWeight(cargo),
     [cargo]
   );
 

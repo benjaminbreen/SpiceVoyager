@@ -14,14 +14,14 @@ const GameScene = lazy(() => import('./GameScene').then((module) => ({
 })));
 
 const MOBILE_RENDER_PRESET = {
-  shadows: false,
+  shadows: true,
   postprocessing: false,
   bloom: false,
   vignette: false,
-  advancedWater: false,
-  shipWake: false,
-  algae: false,
-  wildlifeMotion: false,
+  advancedWater: true,
+  shipWake: true,
+  algae: true,
+  wildlifeMotion: true,
 } as const;
 
 function installVisualViewportHeight() {

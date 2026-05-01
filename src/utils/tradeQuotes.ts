@@ -10,6 +10,7 @@ import {
   getUnknownBuyDiscount,
   type KnowledgeLevel,
 } from './knowledgeSystem';
+import { cargoUnitWeight } from './cargoWeight';
 
 export type TradeBlockReason =
   | 'no-port'
@@ -80,7 +81,6 @@ function displayNameFor(commodity: Commodity, knowledgeLevel: KnowledgeLevel) {
 
 export function quoteBuyCommodity(input: TradeQuoteInput): TradeQuote {
   const amount = clampAmount(input.amount);
-  const def = COMMODITY_DEFS[input.commodity];
   const knowledgeLevel = getEffectiveKnowledge(input.commodity, input.knowledgeState, input.crew);
   if (!input.port) {
     return {
@@ -106,7 +106,8 @@ export function quoteBuyCommodity(input: TradeQuoteInput): TradeQuote {
   const unknownDiscount = knowledgeLevel === 0 ? getUnknownBuyDiscount() : 1.0;
   const unitPrice = Math.max(1, Math.floor(effectiveBase / factorDiscount * traitDiscount * unknownDiscount));
   const maxByGold = unitPrice > 0 ? Math.floor(input.gold / unitPrice) : 0;
-  const maxBySpace = def.weight > 0 ? Math.floor(cargoSpaceLeft(input) / def.weight) : 0;
+  const unitWeight = cargoUnitWeight(input.commodity);
+  const maxBySpace = unitWeight > 0 ? Math.floor(cargoSpaceLeft(input) / unitWeight) : Infinity;
   const playerInv = input.cargo[input.commodity] ?? 0;
   const maxByHoldCap = input.commodity === 'War Rockets' ? Math.max(0, 20 - playerInv) : Infinity;
   const maxAmount = Math.max(0, Math.min(maxByGold, maxBySpace, input.port.inventory[input.commodity] ?? 0, maxByHoldCap));
@@ -125,7 +126,7 @@ export function quoteBuyCommodity(input: TradeQuoteInput): TradeQuote {
     unitPrice,
     total,
     maxAmount,
-    cargoAfter: input.cargoWeight + tradeAmount * def.weight,
+    cargoAfter: input.cargoWeight + tradeAmount * unitWeight,
     knowledgeLevel,
     displayName: displayNameFor(input.commodity, knowledgeLevel),
     blockReason,
@@ -155,7 +156,6 @@ export function sellUnitPrice(
 
 export function quoteSellCommodity(input: TradeQuoteInput): TradeQuote {
   const amount = clampAmount(input.amount);
-  const def = COMMODITY_DEFS[input.commodity];
   const knowledgeLevel = getEffectiveKnowledge(input.commodity, input.knowledgeState, input.crew);
   const playerInv = input.cargo[input.commodity] ?? 0;
   const maxAmount = Math.max(0, playerInv);
@@ -169,7 +169,7 @@ export function quoteSellCommodity(input: TradeQuoteInput): TradeQuote {
     unitPrice,
     total,
     maxAmount,
-    cargoAfter: input.cargoWeight - tradeAmount * def.weight,
+    cargoAfter: input.cargoWeight - tradeAmount * cargoUnitWeight(input.commodity),
     knowledgeLevel,
     displayName: displayNameFor(input.commodity, knowledgeLevel),
     blockReason: maxAmount <= 0 ? 'none-aboard' : null,

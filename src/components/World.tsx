@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef } from 'react';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, type Building, type Port, type Road } from '../store/gameStore';
 import { IS_SAFARI } from '../utils/platform';
 import * as THREE from 'three';
 import { NPCShip } from './NPCShip';
@@ -39,6 +39,170 @@ import {
 // Commodity list now imported from utils/commodities.ts
 
 const TREE_SHAKE_DURATION = 0.34;
+const NPC_PLAYER_START_CLEARANCE_SQ = 70 * 70;
+
+type WearFeature = {
+  x: number;
+  z: number;
+  radius: number;
+  strength: number;
+  kind: 'road' | 'building';
+};
+
+function cityWearColor(waterPaletteId: string, kind: WearFeature['kind']): [number, number, number] {
+  switch (waterPaletteId) {
+    case 'temperate':
+      return kind === 'road' ? [0.64, 0.54, 0.36] : [0.52, 0.44, 0.30];
+    case 'mediterranean':
+      return kind === 'road' ? [0.84, 0.72, 0.48] : [0.74, 0.62, 0.40];
+    case 'tropical':
+    case 'monsoon':
+      return kind === 'road' ? [0.72, 0.56, 0.34] : [0.62, 0.48, 0.28];
+    case 'arid':
+      return kind === 'road' ? [0.78, 0.66, 0.42] : [0.68, 0.54, 0.32];
+    default:
+      return kind === 'road' ? [0.68, 0.54, 0.34] : [0.58, 0.44, 0.28];
+  }
+}
+
+function addWearFeature(
+  grid: Map<string, WearFeature[]>,
+  cellSize: number,
+  feature: WearFeature,
+) {
+  const minX = Math.floor((feature.x - feature.radius) / cellSize);
+  const maxX = Math.floor((feature.x + feature.radius) / cellSize);
+  const minZ = Math.floor((feature.z - feature.radius) / cellSize);
+  const maxZ = Math.floor((feature.z + feature.radius) / cellSize);
+  for (let gx = minX; gx <= maxX; gx++) {
+    for (let gz = minZ; gz <= maxZ; gz++) {
+      const key = `${gx},${gz}`;
+      const bucket = grid.get(key);
+      if (bucket) bucket.push(feature);
+      else grid.set(key, [feature]);
+    }
+  }
+}
+
+function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, roads: Road[]) {
+  for (const road of roads) {
+    const pts = road.points;
+    if (!pts || pts.length < 2 || road.tier === 'bridge') continue;
+    const radius =
+      road.tier === 'avenue' ? 11.0 :
+      road.tier === 'road' ? 8.4 :
+      6.2;
+    const strength =
+      road.tier === 'avenue' ? 0.86 :
+      road.tier === 'road' ? 0.72 :
+      0.54;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, , az] = pts[i];
+      const [bx, , bz] = pts[i + 1];
+      const len = Math.hypot(bx - ax, bz - az);
+      const samples = Math.max(1, Math.ceil(len / 5));
+      for (let s = 0; s <= samples; s++) {
+        const t = s / samples;
+        addWearFeature(grid, cellSize, {
+          x: ax + (bx - ax) * t,
+          z: az + (bz - az) * t,
+          radius,
+          strength,
+          kind: 'road',
+        });
+      }
+    }
+  }
+}
+
+function addBuildingWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, buildings: Building[]) {
+  for (const b of buildings) {
+    const [x, , z] = b.position;
+    const footprint = Math.max(b.scale[0], b.scale[2]);
+    const anchorBoost =
+      b.type === 'dock' || b.type === 'warehouse' || b.type === 'market' || b.type === 'plaza' ? 1.35 :
+      b.type === 'fort' || b.type === 'palace' || b.type === 'landmark' ? 1.15 :
+      1.0;
+    addWearFeature(grid, cellSize, {
+      x,
+      z,
+      radius: footprint * 0.95 + 6.0 * anchorBoost,
+      strength:
+        b.type === 'plaza' ? 0.92 :
+        b.type === 'dock' || b.type === 'warehouse' || b.type === 'market' ? 0.78 :
+        b.type === 'house' || b.type === 'shack' || b.type === 'farmhouse' ? 0.56 :
+        0.62,
+      kind: 'building',
+    });
+  }
+}
+
+function applyCityGroundWear(
+  source: THREE.BufferGeometry,
+  ports: Port[],
+  waterPaletteId: string,
+): THREE.BufferGeometry {
+  const geometry = source.clone();
+  const colors = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+  const positions = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+  if (!colors || !positions) return geometry;
+
+  const cellSize = 18;
+  const grid = new Map<string, WearFeature[]>();
+  for (const port of ports) {
+    addRoadWearFeatures(grid, cellSize, port.roads ?? []);
+    addBuildingWearFeatures(grid, cellSize, port.buildings ?? []);
+  }
+
+  const roadTarget = cityWearColor(waterPaletteId, 'road');
+  const buildingTarget = cityWearColor(waterPaletteId, 'building');
+  const scratch = new THREE.Color();
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i);
+    const height = positions.getZ(i);
+    if (height < SEA_LEVEL - 0.15) continue;
+    const z = -positions.getY(i);
+    const gx = Math.floor(x / cellSize);
+    const gz = Math.floor(z / cellSize);
+    let roadWear = 0;
+    let buildingWear = 0;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oz = -1; oz <= 1; oz++) {
+        const bucket = grid.get(`${gx + ox},${gz + oz}`);
+        if (!bucket) continue;
+        for (const feature of bucket) {
+          const dx = x - feature.x;
+          const dz = z - feature.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist >= feature.radius) continue;
+          const t = 1 - dist / feature.radius;
+          const falloff = t * t * (3 - 2 * t);
+          if (feature.kind === 'road') roadWear = Math.max(roadWear, falloff * feature.strength);
+          else buildingWear = Math.max(buildingWear, falloff * feature.strength);
+        }
+      }
+    }
+    const wear = Math.max(roadWear, buildingWear);
+    if (wear <= 0.01) continue;
+    const heightFade = 1 - Math.min(1, Math.max(0, (height - 9) / 12));
+    const amount = Math.min(0.92, wear * heightFade * 1.25);
+    const mixTotal = roadWear + buildingWear;
+    const roadMix = mixTotal > 0 ? roadWear / mixTotal : 0.5;
+    const target: [number, number, number] = [
+      buildingTarget[0] + (roadTarget[0] - buildingTarget[0]) * roadMix,
+      buildingTarget[1] + (roadTarget[1] - buildingTarget[1]) * roadMix,
+      buildingTarget[2] + (roadTarget[2] - buildingTarget[2]) * roadMix,
+    ];
+    scratch.setRGB(colors.getX(i), colors.getY(i), colors.getZ(i));
+    const dustLift = amount * (waterPaletteId === 'temperate' ? 0.035 : 0.06);
+    scratch.r = scratch.r + (target[0] - scratch.r) * amount + dustLift;
+    scratch.g = scratch.g + (target[1] - scratch.g) * amount + dustLift * 0.82;
+    scratch.b = scratch.b + (target[2] - scratch.b) * amount + dustLift * 0.42;
+    colors.setXYZ(i, scratch.r, scratch.g, scratch.b);
+  }
+  colors.needsUpdate = true;
+  return geometry;
+}
 
 export function World() {
   const initWorld = useGameStore((state) => state.initWorld);
@@ -68,6 +232,7 @@ export function World() {
   })();
   const wildlifeMotionEnabled = useGameStore((state) => state.renderDebug.wildlifeMotion);
   const coralReefEnabled = useGameStore((state) => state.renderDebug.coralReefs);
+  const cityGroundWearEnabled = useGameStore((state) => state.renderDebug.cityGroundWear);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   // Generate world data once
@@ -78,6 +243,20 @@ export function World() {
     () => generateWorldData({ worldSeed, worldSize, devSoloPort, currentWorldPortId, waterPaletteId }),
     [currentWorldPortId, waterPaletteId, worldSeed, worldSize, devSoloPort],
   );
+
+  const visibleLandTerrainGeometry = useMemo(
+    () => cityGroundWearEnabled
+      ? applyCityGroundWear(landTerrainGeometry, generatedPorts, waterPaletteId)
+      : landTerrainGeometry,
+    [cityGroundWearEnabled, generatedPorts, landTerrainGeometry, waterPaletteId],
+  );
+  useEffect(() => {
+    return () => {
+      if (visibleLandTerrainGeometry !== landTerrainGeometry) {
+        visibleLandTerrainGeometry.dispose();
+      }
+    };
+  }, [landTerrainGeometry, visibleLandTerrainGeometry]);
 
   // Sync module-level crab/fish/grazer state
   useEffect(() => {
@@ -124,16 +303,22 @@ export function World() {
 
   useEffect(() => {
     initWorld(generatedPorts);
-    setNpcPositions(generatedNpcs);
+    // Spawn player before mounting NPC ships, so their first frame cannot
+    // collision-test against the store's reset [0, 0, 0] position.
+    const spawn = findSafeSpawn(generatedPorts);
+    setPlayerPos(spawn);
+    const safeNpcs = generatedNpcs.filter(pos => {
+      const dx = pos[0] - spawn[0];
+      const dz = pos[2] - spawn[2];
+      return dx * dx + dz * dz >= NPC_PLAYER_START_CLEARANCE_SQ;
+    });
+    setNpcPositions(safeNpcs);
     // Generate rich NPC ship identities
     const localPortId = generatedPorts[0]?.id;
-    const ships = generatedNpcs.map(pos => generateNPCShip(pos, { portId: localPortId }));
+    const ships = safeNpcs.map(pos => generateNPCShip(pos, { portId: localPortId }));
     setNpcShips(ships);
     setOceanEncounters(encounterData);
     setFishShoals(fishShoalData);
-    // Spawn player in safe water near the first port
-    const spawn = findSafeSpawn(generatedPorts);
-    setPlayerPos(spawn);
   }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos]);
 
   // Calculate sun position and all time-of-day lighting parameters
@@ -174,12 +359,14 @@ export function World() {
       shader.vertexShader = shader.vertexShader.replace(
         '#include <common>',
         `#include <common>
-        varying vec3 vWorldPos;`
+        varying vec3 vWorldPos;
+        varying vec3 vTerrainWorldNormal;`
       );
       shader.vertexShader = shader.vertexShader.replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
-        vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
+        vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+        vTerrainWorldNormal = normalize(mat3(modelMatrix) * normal);`
       );
 
       // Inject noise functions and detail modulation into fragment shader
@@ -192,6 +379,7 @@ export function World() {
         uniform float uCloudStrength;
         uniform float uWetness;
         varying vec3 vWorldPos;
+        varying vec3 vTerrainWorldNormal;
 
         // Hash-based noise — fast, no texture lookups
         float terrainHash(vec2 p) {
@@ -249,6 +437,27 @@ export function World() {
           float colorShift = terrainNoise(wp * 0.12 + 77.7) - 0.5;
           diffuseColor.r += colorShift * 0.018 * noiseMask;
           diffuseColor.b -= colorShift * 0.012 * noiseMask;
+
+          // Slope and foot-of-hill shading — cheap terrain massing without
+          // extra geometry. Lower slopes get a slight occluded/damp read;
+          // ridge shoulders lift a little so hills stop looking uniformly
+          // painted. The height gates keep beaches and flat roads from
+          // turning muddy.
+          vec3 terrainN = normalize(vTerrainWorldNormal);
+          float slopeAmt = smoothstep(0.10, 0.62, 1.0 - clamp(terrainN.y, 0.0, 1.0));
+          float aboveWater = smoothstep(0.25, 1.8, vWorldPos.y);
+          float lowerGround = 1.0 - smoothstep(4.0, 18.0, vWorldPos.y);
+          float highShoulder = smoothstep(7.0, 26.0, vWorldPos.y) * (1.0 - slopeAmt * 0.35);
+          float brokenSlope = terrainFBM(wp * 0.18 + vec2(41.0, 17.0));
+
+          float footShade = slopeAmt * lowerGround * aboveWater * (0.085 + brokenSlope * 0.075);
+          diffuseColor.rgb *= 1.0 - footShade;
+
+          float earthExpose = slopeAmt * aboveWater * smoothstep(0.36, 0.82, brokenSlope);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.10, 0.93, 0.76), earthExpose * 0.13);
+
+          float ridgeLift = highShoulder * aboveWater * (0.04 + terrainNoise(wp * 0.09 - 23.5) * 0.055);
+          diffuseColor.rgb += ridgeLift * noiseMask;
 
           // Wet ground — darken albedo and pull a touch of saturation up so
           // soaked dirt/grass reads correctly. Single uniform, no extra textures.
@@ -1692,7 +1901,7 @@ export function World() {
 
       {/* Procedural Terrain */}
       <mesh
-        geometry={landTerrainGeometry}
+        geometry={visibleLandTerrainGeometry}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow={shadowsActive}
         castShadow={shadowsActive}

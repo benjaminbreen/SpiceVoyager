@@ -119,7 +119,7 @@ function regionLabel(region: WorldRegion): string {
 
 function chooseIncident(input: VoyageResolutionInput, risk: VoyageRisk, routeKnown: boolean): VoyageIncident {
   const seed = hashString(`incident:${input.fromPortId}:${input.toPortId}:${input.dayCount}:${input.stance}`);
-  const pick = seed % 5;
+  const pick = seed % 3;
   if (pick === 0) {
     return {
       title: 'Squall Line',
@@ -148,35 +148,6 @@ function chooseIncident(input: VoyageResolutionInput, risk: VoyageRisk, routeKno
   }
   if (pick === 1) {
     return {
-      title: 'Favorable Current',
-      text: routeKnown
-        ? 'The pilot finds the set of the current earlier than expected.'
-        : 'A steady current takes the ship cleanly along the lane through the night.',
-      autoResult: {
-        id: 'current',
-        label: 'Mark the current',
-        detail: 'The passage shortens without extra strain.',
-        resultText: 'Current made. One day saved.',
-        actualDaysDelta: -1,
-        provisionCostDelta: -1,
-      },
-    };
-  }
-  if (pick === 2) {
-    return {
-      title: 'Cross Swell',
-      text: 'By the middle watch the ship works hard in a contrary swell.',
-      autoResult: {
-        id: 'pumps',
-        label: 'Set the pumps',
-        detail: 'Minor hull wear, no loss of course.',
-        resultText: 'Pumps manned before dawn. Seams held.',
-        hullDamageDelta: risk === 'Low' ? 1 : 2,
-      },
-    };
-  }
-  if (pick === 3) {
-    return {
       title: 'Strange Sail',
       text: 'A sail holds the same quarter through the afternoon watch.',
       choices: [
@@ -202,14 +173,24 @@ function chooseIncident(input: VoyageResolutionInput, risk: VoyageRisk, routeKno
   return {
     title: 'Water Casks',
     text: 'Two casks are found sour when the cooper knocks them open.',
-    autoResult: {
-      id: 'sour-casks',
-      label: 'Ration water',
-      detail: 'Spoiled stores cost morale.',
-      resultText: 'Two casks sour. Water rationed by watch.',
-      provisionCostDelta: -2,
-      moraleDelta: -1,
-    },
+    choices: [
+      {
+        id: 'ration',
+        label: 'Ration water',
+        detail: 'Save stores, hurt morale.',
+        resultText: 'Two casks sour. Water rationed by watch.',
+        provisionCostDelta: -2,
+        moraleDelta: -2,
+      },
+      {
+        id: 'landfall',
+        label: 'Make slower landfall',
+        detail: 'Lose a day finding safer water.',
+        resultText: 'The ship made a slower approach in search of clean water.',
+        actualDaysDelta: 1,
+        provisionCostDelta: 1,
+      },
+    ],
   };
 }
 

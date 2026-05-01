@@ -683,11 +683,20 @@ export function getPOIById(
  */
 export function resolvePOIPosition(
   poi: POIDefinition,
-  port: { buildings: { type: string; landmarkId?: string; position: [number, number, number] }[] },
+  port: {
+    position?: [number, number, number];
+    buildings: { type: string; landmarkId?: string; position: [number, number, number] }[];
+  },
 ): { x: number; z: number; building?: { position: [number, number, number] } } | null {
   switch (poi.location.kind) {
     case 'coords':
-    case 'hinterland':
+    case 'hinterland': {
+      const [x, z] = poi.location.position;
+      return {
+        x: (port.position?.[0] ?? 0) + x,
+        z: (port.position?.[2] ?? 0) + z,
+      };
+    }
     case 'world':
       return { x: poi.location.position[0], z: poi.location.position[1] };
     case 'landmark': {

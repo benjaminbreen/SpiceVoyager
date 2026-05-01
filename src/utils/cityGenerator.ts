@@ -534,6 +534,7 @@ export function generateCity(
   faiths: readonly string[] = [],
   palaceStyle?: string | null,
   pois: readonly POIDefinition[] = [],
+  portId?: string,
 ): { buildings: Building[]; roads: Road[] } {
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
@@ -2193,7 +2194,7 @@ export function generateCity(
       const result = generateBuildingLabel(
         b.id, b.type, culture, portName,
         b.position[1], distToCenter, moisture, labelSeed, nationality, region,
-        { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle },
+        { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle, portId },
       );
       b.label = result.label;
       b.labelSub = result.sub;

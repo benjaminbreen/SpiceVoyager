@@ -16,7 +16,7 @@ import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnc
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
-import { IS_SAFARI } from '../utils/platform';
+import { useIsMobile } from '../utils/useIsMobile';
 import { ShiftSelectOverlay } from './ShiftSelectOverlay';
 import { TouchSteerRaycaster } from './TouchControls';
 import { getTerrainHeight, getTerrainData, BiomeType } from '../utils/terrain';
@@ -3186,6 +3186,11 @@ function PerformanceSampler() {
 }
 
 export function GameScene() {
+  const { isMobile } = useIsMobile();
+  const worldSeed = useGameStore((state) => state.worldSeed);
+  const worldSize = useGameStore((state) => state.worldSize);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
   const postprocessingEnabled = useGameStore((state) => state.renderDebug.postprocessing);
   const bloomEnabled = useGameStore((state) => state.renderDebug.bloom);
   const vignetteEnabled = useGameStore((state) => state.renderDebug.vignette);
@@ -3199,6 +3204,7 @@ export function GameScene() {
   const effectiveRainIntensity = rainEnabled ? Math.max(weatherIntensity, 1) : weatherIntensity;
   const showRain = effectiveRainIntensity > 0.01;
   const [canvasReadyToMount, setCanvasReadyToMount] = useState(false);
+  const canvasDpr: [number, number] = isMobile ? [1.5, 2] : [1, 2];
 
   useEffect(() => {
     const frameId = requestAnimationFrame(() => setCanvasReadyToMount(true));
@@ -3209,8 +3215,8 @@ export function GameScene() {
     <>
       {canvasReadyToMount && (
         <Canvas
-          dpr={[1, IS_SAFARI ? 1.0 : 1.25]}
-          gl={{ antialias: !IS_SAFARI, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
+          dpr={canvasDpr}
+          gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.97 }}
           shadows={{ type: THREE.PCFShadowMap }}
           camera={{ position: [0, 50, 50], fov: 45 }}
         >
@@ -3218,7 +3224,7 @@ export function GameScene() {
             <color attach="background" args={['#87CEEB']} />
             <fog attach="fog" args={['#87CEEB', 200, 600]} />
 
-            <World />
+            <World key={`${worldSeed}:${worldSize}:${currentWorldPortId ?? 'world'}:${devSoloPort ?? 'all'}`} />
             <Ocean />
             <Ship />
             <Player />
@@ -3341,17 +3347,25 @@ function PostProcessing({
     <EffectComposer key={composerKey}>
       {aoEnabled ? (
         <N8AO
-          aoRadius={1.2}
-          intensity={1.5}
+          aoRadius={1.25}
+          intensity={1.05}
           aoSamples={4}
           denoiseSamples={2}
-          denoiseRadius={8}
-          distanceFalloff={1.0}
+          denoiseRadius={7}
+          distanceFalloff={1.25}
           halfRes
         />
       ) : <></>}
 
-      {bloomEnabled ? <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} height={300} intensity={1.0} /> : <></>}
+      {bloomEnabled ? (
+        <Bloom
+          mipmapBlur
+          luminanceThreshold={0.26}
+          luminanceSmoothing={0.45}
+          height={360}
+          intensity={0.65}
+        />
+      ) : <></>}
       {brightnessContrastEnabled ? <BrightnessContrast brightness={brightness} contrast={contrast} /> : <></>}
       {hueSaturationEnabled ? <HueSaturation hue={hue} saturation={saturation} /> : <></>}
       {vignetteEnabled ? <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} /> : <></>}

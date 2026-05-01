@@ -120,7 +120,23 @@ function ShallowWaterTint() {
       const x = position.getX(i);
       const worldZ = -position.getY(i);
       const terrain = getTerrainData(x, worldZ);
-      const tintStrength = Math.min(1, terrain.shallowFactor * 1.55 + terrain.surfFactor * 1.15 + terrain.wetSandFactor * 0.38);
+      const isMediterranean = waterPalette.id === 'mediterranean';
+      const isMonsoon = waterPalette.id === 'monsoon';
+      const shallowBand = isMediterranean
+        ? smoothstep(0.38, 0.92, terrain.shallowFactor)
+        : isMonsoon
+        ? smoothstep(0.28, 0.88, terrain.shallowFactor)
+        : terrain.shallowFactor;
+      const surfBand = isMediterranean
+        ? smoothstep(0.24, 0.86, terrain.surfFactor)
+        : isMonsoon
+        ? smoothstep(0.26, 0.84, terrain.surfFactor)
+        : terrain.surfFactor;
+      const tintStrength = Math.min(1,
+        shallowBand * (isMediterranean ? 1.28 : isMonsoon ? 1.36 : 1.55)
+          + surfBand * (isMediterranean ? 1.42 : isMonsoon ? 1.28 : 1.15)
+          + terrain.wetSandFactor * (isMediterranean ? 0.22 : isMonsoon ? 0.30 : 0.38)
+      );
 
       // Only tint below sea level — above-water terrain is handled by land geometry
       const aboveWater = terrain.height >= SEA_LEVEL;
@@ -129,20 +145,20 @@ function ShallowWaterTint() {
       // River plume forces overlay alpha visibility independent of shoreline
       // factors — silt extends out into deeper water around the mouth, where
       // tintStrength would otherwise be ~0 and the reflective sky would win.
-      const plumeAlpha = aboveWater ? 0 : terrain.plumeFactor * 0.55;
+      const plumeAlpha = aboveWater ? 0 : terrain.plumeFactor * (isMediterranean ? 0.14 : isMonsoon ? 0.34 : 0.55);
       const alpha = Math.min(
         1,
-        tintStrength * 0.55 * (1 - terrain.coastSteepness * 0.20) * depthFade
+        tintStrength * (isMediterranean ? 0.46 : isMonsoon ? 0.50 : 0.55) * (1 - terrain.coastSteepness * 0.20) * depthFade
           + plumeAlpha,
       );
       turquoise.copy(_turquoiseBase);
-      turquoise.lerp(_outerShallow, terrain.shallowFactor * 0.68);
-      turquoise.lerp(_paleSurf, terrain.surfFactor * 0.58);
+      turquoise.lerp(_outerShallow, shallowBand * (isMediterranean ? 0.92 : isMonsoon ? 0.82 : 0.68));
+      turquoise.lerp(_paleSurf, surfBand * (isMediterranean ? 0.82 : isMonsoon ? 0.70 : 0.58));
       // Silty river-plume tint — sediment carried by the outflow turns the
       // water brown-green near deltas. Mixes hard so it reads against the
       // sky reflection on the Water plane above.
       if (terrain.plumeFactor > 0.01) {
-        turquoise.lerp(_siltColor, Math.min(1, terrain.plumeFactor * 0.95));
+        turquoise.lerp(_siltColor, Math.min(1, terrain.plumeFactor * (isMediterranean ? 0.22 : isMonsoon ? 0.62 : 0.95)));
       }
 
       colors[i * 3] = turquoise.r;
@@ -152,8 +168,12 @@ function ShallowWaterTint() {
 
       // Foam intensity: strongest in active surf, with a small wet-sand tail.
       // The nonlinear surf term keeps quiet coves from turning uniformly white.
-      const surfBreak = smoothstep(0.18, 0.82, terrain.surfFactor);
-      const foam = surfBreak * 1.18 + terrain.wetSandFactor * 0.22;
+      const surfBreak = isMediterranean
+        ? smoothstep(0.35, 0.92, terrain.surfFactor)
+        : isMonsoon
+        ? smoothstep(0.30, 0.88, terrain.surfFactor)
+        : smoothstep(0.18, 0.82, terrain.surfFactor);
+      const foam = surfBreak * (isMediterranean ? 1.42 : isMonsoon ? 1.24 : 1.18) + terrain.wetSandFactor * (isMediterranean ? 0.12 : isMonsoon ? 0.18 : 0.22);
       foamIntensities[i] = Math.min(1, foam) * (1 - terrain.coastSteepness * 0.42);
 
       reefFactors[i] = terrain.reefFactor;
@@ -161,7 +181,7 @@ function ShallowWaterTint() {
       // Shore edge: dark band at the waterline for coastline definition
       if (depthBelowSea > 0 && depthBelowSea < 2.5) {
         const proximity = Math.max(0, 1 - depthBelowSea * 0.55);
-        shoreEdges[i] = proximity * Math.min(1, terrain.surfFactor * 2.5 + terrain.shallowFactor * 1.0)
+        shoreEdges[i] = proximity * Math.min(1, surfBand * (isMediterranean ? 3.1 : isMonsoon ? 2.8 : 2.5) + shallowBand * (isMediterranean ? 0.55 : isMonsoon ? 0.72 : 1.0))
           * (0.55 + terrain.coastSteepness * 0.45);
       } else {
         shoreEdges[i] = 0;

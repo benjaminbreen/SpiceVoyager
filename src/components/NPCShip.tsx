@@ -10,6 +10,7 @@ import { sfxCannonFire, sfxShipSink } from '../audio/SoundEffects';
 import { spawnSplash } from '../utils/splashState';
 import { addCameraImpulse } from '../utils/cameraShakeState';
 import { spawnWreckSalvage } from './WreckSalvage';
+import { spawnFloatingCombatText } from './FloatingCombatText';
 import { SEA_LEVEL } from '../constants/world';
 import {
   COLLISION_REPUTATION_TARGET,
@@ -19,6 +20,7 @@ import {
   npcBowWeapon,
   npcBroadsideCount,
   npcBroadsideWeapon,
+  shouldStayHostile,
   type CollisionResponse,
   type WarningResponse,
   type NpcCombatPosture,
@@ -43,6 +45,8 @@ const NPC_BROADSIDE_FIRE_ARC = Math.PI / 4.5;
 const NPC_LEAD_TIME = 0.7;
 const NPC_FIRE_JITTER = 0.095;
 const NPC_BROADSIDE_STAGGER_MS = 170;
+const NPC_INTENT_LEAD_MS = 550;
+const NPC_INTENT_TEXT_COOLDOWN_MS = 2500;
 
 const NPC_HULL_PROBE_POINTS: [number, number][] = [
   [0, 3.5],   // Bow
@@ -97,6 +101,16 @@ function npcProjectileSpeed(weaponType: WeaponType, distance: number) {
   const angleRad = THREE.MathUtils.degToRad(7.5);
   const sin2 = Math.max(0.12, Math.sin(angleRad * 2));
   return THREE.MathUtils.clamp(Math.sqrt((distance * gravity) / sin2), 32, 96);
+}
+
+function readablePostureLabel(posture: NpcCombatPosture, committed: boolean) {
+  if (committed && (posture === 'engage' || posture === 'pursue' || posture === 'evade')) return 'Won\'t Back Down';
+  if (posture === 'engage') return 'Attacking';
+  if (posture === 'pursue') return 'Chasing';
+  if (posture === 'evade') return 'Keeping Distance';
+  if (posture === 'flee') return 'Running Away';
+  if (posture === 'warn') return 'Warning';
+  return null;
 }
 
 function CannonPorts({ visual, zPositions }: { visual: NPCShipVisual; zPositions: number[] }) {
@@ -453,12 +467,12 @@ export function NPCShip({
   const lastClickToast = useRef(0);
   const nextTargetSearchAt = useRef(0);
 
-  // Combat posture: Phase 2 adds flee/evade/engage choices, but no NPC firing yet.
   // Boarding/capture may be added later; it is intentionally not implemented here.
   const alertUntil = useRef(0); // timestamp when alert ends
   const postureUntil = useRef(0);
   const combatPosture = useRef<NpcCombatPosture>('neutral');
   const hostileContact = useRef(false);
+  const committedHostile = useRef(false);
   const lastProcessedHitAlert = useRef(0);
   const lastCollisionTime = useRef(0); // cooldown to prevent spam
   const collisionGrievanceCount = useRef(0);
@@ -467,6 +481,10 @@ export function NPCShip({
   const nextInitiativeWarningAt = useRef(0);
   const nextBowFireAt = useRef(0);
   const nextBroadsideFireAt = useRef(0);
+  const bowIntentReadyAt = useRef(0);
+  const broadsideIntentReadyAt = useRef(0);
+  const nextIntentTextAt = useRef(0);
+  const lastShownPosture = useRef<NpcCombatPosture | null>(null);
   const ALERT_DURATION = 14000; // armed ships need time to maneuver into a firing lane
   const COLLISION_COOLDOWN = 2000; // match Ship.tsx's 2-second cooldown
   const INITIATIVE_CHECK_MS = 2200;
@@ -480,9 +498,31 @@ export function NPCShip({
 
   const setCombatPosture = (posture: NpcCombatPosture, until: number) => {
     combatPosture.current = posture;
-    postureUntil.current = until;
-    alertUntil.current = Math.max(alertUntil.current, until);
+    const effectiveUntil = committedHostile.current && posture !== 'flee' ? Number.POSITIVE_INFINITY : until;
+    postureUntil.current = effectiveUntil;
+    alertUntil.current = Math.max(alertUntil.current, effectiveUntil);
     nextTargetSearchAt.current = 0;
+  };
+
+  const markProvoked = (reputation: number, hullFraction: number) => {
+    hostileContact.current = true;
+    if (shouldStayHostile(identity, { reputation, hullFraction })) {
+      committedHostile.current = true;
+    }
+  };
+
+  const showIntentText = (now: number, label: string, currentPos: THREE.Vector3) => {
+    if (now < nextIntentTextAt.current) return;
+    nextIntentTextAt.current = now + NPC_INTENT_TEXT_COOLDOWN_MS;
+    spawnFloatingCombatText(currentPos.x, currentPos.y + 2.8, currentPos.z, label, 'intent');
+    window.dispatchEvent(new CustomEvent('npc-incoming-fire-intent', {
+      detail: {
+        label,
+        shipName: identity.shipName,
+        x: currentPos.x,
+        z: currentPos.z,
+      },
+    }));
   };
 
   const tryFireAtPlayer = (now: number, currentPos: THREE.Vector3, playerPos: readonly [number, number, number], playerRot: number, playerVel: number, distToPlayer: number) => {
@@ -509,6 +549,13 @@ export function NPCShip({
       const sideAngle = portDiff < starboardDiff ? portAngle : starboardAngle;
       const sideDiff = Math.min(portDiff, starboardDiff);
       if (sideDiff <= NPC_BROADSIDE_FIRE_ARC) {
+        if (broadsideIntentReadyAt.current === 0 || now > broadsideIntentReadyAt.current + 1000) {
+          broadsideIntentReadyAt.current = now + NPC_INTENT_LEAD_MS;
+          showIntentText(now, 'Guns Run Out', currentPos);
+          return;
+        }
+        if (now < broadsideIntentReadyAt.current) return;
+        broadsideIntentReadyAt.current = 0;
         const def = WEAPON_DEFS[broadsideWeapon];
         nextBroadsideFireAt.current = now + def.reloadTime * 1000 * THREE.MathUtils.lerp(0.9, 1.25, Math.random());
         const sideDir = new THREE.Vector3(Math.sin(sideAngle), 0, Math.cos(sideAngle)).normalize();
@@ -548,6 +595,13 @@ export function NPCShip({
     }
 
     if (distToPlayer <= NPC_BOW_FIRE_RANGE && now >= nextBowFireAt.current && Math.abs(angleDelta(bearing, heading)) <= NPC_BOW_FIRE_ARC) {
+      if (bowIntentReadyAt.current === 0 || now > bowIntentReadyAt.current + 1000) {
+        bowIntentReadyAt.current = now + NPC_INTENT_LEAD_MS;
+        showIntentText(now, 'Taking Aim', currentPos);
+        return;
+      }
+      if (now < bowIntentReadyAt.current) return;
+      bowIntentReadyAt.current = 0;
       const def = WEAPON_DEFS[bowWeapon];
       nextBowFireAt.current = now + def.reloadTime * 1000 * THREE.MathUtils.lerp(1.4, 2.4, Math.random());
       const yaw = bearing + (Math.random() - 0.5) * NPC_FIRE_JITTER;
@@ -595,14 +649,14 @@ export function NPCShip({
       if (detail.response === 'apologize' || detail.response === 'pay') {
         posture = identity.armed && hullFraction > 0.35 ? 'evade' : 'flee';
       } else if (detail.response === 'threaten') {
-        hostileContact.current = true;
+        markProvoked(useGameStore.getState().getReputation(identity.flag) - 40, hullFraction);
         posture = chooseProvokedPosture(identity, {
           reputation: useGameStore.getState().getReputation(identity.flag) - 40,
           provoked: true,
           hullFraction,
         });
       } else {
-        hostileContact.current = true;
+        markProvoked(useGameStore.getState().getReputation(identity.flag), hullFraction);
         posture = identity.armed && identity.morale >= 55 && hullFraction > 0.35 ? 'engage' : 'flee';
       }
       setCombatPosture(posture, now + ALERT_DURATION);
@@ -629,14 +683,14 @@ export function NPCShip({
       if (detail.response === 'alterCourse' || detail.response === 'payToll') {
         posture = 'evade';
       } else if (detail.response === 'threaten') {
-        hostileContact.current = true;
+        markProvoked(useGameStore.getState().getReputation(identity.flag) - 35, hullFraction);
         posture = chooseProvokedPosture(identity, {
           reputation: useGameStore.getState().getReputation(identity.flag) - 35,
           provoked: true,
           hullFraction,
         });
       } else {
-        hostileContact.current = true;
+        markProvoked(useGameStore.getState().getReputation(identity.flag), hullFraction);
         posture = identity.armed && identity.morale >= 45 && hullFraction > 0.35 ? 'pursue' : 'evade';
       }
       setCombatPosture(posture, now + ALERT_DURATION);
@@ -908,6 +962,7 @@ export function NPCShip({
         provoked: true,
         hullFraction: hullRef.current / identity.maxHull,
       });
+      markProvoked(getReputation(identity.flag), hullRef.current / identity.maxHull);
       setCombatPosture(posture, now + ALERT_DURATION);
       if (posture === 'flee') {
         targetRef.current.set(
@@ -919,7 +974,7 @@ export function NPCShip({
     // Check for projectile hit alert from combat system
     if (liveEntry?.hitAlert && Date.now() < liveEntry.hitAlert && liveEntry.hitAlert > lastProcessedHitAlert.current) {
       lastProcessedHitAlert.current = liveEntry.hitAlert;
-      hostileContact.current = true;
+      markProvoked(getReputation(identity.flag), hullRef.current / identity.maxHull);
       const posture = chooseProvokedPosture(identity, {
         reputation: getReputation(identity.flag),
         provoked: true,
@@ -934,6 +989,13 @@ export function NPCShip({
     }
     const activePosture = combatPosture.current;
     const isAlerted = activePosture !== 'neutral' || now < alertUntil.current;
+    if (activePosture !== lastShownPosture.current) {
+      lastShownPosture.current = activePosture;
+      const postureLabel = readablePostureLabel(activePosture, committedHostile.current);
+      if (postureLabel && distToPlayer < 165) {
+        spawnFloatingCombatText(currentPos.x, currentPos.y + 3.1, currentPos.z, postureLabel, 'intent');
+      }
+    }
 
     if (
       playerMode === 'ship' &&

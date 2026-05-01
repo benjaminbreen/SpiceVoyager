@@ -23,6 +23,7 @@ import {
   type WorldRegion,
 } from '../utils/worldPorts';
 import VoyageModal from './VoyageModal';
+import PassageInterstitial from './PassageInterstitial';
 import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 import { useIsMobile } from '../utils/useIsMobile';
@@ -94,6 +95,13 @@ type TravelModalState = {
   fromPortId: string;
   toPortId: string;
   force: boolean;
+  swapStarted?: boolean;
+};
+
+type PassageModalState = TravelModalState & {
+  resolution: VoyageResolution;
+  hasIncident: boolean;
+  swapStarted: boolean;
 };
 
 // ── Decorative compass rose (SVG fragment, injected into D3 map) ───────────
@@ -131,6 +139,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
   const [travelModal, setTravelModal] = useState<TravelModalState | null>(null);
+  const [passageModal, setPassageModal] = useState<PassageModalState | null>(null);
 
   const travelInfo = useMemo(() => {
     if (!selectedPort || selectedPort === nearestPortId) return null;
@@ -816,12 +825,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       toPortId: selectedPort,
       force: devMode && !canDirectlySail(nearestPortId, selectedPort),
     };
-    sfxSail();
-    if (Math.random() < VOYAGE_INCIDENT_CHANCE) {
-      setTravelModal(modal);
-      return;
-    }
-    finishVoyage(modal, resolveVoyage({
+    const resolution = resolveVoyage({
       fromPortId: nearestPortId,
       toPortId: selectedPort,
       stance: 'standard',
@@ -832,10 +836,22 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       chartedRoutes,
       weatherIntensity: weather.targetIntensity,
       windSpeed,
-    }));
+    });
+    sfxSail();
+    setPassageModal({
+      ...modal,
+      resolution,
+      hasIncident: Math.random() < VOYAGE_INCIDENT_CHANCE,
+      swapStarted: false,
+    });
   };
 
   const finishVoyage = (modal: TravelModalState, resolution: VoyageResolution) => {
+    if (modal.swapStarted) {
+      setTravelModal(null);
+      onClose();
+      return;
+    }
     const swap = () => {
       fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
       setTravelModal(null);
@@ -850,6 +866,31 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
 
   const handleTravelComplete = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
   const handleTravelSkip = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
+  const handleTravelResolutionReady = (resolution: VoyageResolution) => {
+    if (!travelModal || travelModal.swapStarted) return;
+    fastTravel(travelModal.targetPortId, { force: travelModal.force, voyage: resolution });
+    setTravelModal({ ...travelModal, swapStarted: true });
+  };
+
+  const handlePassageDone = () => {
+    if (!passageModal) return;
+    const modal = passageModal;
+    setPassageModal(null);
+    if (modal.hasIncident) {
+      setTravelModal(modal);
+      return;
+    }
+    if (!modal.swapStarted) {
+      fastTravel(modal.targetPortId, { force: modal.force, voyage: modal.resolution });
+    }
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!passageModal || passageModal.hasIncident || passageModal.swapStarted) return;
+    fastTravel(passageModal.targetPortId, { force: passageModal.force, voyage: passageModal.resolution });
+    setPassageModal({ ...passageModal, swapStarted: true });
+  }, [fastTravel, passageModal]);
 
   useEffect(() => {
     const handleDown = (e: KeyboardEvent) => {
@@ -1321,6 +1362,17 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       </motion.div>
 
       {/* Travel animation */}
+      {passageModal && (
+        <PassageInterstitial
+          fromPort={passageModal.fromPort}
+          toPort={passageModal.toPort}
+          toPortId={passageModal.toPortId}
+          currentDay={dayCount}
+          resolution={passageModal.resolution}
+          hasIncident={passageModal.hasIncident}
+          onDone={handlePassageDone}
+        />
+      )}
       {travelModal && (
         <VoyageModal
           fromPort={travelModal.fromPort}
@@ -1328,6 +1380,8 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
           totalDays={travelModal.totalDays}
           fromPortId={travelModal.fromPortId}
           toPortId={travelModal.toPortId}
+          initialPhase="incident"
+          onResolutionReady={handleTravelResolutionReady}
           onComplete={handleTravelComplete}
           onSkip={handleTravelSkip}
         />

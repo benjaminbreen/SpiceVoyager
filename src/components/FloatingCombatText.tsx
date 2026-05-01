@@ -9,7 +9,8 @@ type CombatTextTone =
   | 'sunk'
   | 'player'
   | 'splash'
-  | 'structure';
+  | 'structure'
+  | 'intent';
 
 export interface FloatingCombatText {
   id: number;
@@ -38,6 +39,7 @@ const TONE_STYLE: Record<CombatTextTone, { color: string; glow: string; size: nu
   player: { color: '#fb8a52', glow: 'rgba(249, 115, 22, 0.55)', size: 17, weight: 720 },
   splash: { color: '#9bd8df', glow: 'rgba(139, 211, 221, 0.34)', size: 13, weight: 560 },
   structure: { color: '#d6d3c4', glow: 'rgba(214, 211, 196, 0.34)', size: 14, weight: 610 },
+  intent: { color: '#c8b88d', glow: 'rgba(168, 139, 83, 0.22)', size: 12, weight: 520 },
 };
 
 export function spawnFloatingCombatText(

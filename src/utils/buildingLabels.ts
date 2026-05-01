@@ -1,4 +1,5 @@
 import { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold } from '../store/gameStore';
+import { authorityForPort } from './portAuthorities';
 
 type EuropeanNationality = 'English' | 'Dutch' | 'Spanish' | 'Portuguese';
 const EUROPEAN_NATIONALITIES: EuropeanNationality[] = ['English', 'Dutch', 'Spanish', 'Portuguese'];
@@ -1178,7 +1179,13 @@ function palaceLabel(
   style: string,
   portName: string,
   nationality: Nationality | undefined,
+  portId?: string,
 ): { label: string; sub: string } {
+  const authority = portId ? authorityForPort(portId) : null;
+  if (authority) {
+    return { label: authority.buildingLabel, sub: authority.buildingSub };
+  }
+
   switch (style) {
     case 'iberian-colonial': {
       // Portuguese or Spanish colonial governor's palace / viceroyalty.
@@ -1435,7 +1442,7 @@ export function generateBuildingLabel(
   seed: number,
   nationality?: Nationality,
   region?: CulturalRegion,
-  opts?: { faith?: string; landmarkId?: string; palaceStyle?: string },
+  opts?: { faith?: string; landmarkId?: string; palaceStyle?: string; portId?: string },
 ): BuildingLabelResult {
   const rng = mulberry32(seed);
   // Consume a few values to decorrelate from other uses of same seed
@@ -1464,7 +1471,7 @@ export function generateBuildingLabel(
 
   if (type === 'palace') {
     const style = opts?.palaceStyle ?? 'iberian-colonial';
-    return palaceLabel(style, portName, nationality);
+    return palaceLabel(style, portName, nationality, opts?.portId);
   }
 
   const euro = asEuropean(nationality);

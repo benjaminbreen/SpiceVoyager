@@ -50,6 +50,7 @@ import { SEMANTIC_STYLE } from '../utils/semanticClasses';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const POIModal = lazy(() => import('./POIModalV2').then((module) => ({ default: module.POIModalV2 })));
+const CrewTroubleModal = lazy(() => import('./CrewTroubleModal').then((module) => ({ default: module.CrewTroubleModal })));
 const BuildingDetailModal = lazy(() => import('./BuildingDetailModal').then((module) => ({ default: module.BuildingDetailModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
 const LearnPanel = lazy(() => import('./LearnPanel').then((module) => ({ default: module.LearnPanel })));
@@ -620,6 +621,82 @@ function HuntingModeBanner() {
           <div className="text-center text-amber-500/45 text-[9px] font-mono tracking-wider mt-0.5">
             ● {weaponLabel} · {ammoLine}
           </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+type IncomingFireIndicator = {
+  id: number;
+  label: string;
+  shipName: string;
+  x: number;
+  z: number;
+  createdAt: number;
+};
+
+function IncomingFireIndicatorHud() {
+  const [indicator, setIndicator] = useState<IncomingFireIndicator | null>(null);
+
+  useEffect(() => {
+    const handleIntent = (e: Event) => {
+      const detail = (e as CustomEvent).detail as Partial<IncomingFireIndicator> | undefined;
+      if (typeof detail?.x !== 'number' || typeof detail?.z !== 'number') return;
+      setIndicator({
+        id: Date.now(),
+        label: detail.label ?? 'Incoming Fire',
+        shipName: detail.shipName ?? 'Unknown ship',
+        x: detail.x,
+        z: detail.z,
+        createdAt: Date.now(),
+      });
+    };
+    window.addEventListener('npc-incoming-fire-intent', handleIntent);
+    return () => window.removeEventListener('npc-incoming-fire-intent', handleIntent);
+  }, []);
+
+  useEffect(() => {
+    if (!indicator) return;
+    const timer = setTimeout(() => setIndicator((current) => current?.id === indicator.id ? null : current), 1400);
+    return () => clearTimeout(timer);
+  }, [indicator]);
+
+  if (!indicator) return null;
+
+  const ship = getLiveShipTransform();
+  const dx = indicator.x - ship.pos[0];
+  const dz = indicator.z - ship.pos[2];
+  const rel = Math.atan2(dx, dz) - ship.rot;
+  const x = 50 + Math.sin(rel) * 42;
+  const y = 50 - Math.cos(rel) * 38;
+
+  return (
+    <motion.div
+      key={indicator.id}
+      initial={{ opacity: 0, scale: 0.92 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.92 }}
+      transition={{ duration: 0.16 }}
+      className="pointer-events-none fixed z-[70]"
+      style={{
+        left: `${Math.max(9, Math.min(91, x))}%`,
+        top: `${Math.max(12, Math.min(88, y))}%`,
+        transform: 'translate(-50%, -50%)',
+      }}
+    >
+      <div className="flex flex-col items-center gap-1">
+        <div
+          className="h-9 w-9 rounded-full border border-amber-300/45 bg-black/45 backdrop-blur-sm
+            shadow-[0_0_18px_rgba(168,139,83,0.22)] flex items-center justify-center"
+        >
+          <div
+            className="h-0 w-0 border-l-[6px] border-r-[6px] border-b-[13px] border-l-transparent border-r-transparent border-b-amber-200/85"
+            style={{ transform: `rotate(${rel}rad)` }}
+          />
+        </div>
+        <div className="rounded border border-amber-300/30 bg-black/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-100/85 shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+          {indicator.label}
         </div>
       </div>
     </motion.div>
@@ -1260,6 +1337,7 @@ export function UI() {
   }, []);
   const setActivePOI = useGameStore((state) => state.setActivePOI);
   const activePOI = useGameStore((state) => state.activePOI);
+  const activeCrewTrouble = useGameStore((state) => state.activeCrewTrouble);
 
   // Collision warning banner state
   const [collisionShipDesc, setCollisionShipDesc] = useState<string | null>(null);
@@ -1499,7 +1577,7 @@ export function UI() {
           const { port, building } = result;
           const tabForBuilding: PlaceTab | undefined =
             building.type === 'market' ? 'market' :
-            building.type === 'fort' ? 'governor' :
+            building.type === 'fort' || building.type === 'palace' || building.labelEyebrow === 'ROYAL' ? 'governor' :
             undefined;
 
           if (tabForBuilding !== undefined) {
@@ -2447,6 +2525,10 @@ export function UI() {
         {combatMode && <CombatHud />}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {!startupOverlayActive && playerMode === 'ship' && <IncomingFireIndicatorHud />}
+      </AnimatePresence>
+
       {/* Anchor Indicator — top-center ASCII banner */}
       <AnimatePresence>
         {anchored && playerMode === 'ship' && !combatMode && (
@@ -2533,6 +2615,12 @@ export function UI() {
       {!startupOverlayActive && activePOI && (
         <Suspense fallback={null}>
           <POIModal poi={activePOI} onDismiss={() => setActivePOI(null)} />
+        </Suspense>
+      )}
+
+      {!startupOverlayActive && activeCrewTrouble && (
+        <Suspense fallback={null}>
+          <CrewTroubleModal event={activeCrewTrouble} />
         </Suspense>
       )}
 

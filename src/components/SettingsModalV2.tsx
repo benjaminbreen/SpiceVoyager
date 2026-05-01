@@ -691,6 +691,10 @@ function DisplayTab({
       <CtrlRow label="Animal Markers" desc="Nearby wildlife cluster labels — camel, antelope, fish, etc." last>
         <Toggle value={renderDebug.animalMarkers} onChange={v => onUpdate({ animalMarkers: v })} />
       </CtrlRow>
+      <SectionRule label="Terrain" />
+      <CtrlRow label="City Ground Wear" desc="Packed earth and damp mud tint around roads, buildings, docks, and plazas." last>
+        <Toggle value={renderDebug.cityGroundWear} onChange={v => onUpdate({ cityGroundWear: v })} />
+      </CtrlRow>
     </div>
   );
 }

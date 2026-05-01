@@ -1,6 +1,7 @@
 import type { Nationality } from '../store/gameStore';
 import type { WeaponType } from '../store/gameStore';
 import { COMMODITY_DEFS, type Commodity } from './commodities';
+import { calculateCargoWeight } from './cargoWeight';
 import { factionRelationModifier } from './factionRelations';
 import type { NPCShipIdentity, RouteRole, ShipType } from './npcShipGenerator';
 
@@ -48,6 +49,22 @@ export function shouldBreakOff(identity: Pick<NPCShipIdentity, 'role' | 'morale'
   if (identity.role === 'privateer' && identity.morale >= 75 && hullFraction > 0.2) return false;
   if (identity.role === 'armed patrol' && identity.morale >= 82 && hullFraction > 0.25) return false;
   return true;
+}
+
+export function shouldStayHostile(
+  identity: Pick<NPCShipIdentity, 'role' | 'armed' | 'morale' | 'shipType'>,
+  context: Pick<NpcCombatContext, 'reputation' | 'hullFraction'>,
+) {
+  if (!identity.armed || shouldBreakOff(identity, context.hullFraction)) return false;
+  const heavy = HEAVY_SHIP_TYPES.has(identity.shipType);
+
+  if (identity.role === 'privateer') return identity.morale >= 40;
+  if (identity.role === 'armed patrol') return identity.morale >= 45 || context.reputation <= -60;
+  if (identity.role === 'spice convoy') return heavy && identity.morale >= 60;
+  if (identity.role === 'blue-water merchant' || identity.role === 'smuggler') {
+    return heavy && identity.morale >= 68 && context.reputation <= -25;
+  }
+  return false;
 }
 
 export function chooseProvokedPosture(
@@ -117,12 +134,7 @@ export function cargoTemptationScore(cargo: Partial<Record<Commodity, number>>, 
       const averagePrice = (def.basePrice[0] + def.basePrice[1]) / 2;
       return sum + averagePrice * qty;
     }, 0);
-  const usedSpace = (Object.entries(cargo) as [Commodity, number][])
-    .reduce((sum, [commodity, qty]) => {
-      const def = COMMODITY_DEFS[commodity];
-      if (!def || qty <= 0) return sum;
-      return sum + def.weight * qty;
-    }, 0);
+  const usedSpace = calculateCargoWeight(cargo);
   const loadFraction = cargoCapacity > 0 ? Math.min(1, usedSpace / cargoCapacity) : 0;
   const valueScore = Math.min(70, totalValue / 12);
   return Math.max(0, Math.min(100, valueScore + loadFraction * 30));

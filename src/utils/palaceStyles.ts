@@ -23,13 +23,31 @@ export type PalaceStyle =
   | 'mughal'
   // Malay istana — raised timber pavilion on stilts, multi-tiered tile
   // roof, carved gable. Bantam.
-  | 'malay-istana';
+  | 'malay-istana'
+  // Ottoman / Red Sea customs office — stone court, shallow dome, small
+  // administrative tower.
+  | 'ottoman-customs'
+  // Swahili coral-rag residence — flat-roofed courtyard house with carved
+  // doorway and shaded baraza.
+  | 'swahili-coral'
+  // Omani / Mahri authority house — austere fortified residence suited to
+  // Muscat and Socotra rather than a palace.
+  | 'omani-fort-house'
+  // Malabar court house — timber hall, tiled roof, veranda, and low plinth.
+  | 'malabar-court'
+  // Japanese magistracy — timber post-and-beam office with plaster walls and
+  // grey tiled hipped roofs.
+  | 'japanese-magistracy'
+  // European company/civic office — brick or timber mercantile chamber.
+  | 'company-office'
+  // Venetian magistracy — brick and Istrian-stone civic office.
+  | 'venetian-magistracy';
 
 /**
  * Per-port palace style. Ports not listed here get no generic palace —
  * either because they have a `royal` landmark already (London, Cartagena),
  * or because their ruling culture's palace style hasn't been implemented
- * yet (Calicut Zamorin, Muscat Omani, Aden Ottoman, Mombasa Swahili, etc.).
+ * yet.
  */
 export const PORT_PALACE_STYLE: Record<string, PalaceStyle> = {
   // Iberian colonial — Portuguese or Spanish viceroyalty / captaincy
@@ -43,11 +61,26 @@ export const PORT_PALACE_STYLE: Record<string, PalaceStyle> = {
   havana:    'iberian-colonial',  // Casa de Gobierno
   lisbon:    'iberian-colonial',  // Paço da Ribeira (Tagus-side royal palace)
   seville:   'iberian-colonial',  // Reales Alcázares
+  manila:    'iberian-colonial',  // Palacio del Gobernador
   // Mughal
   surat:     'mughal',            // Mughal governor's palace
   diu:       'mughal',            // Mughal/Gujarati governor's quarters
+  masulipatnam: 'mughal',         // Qutb Shahi / Golconda customs authority
   // Malay
   bantam:    'malay-istana',      // Sultan's istana
+  // Red Sea / Arabian Sea / Swahili authority houses
+  aden:      'ottoman-customs',
+  mocha:     'ottoman-customs',
+  muscat:    'omani-fort-house',
+  socotra:   'omani-fort-house',
+  calicut:   'malabar-court',
+  mombasa:   'swahili-coral',
+  zanzibar:  'swahili-coral',
+  // East Asian and European company/civic offices
+  nagasaki:  'japanese-magistracy',
+  amsterdam: 'company-office',
+  jamestown: 'company-office',
+  venice:    'venetian-magistracy',
 };
 
 export function palaceStyleForPort(portId: string): PalaceStyle | null {

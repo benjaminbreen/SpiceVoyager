@@ -59,7 +59,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // ── Tier 1: Spices & Stimulants ──
   'Black Pepper': {
     id: 'Black Pepper', tier: 1,
-    basePrice: [8, 25], weight: 1,
+    basePrice: [12, 28], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'The king of spices. Malabar Coast monopoly.',
     physicalDescription: 'Small, hard, wrinkled black drupes with a sharp bite',
@@ -68,7 +68,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Cinnamon': {
     id: 'Cinnamon', tier: 1,
-    basePrice: [12, 30], weight: 1,
+    basePrice: [18, 42], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.06,
     description: 'Ceylon bark. Often adulterated with cassia.',
     physicalDescription: 'Rolled quills of fragrant reddish bark',
@@ -78,7 +78,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Cardamom': {
     id: 'Cardamom', tier: 1,
-    basePrice: [10, 28], weight: 1,
+    basePrice: [18, 45], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'From the hills of Malabar. Traded alongside pepper.',
     physicalDescription: 'Small green pods containing aromatic seeds',
@@ -87,7 +87,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Coffee': {
     id: 'Coffee', tier: 1,
-    basePrice: [10, 25], weight: 1,
+    basePrice: [14, 34], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Mocha monopoly. Demand rising rapidly across the Indian Ocean world.',
     physicalDescription: 'Dark roasted berries with a bitter, stimulating smell',
@@ -96,7 +96,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Tea': {
     id: 'Tea', tier: 1,
-    basePrice: [8, 20], weight: 1,
+    basePrice: [14, 32], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Chinese leaf, funneled through Macau.',
     physicalDescription: 'Dried, tightly rolled leaves with a grassy scent',
@@ -105,7 +105,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Ginger': {
     id: 'Ginger', tier: 1,
-    basePrice: [8, 20], weight: 1,
+    basePrice: [10, 22], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Malabar and Southeast Asian rhizome. Ubiquitous in the spice trade.',
     physicalDescription: 'Knobby pale rhizomes with a fiery, warming taste',
@@ -114,7 +114,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Cloves': {
     id: 'Cloves', tier: 1,
-    basePrice: [25, 70], weight: 1,
+    basePrice: [80, 220], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.05,
     description: 'From the Maluku Islands. Available only through Bantam and Malacca.',
     physicalDescription: 'Tiny dried flower buds, dark brown, intensely aromatic',
@@ -123,7 +123,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Nutmeg': {
     id: 'Nutmeg', tier: 1,
-    basePrice: [20, 55], weight: 1,
+    basePrice: [90, 240], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.06,
     description: 'Banda Islands product. Astronomical markup far from source.',
     physicalDescription: 'Hard brown ovoid seeds with a warm, sweet fragrance',
@@ -132,7 +132,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Saffron': {
     id: 'Saffron', tier: 1,
-    basePrice: [30, 75], weight: 1,
+    basePrice: [100, 260], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.12,
     description: 'Persian and Kashmiri crocus stamens. Worth more than gold by weight. Often adulterated.',
     physicalDescription: 'Tiny crimson threads that stain water brilliant yellow',
@@ -141,7 +141,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Tobacco': {
     id: 'Tobacco', tier: 1,
-    basePrice: [10, 25], weight: 1,
+    basePrice: [16, 38], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'New World plant just arriving in the Indian Ocean. Demand spreading fast.',
     physicalDescription: 'Bundles of large dried leaves with an acrid smell',
@@ -154,7 +154,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // anisette cordials and digestive remedies.
   'Star Anise': {
     id: 'Star Anise', tier: 1,
-    basePrice: [16, 38], weight: 1,
+    basePrice: [24, 60], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.04,
     description: 'Chinese spice and stomachic. Funneled through Manila on the galleon trade. Distinct from European aniseed.',
     physicalDescription: 'Dark eight-pointed pods, intensely fragrant of licorice and warm bark',
@@ -164,7 +164,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // ── Tier 2: Exotic Drugs & Medicines ──
   'Opium': {
     id: 'Opium', tier: 2,
-    basePrice: [40, 100], weight: 1,
+    basePrice: [60, 150], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Cambay product. Portuguese carry it eastward. Some factions disapprove.',
     physicalDescription: 'Dark, sticky paste scraped from seed pods, with a heavy smell',
@@ -173,7 +173,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Camphor': {
     id: 'Camphor', tier: 2,
-    basePrice: [18, 45], weight: 1,
+    basePrice: [35, 85], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.05,
     description: 'Bornean camphor, far superior to the Chinese variety. Medicine and ritual.',
     physicalDescription: 'Waxy white crystals with a sharp, penetrating smell',
@@ -183,7 +183,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Benzoin': {
     id: 'Benzoin', tier: 2,
-    basePrice: [15, 40], weight: 1,
+    basePrice: [25, 65], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Sumatran aromatic resin. Burned as incense and used in medicine.',
     physicalDescription: 'Brittle chunks of amber-colored resin with a vanilla scent',
@@ -192,7 +192,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Frankincense': {
     id: 'Frankincense', tier: 2,
-    basePrice: [20, 50], weight: 1,
+    basePrice: [28, 70], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.04,
     description: 'Arabian olibanum. Sacred incense burned from Lisbon to Kyoto.',
     physicalDescription: 'Pale, translucent tears of hardened tree resin',
@@ -202,7 +202,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Myrrh': {
     id: 'Myrrh', tier: 2,
-    basePrice: [22, 55], weight: 1,
+    basePrice: [30, 75], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.04,
     description: 'Resinous gum from Arabia and the Horn of Africa. Medicine and incense.',
     physicalDescription: 'Rough, reddish-brown nuggets of bitter aromatic gum',
@@ -211,7 +211,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Rhubarb': {
     id: 'Rhubarb', tier: 2,
-    basePrice: [25, 60], weight: 1,
+    basePrice: [45, 110], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.08,
     description: '"China rhubarb" — one of the most valued materia medica in European pharmacies.',
     physicalDescription: 'Thick dried root slices, yellow inside, with a bitter purgative taste',
@@ -221,7 +221,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'China Root': {
     id: 'China Root', tier: 2,
-    basePrice: [20, 50], weight: 1,
+    basePrice: [35, 90], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.06,
     description: 'Smilax china. Prized as a cure for the French disease. Major Chinese export.',
     physicalDescription: 'Knotty tubers with reddish skin, sold as a medicinal cure',
@@ -230,7 +230,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Cassia Fistula': {
     id: 'Cassia Fistula', tier: 2,
-    basePrice: [8, 18], weight: 1,
+    basePrice: [12, 28], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Indian purgative. Black pods prized in European and Islamic medicine.',
     physicalDescription: 'Long, dark, cylindrical pods with a sweet-smelling pulp',
@@ -239,7 +239,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Aloes': {
     id: 'Aloes', tier: 2,
-    basePrice: [22, 55], weight: 1,
+    basePrice: [45, 120], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Aloeswood and agarwood. Precious aromatic resin.',
     physicalDescription: 'Dark, dense, resinous wood that smells sweet when heated',
@@ -248,7 +248,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Musk': {
     id: 'Musk', tier: 2,
-    basePrice: [30, 80], weight: 1,
+    basePrice: [120, 320], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.10,
     description: 'Tibetan musk deer pods. Perfumery and medicine. Often faked.',
     physicalDescription: 'Leathery dried pods containing a dark, powerfully scented paste',
@@ -257,7 +257,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Quicksilver': {
     id: 'Quicksilver', tier: 2,
-    basePrice: [25, 55], weight: 2,
+    basePrice: [35, 85], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Mercury. Essential for amalgamation, medicine, and alchemy. Heavy and dangerous.',
     physicalDescription: 'A heavy sealed flask of shimmering liquid metal',
@@ -266,7 +266,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Sassafras': {
     id: 'Sassafras', tier: 2,
-    basePrice: [14, 38], weight: 1,
+    basePrice: [30, 80], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.04,
     description: 'Aromatic root bark from Virginia. Sold in European apothecaries as a treatment for syphilis and a general tonic. The main export of early Jamestown.',
     physicalDescription: 'Reddish-brown dried root bark with a sweet, rooty smell',
@@ -275,7 +275,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Tamarind': {
     id: 'Tamarind', tier: 2,
-    basePrice: [5, 12], weight: 1,
+    basePrice: [8, 18], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Sour fruit used as food preservative and medicine across the Indian Ocean.',
     physicalDescription: 'Sticky brown pulp in brittle pods, powerfully sour',
@@ -287,7 +287,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // digestive aid, social and ritual good. Bulky, lower-value, ubiquitous.
   'Betel Nut': {
     id: 'Betel Nut', tier: 2,
-    basePrice: [4, 11], weight: 1,
+    basePrice: [6, 14], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.02,
     description: 'Areca palm seed, chewed with lime and betel leaf as a mild stimulant. Universal across the Indian Ocean and Philippines.',
     physicalDescription: 'Hard reddish-brown nuts the size of a walnut, faintly astringent',
@@ -297,7 +297,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // ── Tier 3: Staples & Trade Goods ──
   'Indigo': {
     id: 'Indigo', tier: 3,
-    basePrice: [18, 45], weight: 1,
+    basePrice: [24, 60], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Gujarat dye. Insatiable European demand.',
     physicalDescription: 'Dense cakes of deep blue dye that stain the fingers',
@@ -306,7 +306,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Iron': {
     id: 'Iron', tier: 3,
-    basePrice: [4, 10], weight: 2,
+    basePrice: [6, 14], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Bar iron and steel. High demand in East Africa and Southeast Asia.',
     physicalDescription: 'Rough bars of grey metal',
@@ -315,7 +315,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Timber': {
     id: 'Timber', tier: 3,
-    basePrice: [3, 8], weight: 2,
+    basePrice: [4, 10], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Teak and hardwoods from Malabar. Essential for ship repair.',
     physicalDescription: 'Heavy planks of dark, close-grained wood',
@@ -324,7 +324,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Sugar': {
     id: 'Sugar', tier: 3,
-    basePrice: [6, 15], weight: 1,
+    basePrice: [8, 18], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Increasingly important commodity. Bengal and Southeast Asian production.',
     physicalDescription: 'Coarse brown crystals with an intensely sweet taste',
@@ -333,7 +333,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Ivory': {
     id: 'Ivory', tier: 3,
-    basePrice: [20, 50], weight: 2,
+    basePrice: [36, 90], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'East African elephant tusks. Heavy but always in demand.',
     physicalDescription: 'Heavy curved tusks of creamy white bone-like material',
@@ -342,7 +342,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Chinese Porcelain': {
     id: 'Chinese Porcelain', tier: 3,
-    basePrice: [20, 60], weight: 2,
+    basePrice: [38, 110], weight: 2,
     spoilable: false, breakable: true, fraudRisk: 0,
     description: 'Blue-and-white kraak ware from Jingdezhen. Fragile cargo.',
     physicalDescription: 'Delicate vessels of thin white ceramic painted in blue',
@@ -351,7 +351,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Pearls': {
     id: 'Pearls', tier: 3,
-    basePrice: [25, 65], weight: 1,
+    basePrice: [50, 140], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Persian Gulf pearls. Hormuz and Muscat specialties.',
     physicalDescription: 'Lustrous white spheres harvested from oyster shells',
@@ -360,7 +360,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Red Coral': {
     id: 'Red Coral', tier: 3,
-    basePrice: [25, 60], weight: 1,
+    basePrice: [45, 120], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0,
     description: 'Mediterranean coral, traded into India for jewelry and medicine. Fragile.',
     physicalDescription: 'Branching formations of vivid red marine growth',
@@ -369,7 +369,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Rose Water': {
     id: 'Rose Water', tier: 3,
-    basePrice: [12, 30], weight: 1,
+    basePrice: [24, 58], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0,
     description: 'Persian distillation. Perfumery, cooking, and medicine. Bottles break easily.',
     physicalDescription: 'Stoppered glass bottles of clear, floral-scented liquid',
@@ -380,7 +380,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // ── Tier 4: Precious Rarities ──
   'Ambergris': {
     id: 'Ambergris', tier: 4,
-    basePrice: [50, 150], weight: 1,
+    basePrice: [180, 500], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.10,
     description: 'Whale secretion. Perfume fixative and medicine. Often counterfeited.',
     physicalDescription: 'A waxy grey-black lump with a strange, sweet marine odor',
@@ -390,7 +390,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Bezoar Stones': {
     id: 'Bezoar Stones', tier: 4,
-    basePrice: [80, 200], weight: 1,
+    basePrice: [220, 650], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.20,
     description: 'Calcified stomach stones. Believed to be universal antidote. Frequently faked.',
     physicalDescription: 'Smooth, layered stones found inside animal stomachs',
@@ -400,7 +400,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Bhang': {
     id: 'Bhang', tier: 4,
-    basePrice: [35, 80], weight: 1,
+    basePrice: [55, 130], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Cannabis preparation. Appears unpredictably at market.',
     physicalDescription: 'A pungent green paste made from crushed leaves and flowers',
@@ -409,7 +409,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   "Dragon's Blood": {
     id: "Dragon's Blood", tier: 4,
-    basePrice: [40, 90], weight: 1,
+    basePrice: [90, 240], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.08,
     description: "Deep red resin from Socotra's dragon trees. Dye, varnish, and medicine.",
     physicalDescription: 'Deep crimson resin that shatters like glass when struck',
@@ -419,7 +419,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Virginia Tobacco': {
     id: 'Virginia Tobacco', tier: 4,
-    basePrice: [60, 160], weight: 1,
+    basePrice: [120, 320], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0.05,
     description: 'Rolfe\'s experimental Spanish-seed crop, first planted at Jamestown in 1612. Milder and sweeter than Caribbean leaf; a curiosity in London apothecaries.',
     physicalDescription: 'Small bundles of cured leaves, paler and finer than common tobacco',
@@ -430,7 +430,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // ── Tier 5: Extraordinary ──
   'Mumia': {
     id: 'Mumia', tier: 5,
-    basePrice: [120, 300], weight: 1,
+    basePrice: [180, 450], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.35,
     description: '"Egyptian mummy" — prized drug in European and Islamic medicine. Most is fake bitumen.',
     physicalDescription: 'Dark, tarry substance sold as ancient embalming material',
@@ -439,7 +439,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Lapis de Goa': {
     id: 'Lapis de Goa', tier: 5,
-    basePrice: [150, 400], weight: 1,
+    basePrice: [260, 750], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Artificial bezoar made by Jesuits. Gold leaf, gemstone dust, and secret ingredients.',
     physicalDescription: 'A gilded ball stamped with a cross, said to cure any poison',
@@ -451,7 +451,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   // Piazza San Marco. The most prestigious medicine in early-modern Europe.
   'Theriac': {
     id: 'Theriac', tier: 5,
-    basePrice: [180, 450], weight: 1,
+    basePrice: [320, 900], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.25,
     description: 'Venetian state-monopoly compound of sixty-odd ingredients. Reputed cure-all and antidote.',
     physicalDescription: 'A dense, dark brown electuary in a sealed earthenware pot, sweet and resinous',
@@ -460,7 +460,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Murano Glass': {
     id: 'Murano Glass', tier: 4,
-    basePrice: [60, 140], weight: 1,
+    basePrice: [80, 180], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0.10,
     description: 'Cristallo and mirror-glass from the Murano furnaces. Fragile, prized across the Mediterranean and the Levant.',
     physicalDescription: 'Slender goblets and small mirrors wrapped in straw, catching light like clear water',
@@ -468,7 +468,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Japanese Silver': {
     id: 'Japanese Silver', tier: 4,
-    basePrice: [70, 180], weight: 2,
+    basePrice: [90, 220], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Ingots of refined silver from the Iwami and Ikuno mines. Japan produces roughly a third of the world\'s silver in this period — the engine behind the Macau–Nagasaki trade.',
     physicalDescription: 'Heavy stamped bars of bright, cold-to-the-touch metal',
@@ -476,7 +476,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Venetian Soap': {
     id: 'Venetian Soap', tier: 3,
-    basePrice: [14, 32], weight: 1,
+    basePrice: [20, 48], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0.05,
     description: 'Hard olive-oil soap pressed in pale cakes. A Venetian luxury good across the Levant and northern Europe.',
     physicalDescription: 'Pale cream-coloured cakes stamped with a maker\'s mark, faintly perfumed',
@@ -494,7 +494,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Small Shot': {
     id: 'Small Shot', tier: 3,
-    basePrice: [4, 12], weight: 1,
+    basePrice: [6, 16], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Powder flasks, lead balls, and light swivel shot packed for muskets and rail guns.',
     physicalDescription: 'Kegs of powder and bags of small iron and lead shot',
@@ -502,7 +502,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Cannon Shot': {
     id: 'Cannon Shot', tier: 3,
-    basePrice: [8, 22], weight: 2,
+    basePrice: [14, 36], weight: 2,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Solid iron round shot for shipboard cannon. Heavy, dirty, and always in demand at arsenals.',
     physicalDescription: 'Pyramids of heavy iron cannonballs stacked in rope slings',
@@ -510,7 +510,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Salted Meat': {
     id: 'Salted Meat', tier: 1,
-    basePrice: [3, 8], weight: 1,
+    basePrice: [4, 9], weight: 1,
     spoilable: true, breakable: false, fraudRisk: 0,
     description: 'Cured meat from hunted animals. Feeds the crew on long voyages.',
     physicalDescription: 'Strips of dark, salt-crusted meat in a cloth bundle',
@@ -518,7 +518,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Hides': {
     id: 'Hides', tier: 3,
-    basePrice: [12, 40], weight: 2,
+    basePrice: [18, 48], weight: 2,
     spoilable: true, breakable: false, fraudRisk: 0.05,
     description: 'Cured animal hides — leather for boots, saddles, jerkins. Steady demand in every port.',
     physicalDescription: 'Stiff, salted hides folded into stacks',
@@ -526,7 +526,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Wool': {
     id: 'Wool', tier: 1,
-    basePrice: [4, 12], weight: 1,
+    basePrice: [6, 16], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Raw fleece. European staple — Mediterranean and Atlantic ports buy in bulk.',
     physicalDescription: 'Rough cream-coloured fleece, oily and matted',
@@ -534,7 +534,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'Horn': {
     id: 'Horn', tier: 3,
-    basePrice: [10, 35], weight: 1,
+    basePrice: [14, 40], weight: 1,
     spoilable: false, breakable: true, fraudRisk: 0.1,
     description: 'Polished animal horn — used for combs, powder flasks, ornaments. Light cargo, decent margin.',
     physicalDescription: 'Curved, polished horn pieces tied in a bundle',
@@ -542,7 +542,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
   },
   'War Rockets': {
     id: 'War Rockets', tier: 3,
-    basePrice: [40, 90], weight: 1,
+    basePrice: [55, 130], weight: 1,
     spoilable: false, breakable: false, fraudRisk: 0,
     description: 'Bamboo-tube 火箭 rockets from the Ming arsenals. One consumed per rocket fired. Macau is the reliable source; hold caps at 20.',
     physicalDescription: 'Bundled bamboo tubes, each tipped with an iron head and a paper-wrapped powder charge',

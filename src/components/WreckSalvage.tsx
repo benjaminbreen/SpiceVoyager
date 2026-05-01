@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type CargoStack, type Commodity } from '../store/gameStore';
 import { COMMODITY_DEFS } from '../utils/commodities';
+import { calculateCargoWeight, cargoUnitWeight } from '../utils/cargoWeight';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 import { spawnFloatingCombatText } from './FloatingCombatText';
 import { spawnFloatingLoot } from './FloatingLoot';
@@ -69,10 +70,7 @@ export function spawnWreckSalvage(
 function collectSalvage(ev: WreckSalvage) {
   const state = useGameStore.getState();
   const currentCargo = { ...state.cargo };
-  const currentWeight = Object.entries(currentCargo).reduce(
-    (sum, [commodity, qty]) => sum + qty * COMMODITY_DEFS[commodity as Commodity].weight,
-    0,
-  );
+  const currentWeight = calculateCargoWeight(currentCargo);
   const capacity = state.stats.cargoCapacity;
   let usedWeight = currentWeight;
   const salvaged: string[] = [];
@@ -81,9 +79,11 @@ function collectSalvage(ev: WreckSalvage) {
   for (const [comm, qty] of Object.entries(ev.cargo)) {
     if (!qty || qty <= 0 || usedWeight >= capacity) continue;
     const commodity = comm as Commodity;
-    const unitWeight = COMMODITY_DEFS[commodity].weight;
+    const unitWeight = cargoUnitWeight(commodity);
     const salvageAmt = Math.max(1, Math.floor(qty * (0.12 + Math.random() * 0.2)));
-    const taken = Math.min(salvageAmt, Math.floor((capacity - usedWeight) / unitWeight));
+    const taken = unitWeight > 0
+      ? Math.min(salvageAmt, Math.floor((capacity - usedWeight) / unitWeight))
+      : salvageAmt;
     if (taken <= 0) continue;
     currentCargo[commodity] = (currentCargo[commodity] ?? 0) + taken;
     usedWeight += taken * unitWeight;

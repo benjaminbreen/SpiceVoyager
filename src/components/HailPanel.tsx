@@ -4,6 +4,7 @@ import { useGameStore, type CargoStack, type Port } from '../store/gameStore';
 import { PORT_INTEL } from '../utils/portIntel';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
+import { calculateCargoWeight, cargoUnitWeight } from '../utils/cargoWeight';
 import { ConfigPortrait, tavernNpcToPortraitConfig } from './CrewPortrait';
 import { FactionFlag } from './FactionFlag';
 import { sfxClick, sfxHover } from '../audio/SoundEffects';
@@ -702,11 +703,8 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       return;
     }
 
-    const theirDef = COMMODITY_DEFS[theirGood];
-    const yourDef = COMMODITY_DEFS[yourGood];
-    const currentWeight = (Object.entries(state.cargo) as [Commodity, number][])
-      .reduce((sum, [c, qty]) => sum + qty * COMMODITY_DEFS[c].weight, 0);
-    const projected = currentWeight - yourDef.weight * yourQty + theirDef.weight * theirQty;
+    const currentWeight = calculateCargoWeight(state.cargo);
+    const projected = currentWeight - cargoUnitWeight(yourGood) * yourQty + cargoUnitWeight(theirGood) * theirQty;
     if (projected > cargoCapacity) {
       setResult({ tone: 'warn', text: `No room in your hold for what they'd trade.` });
       setBarterMode(null);

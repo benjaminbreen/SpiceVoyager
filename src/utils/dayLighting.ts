@@ -24,33 +24,33 @@ type LightProfile = {
 const LIGHT_PROFILES: Record<string, LightProfile> = {
   tropical: {
     ambCol: new THREE.Color(0.42, 0.72, 0.96), groundCol: new THREE.Color(0.30, 0.44, 0.24),
-    ambBase: 0.30, ambScale: 0.10,
-    sunCol: new THREE.Color(1.0, 0.92, 0.72), sunBase: 1.15, sunScale: 0.85,
-    shadowRadius: 5.0,
+    ambBase: 0.27, ambScale: 0.08,
+    sunCol: new THREE.Color(1.0, 0.92, 0.72), sunBase: 1.24, sunScale: 0.88,
+    shadowRadius: 4.2,
   },
   monsoon: {
     ambCol: new THREE.Color(0.42, 0.80, 0.76), groundCol: new THREE.Color(0.28, 0.44, 0.20),
-    ambBase: 0.32, ambScale: 0.09,
-    sunCol: new THREE.Color(0.92, 0.96, 0.76), sunBase: 1.0, sunScale: 0.70,
-    shadowRadius: 6.0,
+    ambBase: 0.30, ambScale: 0.07,
+    sunCol: new THREE.Color(0.92, 0.96, 0.76), sunBase: 1.05, sunScale: 0.68,
+    shadowRadius: 5.4,
   },
   temperate: {
     ambCol: new THREE.Color(0.62, 0.68, 0.78), groundCol: new THREE.Color(0.38, 0.34, 0.28),
-    ambBase: 0.36, ambScale: 0.07,
-    sunCol: new THREE.Color(0.90, 0.88, 0.84), sunBase: 0.90, sunScale: 0.65,
-    shadowRadius: 7.0,
+    ambBase: 0.31, ambScale: 0.055,
+    sunCol: new THREE.Color(0.90, 0.88, 0.84), sunBase: 1.02, sunScale: 0.68,
+    shadowRadius: 5.8,
   },
   arid: {
     ambCol: new THREE.Color(0.58, 0.56, 0.50), groundCol: new THREE.Color(0.50, 0.40, 0.26),
-    ambBase: 0.26, ambScale: 0.10,
-    sunCol: new THREE.Color(1.0, 0.88, 0.65), sunBase: 1.30, sunScale: 0.90,
-    shadowRadius: 4.0,
+    ambBase: 0.24, ambScale: 0.085,
+    sunCol: new THREE.Color(1.0, 0.88, 0.65), sunBase: 1.38, sunScale: 0.92,
+    shadowRadius: 3.6,
   },
   mediterranean: {
-    ambCol: new THREE.Color(0.50, 0.66, 0.88), groundCol: new THREE.Color(0.42, 0.36, 0.24),
-    ambBase: 0.30, ambScale: 0.10,
-    sunCol: new THREE.Color(1.0, 0.90, 0.70), sunBase: 1.10, sunScale: 0.80,
-    shadowRadius: 4.5,
+    ambCol: new THREE.Color(0.56, 0.70, 0.92), groundCol: new THREE.Color(0.50, 0.43, 0.30),
+    ambBase: 0.32, ambScale: 0.09,
+    sunCol: new THREE.Color(1.0, 0.91, 0.72), sunBase: 1.18, sunScale: 0.82,
+    shadowRadius: 4.4,
   },
 };
 
@@ -86,7 +86,7 @@ export function computeDayLighting({ timeOfDay, worldSeed, waterPaletteId }: Day
     groundCol = lp.groundCol;
   } else if (sunH > -0.15) {
     const t = (sunH + 0.15) / 0.5;
-    ambInt = 0.22 + t * (lp.ambBase - 0.22);
+    ambInt = 0.20 + t * (lp.ambBase - 0.20);
     ambCol = new THREE.Color().lerpColors(
       new THREE.Color(0.18, 0.22, 0.42),
       new THREE.Color().lerpColors(new THREE.Color(1.0, 0.70, 0.44), lp.ambCol, 0.3),

@@ -5,8 +5,8 @@
 
 import { CanvasContext, COLORS } from './shipCanvas';
 import type { RenderConfig, Compartment } from './shipTypes';
-import { getInterior } from './shipTypes';
 import { getHullGeometry, getHullColumn } from './shipHullProfile';
+import { buildCutawayPlan, type CutawayRenderPlan, type CutawayRoomPlan } from './shipCutawayPlan';
 
 export interface CutawayState {
   cargoUsed: number;      // units currently carried
@@ -17,6 +17,7 @@ export interface CutawayState {
   provisions: number;     // raw provisions count (0-60ish)
   provisionsMax: number;  // target provision capacity for fill fraction
   timeOfDay?: number;     // 0-24, used for small decorative flourishes
+  renderLabels?: boolean; // ShipView can render larger HTML labels instead.
 }
 
 const EMPTY_STATE: CutawayState = {
@@ -27,6 +28,7 @@ const EMPTY_STATE: CutawayState = {
   powderPct: 0,
   provisions: 30,
   provisionsMax: 60,
+  renderLabels: true,
 };
 
 export function drawCutaway(
@@ -36,34 +38,32 @@ export function drawCutaway(
   time: number
 ) {
   const merged = { ...EMPTY_STATE, ...state };
-  const geom = getHullGeometry(config.shipType, config.width, config.height);
-  const interior = getInterior(config.shipType);
+  const plan = buildCutawayPlan(config);
+  const geom = plan.scene.geometry;
 
-  // 1. Draw the hull outline (not filled — this is the silhouette frame).
-  drawHullOutline(ctx, config, geom, time);
+  // 1. Draw the ship as a sectioned object: heavy shell, planked keel, and
+  //    the same broad silhouette as the exterior renderer.
+  drawHullShell(ctx, config, geom, time);
 
-  // 2. Compute per-compartment bounding boxes in pixel space, then draw
-  //    decks, bulkheads, and compartment contents.
-  const bounds = getInteriorBounds(config, geom);
-  drawDecksAndBulkheads(ctx, config, geom, interior.decks);
-  drawCompartments(ctx, config, geom, bounds, interior.compartments, merged, time);
-
-  // 3. Mast stubs (where they rise out of the deck) — short vertical lines
-  //    above the silhouette, plus a fluttering flag for continuity with the
-  //    exterior view.
+  // 2. Mast stubs sit behind the sectioned rooms, so labels and room details
+  //    stay legible while the rig still lines up with exterior view.
   drawMastStubs(ctx, config, geom, time);
+
+  // 3. Draw decks and rooms over that shell.
+  drawDecksAndBulkheads(ctx, config, geom, plan.deckRows);
+  drawCompartments(ctx, config, geom, plan, merged, time);
 
   // 4. Waterline underneath.
   drawWaterline(ctx, config, time);
 }
 
-// ── Hull outline (shared silhouette) ────────────────────────────────────────
+// ── Hull shell (shared silhouette) ──────────────────────────────────────────
 
-function drawHullOutline(
+function drawHullShell(
   ctx: CanvasContext,
   config: RenderConfig,
   geom: ReturnType<typeof getHullGeometry>,
-  _time: number
+  time: number
 ) {
   const { sternX, bowX, bowOvershoot } = geom;
   const { shipType, width, height } = config;
@@ -75,27 +75,37 @@ function drawHullOutline(
     const col = getHullColumn(shipType, geom, height, x);
     if (!col) continue;
     const { topY, bottomY } = col;
+    const shellColor = (x + topY) % 9 === 0 ? COLORS.hullLight : COLORS.hullOutline;
+    const plankColor = (x + bottomY) % 5 === 0 ? COLORS.hullDefault : COLORS.hullDark;
 
-    // Top edge (gunwale / deck line)
+    // Top edge (gunwale / deck line), doubled with an inner shadow so the
+    // cutaway reads as a real hull section instead of a wire outline.
     if (prevTop === null) {
-      ctx.draw(x, topY, '╱', COLORS.hullOutline);
+      ctx.draw(x, topY, '╱', shellColor);
     } else {
       const dy = topY - prevTop;
       let ch = '─';
       if (dy < -0.5) ch = '╱';
       else if (dy > 0.5) ch = '╲';
-      ctx.draw(x, topY, ch, COLORS.hullOutline);
+      ctx.draw(x, topY, ch, shellColor);
+    }
+    if (bottomY - topY > 5) {
+      ctx.draw(x, topY + 1, x % 3 === 0 ? '·' : '─', COLORS.hullDark, false);
     }
 
-    // Bottom edge (keel curve)
+    // Bottom shell and keel: two visible rows of warm planking.
     if (prevBot === null) {
-      ctx.draw(x, bottomY, '╲', COLORS.hullOutline);
+      ctx.draw(x, bottomY, '╲', shellColor);
     } else {
       const dy = bottomY - prevBot;
       let ch = '─';
       if (dy < -0.5) ch = '╱';
       else if (dy > 0.5) ch = '╲';
-      ctx.draw(x, bottomY, ch, COLORS.hullOutline);
+      ctx.draw(x, bottomY, ch, shellColor);
+    }
+    if (bottomY - topY > 6) {
+      ctx.draw(x, bottomY - 1, (x + Math.floor(time * 2)) % 6 === 0 ? '▒' : '═', plankColor);
+      if ((x - sternX) % 4 !== 0) ctx.draw(x, bottomY - 2, '░', COLORS.hullDark, false);
     }
 
     prevTop = topY;
@@ -106,14 +116,16 @@ function drawHullOutline(
   const sternCol = getHullColumn(shipType, geom, height, sternX);
   if (sternCol) {
     for (let y = sternCol.topY; y <= sternCol.bottomY; y++) {
-      ctx.draw(sternX, y, '│', COLORS.hullOutline);
+      ctx.draw(sternX, y, y % 2 === 0 ? '║' : '┃', COLORS.hullOutline);
+      if (sternX + 1 < width) ctx.draw(sternX + 1, y, '│', COLORS.hullDark, false);
     }
   }
   const bowEndX = bowX + bowOvershoot;
   const bowCol = getHullColumn(shipType, geom, height, bowEndX);
   if (bowCol) {
     for (let y = bowCol.topY; y <= bowCol.bottomY; y++) {
-      ctx.draw(bowEndX, y, '│', COLORS.hullOutline);
+      ctx.draw(bowEndX, y, y % 2 === 0 ? '║' : '┃', COLORS.hullOutline);
+      ctx.draw(bowEndX - 1, y, '│', COLORS.hullDark, false);
     }
   }
 
@@ -122,56 +134,26 @@ function drawHullOutline(
 
 // ── Interior bounding box ───────────────────────────────────────────────────
 
-interface InteriorBounds {
-  xStartPx: number;
-  xEndPx: number;
-  yTopPx: (t: number) => number; // maps x-fraction 0..1 to the deck y for that column
-  yBottomPx: (t: number) => number; // same, for keel
-}
-
-function getInteriorBounds(
-  config: RenderConfig,
-  geom: ReturnType<typeof getHullGeometry>
-): InteriorBounds {
-  const { sternX, bowX, length, bowOvershoot } = geom;
-  // Inset from the hull outline by a tiny margin so contents don't sit on the line.
-  const xStartPx = sternX + 1;
-  const xEndPx = bowX + bowOvershoot - 1;
-
-  const yTopPx = (t: number) => {
-    const x = Math.floor(sternX + t * length);
-    const col = getHullColumn(config.shipType, geom, config.height, x);
-    return col ? col.topY + 1 : geom.deckY;
-  };
-  const yBottomPx = (t: number) => {
-    const x = Math.floor(sternX + t * length);
-    const col = getHullColumn(config.shipType, geom, config.height, x);
-    return col ? col.bottomY - 1 : geom.keelY;
-  };
-  return { xStartPx, xEndPx, yTopPx, yBottomPx };
-}
-
 // ── Decks & bulkheads ───────────────────────────────────────────────────────
 
 function drawDecksAndBulkheads(
   ctx: CanvasContext,
   config: RenderConfig,
   geom: ReturnType<typeof getHullGeometry>,
-  decks: number[]
+  deckRows: number[]
 ) {
   const { sternX, bowX, length, bowOvershoot } = geom;
   const xEnd = bowX + bowOvershoot;
 
-  for (const deckFrac of decks) {
+  for (const y of deckRows) {
     for (let x = sternX + 1; x < xEnd; x++) {
       const col = getHullColumn(config.shipType, geom, config.height, x);
       if (!col) continue;
-      const interiorH = col.bottomY - col.topY;
-      if (interiorH < 4) continue;
-      const y = Math.floor(col.topY + interiorH * deckFrac);
-      // Skip a pixel every few columns to suggest plank joints.
-      if ((x - sternX) % 7 === 0) continue;
+      if (y <= col.topY || y >= col.bottomY) continue;
       ctx.draw(x, y, '═', COLORS.deckLine);
+      if ((x - sternX) % 12 === 0 && y + 1 < col.bottomY) {
+        ctx.draw(x, y + 1, '│', COLORS.hullDark, false);
+      }
     }
   }
 }
@@ -182,63 +164,87 @@ function drawCompartments(
   ctx: CanvasContext,
   config: RenderConfig,
   geom: ReturnType<typeof getHullGeometry>,
-  _bounds: InteriorBounds,
-  compartments: Compartment[],
+  plan: CutawayRenderPlan,
   state: CutawayState,
   time: number
 ) {
-  const { sternX, bowX, length, bowOvershoot } = geom;
-  const xEnd = bowX + bowOvershoot;
-  const fullLength = xEnd - sternX;
+  const { rooms } = plan;
 
-  // Aggregate cargo fill across all cargoHold compartments so each one
-  // fills proportionally when the total is partial.
-  const cargoHolds = compartments.filter(c => c.kind === 'cargoHold' || c.kind === 'lowerHold');
-  const totalHoldWeight = cargoHolds.reduce(
-    (acc, c) => acc + (c.xEnd - c.xStart) * (c.yEnd - c.yStart),
-    0
-  );
+  // Cargo rooms all fill to the same level; separate compartments show how
+  // divided holds and bulkheads change by ship type.
   const cargoFillFrac = Math.max(0, Math.min(1, state.cargoUsed / Math.max(1, state.cargoMax)));
 
-  for (const comp of compartments) {
-    const compXStart = Math.floor(sternX + comp.xStart * fullLength);
-    const compXEnd = Math.floor(sternX + comp.xEnd * fullLength);
+  for (const bounds of rooms) {
+    drawRoomBackground(ctx, config, geom, bounds);
+  }
 
-    // Compute the compartment's top/bottom at its midpoint (approximation
-    // is fine — interior boxes are small).
-    const midX = Math.floor((compXStart + compXEnd) / 2);
-    const midCol = getHullColumn(config.shipType, geom, config.height, midX);
-    if (!midCol) continue;
-    const interiorH = midCol.bottomY - midCol.topY;
-    const compYStart = Math.floor(midCol.topY + interiorH * comp.yStart);
-    const compYEnd = Math.floor(midCol.topY + interiorH * comp.yEnd);
+  drawRoomWalls(ctx, config, geom, rooms);
 
-    // Bulkhead separators (vertical line at start of this compartment, if not at hull edge)
-    if (compXStart > sternX + 2) {
-      for (let y = compYStart; y <= compYEnd; y++) {
-        // Only draw bulkhead if the column is actually inside the hull at this y.
-        const col = getHullColumn(config.shipType, geom, config.height, compXStart);
-        if (col && y >= col.topY && y <= col.bottomY) {
-          ctx.draw(compXStart, y, '│', COLORS.bulkhead);
-        }
-      }
-    }
+  for (const bounds of rooms) {
+    const comp = bounds.compartment;
+    drawCompartmentContent(ctx, config, geom, comp, bounds.x0, bounds.x1, bounds.y0, bounds.y1, state, cargoFillFrac, time);
+  }
 
-    drawCompartmentContent(ctx, config, geom, comp, compXStart, compXEnd, compYStart, compYEnd, state, cargoFillFrac, time);
-
-    // Compartment label — tiny, at the top-left of the compartment.
-    if (comp.label && compXEnd - compXStart >= 8 && compYEnd - compYStart >= 3) {
-      const label = comp.label;
-      const labelX = compXStart + 2;
-      const labelY = compYStart + 1;
-      for (let i = 0; i < label.length && labelX + i < compXEnd - 1; i++) {
-        ctx.draw(labelX + i, labelY, label[i], COLORS.labelDim);
+  if (state.renderLabels) {
+    for (const bounds of rooms) {
+      if (!bounds.displayLabel) continue;
+      for (let i = 0; i < bounds.displayLabel.length && bounds.labelX + i < bounds.x1 - 1; i++) {
+        ctx.draw(bounds.labelX + i, bounds.labelY, bounds.displayLabel[i], COLORS.labelBright);
       }
     }
   }
+}
 
-  void totalHoldWeight;
-  void length;
+function drawRoomBackground(
+  ctx: CanvasContext,
+  config: RenderConfig,
+  geom: ReturnType<typeof getHullGeometry>,
+  room: CutawayRoomPlan
+) {
+  const inside = insideHull(config, geom);
+  for (let x = room.x0 + 1; x < room.x1; x++) {
+    for (let y = room.y0 + 1; y < room.y1; y++) {
+      if (!inside(x, y)) continue;
+      if ((x + y) % 17 === 0) {
+        ctx.draw(x, y, '.', COLORS.hullDark, false);
+      }
+    }
+  }
+  for (let x = room.x0 + 1; x < room.x1; x++) {
+    if (inside(x, room.y1 - 1)) ctx.draw(x, room.y1 - 1, '─', COLORS.deckLine);
+  }
+}
+
+function drawRoomWalls(
+  ctx: CanvasContext,
+  config: RenderConfig,
+  geom: ReturnType<typeof getHullGeometry>,
+  rooms: CutawayRoomPlan[]
+) {
+  const walls = new Map<string, { x: number; y0: number; y1: number; exterior: boolean }>();
+  const addWall = (x: number, y0: number, y1: number, exterior: boolean) => {
+    if (y1 <= y0) return;
+    const key = `${x}:${y0}:${y1}`;
+    const current = walls.get(key);
+    walls.set(key, { x, y0, y1, exterior: exterior || current?.exterior === true });
+  };
+
+  for (const room of rooms) {
+    const exteriorLeft = room.x0 <= geom.sternX + 2;
+    const exteriorRight = room.x1 >= geom.bowX + geom.bowOvershoot - 2;
+    addWall(room.x0, room.y0, room.y1, exteriorLeft);
+    addWall(room.x1, room.y0, room.y1, exteriorRight);
+  }
+
+  for (const wall of walls.values()) {
+    for (let y = wall.y0; y <= wall.y1; y++) {
+      if (!insideHullInclusive(config, geom, wall.x, y)) continue;
+      const existing = ctx.data[y]?.[wall.x]?.c ?? ' ';
+      const joinsHorizontal = existing === '═' || existing === '─';
+      const ch = joinsHorizontal ? '╬' : wall.exterior ? '║' : '┃';
+      ctx.draw(wall.x, y, ch, wall.exterior ? COLORS.hullOutline : COLORS.bulkhead);
+    }
+  }
 }
 
 function drawCompartmentContent(
@@ -258,38 +264,38 @@ function drawCompartmentContent(
   const h = y1 - y0;
   if (w < 2 || h < 2) return;
 
-  // Interior column filter — don't draw content outside the hull curve.
-  const inside = (x: number, y: number) => {
-    const col = getHullColumn(config.shipType, geom, config.height, x);
-    if (!col) return false;
-    return y >= col.topY + 1 && y <= col.bottomY - 1;
-  };
+  const inside = insideHull(config, geom);
 
   switch (comp.kind) {
     case 'cargoHold':
     case 'lowerHold': {
-      // Fill from bottom up to `cargoFillFrac` of the compartment height.
-      const fillRows = Math.floor(h * cargoFillFrac);
+      const availableRows = Math.max(1, comp.kind === 'lowerHold' ? h - 3 : Math.floor(h * 0.52));
+      const fillRows = Math.floor(availableRows * cargoFillFrac);
+      const stackTop = Math.max(y0 + 2, y1 - 1 - fillRows);
       for (let row = 0; row < fillRows; row++) {
         const y = y1 - 1 - row;
-        for (let x = x0 + 1; x < x1; x++) {
+        for (let x = x0 + 2; x < x1 - 1; x += 2) {
           if (!inside(x, y)) continue;
-          // Alternate crate glyphs to suggest variety.
-          const which = (x + row) % 3;
-          const ch = which === 0 ? '▦' : which === 1 ? '◯' : '▤';
+          if ((x + row) % 11 === 0) continue;
+          const which = (Math.floor(x / 2) + row) % 4;
+          const ch = which === 0 ? '▣' : which === 1 ? 'o' : which === 2 ? '▤' : '≡';
           const color = which === 1 ? COLORS.cargoBarrel : which === 2 ? COLORS.cargoBale : COLORS.cargoCrate;
           ctx.draw(x, y, ch, color);
+          if (x + 1 < x1 && which !== 1 && inside(x + 1, y)) ctx.draw(x + 1, y, '═', COLORS.cargoCrate, false);
+        }
+      }
+      if (fillRows > 0) {
+        for (let x = x0 + 2; x < x1 - 1; x++) {
+          if (inside(x, stackTop)) ctx.draw(x, stackTop, x % 6 === 0 ? '╤' : '─', COLORS.cargoBale, false);
         }
       }
       break;
     }
 
     case 'berths': {
-      // Each berth is a small 3-wide glyph: ╒═╕ empty, ╒·╕ occupied.
-      // Stack them in rows of 2 if the compartment is tall enough.
-      const berthW = 3;
+      const berthW = 5;
       const perRow = Math.max(1, Math.floor((w - 2) / (berthW + 1)));
-      const rows = Math.max(1, Math.floor((h - 2) / 2));
+      const rows = Math.max(1, Math.floor((h - 4) / 3));
       const capacity = Math.max(state.berthsMax, perRow * rows);
       let drawn = 0;
       let occupied = 0;
@@ -297,15 +303,14 @@ function drawCompartmentContent(
         for (let c = 0; c < perRow; c++) {
           if (drawn >= capacity) break;
           const bx = x0 + 1 + c * (berthW + 1);
-          const by = y0 + 1 + r * 2;
-          if (by + 1 > y1 - 1) continue;
+          const by = y0 + 1 + r * 3;
+          if (by + 1 > y1 - 2) continue;
           const isOccupied = occupied < state.crewCount;
           const color = isOccupied ? COLORS.berthFull : COLORS.berthEmpty;
-          if (inside(bx, by)) ctx.draw(bx, by, '╒', color);
-          if (inside(bx + 1, by)) ctx.draw(bx + 1, by, '═', color);
-          if (inside(bx + 2, by)) ctx.draw(bx + 2, by, '╕', color);
+          const chars = ['╭', '─', '─', '─', '╮'];
+          for (let i = 0; i < chars.length; i++) if (inside(bx + i, by)) ctx.draw(bx + i, by, chars[i], color);
           const sleepChar = isOccupied ? (Math.sin(time * 0.8 + drawn) > 0.8 ? 'z' : '·') : ' ';
-          if (inside(bx + 1, by + 1)) ctx.draw(bx + 1, by + 1, sleepChar, color);
+          if (inside(bx + 2, by + 1)) ctx.draw(bx + 2, by + 1, sleepChar, color);
           drawn++;
           if (isOccupied) occupied++;
         }
@@ -314,37 +319,47 @@ function drawCompartmentContent(
     }
 
     case 'captainCabin': {
-      // Little desk and chair; "C" for captain in gold, if room.
       const cy = y1 - 1;
       const cx = x0 + 2;
-      if (inside(cx, cy)) ctx.draw(cx, cy, '⊏', COLORS.captain);
-      if (inside(cx + 1, cy)) ctx.draw(cx + 1, cy, '═', COLORS.captain);
-      if (inside(cx + 2, cy)) ctx.draw(cx + 2, cy, '⊐', COLORS.captain);
-      // A chair.
+      const desk = ['╔', '═', '═', '╗'];
+      for (let i = 0; i < desk.length; i++) if (inside(cx + i, cy - 1)) ctx.draw(cx + i, cy - 1, desk[i], COLORS.captain);
+      if (inside(cx + 1, cy)) ctx.draw(cx + 1, cy, '□', COLORS.captain);
       if (inside(cx + 4, cy)) ctx.draw(cx + 4, cy, 'h', COLORS.captain);
+      if (inside(x1 - 5, y0 + 2)) ctx.draw(x1 - 5, y0 + 2, '✦', COLORS.gold);
+      if (w > 12 && h > 6) {
+        const mapX = x0 + Math.floor(w * 0.58);
+        const mapY = y1 - 3;
+        const chart = ['╭', '─', '╮'];
+        for (let i = 0; i < chart.length; i++) if (inside(mapX + i, mapY)) ctx.draw(mapX + i, mapY, chart[i], COLORS.labelDim);
+        if (inside(mapX + 1, mapY + 1)) ctx.draw(mapX + 1, mapY + 1, '×', COLORS.labelDim);
+      }
       break;
     }
 
     case 'galley': {
-      // Stove with fire flicker.
       const cy = y1 - 1;
       const cx = x0 + 1;
-      if (inside(cx, cy)) ctx.draw(cx, cy, '[', COLORS.galley);
+      if (inside(cx, cy)) ctx.draw(cx, cy, '▐', COLORS.galley);
       const flame = Math.sin(time * 6) > 0 ? '^' : '*';
-      if (inside(cx + 1, cy)) ctx.draw(cx + 1, cy, flame, COLORS.galley);
-      if (inside(cx + 2, cy)) ctx.draw(cx + 2, cy, ']', COLORS.galley);
-      // Barrels of provisions above the stove — filled proportional to provisions/max.
-      const barrelCount = Math.max(0, Math.min(3, Math.floor((state.provisions / Math.max(1, state.provisionsMax)) * 3)));
+      if (inside(cx + 1, cy)) ctx.draw(cx + 1, cy, flame, COLORS.damageFire);
+      if (inside(cx + 2, cy)) ctx.draw(cx + 2, cy, '▌', COLORS.galley);
+      if (inside(cx + 1, cy - 1)) ctx.draw(cx + 1, cy - 1, Math.sin(time * 2) > 0 ? '\'' : '`', COLORS.labelDim);
+      const barrelCount = Math.max(0, Math.min(4, Math.floor((state.provisions / Math.max(1, state.provisionsMax)) * 4)));
       for (let i = 0; i < barrelCount; i++) {
-        const bx = x0 + 1 + i * 2;
-        const by = cy - 1;
+        const bx = x0 + 5 + i * 2;
+        const by = cy - 1 - (i % 2);
         if (inside(bx, by)) ctx.draw(bx, by, 'o', COLORS.cargoBarrel);
+      }
+      if (w > 9) {
+        const shelfY = y0 + 2;
+        for (let x = x0 + 2; x < x1 - 2; x++) {
+          if (inside(x, shelfY)) ctx.draw(x, shelfY, x % 5 === 0 ? '┬' : '─', COLORS.deckLine, false);
+        }
       }
       break;
     }
 
     case 'powder': {
-      // Red powder barrels marked with ×; fill fraction = state.powderPct.
       const barrelsPerRow = Math.max(1, Math.floor((w - 2) / 2));
       const rows = Math.max(1, Math.floor((h - 2) / 2));
       const totalBarrels = barrelsPerRow * rows;
@@ -355,7 +370,7 @@ function drawCompartmentContent(
           const bx = x0 + 1 + c * 2;
           const by = y1 - 1 - r * 2;
           if (n < filled) {
-            if (inside(bx, by)) ctx.draw(bx, by, '×', COLORS.powder);
+            if (inside(bx, by)) ctx.draw(bx, by, '⊗', COLORS.powder);
           } else {
             if (inside(bx, by)) ctx.draw(bx, by, '·', COLORS.labelDim);
           }
@@ -366,8 +381,8 @@ function drawCompartmentContent(
     }
 
     case 'bilge': {
-      // Rippling water at the very bottom.
-      for (let y = y1 - 2; y <= y1; y++) {
+      const waterTop = Math.max(y0 + 2, y1 - 4);
+      for (let y = waterTop; y <= y1; y++) {
         for (let x = x0 + 1; x < x1; x++) {
           if (!inside(x, y)) continue;
           const wave = Math.sin(x * 0.4 + time * 1.5);
@@ -379,25 +394,52 @@ function drawCompartmentContent(
     }
 
     case 'forecastle': {
-      // Anchor chain — a diagonal line of `#` glyphs.
+      if (w > 8) {
+        const railY = y0 + 2;
+        for (let x = x0 + 2; x < x1 - 2; x++) {
+          if (inside(x, railY)) ctx.draw(x, railY, x % 4 === 0 ? '┬' : '─', COLORS.deckLine, false);
+        }
+      }
       for (let i = 0; i < 4; i++) {
         const ax = x1 - 1 - i;
         const ay = y1 - 1 - Math.floor(i * 0.5);
         if (inside(ax, ay)) ctx.draw(ax, ay, '#', COLORS.hullDark);
       }
+      if (inside(x1 - 4, y0 + 2)) ctx.draw(x1 - 4, y0 + 2, '⚓', COLORS.hullOutline);
       break;
     }
 
     case 'gunDeck': {
-      // Row of cannons (aimed outward).
-      const cy = y1 - 1;
-      const step = 4;
-      for (let x = x0 + 2; x < x1 - 1; x += step) {
-        if (inside(x, cy)) ctx.draw(x, cy, '▬', '#6B7280');
+      const gunY = y1 - 2;
+      const portY = Math.max(y0 + 2, gunY - 2);
+      const step = 7;
+      for (let x = x0 + 4; x < x1 - 3; x += step) {
+        if (inside(x, portY)) ctx.draw(x, portY, '□', COLORS.hullDark);
+        if (inside(x, gunY)) ctx.draw(x, gunY, '◄', '#6B7280');
+        if (inside(x + 1, gunY)) ctx.draw(x + 1, gunY, '═', '#6B7280');
       }
       break;
     }
   }
+}
+
+function insideHull(config: RenderConfig, geom: ReturnType<typeof getHullGeometry>) {
+  return (x: number, y: number) => {
+    const col = getHullColumn(config.shipType, geom, config.height, x);
+    if (!col) return false;
+    return y >= col.topY + 1 && y <= col.bottomY - 1;
+  };
+}
+
+function insideHullInclusive(
+  config: RenderConfig,
+  geom: ReturnType<typeof getHullGeometry>,
+  x: number,
+  y: number
+) {
+  const col = getHullColumn(config.shipType, geom, config.height, x);
+  if (!col) return false;
+  return y >= col.topY && y <= col.bottomY;
 }
 
 // ── Mast stubs + flags (above the silhouette) ───────────────────────────────

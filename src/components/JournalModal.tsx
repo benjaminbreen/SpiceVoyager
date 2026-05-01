@@ -3,8 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore, JournalCategory, JournalEntry } from '../store/gameStore';
 import {
   X, Anchor, Coins, Shield, Users, Swords,
-  StickyNote, Send,
+  StickyNote, Send, ScrollText,
 } from 'lucide-react';
+import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 
 const CATEGORY_CONFIG: Record<JournalCategory, { icon: typeof Anchor; color: string; label: string }> = {
@@ -31,7 +32,12 @@ export function JournalModal({ open, onClose, initialEntry }: {
 }) {
   const journalEntries = useGameStore(s => s.journalEntries);
   const addJournalNote = useGameStore(s => s.addJournalNote);
+  const gold = useGameStore(s => s.gold);
+  const cargo = useGameStore(s => s.cargo);
+  const stats = useGameStore(s => s.stats);
+  const obligations = useGameStore(s => s.obligations);
   const [filter, setFilter] = useState<JournalCategory | 'all'>('all');
+  const [view, setView] = useState<'log' | 'ledger'>('log');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -57,6 +63,12 @@ export function JournalModal({ open, onClose, initialEntry }: {
 
   // Get the live version of the selected entry from store
   const selectedEntry = selectedId ? journalEntries.find(e => e.id === selectedId) ?? null : null;
+  const activeObligations = obligations.filter(o => o.status === 'active');
+  const settledObligations = obligations.filter(o => o.status === 'settled');
+  const cargoWeight = Object.entries(cargo).reduce(
+    (sum, [commodity, qty]) => sum + qty * (COMMODITY_DEFS[commodity as Commodity]?.weight ?? 1),
+    0,
+  );
 
   const handleSubmitNote = () => {
     if (!selectedEntry || !noteText.trim()) return;
@@ -82,7 +94,7 @@ export function JournalModal({ open, onClose, initialEntry }: {
     >
       <motion.div
         {...modalPanelMotion}
-        className="w-full max-w-4xl h-[80vh] flex rounded-xl overflow-hidden shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-[#2a2d3a]/50"
+        className="w-full max-w-6xl h-[88vh] flex rounded-xl overflow-hidden shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-[#2a2d3a]/50"
       >
         {/* LEFT PANE — Event Log (sleek dark) */}
         <div className="w-[380px] bg-[#0c1019]/95 backdrop-blur-xl flex flex-col border-r border-white/[0.06]">
@@ -96,6 +108,25 @@ export function JournalModal({ open, onClose, initialEntry }: {
               className="w-7 h-7 rounded-full flex items-center justify-center text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-all"
             >
               <X size={14} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1 px-3 py-2 border-b border-white/[0.04]">
+            <button
+              type="button"
+              onClick={() => setView('log')}
+              className={`min-h-9 rounded-lg text-[10px] font-bold uppercase tracking-[0.12em] transition-all ${view === 'log' ? 'bg-white/[0.08] text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+            >
+              Log
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('ledger')}
+              className={`min-h-9 rounded-lg text-[10px] font-bold uppercase tracking-[0.12em] transition-all ${view === 'ledger' ? 'bg-white/[0.08] text-amber-200' : 'text-slate-500 hover:text-slate-300'}`}
+              style={{ fontFamily: '"DM Sans", sans-serif' }}
+            >
+              Ledger
             </button>
           </div>
 
@@ -183,14 +214,96 @@ export function JournalModal({ open, onClose, initialEntry }: {
           </div>
         </div>
 
-        {/* RIGHT PANE — Annotations (parchment) */}
+        {/* RIGHT PANE — Annotations / Ledger (parchment) */}
         <div className="flex-1 flex flex-col"
           style={{
             background: 'linear-gradient(135deg, #f4edd8 0%, #e8ddc4 40%, #f0e6ce 100%)',
           }}
         >
+          {view === 'ledger' ? (
+            <div className="flex-1 overflow-y-auto p-7">
+              <div className="flex items-start justify-between gap-4 border-b border-[#c8b98a]/40 pb-4">
+                <div>
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#8a7a5a]">
+                    <ScrollText size={14} /> Ledger
+                  </div>
+                  <h2 className="mt-2 text-2xl font-bold text-[#302718]" style={{ fontFamily: '"IM Fell English", Georgia, serif' }}>
+                    Accounts and obligations
+                  </h2>
+                </div>
+                <button
+                  onClick={onClose}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[#8a7a5a] hover:text-[#3a3020] hover:bg-[#3a3020]/10 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-[#c8b98a]/35 bg-white/35 p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8a7a5a]">Cash</div>
+                  <div className="mt-1 font-mono text-2xl font-bold text-[#3a3020]">{gold.toLocaleString()}g</div>
+                </div>
+                <div className="rounded-lg border border-[#c8b98a]/35 bg-white/35 p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8a7a5a]">Hold</div>
+                  <div className="mt-1 font-mono text-2xl font-bold text-[#3a3020]">{cargoWeight}/{stats.cargoCapacity}</div>
+                </div>
+                <div className="rounded-lg border border-[#c8b98a]/35 bg-white/35 p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8a7a5a]">Open Accounts</div>
+                  <div className="mt-1 font-mono text-2xl font-bold text-[#3a3020]">{activeObligations.length}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-3">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#8a7a5a]">Open</h3>
+                {activeObligations.length === 0 ? (
+                  <div className="rounded-lg border border-[#c8b98a]/30 bg-white/25 p-5 text-sm italic text-[#8a7a5a]" style={{ fontFamily: '"IM Fell English", Georgia, serif' }}>
+                    No active debts or commission accounts.
+                  </div>
+                ) : activeObligations.map((obligation) => {
+                  const remaining = Math.max(0, obligation.amountDue - obligation.settledGold);
+                  return (
+                    <div key={obligation.id} className="rounded-lg border border-[#c8b98a]/35 bg-white/35 p-4">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9a6f3a]">
+                            {obligation.type === 'credit' ? 'Credit' : 'Commission Cargo'}
+                          </div>
+                          <div className="mt-1 text-lg font-bold text-[#302718]" style={{ fontFamily: '"IM Fell English", Georgia, serif' }}>
+                            {obligation.patron}
+                          </div>
+                          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#6b5a3d]" style={{ fontFamily: '"IM Fell English", Georgia, serif' }}>
+                            {obligation.note}
+                          </p>
+                        </div>
+                        <div className="font-mono text-sm text-[#3a3020] md:text-right">
+                          <div>{obligation.settledGold}/{obligation.amountDue}g</div>
+                          <div className={remaining > 0 ? 'text-[#8a2d24]' : 'text-[#2f6b45]'}>
+                            {remaining > 0 ? `${remaining}g remaining` : 'Ready to settle'}
+                          </div>
+                          <div className="text-[#8a7a5a]">Due Day {obligation.dueDay}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {settledObligations.length > 0 && (
+                <div className="mt-6 space-y-2">
+                  <h3 className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#8a7a5a]">Settled</h3>
+                  {settledObligations.slice(-5).reverse().map((obligation) => (
+                    <div key={obligation.id} className="rounded-lg border border-[#c8b98a]/25 bg-white/20 px-4 py-3 text-sm text-[#6b5a3d]">
+                      {obligation.patron} · {obligation.amountDue}g settled
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           {/* Annotation header */}
-          <div className="px-6 py-4 border-b border-[#c8b98a]/40">
+          <div className="px-7 py-5 border-b border-[#c8b98a]/40">
             {selectedEntry ? (
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -220,7 +333,7 @@ export function JournalModal({ open, onClose, initialEntry }: {
           </div>
 
           {/* Notes area */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 min-h-0">
+          <div className="flex-1 overflow-y-auto px-7 py-5 space-y-4 min-h-0">
             {selectedEntry && selectedEntry.notes.length === 0 && (
               <div className="text-center py-8">
                 <StickyNote size={24} className="mx-auto mb-2 text-[#b8a880]" />
@@ -244,7 +357,7 @@ export function JournalModal({ open, onClose, initialEntry }: {
 
           {/* Note input */}
           {selectedEntry && (
-            <div className="px-4 py-3 border-t border-[#c8b98a]/40 bg-[#efe5cc]/80">
+            <div className="px-5 py-4 border-t border-[#c8b98a]/40 bg-[#efe5cc]/80">
               <div className="flex gap-2">
                 <textarea
                   ref={textareaRef}
@@ -272,6 +385,8 @@ export function JournalModal({ open, onClose, initialEntry }: {
                 Enter to save &middot; Shift+Enter for new line
               </p>
             </div>
+          )}
+          </>
           )}
         </div>
       </motion.div>

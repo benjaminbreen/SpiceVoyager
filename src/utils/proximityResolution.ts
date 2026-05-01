@@ -181,7 +181,12 @@ export function clearSnappedCache(): void {
  */
 export function resolveSnappedPOI(
   poi: POIDefinition,
-  port: { id: string; buildings: { type: string; landmarkId?: string; position: [number, number, number] }[]; pois?: POIDefinition[] },
+  port: {
+    id: string;
+    position?: [number, number, number];
+    buildings: { type: string; landmarkId?: string; position: [number, number, number] }[];
+    pois?: POIDefinition[];
+  },
 ): SnappedPosition | null {
   const key = `${poi.id}:${port.id}`;
   const hit = snappedCache.get(key);

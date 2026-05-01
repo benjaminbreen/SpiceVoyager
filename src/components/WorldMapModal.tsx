@@ -23,6 +23,7 @@ import {
   type WorldRegion,
 } from '../utils/worldPorts';
 import VoyageModal from './VoyageModal';
+import PassageInterstitial from './PassageInterstitial';
 import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 
@@ -70,6 +71,13 @@ type TravelModalState = {
   fromPortId: string;
   toPortId: string;
   force: boolean;
+  swapStarted?: boolean;
+};
+
+type PassageModalState = TravelModalState & {
+  resolution: VoyageResolution;
+  hasIncident: boolean;
+  swapStarted: boolean;
 };
 
 export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
@@ -100,6 +108,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
   const [travelModal, setTravelModal] = useState<TravelModalState | null>(null);
+  const [passageModal, setPassageModal] = useState<PassageModalState | null>(null);
 
   // Calculate travel info for selected port
   const travelInfo = useMemo(() => {
@@ -492,12 +501,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
       toPortId: selectedPort,
       force: devMode && !canDirectlySail(nearestPortId, selectedPort),
     };
-    sfxSail();
-    if (Math.random() < VOYAGE_INCIDENT_CHANCE) {
-      setTravelModal(modal);
-      return;
-    }
-    finishVoyage(modal, resolveVoyage({
+    const resolution = resolveVoyage({
       fromPortId: nearestPortId,
       toPortId: selectedPort,
       stance: 'standard',
@@ -508,10 +512,22 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
       chartedRoutes,
       weatherIntensity: weather.targetIntensity,
       windSpeed,
-    }));
+    });
+    sfxSail();
+    setPassageModal({
+      ...modal,
+      resolution,
+      hasIncident: Math.random() < VOYAGE_INCIDENT_CHANCE,
+      swapStarted: false,
+    });
   };
 
   const finishVoyage = (modal: TravelModalState, resolution: VoyageResolution) => {
+    if (modal.swapStarted) {
+      setTravelModal(null);
+      onClose();
+      return;
+    }
     const swap = () => {
       fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
       setTravelModal(null);
@@ -533,6 +549,31 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
     if (!travelModal) return;
     finishVoyage(travelModal, resolution);
   };
+  const handleTravelResolutionReady = (resolution: VoyageResolution) => {
+    if (!travelModal || travelModal.swapStarted) return;
+    fastTravel(travelModal.targetPortId, { force: travelModal.force, voyage: resolution });
+    setTravelModal({ ...travelModal, swapStarted: true });
+  };
+
+  const handlePassageDone = () => {
+    if (!passageModal) return;
+    const modal = passageModal;
+    setPassageModal(null);
+    if (modal.hasIncident) {
+      setTravelModal(modal);
+      return;
+    }
+    if (!modal.swapStarted) {
+      fastTravel(modal.targetPortId, { force: modal.force, voyage: modal.resolution });
+    }
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!passageModal || passageModal.hasIncident || passageModal.swapStarted) return;
+    fastTravel(passageModal.targetPortId, { force: passageModal.force, voyage: passageModal.resolution });
+    setPassageModal({ ...passageModal, swapStarted: true });
+  }, [fastTravel, passageModal]);
 
   // Keyboard
   useEffect(() => {
@@ -821,6 +862,17 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
       </motion.div>
 
       {/* Travel animation modal */}
+      {passageModal && (
+        <PassageInterstitial
+          fromPort={passageModal.fromPort}
+          toPort={passageModal.toPort}
+          toPortId={passageModal.toPortId}
+          currentDay={dayCount}
+          resolution={passageModal.resolution}
+          hasIncident={passageModal.hasIncident}
+          onDone={handlePassageDone}
+        />
+      )}
       {travelModal && (
         <VoyageModal
           fromPort={travelModal.fromPort}
@@ -828,6 +880,8 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
           totalDays={travelModal.totalDays}
           fromPortId={travelModal.fromPortId}
           toPortId={travelModal.toPortId}
+          initialPhase="incident"
+          onResolutionReady={handleTravelResolutionReady}
           onComplete={handleTravelComplete}
           onSkip={handleTravelSkip}
         />

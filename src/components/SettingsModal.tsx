@@ -720,6 +720,27 @@ function DisplayTab({ renderDebug, onUpdateRenderDebug }: {
           </button>
         </div>
       </SettingsSection>
+      <SettingsSection title="Terrain" description="Experimental terrain rendering layers that can be toggled while judging the port map.">
+        <div className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+          <div>
+            <div className="text-xs font-semibold text-slate-300">City Ground Wear</div>
+            <div className="text-[11px] text-slate-500">Packed earth and damp mud tint around roads, buildings, docks, and plazas.</div>
+          </div>
+          <button
+            onClick={() => {
+              sfxClick();
+              onUpdateRenderDebug({ cityGroundWear: !renderDebug.cityGroundWear });
+            }}
+            className={`rounded-lg px-3 py-2 text-xs font-medium transition-all border ${
+              renderDebug.cityGroundWear
+                ? 'bg-emerald-600/20 border-emerald-600/30 text-emerald-300'
+                : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]'
+            }`}
+          >
+            {renderDebug.cityGroundWear ? 'On' : 'Off'}
+          </button>
+        </div>
+      </SettingsSection>
     </div>
   );
 }
