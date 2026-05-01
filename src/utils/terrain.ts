@@ -881,10 +881,9 @@ export function getTerrainData(x: number, z: number): TerrainData {
     // is what actually carries the effect to the player.
     if (plumeFactor > 0) {
       const depthScale = 0.55 + 0.45 * underwaterBlend; // ~half strength in deep, full in shallows
-      // Muted olive-brown silt — equal R/G with a touch of B reads as muddy
-      // sediment without going pure yellow-tan. R must not exceed G or the lerp
-      // from the cyan-green water palette drifts back through magenta.
-      const siltColor: TerrainColor = [0.38, 0.38, 0.22];
+      // Muted green-brown silt — dark enough to read as murky estuary water
+      // without pulling the plume toward pale yellow-tan.
+      const siltColor: TerrainColor = [0.28, 0.34, 0.24];
       color = mixColor(color, siltColor, plumeFactor * depthScale * 0.85);
     }
 

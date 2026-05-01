@@ -22,7 +22,8 @@ import {
   REGION_LABELS,
   type WorldRegion,
 } from '../utils/worldPorts';
-import TravelModalB from './TravelModalB';
+import VoyageModal from './VoyageModal';
+import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 import { useIsMobile } from '../utils/useIsMobile';
 
@@ -83,6 +84,18 @@ const REGION_NAV_LABELS: Record<string, string> = {
   atlantic: 'Atlantic',
 };
 
+const VOYAGE_INCIDENT_CHANCE = 0.25;
+
+type TravelModalState = {
+  fromPort: string;
+  toPort: string;
+  totalDays: number;
+  targetPortId: string;
+  fromPortId: string;
+  toPortId: string;
+  force: boolean;
+};
+
 // ── Decorative compass rose (SVG fragment, injected into D3 map) ───────────
 // Placed in a low-information ocean quadrant; rendered at ~12% opacity.
 const COMPASS_ROSE_PATH = `
@@ -102,6 +115,12 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   const { isMobile } = useIsMobile();
   const dayCount = useGameStore(s => s.dayCount);
   const fastTravel = useGameStore(s => s.fastTravel);
+  const crew = useGameStore(s => s.crew);
+  const stats = useGameStore(s => s.stats);
+  const provisions = useGameStore(s => s.provisions);
+  const weather = useGameStore(s => s.weather);
+  const windSpeed = useGameStore(s => s.windSpeed);
+  const chartedRoutes = useGameStore(s => s.chartedRoutes);
   const worldSeed = useGameStore(s => s.worldSeed);
   const devSoloPort = useGameStore(s => s.devSoloPort);
   const currentWorldPortId = useGameStore(s => s.currentWorldPortId);
@@ -111,15 +130,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   const reachablePortIds = useMemo(() => getReachableWorldPortIds(nearestPortId), [nearestPortId]);
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
-  const [travelModal, setTravelModal] = useState<{
-    fromPort: string;
-    toPort: string;
-    totalDays: number;
-    targetPortId: string;
-    fromPortId: string;
-    toPortId: string;
-    force: boolean;
-  } | null>(null);
+  const [travelModal, setTravelModal] = useState<TravelModalState | null>(null);
 
   const travelInfo = useMemo(() => {
     if (!selectedPort || selectedPort === nearestPortId) return null;
@@ -796,8 +807,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
     const travel = estimateSeaTravel(nearestPortId, selectedPort);
     const fromName = getWorldPortById(nearestPortId)?.name ?? nearestPortId;
     const toName = getWorldPortById(selectedPort)?.name ?? selectedPort;
-    sfxSail();
-    setTravelModal({
+    const modal = {
       fromPort: fromName,
       toPort: toName,
       totalDays: travel?.days ?? 1,
@@ -805,12 +815,29 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       fromPortId: nearestPortId,
       toPortId: selectedPort,
       force: devMode && !canDirectlySail(nearestPortId, selectedPort),
-    });
+    };
+    sfxSail();
+    if (Math.random() < VOYAGE_INCIDENT_CHANCE) {
+      setTravelModal(modal);
+      return;
+    }
+    finishVoyage(modal, resolveVoyage({
+      fromPortId: nearestPortId,
+      toPortId: selectedPort,
+      stance: 'standard',
+      crew,
+      stats,
+      provisions,
+      dayCount,
+      chartedRoutes,
+      weatherIntensity: weather.targetIntensity,
+      windSpeed,
+    }));
   };
 
-  const finishVoyage = (modal: NonNullable<typeof travelModal>) => {
+  const finishVoyage = (modal: TravelModalState, resolution: VoyageResolution) => {
     const swap = () => {
-      fastTravel(modal.targetPortId, { force: modal.force });
+      fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
       setTravelModal(null);
       onClose();
     };
@@ -821,8 +848,8 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
     }
   };
 
-  const handleTravelComplete = () => { if (travelModal) finishVoyage(travelModal); };
-  const handleTravelSkip = () => { if (travelModal) finishVoyage(travelModal); };
+  const handleTravelComplete = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
+  const handleTravelSkip = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
 
   useEffect(() => {
     const handleDown = (e: KeyboardEvent) => {
@@ -856,7 +883,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
       <motion.div
         {...modalPanelMotion}
         onClick={(e) => e.stopPropagation()}
-	        className={`relative rounded-[18px] ${isMobile ? 'w-full h-[100dvh]' : 'w-full max-w-6xl h-[82vh]'}`}
+	        className={`relative rounded-[18px] ${isMobile ? 'w-full h-[var(--app-height)]' : 'w-full max-w-6xl h-[82vh]'}`}
 	        style={{
 	          padding: isMobile
 	            ? 'calc(3px + var(--sai-top)) calc(3px + var(--sai-right)) calc(3px + var(--sai-bottom)) calc(3px + var(--sai-left))'
@@ -1295,7 +1322,7 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
 
       {/* Travel animation */}
       {travelModal && (
-        <TravelModalB
+        <VoyageModal
           fromPort={travelModal.fromPort}
           toPort={travelModal.toPort}
           totalDays={travelModal.totalDays}

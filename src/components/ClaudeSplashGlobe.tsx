@@ -259,10 +259,6 @@ const OCEAN_VERT = /* glsl */`
   varying vec3 vWorldNormal;
   varying vec3 vLocalNormal;
   varying vec3 vViewDir;
-  varying vec2 vUvA;
-  varying vec2 vUvB;
-  varying vec2 vUvC;
-  uniform float uTime;
   void main() {
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vWorldPos = wp.xyz;
@@ -272,11 +268,6 @@ const OCEAN_VERT = /* glsl */`
     // CONTINENT_BOUNDS (which are stored in globe-local frame).
     vLocalNormal = normalize(normal);
     vViewDir = normalize(cameraPosition - wp.xyz);
-    float lat = asin(normal.y);
-    float lon = atan(normal.z, normal.x);
-    vUvA = vec2(lon * 0.7 + uTime * 0.020, lat * 0.7 + uTime * 0.014);
-    vUvB = vec2(lon * 1.4 - uTime * 0.026, lat * 1.2 + uTime * 0.022) + vec2(0.37, 0.13);
-    vUvC = vec2(lon * 3.1 + uTime * 0.042, lat * 2.8 - uTime * 0.038) + vec2(0.71, 0.59);
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
@@ -287,9 +278,6 @@ const OCEAN_FRAG = /* glsl */`
   varying vec3 vWorldNormal;
   varying vec3 vLocalNormal;
   varying vec3 vViewDir;
-  varying vec2 vUvA;
-  varying vec2 vUvB;
-  varying vec2 vUvC;
   uniform float uTime;
   uniform sampler2D uNormalMap;
   uniform vec3 uDeepColor;
@@ -309,9 +297,19 @@ const OCEAN_FRAG = /* glsl */`
   // Cloud shadow spheres: xyz = world-space center, w = shadow radius.
   uniform vec4 uClouds[CLOUD_COUNT];
   void main() {
-    vec3 nA = texture2D(uNormalMap, vUvA).rgb * 2.0 - 1.0;
-    vec3 nB = texture2D(uNormalMap, vUvB).rgb * 2.0 - 1.0;
-    vec3 nC = texture2D(uNormalMap, vUvC).rgb * 2.0 - 1.0;
+    // Compute spherical normal-map coordinates per fragment. Interpolating
+    // longitude/latitude from vertices creates visible bands and seam streaks
+    // on a globe because atan() is discontinuous at the date line.
+    vec3 localN = normalize(vLocalNormal);
+    float lat = asin(clamp(localN.y, -1.0, 1.0));
+    float lon = atan(localN.z, localN.x);
+    vec2 uvA = vec2(lon * 0.7 + uTime * 0.020, lat * 0.7 + uTime * 0.014);
+    vec2 uvB = vec2(lon * 1.4 - uTime * 0.026, lat * 1.2 + uTime * 0.022) + vec2(0.37, 0.13);
+    vec2 uvC = vec2(lon * 3.1 + uTime * 0.042, lat * 2.8 - uTime * 0.038) + vec2(0.71, 0.59);
+
+    vec3 nA = texture2D(uNormalMap, uvA).rgb * 2.0 - 1.0;
+    vec3 nB = texture2D(uNormalMap, uvB).rgb * 2.0 - 1.0;
+    vec3 nC = texture2D(uNormalMap, uvC).rgb * 2.0 - 1.0;
 
     // Wave-activity field — modulates whitecap density, wavetop sparkle,
     // and normal-map perturbation strength so the ocean isn't a uniform
@@ -320,8 +318,8 @@ const OCEAN_FRAG = /* glsl */`
     // quietest in the equatorial doldrums and at the poles. A low-
     // frequency longitudinal term breaks up the horizontal banding so
     // adjacent oceans at the same latitude don't read as identical.
-    float latAbs = abs(vLocalNormal.y);
-    float oceanLon = atan(vLocalNormal.z, vLocalNormal.x);
+    float latAbs = abs(localN.y);
+    float oceanLon = lon;
     float trade     = exp(-pow((latAbs - 0.42) * 4.0, 2.0));
     float westerly  = exp(-pow((latAbs - 0.77) * 4.0, 2.0));
     float doldrum   = 1.0 - smoothstep(0.0, 0.15, latAbs);
@@ -375,7 +373,7 @@ const OCEAN_FRAG = /* glsl */`
     // computed here but APPLIED at the end of main() as a finishing
     // multiplier so the white sun-glint, lambert lift, and whitecap
     // noise can't neutralize it (which is what was hiding it before).
-    vec3 N = vLocalNormal;
+    vec3 N = localN;
     float bathy =
       sin(N.x * 3.7 + N.y * 1.9) * cos(N.z * 2.8 - N.y * 1.3) * 0.55 +
       sin(N.x * 1.4 - N.z * 2.1) * cos(N.y * 2.4 + N.x * 0.9) * 0.35 +
@@ -403,7 +401,7 @@ const OCEAN_FRAG = /* glsl */`
     float shore = 0.0;
     float shallowMix = 0.0;
     for (int i = 0; i < CONTINENT_COUNT; i++) {
-      float d = dot(vLocalNormal, uContinentCenters[i]);
+      float d = dot(localN, uContinentCenters[i]);
       float gap = uContinentCosRadii[i] - d;        // >0 in water, <0 in land
       float t = clamp(1.0 - gap / uShoreBand, 0.0, 1.0);
       shore = max(shore, t);
@@ -495,7 +493,7 @@ const OCEAN_FRAG = /* glsl */`
     // Applied post-lambert because foam reads as bright surf regardless of
     // how lit that side of the planet currently is.
     float surf = smoothstep(0.35, 0.95, (nA.x + nB.x) * 0.5 + 0.5);
-    float breath = 0.55 + 0.45 * sin(uTime * 1.4 + vLocalNormal.x * 5.0 + vLocalNormal.z * 4.0);
+    float breath = 0.55 + 0.45 * sin(uTime * 1.4 + localN.x * 5.0 + localN.z * 4.0);
     float foamBand = pow(shore, 1.6) * (0.55 + 0.55 * surf) * breath;
     // Shore foam dims at night rather than brightening — moonlit surf is
     // visible but not glowing, so the halo around islands stays grounded
@@ -550,6 +548,7 @@ function OceanShell({ dayRef }: { dayRef: React.MutableRefObject<DayState> }) {
   useEffect(() => {
     normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
     normalMap.anisotropy = 8;
+    normalMap.colorSpace = THREE.NoColorSpace;
   }, [normalMap]);
 
   const uniforms = useMemo(
@@ -3957,15 +3956,16 @@ export function ClaudeSplashGlobe(props: Props) {
             top: 18,
             left: 20,
             fontFamily: MONO,
-            fontSize: 11,
-            color: 'rgba(255,248,232,0.62)',
-            letterSpacing: '0.16em',
-            textShadow: '0 1px 2px rgba(0,0,0,0.45)',
+            fontSize: 13,
+            fontWeight: 700,
+            color: 'rgba(255,255,255,0.86)',
+            letterSpacing: '0.12em',
+            textShadow: '0 1px 3px rgba(0,0,0,0.72), 0 0 10px rgba(0,0,0,0.35)',
             pointerEvents: 'none',
             textTransform: 'uppercase',
           }}
         >
-          W/S sail · A/D turn · SHIFT trim · ENTER begin
+          W/S sail · A/D turn · SHIFT speed up · ENTER begin
         </motion.div>
       )}
       {/* Top-right: Settings + About icon buttons */}
@@ -3983,10 +3983,10 @@ export function ClaudeSplashGlobe(props: Props) {
         }}
       >
         <AudioMuteButton variant="splash" />
-        <CornerIconButton label="About" onClick={openAbout}>
+        <CornerIconButton label="About" iconOnly={isMobile} onClick={openAbout}>
           <Info size={18} strokeWidth={2.2} />
         </CornerIconButton>
-        <CornerIconButton label="Settings" onClick={openSettings}>
+        <CornerIconButton label="Settings" iconOnly={isMobile} onClick={openSettings}>
           <SettingsIcon size={18} strokeWidth={2.2} />
         </CornerIconButton>
       </motion.div>
@@ -4222,9 +4222,10 @@ function BeginButton({
 
 function CornerIconButton({
   label,
+  iconOnly = false,
   onClick,
   children,
-}: { label: string; onClick: () => void; children: React.ReactNode }) {
+}: { label: string; iconOnly?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
@@ -4234,9 +4235,11 @@ function CornerIconButton({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
+        justifyContent: 'center',
+        gap: iconOnly ? 0 : 8,
+        width: iconOnly ? 38 : undefined,
         height: 38,
-        padding: '0 14px',
+        padding: iconOnly ? 0 : '0 14px',
         borderRadius: 19,
         background: 'rgba(20, 30, 45, 0.42)',
         border: '1px solid rgba(255,248,232,0.22)',
@@ -4262,7 +4265,7 @@ function CornerIconButton({
       }}
     >
       {children}
-      <span>{label}</span>
+      {!iconOnly && <span>{label}</span>}
     </button>
   );
 }

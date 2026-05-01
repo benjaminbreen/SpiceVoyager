@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useGameStore, PORT_FACTION, PORT_CULTURAL_REGION } from '../store/gameStore';
 import type { CulturalRegion, Nationality } from '../store/gameStore';
 import type { BuildingStyle } from '../utils/portArchetypes';
-import { buildingShakes, getBuildingDamageFraction, getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impactShakeState';
+import { buildingCollapseEvents, buildingShakes, getBuildingDamageFraction, getBuildingDamageStage, getBuildingDamageVersion } from '../utils/impactShakeState';
 import { sampleCityFields, sampleWorldFields } from '../utils/cityFields';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
 import { DISTRICT_COLORS, classifyDistrict } from '../utils/cityDistricts';
@@ -43,6 +43,7 @@ interface Part {
 
 interface TorchSpot {
   pos: [number, number, number];
+  buildingId: string;
 }
 
 interface SmokeSpot {
@@ -57,7 +58,21 @@ interface DamageSmokeSpot extends SmokeSpot {
 interface RuinMarker {
   pos: [number, number, number];
   scale: [number, number, number];
-  rotY: number;
+  rot: [number, number, number];
+  color: [number, number, number];
+}
+
+interface CollapseDustSource {
+  pos: [number, number, number];
+  scale: [number, number, number];
+  buildingId: string;
+  seed: number;
+}
+
+interface BuildingFlameSource {
+  pos: [number, number, number];
+  scale: number;
+  seed: number;
 }
 
 interface CityFieldOverlaySample {
@@ -97,6 +112,15 @@ function varyColor(base: [number, number, number], rng: () => number, amount = 0
   ];
 }
 
+function hashString(s: string) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 function lerpColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
   const clamped = Math.max(0, Math.min(1, t));
   return [
@@ -107,7 +131,7 @@ function lerpColor(a: [number, number, number], b: [number, number, number], t: 
 }
 
 function ruinedColor(base: [number, number, number]): [number, number, number] {
-  return lerpColor(base, [0.24, 0.22, 0.20], 0.72);
+  return lerpColor(base, [0.025, 0.022, 0.018], 0.9);
 }
 
 function damagedColor(base: [number, number, number], fraction: number): [number, number, number] {
@@ -777,7 +801,7 @@ export function ProceduralCity() {
           const lyAdj = ly + lift;
           const rx = lx * Math.cos(rot) - lz * Math.sin(rot);
           const rz = lx * Math.sin(rot) + lz * Math.cos(rot);
-          torches.push({ pos: [x + rx, y + lyAdj, z + rz] });
+          torches.push({ pos: [x + rx, y + lyAdj, z + rz], buildingId: b.id });
           // Torch bracket (small wood cylinder)
           addPart('cylinder', 'wood', lx, lyAdj - 0.3, lz, 0.08, 0.6, 0.08);
         };
@@ -2273,19 +2297,93 @@ export function ProceduralCity() {
     ports.forEach((port) => {
       port.buildings.forEach((b) => {
         if (getBuildingDamageStage(b.id) !== 'destroyed') return;
+        const rng = mulberry32(hashString(b.id));
+        const wallColor = varyColor([0.055, 0.050, 0.045], rng, 0.035);
+        const roofColor = varyColor([0.070, 0.045, 0.030], rng, 0.035);
         ruins.push({
           pos: [b.position[0], b.position[1] + Math.max(0.35, b.scale[1] * 0.16), b.position[2]],
           scale: [Math.max(1.1, b.scale[0] * 0.72), Math.max(0.4, b.scale[1] * 0.18), Math.max(1.1, b.scale[2] * 0.6)],
-          rotY: b.rotation + 0.35,
+          rot: [-0.18, b.rotation + 0.35, 0.14],
+          color: wallColor,
         });
         ruins.push({
           pos: [b.position[0] + Math.sin(b.rotation) * 0.7, b.position[1] + Math.max(0.6, b.scale[1] * 0.28), b.position[2] + Math.cos(b.rotation) * 0.7],
           scale: [Math.max(0.5, b.scale[0] * 0.16), Math.max(0.9, b.scale[1] * 0.45), Math.max(0.4, b.scale[2] * 0.12)],
-          rotY: b.rotation - 0.4,
+          rot: [0.22, b.rotation - 0.4, -0.12],
+          color: wallColor,
         });
+        for (let i = 0; i < 7; i++) {
+          const lx = (rng() - 0.5) * b.scale[0] * 0.9;
+          const lz = (rng() - 0.5) * b.scale[2] * 0.85;
+          const rx = lx * Math.cos(b.rotation) - lz * Math.sin(b.rotation);
+          const rz = lx * Math.sin(b.rotation) + lz * Math.cos(b.rotation);
+          const isRoof = i < 3;
+          ruins.push({
+            pos: [
+              b.position[0] + rx,
+              b.position[1] + 0.18 + rng() * Math.max(0.35, b.scale[1] * 0.18),
+              b.position[2] + rz,
+            ],
+            scale: [
+              0.28 + rng() * Math.max(0.55, b.scale[0] * 0.18),
+              isRoof ? 0.10 + rng() * 0.12 : 0.18 + rng() * 0.24,
+              0.24 + rng() * Math.max(0.5, b.scale[2] * 0.16),
+            ],
+            rot: [
+              (rng() - 0.5) * 0.65,
+              b.rotation + (rng() - 0.5) * Math.PI,
+              (rng() - 0.5) * 0.55,
+            ],
+            color: isRoof ? roofColor : wallColor,
+          });
+        }
       });
     });
     return ruins;
+  }, [ports, damageVersion]);
+
+  const collapseDustSources = useMemo(() => {
+    const sources: CollapseDustSource[] = [];
+    ports.forEach((port) => {
+      port.buildings.forEach((b) => {
+        sources.push({
+          pos: [b.position[0], b.position[1] + Math.max(0.45, b.scale[1] * 0.2), b.position[2]],
+          scale: b.scale,
+          buildingId: b.id,
+          seed: hashString(b.id),
+        });
+      });
+    });
+    return sources;
+  }, [ports]);
+
+  const destructionFlames = useMemo(() => {
+    const flames: BuildingFlameSource[] = [];
+    ports.forEach((port) => {
+      port.buildings.forEach((b) => {
+        if (getBuildingDamageStage(b.id) !== 'destroyed') return;
+        const seed = hashString(b.id);
+        if ((seed & 1) !== 0) return;
+        const rng = mulberry32(seed ^ 0xa53c9e2d);
+        const count = b.scale[0] * b.scale[2] > 28 ? 2 : 1;
+        for (let i = 0; i < count; i++) {
+          const lx = (rng() - 0.5) * b.scale[0] * 0.45;
+          const lz = (rng() - 0.5) * b.scale[2] * 0.45;
+          const rx = lx * Math.cos(b.rotation) - lz * Math.sin(b.rotation);
+          const rz = lx * Math.sin(b.rotation) + lz * Math.cos(b.rotation);
+          flames.push({
+            pos: [
+              b.position[0] + rx,
+              b.position[1] + Math.max(0.75, b.scale[1] * 0.42) + rng() * 0.45,
+              b.position[2] + rz,
+            ],
+            scale: Math.max(0.75, Math.min(1.45, Math.max(b.scale[0], b.scale[2]) * 0.18)) * (0.85 + rng() * 0.35),
+            seed: seed + i * 911,
+          });
+        }
+      });
+    });
+    return flames;
   }, [ports, damageVersion]);
 
   // Group parts by geo+mat (+ overlay flag). Overlay parts bucket into a
@@ -2361,6 +2459,8 @@ export function ProceduralCity() {
       <CityTorches spots={torchSpots} />
       <ChimneySmoke spots={smokeSpots} />
       <BuildingDamageSmoke spots={damageSmokeSpots} />
+      <BuildingCollapseDust sources={collapseDustSources} />
+      <BuildingDestructionFlames sources={destructionFlames} />
       <RuinedBuildingDebris ruins={ruinedBuildingDebris} />
     </group>
   );
@@ -2502,15 +2602,120 @@ function bridgeStyleForPort(culture: string): BridgeStyleKey {
 // cos(75°) ≈ 0.26. Picked empirically: smoother turns than ~75° look fine
 // mitered, sharper than that visibly pinch.
 const RIBBON_MITER_DOT = 0.26;
+const RIBBON_MIN_POINT_SPACING = 0.08;
+const RIBBON_EDGE_MAX_DELTA = 1.2;
+const RIBBON_MAX_SPIKE_SEG_LEN = 0.6;
+const RIBBON_SPIKE_DOT = -0.85;
+
+function addRoadSurfaceGrain(
+  mat: THREE.MeshStandardMaterial,
+  strength = 0.10,
+  scale = 1.0,
+): THREE.MeshStandardMaterial {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `#include <common>
+      varying vec3 vRoadWorldPos;`
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      `#include <worldpos_vertex>
+      vRoadWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+      varying vec3 vRoadWorldPos;
+
+      float roadHash(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      float roadNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = roadHash(i);
+        float b = roadHash(i + vec2(1.0, 0.0));
+        float c = roadHash(i + vec2(0.0, 1.0));
+        float d = roadHash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }`
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+      {
+        vec2 p = vRoadWorldPos.xz * ${scale.toFixed(2)};
+        float gravel = roadNoise(p * 2.8) * 2.0 - 1.0;
+        float grit = roadHash(floor(p * 11.0)) * 2.0 - 1.0;
+        float lane = roadNoise(vec2(p.x * 0.28, p.y * 1.35)) * 2.0 - 1.0;
+        float worn = smoothstep(0.55, 0.98, roadNoise(p * 0.42 + 19.7));
+        float detail = gravel * 0.56 + grit * 0.18 + lane * 0.26;
+        diffuseColor.rgb *= 1.0 + detail * ${strength.toFixed(2)};
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.08, 1.04, 0.96), worn * ${(
+          strength * 0.55
+        ).toFixed(2)});
+      }`
+    );
+  };
+  return mat;
+}
+
+function sanitizeRibbonPoints(points: [number, number, number][]): [number, number, number][] {
+  if (points.length < 2) return points;
+  const out: [number, number, number][] = [points[0]];
+  const minDistSq = RIBBON_MIN_POINT_SPACING * RIBBON_MIN_POINT_SPACING;
+  for (let i = 1; i < points.length; i++) {
+    const prev = out[out.length - 1];
+    const p = points[i];
+    const dx = p[0] - prev[0];
+    const dz = p[2] - prev[2];
+    if (dx * dx + dz * dz < minDistSq) {
+      // Keep the latest height sample for the same XZ position without
+      // emitting a zero-length segment that would poison the tangent pass.
+      out[out.length - 1] = p;
+      continue;
+    }
+    if (out.length >= 2) {
+      const beforePrev = out[out.length - 2];
+      const backDx = p[0] - beforePrev[0];
+      const backDz = p[2] - beforePrev[2];
+      if (backDx * backDx + backDz * backDz < minDistSq) {
+        out.pop();
+        out[out.length - 1] = p;
+        continue;
+      }
+      const prevDx = prev[0] - beforePrev[0];
+      const prevDz = prev[2] - beforePrev[2];
+      const prevLen = Math.hypot(prevDx, prevDz);
+      const nextLen = Math.hypot(dx, dz);
+      if (prevLen < RIBBON_MAX_SPIKE_SEG_LEN && nextLen < RIBBON_MAX_SPIKE_SEG_LEN) {
+        const dot = (prevDx / prevLen) * (dx / nextLen) + (prevDz / prevLen) * (dz / nextLen);
+        if (dot < RIBBON_SPIKE_DOT) {
+          out.pop();
+          out.push(p);
+          continue;
+        }
+      }
+    }
+    out.push(p);
+  }
+  return out.length >= 2 ? out : points;
+}
 
 function buildRoadRibbon(
-  points: [number, number, number][],
+  rawPoints: [number, number, number][],
   width: number,
   yLift: number,
   taperStart: boolean = true,
   taperEnd: boolean = true,
   sampleEdgeY?: (x: number, z: number) => number,
 ): THREE.BufferGeometry | null {
+  const points = sanitizeRibbonPoints(rawPoints);
   const n = points.length;
   if (n < 2) return null;
   const half = width / 2;
@@ -2554,6 +2759,15 @@ function buildRoadRibbon(
       if (elevatedCenterline) {
         ly = Math.max(ly, py);
         ry = Math.max(ry, py);
+      } else {
+        // Riverbanks, canal lips, and steep terrain can put one sampled edge
+        // far above/below the road centerline. A flat ribbon twisted across
+        // that height gap creates the torn brown patches visible at some
+        // ports. Keep mild banking, but clamp cliff/shore samples back toward
+        // the centerline so roads read as ground decals rather than draped
+        // terrain strips.
+        ly = THREE.MathUtils.clamp(ly, py - RIBBON_EDGE_MAX_DELTA, py + RIBBON_EDGE_MAX_DELTA);
+        ry = THREE.MathUtils.clamp(ry, py - RIBBON_EDGE_MAX_DELTA, py + RIBBON_EDGE_MAX_DELTA);
       }
     }
     verts.push(lx, ly + yLift, lz);
@@ -2911,12 +3125,15 @@ function CityRoads({ ports }: { ports: PortsProp }) {
     for (const t of tiers) {
       for (const v of variants) {
         const s = ROAD_VARIANT_STYLE[v][t];
-        m.set(`${t}|${v}`, new THREE.MeshStandardMaterial({
+        m.set(`${t}|${v}`, addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
           color: s.color, roughness: s.roughness, metalness: 0,
+          transparent: t !== 'avenue',
+          opacity: t === 'path' ? 0.88 : t === 'road' ? 0.94 : 1,
+          depthWrite: t === 'avenue',
           polygonOffset: true,
           polygonOffsetFactor: ROAD_TIER_STYLE[t].polygonOffsetFactor,
           polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-        }));
+        }), t === 'avenue' ? 0.075 : 0.11, t === 'avenue' ? 0.82 : 1.0));
       }
     }
     return m;
@@ -2931,13 +3148,13 @@ function CityRoads({ ports }: { ports: PortsProp }) {
     for (const v of variants) {
       const base = new THREE.Color(ROAD_VARIANT_STYLE[v].path.color);
       base.multiplyScalar(0.78); // slightly darker than the built path
-      m.set(v, new THREE.MeshStandardMaterial({
+      m.set(v, addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
         color: base, roughness: 1.0, metalness: 0,
         transparent: true, opacity: FARM_TRACK_OPACITY, depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: ROAD_TIER_STYLE.path.polygonOffsetFactor,
         polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-      }));
+      }), 0.14, 1.15));
     }
     return m;
   }, []);
@@ -2947,12 +3164,12 @@ function CityRoads({ ports }: { ports: PortsProp }) {
     (['stone', 'timber', 'plank'] as const).forEach(k => {
       const s = BRIDGE_STYLE[k];
       m[k] = {
-        deck: new THREE.MeshStandardMaterial({
+        deck: addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
           color: s.deckColor, roughness: s.deckRoughness, metalness: 0,
           polygonOffset: true,
           polygonOffsetFactor: ROAD_TIER_STYLE.bridge.polygonOffsetFactor,
           polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-        }),
+        }), 0.07, 0.72),
         parapet: new THREE.MeshStandardMaterial({
           color: s.parapet?.color ?? s.deckColor, roughness: 0.95, metalness: 0,
         }),
@@ -3594,8 +3811,9 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     if (!meshRef.current || spots.length === 0) return;
     const dummy = new THREE.Object3D();
     spots.forEach((s, i) => {
+      const destroyed = getBuildingDamageStage(s.buildingId) === 'destroyed';
       dummy.position.set(s.pos[0], s.pos[1], s.pos[2]);
-      dummy.scale.set(0.225, 0.35, 0.225);
+      dummy.scale.set(destroyed ? 0.0001 : 0.225, destroyed ? 0.0001 : 0.35, destroyed ? 0.0001 : 0.225);
       dummy.updateMatrix();
       meshRef.current!.setMatrixAt(i, dummy.matrix);
     });
@@ -3607,8 +3825,9 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     if (!haloRef.current || spots.length === 0) return;
     const dummy = new THREE.Object3D();
     spots.forEach((s, i) => {
+      const destroyed = getBuildingDamageStage(s.buildingId) === 'destroyed';
       dummy.position.set(s.pos[0], s.pos[1] + 0.05, s.pos[2]);
-      dummy.scale.set(2.6, 2.6, 2.6);
+      dummy.scale.setScalar(destroyed ? 0.0001 : 2.6);
       dummy.updateMatrix();
       haloRef.current!.setMatrixAt(i, dummy.matrix);
     });
@@ -3643,6 +3862,7 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     if (meshRef.current && nightFactor > 0) {
       const dummy = dummyRef.current;
       for (let i = 0; i < spots.length; i++) {
+        const destroyed = getBuildingDamageStage(spots[i].buildingId) === 'destroyed';
         const phase = phaseOffsets[i];
         const f =
           0.78 +
@@ -3651,7 +3871,11 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
           Math.sin(t * 3.7 + phase * 0.5) * 0.05;
         const s = spots[i].pos;
         dummy.position.set(s[0], s[1], s[2]);
-        dummy.scale.set(0.225 * f, 0.35 * f, 0.225 * f);
+        dummy.scale.set(
+          destroyed ? 0.0001 : 0.225 * f,
+          destroyed ? 0.0001 : 0.35 * f,
+          destroyed ? 0.0001 : 0.225 * f,
+        );
         dummy.updateMatrix();
         meshRef.current.setMatrixAt(i, dummy.matrix);
       }
@@ -3662,6 +3886,7 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
     if (haloRef.current && nightFactor > 0) {
       const dummy = dummyRef.current;
       for (let i = 0; i < spots.length; i++) {
+        const destroyed = getBuildingDamageStage(spots[i].buildingId) === 'destroyed';
         const phase = phaseOffsets[i];
         const h =
           0.92 +
@@ -3669,7 +3894,7 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
           Math.sin(t * 9.3 + phase * 1.3) * 0.03;
         const s = spots[i].pos;
         dummy.position.set(s[0], s[1] + 0.05, s[2]);
-        const scale = 2.6 * h;
+        const scale = destroyed ? 0.0001 : 2.6 * h;
         dummy.scale.set(scale, scale, scale);
         dummy.updateMatrix();
         haloRef.current.setMatrixAt(i, dummy.matrix);
@@ -3682,12 +3907,13 @@ function CityTorches({ spots }: { spots: TorchSpot[] }) {
       const light = lightsRef.current[i];
       if (!light) continue;
       const phase = phaseOffsets[i];
+      const destroyed = getBuildingDamageStage(spots[i].buildingId) === 'destroyed';
       const lf =
         0.82 +
         Math.sin(t * 7.3 + phase) * 0.09 +
         Math.sin(t * 13.1 + phase * 1.7) * 0.05 +
         Math.sin(t * 3.7 + phase) * 0.04;
-      light.intensity = nightFactor * 4 * lf;
+      light.intensity = destroyed ? 0 : nightFactor * 4 * lf;
     }
   });
 
@@ -3854,27 +4080,213 @@ function BuildingDamageSmoke({ spots }: { spots: DamageSmokeSpot[] }) {
 function RuinedBuildingDebris({ ruins }: { ruins: RuinMarker[] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummyRef = useRef(new THREE.Object3D());
+  const colorRef = useRef(new THREE.Color());
   const geo = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   const mat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#3f3b37',
+    color: '#ffffff',
     roughness: 1,
   }), []);
 
   useEffect(() => {
     if (!meshRef.current) return;
     const dummy = dummyRef.current;
+    const color = colorRef.current;
     ruins.forEach((r, i) => {
       dummy.position.set(...r.pos);
       dummy.scale.set(...r.scale);
-      dummy.rotation.set(-0.18, r.rotY, 0.14);
+      dummy.rotation.set(...r.rot);
       dummy.updateMatrix();
       meshRef.current!.setMatrixAt(i, dummy.matrix);
+      color.setRGB(r.color[0], r.color[1], r.color[2]);
+      meshRef.current!.setColorAt(i, color);
     });
     meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
   }, [ruins]);
 
   if (ruins.length === 0) return null;
   return <instancedMesh ref={meshRef} args={[geo, mat, ruins.length]} frustumCulled={false} />;
+}
+
+const COLLAPSE_DUST_PUFFS = 12;
+const COLLAPSE_DUST_DURATION = 1.8;
+const MAX_BUILDING_COLLAPSE_PUFFS = COLLAPSE_DUST_PUFFS * 12;
+
+function BuildingCollapseDust({ sources }: { sources: CollapseDustSource[] }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummyRef = useRef(new THREE.Object3D());
+  const lastUpdateRef = useRef(0);
+
+  const sourceById = useMemo(() => {
+    const map = new Map<string, CollapseDustSource>();
+    sources.forEach((s) => map.set(s.buildingId, s));
+    return map;
+  }, [sources]);
+
+  const puffGeo = useMemo(() => new THREE.SphereGeometry(1, 7, 5), []);
+  const puffMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#756c62',
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    roughness: 1,
+  }), []);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const dummy = dummyRef.current;
+    dummy.scale.setScalar(0.0001);
+    dummy.updateMatrix();
+    for (let i = 0; i < MAX_BUILDING_COLLAPSE_PUFFS; i++) {
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }, []);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const now = Date.now() * 0.001;
+    if (now - lastUpdateRef.current < 0.035) return;
+    lastUpdateRef.current = now;
+
+    const dummy = dummyRef.current;
+    let idx = 0;
+    for (const ev of buildingCollapseEvents) {
+      const src = sourceById.get(ev.buildingId);
+      if (!src) continue;
+      const age = now - ev.time;
+      if (age < 0 || age > COLLAPSE_DUST_DURATION) continue;
+      const progress = age / COLLAPSE_DUST_DURATION;
+      const alpha = progress < 0.18 ? progress / 0.18 : 1 - (progress - 0.18) / 0.82;
+      const rng = mulberry32(src.seed);
+      for (let p = 0; p < COLLAPSE_DUST_PUFFS; p++) {
+        const angle = rng() * Math.PI * 2;
+        const radius = (0.35 + rng() * 0.75) * Math.max(src.scale[0], src.scale[2]) * (0.28 + progress * 0.55);
+        const lift = progress * (1.4 + rng() * 1.8) * ev.intensity;
+        const sx = 0.65 + rng() * 0.9;
+        dummy.position.set(
+          src.pos[0] + Math.cos(angle) * radius,
+          src.pos[1] + lift + rng() * 0.4,
+          src.pos[2] + Math.sin(angle) * radius,
+        );
+        dummy.scale.setScalar((0.25 + progress * 0.9) * sx * ev.intensity * Math.max(0.01, alpha));
+        dummy.updateMatrix();
+        mesh.setMatrixAt(idx, dummy.matrix);
+        idx++;
+      }
+    }
+    for (; idx < MAX_BUILDING_COLLAPSE_PUFFS; idx++) {
+      dummy.scale.setScalar(0.0001);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(idx, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  return <instancedMesh ref={meshRef} args={[puffGeo, puffMat, MAX_BUILDING_COLLAPSE_PUFFS]} frustumCulled={false} />;
+}
+
+function BuildingDestructionFlames({ sources }: { sources: BuildingFlameSource[] }) {
+  const flameRef = useRef<THREE.InstancedMesh>(null);
+  const haloRef = useRef<THREE.InstancedMesh>(null);
+  const lightsRef = useRef<(THREE.PointLight | null)[]>([]);
+  const dummyRef = useRef(new THREE.Object3D());
+
+  const flameGeo = useMemo(() => new THREE.SphereGeometry(1, 7, 7), []);
+  const flameMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: '#ff7a18',
+    transparent: true,
+    opacity: 0.92,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  }), []);
+  const haloGeo = useMemo(() => {
+    const g = new THREE.PlaneGeometry(1, 1);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  }, []);
+  const haloTexture = useMemo(() => {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0.0, 'rgba(255, 180, 70, 1.0)');
+    grad.addColorStop(0.38, 'rgba(255, 85, 18, 0.50)');
+    grad.addColorStop(1.0, 'rgba(255, 40, 0, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+  const haloMat = useMemo(() => new THREE.MeshBasicMaterial({
+    map: haloTexture,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    opacity: 0.7,
+    toneMapped: false,
+  }), [haloTexture]);
+
+  useFrame(({ clock }) => {
+    const flameMesh = flameRef.current;
+    const haloMesh = haloRef.current;
+    if (!flameMesh || !haloMesh) return;
+    const dummy = dummyRef.current;
+    const t = clock.elapsedTime;
+    for (let i = 0; i < sources.length; i++) {
+      const s = sources[i];
+      const phase = (s.seed % 997) * 0.031;
+      const flicker = 0.84
+        + Math.sin(t * 9.4 + phase) * 0.13
+        + Math.sin(t * 16.7 + phase * 1.7) * 0.07;
+      dummy.position.set(s.pos[0], s.pos[1], s.pos[2]);
+      dummy.scale.set(0.33 * s.scale * flicker, 0.68 * s.scale * (0.9 + flicker * 0.25), 0.33 * s.scale * flicker);
+      dummy.updateMatrix();
+      flameMesh.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(s.pos[0], s.pos[1] - 0.45 * s.scale, s.pos[2]);
+      const haloScale = 3.2 * s.scale * (0.88 + flicker * 0.12);
+      dummy.scale.set(haloScale, haloScale, haloScale);
+      dummy.updateMatrix();
+      haloMesh.setMatrixAt(i, dummy.matrix);
+    }
+    flameMesh.instanceMatrix.needsUpdate = true;
+    haloMesh.instanceMatrix.needsUpdate = true;
+
+    for (let i = 0; i < lightsRef.current.length; i++) {
+      const light = lightsRef.current[i];
+      if (!light) continue;
+      const s = sources[i];
+      const phase = (s.seed % 997) * 0.031;
+      const flicker = 0.8 + Math.sin(t * 8.7 + phase) * 0.16 + Math.sin(t * 18.1 + phase) * 0.06;
+      light.intensity = 3.8 * flicker * s.scale;
+    }
+  });
+
+  if (sources.length === 0) return null;
+  const lightCount = Math.min(sources.length, 5);
+  return (
+    <group>
+      <instancedMesh ref={haloRef} args={[haloGeo, haloMat, sources.length]} frustumCulled={false} renderOrder={2} />
+      <instancedMesh ref={flameRef} args={[flameGeo, flameMat, sources.length]} frustumCulled={false} renderOrder={3} />
+      {sources.slice(0, lightCount).map((s, i) => (
+        <pointLight
+          key={i}
+          ref={(el) => { lightsRef.current[i] = el; }}
+          position={s.pos}
+          color="#ff7a24"
+          intensity={0}
+          distance={14}
+          decay={2}
+        />
+      ))}
+    </group>
+  );
 }
 
 // ── Instanced Parts Renderer ──────────────────────────────────────────────────
@@ -3897,7 +4309,13 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry
 
     if (damageStage === 'destroyed') {
       if (isRoofLikePart(part, centerY)) {
-        dummy.scale.setScalar(0.0001);
+        const side = Math.sin((part.pos[0] + part.pos[2]) * 4.17) > 0 ? 1 : -1;
+        dummy.scale.y *= 0.16;
+        dummy.scale.x *= 0.82;
+        dummy.scale.z *= 0.86;
+        dummy.position.y = Math.max(part.pos[1] - 1.15, centerY - 1.05);
+        dummy.rotation.x += 0.34 * side;
+        dummy.rotation.z += 0.22 * side;
       } else if (isWindowLikePart(part, centerY)) {
         dummy.scale.setScalar(0.0001);
       } else if (isDelicateDetailPart(part, centerY)) {
@@ -4006,11 +4424,10 @@ function InstancedParts({ parts, geometry, material }: { parts: Part[]; geometry
       }
 
       dummy.position.set(p.pos[0] + offsetX, p.pos[1] + offsetY, p.pos[2] + offsetZ);
-      dummy.scale.set(...p.scale);
-      dummy.rotation.set(...p.rot);
-      if (geometry instanceof THREE.CylinderGeometry && geometry.parameters.radialSegments === 4) {
-        dummy.rotation.y += Math.PI / 4;
-      }
+      applyPartMatrix(dummy, p);
+      dummy.position.x += offsetX;
+      dummy.position.y += offsetY;
+      dummy.position.z += offsetZ;
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       needsUpdate = true;

@@ -162,12 +162,7 @@ export async function callGeminiPOI(
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return {
-      npcDialogue: '"I have nothing more to say to you today." Your host turns away.',
-      suggestedResponses: [
-        { label: 'Take your leave', type: 'farewell' },
-      ],
-    };
+    return getOfflinePOIResponse(userMessage);
   }
 
   recordCall();
@@ -232,6 +227,37 @@ export async function callGeminiPOI(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function getOfflinePOIResponse(userMessage: string): POILLMResponse {
+  const text = userMessage.toLowerCase();
+  if (text.includes('lesson') || text.includes('teach') || text.includes('learn')) {
+    return {
+      npcDialogue: 'Your host gestures toward the workbench and the written labels. Formal instruction is handled through the lesson ledger here, not by idle conversation.',
+      suggestedResponses: [
+        { label: 'Ask for formal instruction', type: 'request_lesson' },
+        { label: 'Inspect the site instead', type: 'question' },
+        { label: 'Take your leave', type: 'farewell' },
+      ],
+    };
+  }
+  if (text.includes('show') || text.includes('sample') || text.includes('specimen')) {
+    return {
+      npcDialogue: 'The sample is examined briefly, then set down with care. Without a full lesson, your host will not hazard a public judgment.',
+      suggestedResponses: [
+        { label: 'Ask for formal instruction', type: 'request_lesson' },
+        { label: 'Take your leave', type: 'farewell' },
+      ],
+    };
+  }
+  return {
+    npcDialogue: 'The keeper is occupied with visitors, accounts, and local business. You may still inspect the place, claim any available find, or pay for formal instruction.',
+    suggestedResponses: [
+      { label: 'Ask for formal instruction', type: 'request_lesson' },
+      { label: 'Inspect the site instead', type: 'question' },
+      { label: 'Take your leave', type: 'farewell' },
+    ],
+  };
 }
 
 function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {

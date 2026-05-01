@@ -15,6 +15,8 @@ View your app in AI Studio: https://ai.studio/apps/f1d51c77-2e6d-41a8-8ff2-dba73
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Optional: for local-only tavern/POI LLM testing, set `GEMINI_API_KEY` and `VITE_ENABLE_CLIENT_LLM=true` in `.env.local`
 3. Run the app:
    `npm run dev`
+
+For public/Vercel builds, leave `GEMINI_API_KEY` unset. The game runs with non-LLM tavern and POI fallbacks.

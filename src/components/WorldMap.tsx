@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData, type TerrainData } from '../utils/terrain';
 import { motion } from 'framer-motion';
-import { X, Compass, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
+import { X, Compass, ZoomIn, ZoomOut, Crosshair, Map as MapIcon } from 'lucide-react';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 import { getAnimalMapData } from '../state/worldRegistries';
@@ -55,9 +55,85 @@ function terrainHoverLabel(terrain: TerrainData): string {
 
 interface WorldMapProps {
   onClose: () => void;
+  onOpenWorldMap?: () => void;
 }
 
-export function WorldMap({ onClose }: WorldMapProps) {
+const CHART = {
+  oceanPanel: '#070b14',
+  brass: '#c9a25a',
+  brassBright: '#e2c87a',
+  brassSoft: 'rgba(226,200,122,0.72)',
+  player: '#94a8c4',
+  landText: '#c8bfa8',
+  mutedText: '#64748b',
+  panel: 'rgba(8, 12, 20, 0.78)',
+  panelLine: 'rgba(184,154,106,0.34)',
+  poi: '#6dc3b0',
+  scene: '#e8c872',
+  grazer: '#c8a060',
+  primate: '#8d6b52',
+  reptile: '#78905a',
+  bird: '#d8a0aa',
+};
+
+type AnimalLayer = {
+  key: 'grazers' | 'primates' | 'reptiles' | 'wadingBirds';
+  label: string;
+  color: string;
+  points: { position: [number, number, number] }[];
+  speciesName?: string;
+};
+
+type AnimalCluster = {
+  x: number;
+  z: number;
+  count: number;
+  label: string;
+  color: string;
+};
+
+const ANIMAL_CLUSTER_RADIUS = 34;
+const ANIMAL_CLUSTER_SQ = ANIMAL_CLUSTER_RADIUS * ANIMAL_CLUSTER_RADIUS;
+
+function clusterAnimalLayer(layer: AnimalLayer): AnimalCluster[] {
+  const used = new Array(layer.points.length).fill(false);
+  const clusters: AnimalCluster[] = [];
+  for (let i = 0; i < layer.points.length; i++) {
+    if (used[i]) continue;
+    const origin = layer.points[i].position;
+    let x = origin[0];
+    let z = origin[2];
+    let count = 1;
+    used[i] = true;
+    for (let j = i + 1; j < layer.points.length; j++) {
+      if (used[j]) continue;
+      const p = layer.points[j].position;
+      const dx = p[0] - origin[0];
+      const dz = p[2] - origin[2];
+      if (dx * dx + dz * dz <= ANIMAL_CLUSTER_SQ) {
+        used[j] = true;
+        x += p[0];
+        z += p[2];
+        count++;
+      }
+    }
+    const name = layer.speciesName ?? layer.label;
+    clusters.push({
+      x: x / count,
+      z: z / count,
+      count,
+      label: count > 1 ? `${count} ${name}` : name,
+      color: layer.color,
+    });
+  }
+  return clusters;
+}
+
+function currentPortLabel(portName?: string) {
+  return portName ? portName.toUpperCase() : 'LOCAL CHART';
+}
+
+export function WorldMap({ onClose, onOpenWorldMap }: WorldMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -82,6 +158,66 @@ export function WorldMap({ onClose }: WorldMapProps) {
   const playerMode = useGameStore(s => s.playerMode);
   const worldSeed = useGameStore(s => s.worldSeed);
   const discoveredPOIs = useGameStore(s => s.discoveredPOIs);
+  const currentWorldPortId = useGameStore(s => s.currentWorldPortId);
+
+  const currentPort = useMemo(() => {
+    if (currentWorldPortId) {
+      const exact = ports.find(p => p.id === currentWorldPortId);
+      if (exact) return exact;
+    }
+    let nearest = ports[0];
+    let nearestDistSq = Infinity;
+    for (const port of ports) {
+      const dx = port.position[0] - playerPos[0];
+      const dz = port.position[2] - playerPos[2];
+      const distSq = dx * dx + dz * dz;
+      if (distSq < nearestDistSq) {
+        nearestDistSq = distSq;
+        nearest = port;
+      }
+    }
+    return nearest;
+  }, [currentWorldPortId, playerPos, ports]);
+
+  const animalLayers = useMemo<AnimalLayer[]>(() => {
+    const animals = getAnimalMapData();
+    const layers: AnimalLayer[] = [
+      {
+        key: 'grazers',
+        label: 'Grazers',
+        color: CHART.grazer,
+        points: animals.grazers,
+        speciesName: animals.grazerSpecies?.name,
+      },
+      {
+        key: 'primates',
+        label: 'Primates',
+        color: CHART.primate,
+        points: animals.primates,
+        speciesName: animals.primateSpecies?.name,
+      },
+      {
+        key: 'reptiles',
+        label: 'Reptiles',
+        color: CHART.reptile,
+        points: animals.reptiles,
+        speciesName: animals.reptileSpecies?.name,
+      },
+      {
+        key: 'wadingBirds',
+        label: 'Wading birds',
+        color: CHART.bird,
+        points: animals.wadingBirds,
+        speciesName: animals.wadingSpecies?.name,
+      },
+    ];
+    return layers.filter(layer => layer.points.length > 0);
+  }, [worldSeed, ports]);
+
+  const animalClusters = useMemo(
+    () => animalLayers.flatMap(clusterAnimalLayer),
+    [animalLayers],
+  );
 
   // Wait for the module-level pre-render (usually already done by the time modal opens)
   useEffect(() => {
@@ -204,46 +340,44 @@ export function WorldMap({ onClose }: WorldMapProps) {
       y: (wz / mapWorldHalf) * (h / 2),
     });
 
-    // Draw trade route lines between discovered ports (subtle)
-    if (discoveredPorts.length > 1) {
-      ctx.strokeStyle = 'rgba(200, 170, 120, 0.2)';
-      ctx.lineWidth = 1.5 / zoom;
-      ctx.setLineDash([6 / zoom, 4 / zoom]);
-      const discovered = ports.filter(p => discoveredPorts.includes(p.id));
-      for (let i = 0; i < discovered.length; i++) {
-        for (let j = i + 1; j < discovered.length; j++) {
-          const a = worldToCanvas(discovered[i].position[0], discovered[i].position[2]);
-          const b = worldToCanvas(discovered[j].position[0], discovered[j].position[2]);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
-        }
-      }
-      ctx.setLineDash([]);
-    }
-
-    // Draw animal markers — tiny dots colored by template, faded at very low zoom
-    const animals = getAnimalMapData();
+    // Draw animal markers — clustered labels at chart zoom, dots when pulled back.
     const animalOpacity = Math.min(1, Math.max(0, (zoom - 0.5) / 0.4));
     if (animalOpacity > 0.05) {
       const dotRadius = Math.max(0.8, 1.6 / zoom);
-      const drawLayer = (entries: { position: [number, number, number] }[], fill: string) => {
-        if (!entries || entries.length === 0) return;
-        ctx.fillStyle = fill;
-        for (const a of entries) {
-          const p = worldToCanvas(a.position[0], a.position[2]);
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, dotRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      };
       ctx.globalAlpha = animalOpacity;
-      drawLayer(animals.grazers, '#c8a060');       // tan — grazers/camels/deer
-      drawLayer(animals.primates, '#5a3a28');      // dark brown — primates
-      drawLayer(animals.reptiles, '#6a8048');      // olive — reptiles
-      drawLayer(animals.wadingBirds, '#f0b8c0');   // soft pink — wading birds
+      for (const cluster of animalClusters) {
+        const p = worldToCanvas(cluster.x, cluster.z);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, dotRadius + Math.min(2.5, cluster.count * 0.25) / zoom, 0, Math.PI * 2);
+        ctx.fillStyle = cluster.color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(8,14,28,0.72)';
+        ctx.lineWidth = 1 / zoom;
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
+
+      if (zoom > 1.05) {
+        ctx.font = `600 ${Math.max(8.5, 10.5 / zoom)}px "DM Sans", system-ui, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        for (const cluster of animalClusters) {
+          if (cluster.count < 2 && zoom < 1.45) continue;
+          const p = worldToCanvas(cluster.x, cluster.z);
+          const label = cluster.label;
+          const fs = Math.max(8.5, 10.5 / zoom);
+          const lw = ctx.measureText(label).width;
+          const lx = p.x + 5 / zoom;
+          const ly = p.y - 7 / zoom;
+          const pad = 2.5 / zoom;
+          ctx.fillStyle = 'rgba(8, 12, 20, 0.74)';
+          ctx.beginPath();
+          ctx.roundRect(lx - pad, ly - fs / 2 - pad, lw + pad * 2, fs + pad * 2, 2.5 / zoom);
+          ctx.fill();
+          ctx.fillStyle = cluster.color;
+          ctx.fillText(label, lx, ly);
+        }
+      }
     }
 
     // Draw hinterland scenes — amber diamonds for each scene in a discovered
@@ -270,7 +404,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
           ctx.save();
           ctx.translate(p.x, p.y);
           ctx.rotate(Math.PI / 4);
-          ctx.fillStyle = '#f2b840';
+          ctx.fillStyle = CHART.scene;
           ctx.strokeStyle = 'rgba(255,255,255,0.85)';
           ctx.lineWidth = 1 / zoom;
           ctx.beginPath();
@@ -293,7 +427,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
             ctx.beginPath();
             ctx.roundRect(lx - pad, ly - fs / 2 - pad, lw + pad * 2, fs + pad * 2, 2 / zoom);
             ctx.fill();
-            ctx.fillStyle = '#f2d890';
+            ctx.fillStyle = CHART.brassBright;
             ctx.fillText(label, lx, ly);
           }
         }
@@ -327,7 +461,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
         // Filled disc
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = '#5fc8ff';
+        ctx.fillStyle = CHART.poi;
         ctx.fill();
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
         ctx.lineWidth = 1.2 / zoom;
@@ -351,7 +485,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
           ctx.beginPath();
           ctx.roundRect(lx - pad, ly - fs / 2 - pad, lw + pad * 2, fs + pad * 2, 2 / zoom);
           ctx.fill();
-          ctx.fillStyle = discovered ? '#cfe9ff' : '#5fc8ff';
+          ctx.fillStyle = discovered ? '#d7f3ea' : CHART.poi;
           ctx.fillText(label, lx, ly);
         }
       }
@@ -370,7 +504,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
         // Undiscovered: subtle hint marker
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, 3 / zoom, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(139, 90, 43, 0.25)';
+        ctx.fillStyle = 'rgba(201, 162, 90, 0.22)';
         ctx.fill();
         return;
       }
@@ -387,9 +521,9 @@ export function WorldMap({ onClose }: WorldMapProps) {
       // Port dot
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, baseSize, 0, Math.PI * 2);
-      ctx.fillStyle = isHovered ? '#ffcc44' : '#c8553d';
+      ctx.fillStyle = isHovered ? CHART.brassBright : CHART.brass;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.strokeStyle = 'rgba(255,240,200,0.72)';
       ctx.lineWidth = 1.5 / zoom;
       ctx.stroke();
 
@@ -401,7 +535,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
 
       // Port name
       const fontSize = Math.max(10, 13 / zoom);
-      ctx.font = `600 ${fontSize}px "Inter", system-ui, sans-serif`;
+      ctx.font = `600 ${fontSize}px "Fraunces", serif`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
 
@@ -420,7 +554,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
       ctx.roundRect(rectX, rectY, rectW, rectH, radius);
       ctx.fill();
 
-      ctx.fillStyle = '#e6d5ac';
+      ctx.fillStyle = '#f0dfb8';
       ctx.fillText(port.name, textX, textY);
     });
 
@@ -507,7 +641,7 @@ export function WorldMap({ onClose }: WorldMapProps) {
     ctx.stroke();
 
     ctx.restore();
-  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, discoveredPOIs, mapWorldHalf, worldSeed]);
+  }, [zoom, offset, hoveredPort, playerPos, playerRot, playerMode, ports, discoveredPorts, discoveredPOIs, mapWorldHalf, worldSeed, animalClusters]);
 
   useEffect(() => {
     if (isRendering) return;
@@ -583,193 +717,233 @@ export function WorldMap({ onClose }: WorldMapProps) {
     setZoom(1.5);
   };
 
+  const hoveredPortInfo = hoveredPort ? ports.find(p => p.id === hoveredPort) : null;
+  const hoveredBearing = hoveredPortInfo ? (() => {
+    const dx = hoveredPortInfo.position[0] - playerPos[0];
+    const dz = hoveredPortInfo.position[2] - playerPos[2];
+    const bearing = ((Math.atan2(dx, -dz) * 180 / Math.PI) + 360) % 360;
+    const dist = Math.round(Math.sqrt(dx * dx + dz * dz));
+    const cardinals = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    return { dist, bearing: Math.round(bearing), cardinal: cardinals[Math.round(bearing / 22.5) % 16] };
+  })() : null;
+
   return (
     <motion.div
       {...modalBackdropMotion}
-      className="absolute inset-0 bg-black/70 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-6 z-40"
+      className="absolute inset-0 bg-black/65 backdrop-blur-sm pointer-events-auto flex items-center justify-center z-40 p-0 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
-        ref={containerRef}
+        data-testid="local-map-modal"
         {...modalPanelMotion}
-        className="relative w-full max-w-5xl aspect-[4/3] rounded-2xl overflow-hidden
-          bg-[#0a0e18]/80 backdrop-blur-xl border border-[#2a2d3a]/50
-          shadow-[0_8px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)]"
+        className="relative w-full h-[var(--app-height)] sm:h-[82vh] sm:max-w-6xl sm:rounded-[18px] overflow-hidden"
+        style={{
+          padding: 7,
+          background: 'radial-gradient(ellipse at 22% 12%, #d4b16a 0%, #a78845 22%, #6b4f22 48%, #2c1f0c 100%)',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.75), inset 0 2px 3px rgba(255,225,160,0.35), inset 0 -2px 4px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4)',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header bar */}
-        <div className="absolute top-0 left-0 right-0 h-12 flex items-center justify-between px-5 z-20
-          bg-gradient-to-b from-[#0a0e18]/90 to-transparent">
-          <div className="flex items-center gap-3">
-            <Compass size={18} className="text-amber-400" />
-            <span className="text-amber-200/90 text-sm font-semibold tracking-wide uppercase">
-              Navigation Chart
-            </span>
-            <span className="text-[#6a6d7a] text-xs ml-2">
-              {discoveredPorts.length} / {ports.length} ports discovered
-            </span>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10
-              flex items-center justify-center transition-all hover:border-white/20"
-          >
-            <X size={16} className="text-white/60" />
-          </button>
-        </div>
-
-        {/* Canvas */}
-        <canvas
-          ref={canvasRef}
-          className={`w-full h-full ${dragging ? 'cursor-grabbing' : hoveredPort ? 'cursor-pointer' : 'cursor-grab'}`}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onWheel={handleWheel}
-        />
-
-        {/* Loading overlay */}
-        {isRendering && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e18]/90 z-30">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-8 h-8 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
-              <span className="text-amber-200/70 text-sm">Rendering chart...</span>
-            </div>
-          </div>
-        )}
-
-        {/* Zoom controls */}
-        <div className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-20">
-          <button
-            onClick={() => setZoom(prev => Math.min(4, prev + 0.3))}
-            className="w-9 h-9 rounded-lg bg-[#0a0e18]/70 backdrop-blur-sm border border-[#2a2d3a]/40
-              flex items-center justify-center text-white/60 hover:text-white hover:bg-[#0a0e18]/90
-              transition-all shadow-lg"
-          >
-            <ZoomIn size={16} />
-          </button>
-          <button
-            onClick={() => setZoom(prev => Math.max(0.5, prev - 0.3))}
-            className="w-9 h-9 rounded-lg bg-[#0a0e18]/70 backdrop-blur-sm border border-[#2a2d3a]/40
-              flex items-center justify-center text-white/60 hover:text-white hover:bg-[#0a0e18]/90
-              transition-all shadow-lg"
-          >
-            <ZoomOut size={16} />
-          </button>
-          <button
-            onClick={centerOnPlayer}
-            className="w-9 h-9 rounded-lg bg-[#0a0e18]/70 backdrop-blur-sm border border-[#2a2d3a]/40
-              flex items-center justify-center text-white/60 hover:text-white hover:bg-[#0a0e18]/90
-              transition-all shadow-lg"
-          >
-            <Crosshair size={16} />
-          </button>
-        </div>
-
-        {/* Compass rose decoration */}
-        <div className="absolute bottom-4 left-4 z-20 opacity-40 pointer-events-none">
-          <svg width="64" height="64" viewBox="0 0 100 100">
-            <g transform="translate(50,50)">
-              {/* Main cardinal points */}
-              <polygon points="0,-42 4,-12 -4,-12" fill="#c8a96e" />
-              <polygon points="0,42 4,12 -4,12" fill="#8b7355" />
-              <polygon points="-42,0 -12,4 -12,-4" fill="#8b7355" />
-              <polygon points="42,0 12,4 12,-4" fill="#8b7355" />
-              {/* Intercardinal points */}
-              <polygon points="-30,-30 -6,-10 -10,-6" fill="#6b6355" opacity="0.6" />
-              <polygon points="30,-30 6,-10 10,-6" fill="#6b6355" opacity="0.6" />
-              <polygon points="-30,30 -6,10 -10,6" fill="#6b6355" opacity="0.6" />
-              <polygon points="30,30 6,10 10,6" fill="#6b6355" opacity="0.6" />
-              {/* Center */}
-              <circle r="4" fill="#c8a96e" />
-              <circle r="2" fill="#0a0e18" />
-            </g>
-            {/* Labels */}
-            <text x="50" y="10" textAnchor="middle" fill="#c8a96e" fontSize="11" fontWeight="bold">N</text>
-            <text x="50" y="97" textAnchor="middle" fill="#8b7355" fontSize="9">S</text>
-            <text x="5" y="54" textAnchor="middle" fill="#8b7355" fontSize="9">W</text>
-            <text x="95" y="54" textAnchor="middle" fill="#8b7355" fontSize="9">E</text>
-          </svg>
-        </div>
-
-        {/* Hovered port tooltip */}
-        {hoveredPort && (() => {
-          const port = ports.find(p => p.id === hoveredPort);
-          if (!port) return null;
-          const dx = port.position[0] - playerPos[0];
-          const dz = port.position[2] - playerPos[2];
-          const dist = Math.round(Math.sqrt(dx * dx + dz * dz));
-          const bearing = ((Math.atan2(dx, -dz) * 180 / Math.PI) + 360) % 360;
-          const cardinals = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-          const cardinal = cardinals[Math.round(bearing / 22.5) % 16];
-          return (
-            <div className="absolute top-14 left-5 z-20 bg-[#0a0e18]/80 backdrop-blur-md border border-[#2a2d3a]/50 rounded-xl px-4 py-3 shadow-lg max-w-xs">
-              <div className="text-amber-200 font-semibold text-sm">{port.name}</div>
-              <div className="text-[#6a6d7a] text-xs mt-1">
-                {port.scale} {port.culture} port
-              </div>
-              <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-white/5">
-                <span className="text-amber-400/80 text-xs font-mono">{dist}u</span>
-                <span className="text-[#6a6d7a] text-xs">bearing {Math.round(bearing)}° {cardinal}</span>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Wildlife legend (bottom-left) — only when species are actually spawned on this map */}
-        {(() => {
-          const a = getAnimalMapData();
-          const items: { color: string; info?: { name: string } }[] = [];
-          if (a.grazers.length > 0 && a.grazerSpecies) items.push({ color: '#c8a060', info: a.grazerSpecies });
-          if (a.primates.length > 0 && a.primateSpecies) items.push({ color: '#5a3a28', info: a.primateSpecies });
-          if (a.reptiles.length > 0 && a.reptileSpecies) items.push({ color: '#6a8048', info: a.reptileSpecies });
-          if (a.wadingBirds.length > 0 && a.wadingSpecies) items.push({ color: '#f0b8c0', info: a.wadingSpecies });
-          if (items.length === 0) return null;
-          return (
-            <div className="absolute bottom-5 left-5 z-20 bg-[#0a0e18]/80 backdrop-blur-md border border-[#2a2d3a]/50 rounded-xl px-3 py-2 shadow-lg">
-              <div className="text-[10px] uppercase tracking-wider text-[#8a8060] font-semibold mb-1.5">Wildlife</div>
-              <div className="flex flex-col gap-1">
-                {items.map((it, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ background: it.color }} />
-                    <span className="text-[11px] text-[#c8bfa8]">{it.info?.name ?? '—'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Subtle vignette */}
-        <div className="absolute inset-0 pointer-events-none z-10 rounded-2xl"
+        <div
+          className="relative w-full h-full overflow-hidden sm:rounded-[12px] grid grid-rows-[minmax(0,1fr)_minmax(190px,42%)] md:grid-rows-1 md:grid-cols-[minmax(0,1fr)_18rem]"
           style={{
-            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.3)',
+            background: CHART.oceanPanel,
+            boxShadow: 'inset 0 0 0 1px #b89a6a, inset 0 0 0 2px rgba(0,0,0,0.5), inset 0 4px 12px rgba(0,0,0,0.7)',
           }}
-        />
+        >
+          <div ref={containerRef} className="relative min-h-0 min-w-0">
+            <div className="absolute top-0 left-0 right-0 z-20 px-4 pt-3 pb-3 bg-gradient-to-b from-[#070b14]/95 to-transparent">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-amber-500/70">
+                    <Compass size={13} />
+                    Local Chart
+                  </div>
+                </div>
+                <div className="text-center min-w-0">
+                  <div
+                    className="text-amber-200 text-base sm:text-lg truncate"
+                    style={{ fontFamily: '"Fraunces", serif', fontWeight: 600, letterSpacing: '0.08em' }}
+                  >
+                    {currentPortLabel(currentPort?.name)}
+                  </div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    {currentPort ? `${currentPort.scale} ${currentPort.culture} harbor` : 'Harbor vicinity'} · {discoveredPorts.length}/{ports.length} ports known
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  {onOpenWorldMap && (
+                    <button
+                      data-testid="local-map-world-map"
+                      aria-label="Open world map"
+                      onClick={onOpenWorldMap}
+                      className="h-8 px-3 rounded-md border border-amber-400/25 bg-amber-500/[0.08] text-amber-200/90 hover:bg-amber-500/[0.14] transition-colors flex items-center gap-2 text-[11px] uppercase tracking-[0.12em]"
+                    >
+                      <MapIcon size={13} />
+                      <span className="hidden sm:inline">World Map</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={onClose}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90"
+                    style={{
+                      background: 'radial-gradient(circle at 30% 25%, #d8b46a 0%, #a08548 35%, #5c4320 75%, #291c08 100%)',
+                      boxShadow: 'inset 0 1px 1.5px rgba(255,225,160,0.4), inset 0 -1px 2px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.6)',
+                    }}
+                    title="Close"
+                  >
+                    <X size={13} className="text-[#2a1f0c]" strokeWidth={3} />
+                  </button>
+                </div>
+              </div>
+            </div>
 
-        {/* Subtle top/bottom gradient borders */}
-        <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10
-          bg-gradient-to-t from-[#0a0e18]/60 to-transparent" />
+            <canvas
+              ref={canvasRef}
+              className={`w-full h-full ${dragging ? 'cursor-grabbing' : hoveredPort ? 'cursor-pointer' : 'cursor-grab'}`}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onWheel={handleWheel}
+            />
 
-        {/* Keyboard hints */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-4 text-[10px] text-white/25 pointer-events-none">
-          <span>Drag to pan</span>
-          <span>Scroll or +/- to zoom</span>
-          <span>ESC to close</span>
-        </div>
+            {isRendering && (
+              <div className="absolute inset-0 flex items-center justify-center bg-[#070b14]/92 z-30 pointer-events-none">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-8 h-8 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                  <span className="text-amber-200/70 text-sm">Rendering local chart...</span>
+                </div>
+              </div>
+            )}
 
-        {/* Hovered terrain label */}
-        {hoveredTerrainLabel && !isRendering && (
-          <div className="absolute bottom-9 left-1/2 -translate-x-1/2 z-20 pointer-events-none
-            rounded-md border border-[#2a2d3a]/60 bg-[#0a0e18]/75 backdrop-blur-md
-            px-3 py-1 shadow-lg">
-            <span className="text-[11px] font-semibold tracking-wide text-amber-100/90">
-              {hoveredTerrainLabel}
-            </span>
+            <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-1.5">
+              <ChartIconButton label="Zoom in" onClick={() => setZoom(prev => Math.min(4, prev + 0.3))}><ZoomIn size={16} /></ChartIconButton>
+              <ChartIconButton label="Zoom out" onClick={() => setZoom(prev => Math.max(0.5, prev - 0.3))}><ZoomOut size={16} /></ChartIconButton>
+              <ChartIconButton label="Center" onClick={centerOnPlayer}><Crosshair size={16} /></ChartIconButton>
+            </div>
+
+            {hoveredTerrainLabel && !isRendering && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none rounded-md px-3 py-1 shadow-lg"
+                style={{ background: CHART.panel, border: `1px solid ${CHART.panelLine}` }}>
+                <span className="text-[11px] font-semibold tracking-wide text-amber-100/90">
+                  {hoveredTerrainLabel}
+                </span>
+              </div>
+            )}
+
+            <div className="absolute inset-0 pointer-events-none z-10"
+              style={{ boxShadow: 'inset 0 0 70px rgba(20,10,0,0.48)' }}
+            />
           </div>
-        )}
+
+          <div
+            aria-hidden
+            className="hidden"
+            style={{ background: 'linear-gradient(to bottom, transparent 0%, rgba(201,162,90,0.55) 50%, transparent 100%)' }}
+          />
+
+          <aside className="min-h-0 min-w-0 bg-[#080c14]/78 border-t md:border-t-0 md:border-l border-[#3a3020]/60 flex flex-col">
+            <div className="px-4 pt-3.5 pb-3 border-b border-[#2a2520]/60">
+              <div className="text-center text-amber-400/90 uppercase"
+                style={{ fontFamily: '"Fraunces", serif', fontSize: 11, letterSpacing: '0.28em', fontWeight: 500 }}>
+                Harbor Detail
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <MiniStat label="Zoom" value={`${zoom.toFixed(1)}x`} />
+                <MiniStat label="POIs" value={String(discoveredPOIs.length)} />
+                <MiniStat label="Wildlife" value={String(animalClusters.length)} />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              <section>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-500/70 mb-2">Selected</div>
+                {hoveredPortInfo && hoveredBearing ? (
+                  <div className="rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div className="text-sm text-amber-100" style={{ fontFamily: '"Fraunces", serif' }}>{hoveredPortInfo.name}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">{hoveredPortInfo.scale} {hoveredPortInfo.culture} port</div>
+                    <div className="mt-2 flex gap-3 text-[11px]">
+                      <span className="text-amber-300 tabular-nums">{hoveredBearing.dist}u</span>
+                      <span className="text-slate-400">bearing {hoveredBearing.bearing}° {hoveredBearing.cardinal}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500 leading-snug">Hover a port or marker on the chart. Terrain appears along the lower edge.</div>
+                )}
+              </section>
+
+              <section>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-500/70 mb-2">Legend</div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px] text-slate-300">
+                  <LegendItem color={CHART.player} label="You" shape="arrow" />
+                  <LegendItem color={CHART.brass} label="Port" />
+                  <LegendItem color={CHART.poi} label="POI" />
+                  <LegendItem color={CHART.scene} label="Scene" shape="diamond" />
+                </div>
+              </section>
+
+              <section>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-500/70 mb-2">Animals</div>
+                {animalLayers.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {animalLayers.map(layer => (
+                      <div key={layer.key} className="flex items-center gap-2 text-[11px]">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: layer.color }} />
+                        <span className="text-slate-300 truncate">{layer.speciesName ?? layer.label}</span>
+                        <span className="ml-auto text-slate-500 tabular-nums">{layer.points.length}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500">No wildlife markers in this loaded scene.</div>
+                )}
+              </section>
+
+              <section className="hidden md:block">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-amber-500/70 mb-2">Controls</div>
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  Drag to pan. Scroll or use the buttons to zoom. Press Escape to close.
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+function ChartIconButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      className="w-9 h-9 rounded-md flex items-center justify-center text-amber-100/75 hover:text-amber-100 transition-colors shadow-lg"
+      style={{ background: CHART.panel, border: `1px solid ${CHART.panelLine}` }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md py-1.5" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="text-[13px] text-amber-100 tabular-nums">{value}</div>
+      <div className="text-[8px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+    </div>
+  );
+}
+
+function LegendItem({ color, label, shape = 'dot' }: { color: string; label: string; shape?: 'dot' | 'diamond' | 'arrow' }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={shape === 'diamond' ? 'w-2.5 h-2.5 rotate-45' : shape === 'arrow' ? 'w-0 h-0 border-y-[5px] border-y-transparent border-l-[9px]' : 'w-2.5 h-2.5 rounded-full'}
+        style={shape === 'arrow' ? { borderLeftColor: color } : { backgroundColor: color }}
+      />
+      <span>{label}</span>
+    </div>
   );
 }

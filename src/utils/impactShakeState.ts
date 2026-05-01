@@ -6,6 +6,12 @@ export interface BuildingShakeEvent {
   intensity: number;
 }
 
+export interface BuildingCollapseEvent {
+  buildingId: string;
+  time: number;
+  intensity: number;
+}
+
 export interface TreeShakeEvent {
   kind: TreeImpactKind;
   index: number;
@@ -21,6 +27,7 @@ export interface FelledTreeState {
 export type BuildingDamageStage = 'intact' | 'damaged' | 'heavilyDamaged' | 'destroyed';
 
 const MAX_BUILDING_SHAKES = 24;
+const MAX_BUILDING_COLLAPSES = 12;
 const MAX_TREE_SHAKES = 32;
 const TREE_MAX_HP: Record<TreeImpactKind, number> = {
   tree: 10,
@@ -39,6 +46,7 @@ const TREE_MAX_HP: Record<TreeImpactKind, number> = {
 };
 
 export const buildingShakes: BuildingShakeEvent[] = [];
+export const buildingCollapseEvents: BuildingCollapseEvent[] = [];
 export const treeShakes: TreeShakeEvent[] = [];
 const palmDamage = new Map<number, number>();
 const treeDamage = new Map<string, number>();
@@ -70,6 +78,18 @@ export function spawnBuildingShake(buildingId: string, intensity = 1) {
     buildingShakes.shift();
   }
   buildingShakes.push(ev);
+}
+
+export function spawnBuildingCollapse(buildingId: string, intensity = 1) {
+  const ev: BuildingCollapseEvent = {
+    buildingId,
+    time: nowSeconds(),
+    intensity: clampIntensity(intensity),
+  };
+  if (buildingCollapseEvents.length >= MAX_BUILDING_COLLAPSES) {
+    buildingCollapseEvents.shift();
+  }
+  buildingCollapseEvents.push(ev);
 }
 
 export function spawnTreeShake(kind: TreeImpactKind, index: number, intensity = 1) {

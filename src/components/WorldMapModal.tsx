@@ -22,7 +22,8 @@ import {
   PORT_REGIONS,
   type WorldRegion,
 } from '../utils/worldPorts';
-import TravelModalB from './TravelModalB';
+import VoyageModal from './VoyageModal';
+import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 
 interface WorldMapModalProps {
@@ -59,6 +60,18 @@ const REGION_NAV_LABELS: Record<string, string> = {
   atlantic: 'Atlantic',
 };
 
+const VOYAGE_INCIDENT_CHANCE = 0.25;
+
+type TravelModalState = {
+  fromPort: string;
+  toPort: string;
+  totalDays: number;
+  targetPortId: string;
+  fromPortId: string;
+  toPortId: string;
+  force: boolean;
+};
+
 export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -71,6 +84,12 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
 
   const dayCount = useGameStore(s => s.dayCount);
   const fastTravel = useGameStore(s => s.fastTravel);
+  const crew = useGameStore(s => s.crew);
+  const stats = useGameStore(s => s.stats);
+  const provisions = useGameStore(s => s.provisions);
+  const weather = useGameStore(s => s.weather);
+  const windSpeed = useGameStore(s => s.windSpeed);
+  const chartedRoutes = useGameStore(s => s.chartedRoutes);
   const worldSeed = useGameStore(s => s.worldSeed);
   const devSoloPort = useGameStore(s => s.devSoloPort);
   const currentWorldPortId = useGameStore(s => s.currentWorldPortId);
@@ -80,15 +99,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
   const reachablePortIds = useMemo(() => getReachableWorldPortIds(nearestPortId), [nearestPortId]);
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
-  const [travelModal, setTravelModal] = useState<{
-    fromPort: string;
-    toPort: string;
-    totalDays: number;
-    targetPortId: string;
-    fromPortId: string;
-    toPortId: string;
-    force: boolean;
-  } | null>(null);
+  const [travelModal, setTravelModal] = useState<TravelModalState | null>(null);
 
   // Calculate travel info for selected port
   const travelInfo = useMemo(() => {
@@ -472,8 +483,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
     const travel = estimateSeaTravel(nearestPortId, selectedPort);
     const fromName = getWorldPortById(nearestPortId)?.name ?? nearestPortId;
     const toName = getWorldPortById(selectedPort)?.name ?? selectedPort;
-    sfxSail();
-    setTravelModal({
+    const modal = {
       fromPort: fromName,
       toPort: toName,
       totalDays: travel?.days ?? 1,
@@ -481,12 +491,29 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
       fromPortId: nearestPortId,
       toPortId: selectedPort,
       force: devMode && !canDirectlySail(nearestPortId, selectedPort),
-    });
+    };
+    sfxSail();
+    if (Math.random() < VOYAGE_INCIDENT_CHANCE) {
+      setTravelModal(modal);
+      return;
+    }
+    finishVoyage(modal, resolveVoyage({
+      fromPortId: nearestPortId,
+      toPortId: selectedPort,
+      stance: 'standard',
+      crew,
+      stats,
+      provisions,
+      dayCount,
+      chartedRoutes,
+      weatherIntensity: weather.targetIntensity,
+      windSpeed,
+    }));
   };
 
-  const finishVoyage = (modal: NonNullable<typeof travelModal>) => {
+  const finishVoyage = (modal: TravelModalState, resolution: VoyageResolution) => {
     const swap = () => {
-      fastTravel(modal.targetPortId, { force: modal.force });
+      fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
       setTravelModal(null);
       onClose();
     };
@@ -497,14 +524,14 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
     }
   };
 
-  const handleTravelComplete = () => {
+  const handleTravelComplete = (resolution: VoyageResolution) => {
     if (!travelModal) return;
-    finishVoyage(travelModal);
+    finishVoyage(travelModal, resolution);
   };
 
-  const handleTravelSkip = () => {
+  const handleTravelSkip = (resolution: VoyageResolution) => {
     if (!travelModal) return;
-    finishVoyage(travelModal);
+    finishVoyage(travelModal, resolution);
   };
 
   // Keyboard
@@ -795,7 +822,7 @@ export function WorldMapModal({ onClose, onArrival }: WorldMapModalProps) {
 
       {/* Travel animation modal */}
       {travelModal && (
-        <TravelModalB
+        <VoyageModal
           fromPort={travelModal.fromPort}
           toPort={travelModal.toPort}
           totalDays={travelModal.totalDays}

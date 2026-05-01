@@ -19,6 +19,8 @@ export interface Projectile {
   ownerId?: string;
   distanceTraveled?: number;
   maxDistance?: number;
+  ricochets?: number;
+  damageScale?: number;
   /** Accumulator for rocket-trail spawning — fires a smoke puff every
    *  ~50ms while positive. Only set for fireRocket projectiles. */
   trailClock?: number;
@@ -90,6 +92,8 @@ export function spawnProjectile(
     ownerId: opts.ownerId,
     distanceTraveled: opts.maxDistance ? 0 : undefined,
     maxDistance: opts.maxDistance,
+    ricochets: 0,
+    damageScale: 1,
     trailClock: weaponType === 'fireRocket' ? 0 : undefined,
   };
   if (projectiles.length >= MAX_PROJECTILES) {

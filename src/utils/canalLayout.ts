@@ -100,34 +100,6 @@ export interface CanalLayout {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Sample N points evenly along a semicircular arc opening in `awayDirRad`. */
-function arcPoints(
-  cx: number, cz: number,
-  radius: number,
-  awayDirX: number, awayDirZ: number,
-  samples: number,
-): [number, number][] {
-  // The arc covers 180°, sweeping from +90° to -90° relative to awayDir.
-  // Tangent basis: awayDir is the "north" of the arc (the open side); rotate 90°
-  // clockwise to get the sweep start direction.
-  const startX = -awayDirZ;  // perpendicular, starts on one flank
-  const startZ =  awayDirX;
-  // We want the arc on the side OPPOSITE awayDir (the city side, away from harbor).
-  // Parametrize point = center + radius * (cos(t) * startDir + sin(t) * (-awayDir))
-  // for t in [0, π] — when t=0 we're at one flank, t=π/2 we're at the back of the
-  // arc (deepest into city), t=π we're at the other flank.
-  const out: [number, number][] = [];
-  for (let i = 0; i < samples; i++) {
-    const t = (i / (samples - 1)) * Math.PI;
-    const c = Math.cos(t);
-    const s = Math.sin(t);
-    const px = cx + radius * (c * startX + s * (-awayDirX));
-    const pz = cz + radius * (c * startZ + s * (-awayDirZ));
-    out.push([px, pz]);
-  }
-  return out;
-}
-
 /**
  * Sample N points along an arc of arbitrary extent, centered on the inland
  * direction. extent=π reproduces arcPoints (180° wrap); 1.4π wraps further
@@ -173,6 +145,76 @@ function partialArcPoints(
     ]);
   }
   return out;
+}
+
+function organicLinePoints(
+  start: [number, number],
+  end: [number, number],
+  samples: number,
+  lateralAmplitude: number,
+  phase: number,
+): [number, number][] {
+  if (samples < 2 || lateralAmplitude <= 0) return [start, end];
+  const dx = end[0] - start[0];
+  const dz = end[1] - start[1];
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-6) return [start, end];
+  const nx = -dz / len;
+  const nz = dx / len;
+  const out: [number, number][] = [];
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    const taper = Math.sin(t * Math.PI);
+    const wave =
+      Math.sin(t * Math.PI * 1.35 + phase) * 0.8 +
+      Math.sin(t * Math.PI * 2.7 + phase * 0.53) * 0.28;
+    const offset = lateralAmplitude * wave * taper;
+    out.push([
+      start[0] + dx * t + nx * offset,
+      start[1] + dz * t + nz * offset,
+    ]);
+  }
+  return out;
+}
+
+function pointAtPolylineT(points: [number, number][], t: number): [number, number] {
+  if (points.length === 0) return [0, 0];
+  if (points.length === 1) return points[0];
+  const clamped = Math.max(0, Math.min(1, t));
+  const lengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const len = Math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1]);
+    lengths.push(len);
+    total += len;
+  }
+  if (total < 1e-6) return points[0];
+  let target = total * clamped;
+  for (let i = 0; i < lengths.length; i++) {
+    const len = lengths[i];
+    if (target <= len || i === lengths.length - 1) {
+      const localT = len < 1e-6 ? 0 : target / len;
+      return [
+        points[i][0] + (points[i + 1][0] - points[i][0]) * localT,
+        points[i][1] + (points[i + 1][1] - points[i][1]) * localT,
+      ];
+    }
+    target -= len;
+  }
+  return points[points.length - 1];
+}
+
+function normalAtPolylineT(points: [number, number][], t: number): [number, number] {
+  if (points.length < 2) return [1, 0];
+  const clamped = Math.max(0, Math.min(1, t));
+  const idx = Math.max(0, Math.min(points.length - 2, Math.floor(clamped * (points.length - 1))));
+  const a = points[idx];
+  const b = points[idx + 1];
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-6) return [1, 0];
+  return [-dz / len, dx / len];
 }
 
 /**
@@ -256,7 +298,13 @@ function generateWedge(
     centerX + inlandX * def.inletDepth,
     centerZ + inlandZ * def.inletDepth,
   ];
-  canals.push({ polyline: [inletStart, inletEnd], halfWidth: inletHalfW, primary: true });
+  const inletPoints = organicLinePoints(
+    inletStart, inletEnd,
+    Math.max(8, Math.round(def.inletDepth / 8)),
+    def.inletWidth * 0.12,
+    0.9,
+  );
+  canals.push({ polyline: inletPoints, halfWidth: inletHalfW, primary: true });
 
   const inletBridges = def.bridgesOnInlet ?? 2;
   for (let b = 0; b < inletBridges; b++) {
@@ -264,11 +312,12 @@ function generateWedge(
     // bridges. exclusive-endpoint t in (0.45, 0.9).
     const u = (b + 1) / (inletBridges + 1);
     const t = 0.45 + u * 0.45;
+    const [bx, bz] = pointAtPolylineT(inletPoints, t);
+    const [nx, nz] = normalAtPolylineT(inletPoints, t);
     bridges.push({
-      x: inletStart[0] + (inletEnd[0] - inletStart[0]) * t,
-      z: inletStart[1] + (inletEnd[1] - inletStart[1]) * t,
-      // Deck axis perpendicular to the inlet (lateral direction).
-      dirX: latX, dirZ: latZ,
+      x: bx,
+      z: bz,
+      dirX: nx, dirZ: nz,
       halfLength: deckOverhang(inletHalfW),
     });
   }
@@ -291,15 +340,23 @@ function generateWedge(
         centerX + inlandX * def.sideCanalLength + lateralX,
         centerZ + inlandZ * def.sideCanalLength + lateralZ,
       ];
-      canals.push({ polyline: [start, end], halfWidth: sideHalfW, primary: false });
+      const sidePoints = organicLinePoints(
+        start, end,
+        Math.max(7, Math.round(def.sideCanalLength / 8)),
+        def.sideCanalWidth * 0.18,
+        1.4 + offset * 0.017 * sign,
+      );
+      canals.push({ polyline: sidePoints, halfWidth: sideHalfW, primary: false });
 
       for (let b = 0; b < bridgesPerSide; b++) {
         const u = (b + 1) / (bridgesPerSide + 1);
         const t = 0.35 + u * 0.5; // mid-span bias, away from both ends
+        const [bx, bz] = pointAtPolylineT(sidePoints, t);
+        const [nx, nz] = normalAtPolylineT(sidePoints, t);
         bridges.push({
-          x: start[0] + (end[0] - start[0]) * t,
-          z: start[1] + (end[1] - start[1]) * t,
-          dirX: latX, dirZ: latZ,
+          x: bx,
+          z: bz,
+          dirX: nx, dirZ: nz,
           halfLength: deckOverhang(sideHalfW),
         });
       }
@@ -327,13 +384,10 @@ function generateWedge(
     const t = (b + 1) / (moatBridges + 1);
     const idx = Math.floor(t * (moatPoints.length - 1));
     const [bx, bz] = moatPoints[idx];
-    // Deck radial — from arc center outward.
-    const ox = bx - ccx;
-    const oz = bz - ccz;
-    const ol = Math.hypot(ox, oz) || 1;
+    const [nx, nz] = normalAtPolylineT(moatPoints, t);
     bridges.push({
       x: bx, z: bz,
-      dirX: ox / ol, dirZ: oz / ol,
+      dirX: nx, dirZ: nz,
       halfLength: deckOverhang(moatHalfW),
     });
   }
@@ -373,11 +427,20 @@ export function generateCanalLayout(
   const bridgeHalfDeck = halfW * 1.4 + Math.max(1.5, halfW * 0.25);
 
   // ── Concentric rings ──────────────────────────────────────────────────────
-  // Each ring is a 180° arc opening toward the harbor.
+  // Each ring is a 180° arc opening toward the harbor. Small deterministic
+  // radius variation keeps lagoon-city canals from reading as compass-drawn
+  // geometry while preserving broad navigability for bridges and roads.
   for (let r = 0; r < def.rings; r++) {
     const radius = def.innerRadius + r * def.ringSpacing;
     const samples = Math.max(20, Math.round(radius * 1.2));
-    const points = arcPoints(ccx, ccz, radius, harborX, harborZ, samples);
+    const points = partialArcPoints(
+      ccx, ccz,
+      radius + Math.sin((r + 1) * 1.37) * def.ringSpacing * 0.08,
+      -harborX, -harborZ,
+      Math.PI * (0.92 + r * 0.08),
+      samples,
+      Math.min(def.ringSpacing * 0.12, def.canalWidth * 0.9),
+    );
     canals.push({ polyline: points, halfWidth: halfW, primary: false });
 
     // Bridges along the arc — evenly spaced in arc-parameter, offset slightly
@@ -386,13 +449,10 @@ export function generateCanalLayout(
       const t = (b + 1) / (bridgesPerRing + 1); // 0..1, exclusive endpoints
       const idx = Math.floor(t * (points.length - 1));
       const [bx, bz] = points[idx];
-      // Bridge crosses radially — direction is from canal-center outward.
-      const ox = bx - ccx;
-      const oz = bz - ccz;
-      const ol = Math.hypot(ox, oz) || 1;
+      const [nx, nz] = normalAtPolylineT(points, t);
       bridges.push({
         x: bx, z: bz,
-        dirX: ox / ol, dirZ: oz / ol,
+        dirX: nx, dirZ: nz,
         halfLength: bridgeHalfDeck,
       });
     }
@@ -414,20 +474,25 @@ export function generateCanalLayout(
     const dirAwayZ = Math.cos(angle) * (-harborZ) - Math.sin(angle) * (-harborX);
     const start: [number, number] = [ccx + dirAwayX * innerR, ccz + dirAwayZ * innerR];
     const end:   [number, number] = [ccx + dirAwayX * outerR, ccz + dirAwayZ * outerR];
+    const points = organicLinePoints(
+      start, end,
+      Math.max(6, Math.round((outerR - innerR) / 8)),
+      def.canalWidth * 0.35,
+      2.1 + i * 0.73,
+    );
     canals.push({
-      polyline: [start, end],
+      polyline: points,
       halfWidth: halfW * 0.85, // radials slightly narrower
       primary: false,
     });
 
     for (let b = 0; b < bridgesPerRadial; b++) {
       const bt = (b + 1) / (bridgesPerRadial + 1);
-      const bx = start[0] + (end[0] - start[0]) * bt;
-      const bz = start[1] + (end[1] - start[1]) * bt;
-      // Perpendicular to the radial: rotate the radial direction by 90°.
+      const [bx, bz] = pointAtPolylineT(points, bt);
+      const [nx, nz] = normalAtPolylineT(points, bt);
       bridges.push({
         x: bx, z: bz,
-        dirX: -dirAwayZ, dirZ: dirAwayX,
+        dirX: nx, dirZ: nz,
         halfLength: bridgeHalfDeck * 0.9,
       });
     }
@@ -454,8 +519,14 @@ export function generateCanalLayout(
       centerX - harborX * tailOffset,
       centerZ - harborZ * tailOffset,
     ];
+    const inletPoints = organicLinePoints(
+      start, end,
+      Math.max(8, Math.round((mouthOffset + tailOffset) / 8)),
+      inletHalfW * 0.28,
+      0.4,
+    );
     canals.push({
-      polyline: [start, end],
+      polyline: inletPoints,
       halfWidth: inletHalfW,
       primary: true,
     });
@@ -468,12 +539,11 @@ export function generateCanalLayout(
       // mid-span (t=0.7) instead of on the harbor seam.
       const u = (b + 1) / (inletBridges + 1); // 0..1, exclusive endpoints
       const t = 0.5 + u * 0.4;                // remapped to (0.5, 0.9)
-      const bx = start[0] + (end[0] - start[0]) * t;
-      const bz = start[1] + (end[1] - start[1]) * t;
-      // Perpendicular to harbor direction.
+      const [bx, bz] = pointAtPolylineT(inletPoints, t);
+      const [nx, nz] = normalAtPolylineT(inletPoints, t);
       bridges.push({
         x: bx, z: bz,
-        dirX: -harborZ, dirZ: harborX,
+        dirX: nx, dirZ: nz,
         halfLength: inletHalfW + 3,
       });
     }

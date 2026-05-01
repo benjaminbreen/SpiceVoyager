@@ -803,8 +803,9 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     <motion.div
       {...floatingPanelMotion}
       className={isMobile
-        ? 'absolute bottom-24 left-1/2 z-40 w-[min(580px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto'
+        ? 'absolute left-1/2 z-40 w-[min(580px,calc(100vw-2rem))] -translate-x-1/2 pointer-events-auto'
         : 'absolute bottom-24 left-1/2 z-40 w-[min(880px,calc(100vw-3rem))] -translate-x-1/2 pointer-events-auto'}
+      style={isMobile ? { bottom: 'calc(6rem + var(--sai-bottom))' } : undefined}
     >
       <div
         className="bg-[#0a0e18]/92 backdrop-blur-xl border border-[#2a2d3a]/55 rounded-2xl overflow-hidden"

@@ -11,9 +11,10 @@ interface QuestsPanelProps {
   open: boolean;
   onClose: () => void;
   dockOffset?: boolean;
+  onOpenChart?: () => void;
 }
 
-export function QuestsPanel({ open, onClose, dockOffset = false }: QuestsPanelProps) {
+export function QuestsPanel({ open, onClose, dockOffset = false, onOpenChart }: QuestsPanelProps) {
   const leads = useGameStore(s => s.leads);
   const dayCount = useGameStore(s => s.dayCount);
   const failLead = useGameStore(s => s.failLead);
@@ -70,6 +71,7 @@ export function QuestsPanel({ open, onClose, dockOffset = false }: QuestsPanelPr
                   lead={lead}
                   currentDay={dayCount}
                   onAbandon={failLead}
+                  onOpenChart={onOpenChart}
                 />
               ))
             )}

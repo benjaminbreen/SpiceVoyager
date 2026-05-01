@@ -6,6 +6,7 @@ import { useIsMobile } from '../utils/useIsMobile';
 import { SettingsModal } from './SettingsModal';
 import { SettingsModalV2 } from './SettingsModalV2';
 import { useGameStore } from '../store/gameStore';
+import { Info, Settings as SettingsIcon } from 'lucide-react';
 
 // Responsive opening splash. Keeps the ASCII charm of the original — title
 // block letters, the ship, animated waves, pennants, twinkles, SET SAIL
@@ -913,9 +914,13 @@ export function Opening({
               onMouseEnter={() => setHoveredSecBtn(btn)}
               onMouseLeave={() => setHoveredSecBtn(null)}
               style={{
-                flex: 1,
-                maxWidth: 'min(155px, 43%)',
+                flex: isMobile ? '0 0 auto' : 1,
+                width: isMobile ? 38 : undefined,
+                maxWidth: isMobile ? undefined : 'min(155px, 43%)',
                 minHeight: 38,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 fontFamily: MONO,
                 fontSize: 'clamp(10px, 2.6vw, 11px)',
                 letterSpacing: '0.22em',
@@ -923,12 +928,18 @@ export function Opening({
                 color: hoveredSecBtn === btn ? PALETTE.txt : PALETTE.dim,
                 backgroundColor: 'transparent',
                 border: `1px solid ${hoveredSecBtn === btn ? PALETTE.dimGold + '88' : PALETTE.rule}`,
-                borderRadius: 3,
+                borderRadius: isMobile ? 19 : 3,
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
               }}
+              aria-label={btn === 'about' ? 'About' : 'Settings'}
+              title={btn === 'about' ? 'About' : 'Settings'}
             >
-              {btn}
+              {isMobile
+                ? btn === 'about'
+                  ? <Info size={16} strokeWidth={2.2} />
+                  : <SettingsIcon size={16} strokeWidth={2.2} />
+                : btn}
             </button>
           ))}
         </div>

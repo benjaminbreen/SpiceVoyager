@@ -112,11 +112,9 @@ function ShallowWaterTint() {
     const _outerShallow = new THREE.Color().setRGB(...waterPalette.oceanOverlay.outerShallow);
     const turquoise = new THREE.Color();
 
-    // Muted olive-brown silt for the river-plume tint. Equal R/G keeps the
-    // lerp from the cyan-green oceanOverlay palette out of the magenta
-    // midpoint; raised B pulls it off pure yellow-tan toward muddy olive,
-    // which reads more like real estuary water than straw.
-    const _siltColor = new THREE.Color().setRGB(0.38, 0.38, 0.22);
+    // Muted green-brown silt for the river-plume tint. Kept dark and slightly
+    // blue-green so estuary water reads murky instead of pale yellow-tan.
+    const _siltColor = new THREE.Color().setRGB(0.28, 0.34, 0.24);
 
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i);
@@ -152,9 +150,11 @@ function ShallowWaterTint() {
       colors[i * 3 + 2] = turquoise.b;
       alphas[i] = alpha;
 
-      // Foam intensity: strongest in the surf zone, fades into shallows
-      const foam = terrain.surfFactor * 0.9 + terrain.wetSandFactor * 0.4;
-      foamIntensities[i] = Math.min(1, foam) * (1 - terrain.coastSteepness * 0.5);
+      // Foam intensity: strongest in active surf, with a small wet-sand tail.
+      // The nonlinear surf term keeps quiet coves from turning uniformly white.
+      const surfBreak = smoothstep(0.18, 0.82, terrain.surfFactor);
+      const foam = surfBreak * 1.18 + terrain.wetSandFactor * 0.22;
+      foamIntensities[i] = Math.min(1, foam) * (1 - terrain.coastSteepness * 0.42);
 
       reefFactors[i] = terrain.reefFactor;
 
@@ -260,13 +260,15 @@ function ShallowWaterTint() {
             float crest = pow(max(0.0, sin(waveFront)), 3.0) * 0.35;
             foam = max(foam, foam + crest);
 
-            // Threshold to create patchy foam rather than uniform white
-            float foamMask = smoothstep(0.32, 0.58, foam) * vFoam;
+            // Threshold to create patchy foam rather than uniform white. The
+            // contrast lift comes from vFoam, so it only bites in surf zones.
+            float foamMask = smoothstep(0.30, 0.56, foam) * vFoam;
+            foamMask = pow(foamMask, mix(1.35, 0.82, clamp(vFoam, 0.0, 1.0)));
 
             // Mix toward foam color — darken at night
             vec3 foamColor = mix(vec3(0.12, 0.14, 0.18), vec3(0.82, 0.90, 0.92), uDaylight);
-            col = mix(col, foamColor, foamMask * 0.74);
-            alpha = max(alpha, foamMask * 0.36);
+            col = mix(col, foamColor, foamMask * (0.62 + vFoam * 0.26));
+            alpha = max(alpha, foamMask * (0.26 + vFoam * 0.18));
           }
 
           // Coral reef caustic shimmer — warm dappled light over reef patches (suppressed at night).

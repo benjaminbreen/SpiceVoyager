@@ -52,6 +52,7 @@ const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: 
 const POIModal = lazy(() => import('./POIModalV2').then((module) => ({ default: module.POIModalV2 })));
 const BuildingDetailModal = lazy(() => import('./BuildingDetailModal').then((module) => ({ default: module.BuildingDetailModal })));
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
+const LearnPanel = lazy(() => import('./LearnPanel').then((module) => ({ default: module.LearnPanel })));
 const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const SettingsModalV2 = lazy(() => import('./SettingsModalV2').then((module) => ({ default: module.SettingsModalV2 })));
@@ -89,7 +90,13 @@ const SPLASH_VARIANT = typeof window !== 'undefined'
   : 'claude';
 const SEEN_NUDGES_KEY = 'spice-voyager-seen-nudges';
 
-type NudgeId = 'open-commissions' | 'hostile-fight';
+type NudgeId =
+  | 'open-commissions'
+  | 'hostile-fight'
+  | 'broadside-elevation'
+  | 'open-navigation'
+  | 'open-dashboard'
+  | 'open-journal';
 
 function readSeenNudges(): Set<NudgeId> {
   if (typeof window === 'undefined') return new Set();
@@ -838,10 +845,15 @@ function CombatHud() {
                 primary={broadsideSummary}
                 secondary={`${broadsideNeedsShot ? 'Need' : 'Cannon Shot'} ${cannonShot}/${broadsideWeapons.length} · ${broadsideTypes}`}
                 actions={!isMobile && (
-                  <>
-                    <CombatKey value="Q" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="port" />{portLeft > 0 ? `${(portLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
-                    <CombatKey value="R" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="starboard" />{starboardLeft > 0 ? `${(starboardLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
-                  </>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      <CombatKey value="Q" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="port" />{portLeft > 0 ? `${(portLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
+                      <CombatKey value="R" label={<span className="inline-flex items-center gap-1"><ShipSideIcon side="starboard" />{starboardLeft > 0 ? `${(starboardLeft / 1000).toFixed(1)}s` : 'ready'}</span>} />
+                    </div>
+                    <span data-nudge-target="broadside-elevation">
+                      <CombatKey value="Space" label="hold to aim" />
+                    </span>
+                  </div>
                 )}
               />
             )}
@@ -1049,6 +1061,7 @@ export function UI() {
     : null;
   const leads = useGameStore((state) => state.leads);
   const knowledgeState = useGameStore((state) => state.knowledgeState);
+  const journalEntries = useGameStore((state) => state.journalEntries);
 
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -1089,8 +1102,13 @@ export function UI() {
   useEffect(() => {
     if (!testMode.enabled) return;
     const openWorldMapForTest = () => setShowWorldMap(true);
+    const openLocalMapForTest = () => setShowLocalMap(true);
     window.addEventListener('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__', openWorldMapForTest);
-    return () => window.removeEventListener('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__', openWorldMapForTest);
+    window.addEventListener('__SPICE_VOYAGER_TEST_OPEN_LOCAL_MAP__', openLocalMapForTest);
+    return () => {
+      window.removeEventListener('__SPICE_VOYAGER_TEST_OPEN_WORLD_MAP__', openWorldMapForTest);
+      window.removeEventListener('__SPICE_VOYAGER_TEST_OPEN_LOCAL_MAP__', openLocalMapForTest);
+    };
   }, [testMode.enabled]);
   const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string; commodity?: string } | null>(null);
   const showDashboard = !!dashboardState;
@@ -1098,6 +1116,7 @@ export function UI() {
   const [expandedStat, setExpandedStat] = useState<'hull' | 'morale' | 'cargo' | null>(null);
   const paused = useGameStore(s => s.paused);
   const setPaused = useGameStore(s => s.setPaused);
+  const [showLearn, setShowLearn] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1131,6 +1150,10 @@ export function UI() {
   const hailWasPausedRef = useRef(false);
   const portWasPausedRef = useRef(false);
   const previousHullRef = useRef(stats.hull);
+  const initialCargoUsedRef = useRef<number | null>(null);
+  const initialCrewCountRef = useRef<number | null>(null);
+  const initialJournalCountRef = useRef<number | null>(null);
+  const initialKnownCommodityCountRef = useRef<number | null>(null);
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission || showVoyageCurtain;
@@ -1594,6 +1617,7 @@ export function UI() {
       if (e.key === 'Escape') {
         if (showOverlayMenu) { sfxClose(); setShowOverlayMenu(false); }
         else if (hailNpc) { sfxClose(); closeHail(); }
+        else if (showLearn) { sfxClose(); setShowLearn(false); }
         else if (showHelp) { sfxClose(); setShowHelp(false); }
         else if (showDashboard) { sfxClose(); setShowDashboard(false); }
         else if (showLocalMap) { sfxClose(); setShowLocalMap(false); }
@@ -1607,7 +1631,7 @@ export function UI() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showOverlayMenu, showLocalMap, showWorldMap, showHelp, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
+  }, [showOverlayMenu, showLocalMap, showWorldMap, showLearn, showHelp, showDashboard, activePort, setActivePort, hailNpc, closeHail]);
 
   useEffect(() => {
     if (!showOverlayMenu) return;
@@ -1622,10 +1646,10 @@ export function UI() {
   }, [showOverlayMenu]);
 
   useEffect(() => {
-    if (showLocalMap || showWorldMap || showSettings || showHelp || showDashboard || activePort || hailNpc) {
+    if (showLocalMap || showWorldMap || showSettings || showLearn || showHelp || showDashboard || activePort || hailNpc) {
       setShowOverlayMenu(false);
     }
-  }, [activePort, hailNpc, showDashboard, showHelp, showLocalMap, showSettings, showWorldMap]);
+  }, [activePort, hailNpc, showDashboard, showHelp, showLearn, showLocalMap, showSettings, showWorldMap]);
 
   useEffect(() => {
     const handleHailKey = (e: KeyboardEvent) => {
@@ -1662,7 +1686,11 @@ export function UI() {
   // That fixes the "only the latest toast auto-dismisses" bug and enables pause-on-hover.
 
   const toggleLocalMap = useCallback(() => { sfxOpen(); setShowLocalMap(prev => !prev); }, []);
-  const toggleWorldMap = useCallback(() => { sfxOpen(); setShowWorldMap(prev => !prev); }, []);
+  const toggleWorldMap = useCallback(() => {
+    dismissNudge('open-navigation');
+    sfxOpen();
+    setShowWorldMap(prev => !prev);
+  }, [dismissNudge]);
   const cycleViewMode = useGameStore((state) => state.cycleViewMode);
 
   // SHIFT + ` toggles the dev render panel. Bypasses the modal guard so it
@@ -1690,6 +1718,7 @@ export function UI() {
       switch (e.key) {
         case '1': // Learn
           sfxClick();
+          setShowLearn(true);
           break;
         case '2': // Help
           sfxClick();
@@ -1723,13 +1752,33 @@ export function UI() {
   const activeLeadCount = leads.filter((lead) => lead.status === 'active').length;
   const knownCommodityCount = Object.values(knowledgeState).filter((level) => level > 0).length;
   const cargoUsed = Object.values(cargo).reduce((sum, qty) => sum + qty, 0);
+  if (initialCargoUsedRef.current === null) initialCargoUsedRef.current = cargoUsed;
+  if (initialCrewCountRef.current === null) initialCrewCountRef.current = crew.length;
+  if (initialJournalCountRef.current === null) initialJournalCountRef.current = journalEntries.length;
+  if (initialKnownCommodityCountRef.current === null) initialKnownCommodityCountRef.current = knownCommodityCount;
   const currentPortName = getWorldPortById(currentWorldPortId)?.name ?? 'this coast';
-  const suppressNudges = startupOverlayActive || showHelp || showSettings || showDashboard || showLocalMap || showWorldMap || !!activePort || !!hailNpc;
+  const suppressNudges = startupOverlayActive || showLearn || showHelp || showSettings || showDashboard || showLocalMap || showWorldMap || !!activePort || !!hailNpc;
+  const hasBroadsideCannons = stats.armament.some((weapon) => !WEAPON_DEFS[weapon].aimable);
+  const initialJournalCount = initialJournalCountRef.current ?? journalEntries.length;
+  const initialKnownCommodityCount = initialKnownCommodityCountRef.current ?? knownCommodityCount;
+  const dashboardChanged = stats.hull < stats.maxHull
+    || cargoUsed !== initialCargoUsedRef.current
+    || crew.length !== initialCrewCountRef.current;
+  const journalChanged = knownCommodityCount > initialKnownCommodityCount
+    || journalEntries.length > initialJournalCount;
   const activeNudge: NudgeId | null = !suppressNudges && collisionShipDesc && !combatMode && !anchored && playerMode === 'ship' && !seenNudges.has('hostile-fight')
     ? 'hostile-fight'
-    : !suppressNudges && voyageBegun && activeLeadCount > 0 && !showQuests && !seenNudges.has('open-commissions')
-      ? 'open-commissions'
-      : null;
+    : !suppressNudges && combatMode && playerMode === 'ship' && hasBroadsideCannons && !seenNudges.has('broadside-elevation')
+      ? 'broadside-elevation'
+      : !suppressNudges && voyageBegun && activeLeadCount > 0 && !showQuests && !seenNudges.has('open-commissions')
+        ? 'open-commissions'
+        : !suppressNudges && voyageBegun && activeLeadCount > 0 && seenNudges.has('open-commissions') && !seenNudges.has('open-navigation')
+          ? 'open-navigation'
+          : !suppressNudges && isMobile && voyageBegun && dashboardChanged && !seenNudges.has('open-dashboard')
+            ? 'open-dashboard'
+            : !suppressNudges && voyageBegun && journalChanged && !seenNudges.has('open-journal')
+              ? 'open-journal'
+              : null;
 
   const hullDamageSeverity = hullDamagePulse?.severity ?? 0;
   const hullDamageHudMotion = hullDamagePulse && !reduceMotion
@@ -1769,12 +1818,43 @@ export function UI() {
       </AnimatePresence>
 
       {/* Top Bar */}
-      <div className="flex justify-between items-start">
+      <div className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex justify-between items-start'}>
+        {isMobile && (
+          <div className="pointer-events-auto grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
+            <AudioMuteButton />
+            <button
+              type="button"
+              onClick={() => { sfxOpen(); setShowWorldMap(true); }}
+              className="min-w-0 justify-self-center rounded-full border border-[#d7c08a]/25 bg-[#0a0e18]/62 px-4 py-2 text-center shadow-[0_6px_18px_rgba(0,0,0,0.35)] backdrop-blur-md active:scale-[0.99] transition-transform"
+              title={`${currentPortName} — open world map`}
+            >
+              <span className="flex min-w-0 items-center justify-center gap-2">
+                <span className="h-3 w-4 shrink-0 rounded-[1px] bg-red-700 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]" />
+                <span className="truncate text-[18px] font-bold leading-none text-[#f5ebd5]" style={{ fontFamily: '"Fraunces", serif' }}>
+                  {currentPortName}
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { sfxOpen(); setShowSettings(true); }}
+              aria-label="Settings"
+              title="Settings"
+              className="relative h-11 w-11 rounded-full flex items-center justify-center justify-self-end
+                bg-[#1a1e2e]/90 border-2 border-[#4a4535]/60 text-[#9a9070]
+                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),0_2px_8px_rgba(0,0,0,0.55)]
+                transition-all active:scale-95"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+        )}
         <motion.div
           animate={hullDamageHudMotion}
           transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
-          className="relative overflow-hidden bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border pointer-events-auto
-            shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]"
+          className={`relative overflow-hidden bg-[#0a0e18]/70 backdrop-blur-xl rounded-xl border pointer-events-auto
+            shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)]
+            ${isMobile ? 'w-full' : ''}`}
           style={{
             borderColor: combatHudTone?.border ?? 'rgba(42,45,58,0.5)',
             boxShadow: combatHudTone
@@ -1788,9 +1868,79 @@ export function UI() {
               style={{ background: `linear-gradient(90deg, transparent, ${combatHudTone.border}, transparent)` }}
             />
           )}
+          {isMobile ? (
+            <button
+              type="button"
+              onClick={() => { sfxOpen(); setDashboardState({}); }}
+              className="block w-full text-left active:scale-[0.99] transition-transform"
+              title="Open ship dashboard"
+            >
+              <div className="flex items-center gap-2 px-2.5 py-2">
+                {(() => {
+                  const moodRingColor = captainExpression === 'Friendly' ? '#22c55e'
+                    : captainExpression === 'Smug' ? '#eab308'
+                    : captainExpression === 'Fierce' ? '#ef4444'
+                    : captainExpression === 'Rage' ? '#dc2626'
+                    : captainExpression === 'Stern' ? '#f97316'
+                    : captainExpression === 'Melancholy' ? '#6366f1'
+                    : captainExpression === 'Curious' ? '#06b6d4'
+                    : captain && captain.morale >= 85 ? '#22c55e'
+                    : captain && captain.morale <= 25 ? '#ef4444'
+                    : '#8b7a5e';
+                  const ringColor = combatHudTone?.ring ?? moodRingColor;
+                  return (
+                    <div
+                      className="rounded-full bg-[#1a1e2e] flex items-center justify-center shrink-0 overflow-hidden"
+                      style={{
+                        width: 42,
+                        height: 42,
+                        border: `2px solid ${ringColor}`,
+                        boxShadow: `0 0 10px ${ringColor}55`,
+                      }}
+                    >
+                      {captain ? (
+                        <CrewPortraitSquare
+                          member={captain}
+                          size={38}
+                          expressionOverride={combatMode && playerMode === 'ship' ? 'Rage' : captainExpression}
+                        />
+                      ) : (
+                        <Users size={18} className="text-amber-400/80" />
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <FactionFlag nationality={ship.flag} size={11} />
+                    <span className="text-[9px] font-semibold tracking-[0.14em] uppercase text-amber-200/85 truncate">
+                      {FACTIONS[ship.flag].shortName}
+                    </span>
+                    <span className="text-slate-600" aria-hidden>·</span>
+                    <span className="text-[11px] font-medium text-slate-300 tabular-nums whitespace-nowrap">
+                      {formatTime(timeOfDay)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-amber-400 font-bold tabular-nums">
+                    <Coins size={14} className="text-amber-500" />
+                    <ValueFlash value={gold} upColor="#fde68a" downColor="#f59e0b">
+                      {gold.toLocaleString()}
+                    </ValueFlash>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 border-t border-[#3a3530]/30 px-2.5 py-1.5">
+                <MobileStatBar icon={<Shield size={11} />} value={stats.hull} max={stats.maxHull} color={statColors.hull} />
+                <MobileStatBar icon={<Users size={11} />} value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale} />
+                <MobileStatBar icon={<Anchor size={11} />} value={cargoUsed} max={stats.cargoCapacity} color={statColors.cargo} />
+              </div>
+            </button>
+          ) : (
+            <>
           {/* Top section — portrait on the left, right column holds the
               identity strip over the info row (gold/food · time · crew). */}
-          <div className={`flex items-stretch border-b border-[#3a3530]/30 ${isMobile ? 'gap-2 px-2.5 py-2' : 'gap-3 px-4 py-3'}`}>
+          <div className="flex items-stretch border-b border-[#3a3530]/30 gap-3 px-4 py-3">
             {(() => {
               // Ring color reflects captain's current expression/mood
               const moodRingColor = captainExpression === 'Friendly' ? '#22c55e'
@@ -1973,12 +2123,12 @@ export function UI() {
           </div>
 
           {/* Bottom row: stat bars */}
-          <div className={`flex items-center ${isMobile ? 'gap-2 px-2.5 py-1.5' : 'gap-5 px-4 py-2.5'}`}>
-            <StatBar icon={<Shield size={isMobile ? 12 : 15} />} label="Ship" value={stats.hull} max={stats.maxHull} color={statColors.hull}
+          <div className="flex items-center gap-5 px-4 py-2.5">
+            <StatBar icon={<Shield size={15} />} label="Ship" value={stats.hull} max={stats.maxHull} color={statColors.hull}
               active={expandedStat === 'hull'} onClick={() => setExpandedStat(expandedStat === 'hull' ? null : 'hull')} />
-            <StatBar icon={<Users size={isMobile ? 12 : 15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
+            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
               active={expandedStat === 'morale'} onClick={() => setExpandedStat(expandedStat === 'morale' ? null : 'morale')} />
-            <StatBar icon={<Anchor size={isMobile ? 12 : 15} />} label="Cargo" value={Object.values(cargo).reduce((a,b)=>a+b,0)} max={stats.cargoCapacity} color={statColors.cargo}
+            <StatBar icon={<Anchor size={15} />} label="Cargo" value={cargoUsed} max={stats.cargoCapacity} color={statColors.cargo}
               active={expandedStat === 'cargo'} onClick={() => setExpandedStat(expandedStat === 'cargo' ? null : 'cargo')} />
           </div>
 
@@ -2005,10 +2155,15 @@ export function UI() {
               </motion.div>
             )}
           </AnimatePresence>
+            </>
+          )}
         </motion.div>
 
-        {/* Minimap (top-right) — click to open full map */}
-        <div className={`flex flex-col pointer-events-auto items-end ${isMobile ? 'gap-2' : 'gap-3'}`}>
+        {/* Minimap (top-right) — desktop keeps the full navigation/debug
+            control stack. Mobile hides the minimap by default and uses the
+            header + bottom Navigate button instead. */}
+        {!isMobile && (
+        <div className="flex flex-col pointer-events-auto items-end gap-3">
           <div className="flex items-center gap-2">
             <AudioMuteButton />
             <button
@@ -2033,11 +2188,11 @@ export function UI() {
               className="relative group rounded-full transition-shadow duration-300"
               style={combatHudTone ? { boxShadow: `0 0 18px ${combatHudTone.soft}, 0 0 0 1px ${combatHudTone.border}` } : undefined}
             >
-              <Minimap onClick={toggleLocalMap} size={isMobile ? 104 : 172} />
+              <Minimap onClick={toggleLocalMap} size={172} />
               <div
-                className={`absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap pointer-events-none ${isMobile ? 'px-1.5 py-0 text-[8px]' : 'px-2 py-0.5 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity duration-200'}`}
+                className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-slate-900/80 rounded text-amber-400 font-bold uppercase tracking-wider whitespace-nowrap pointer-events-none px-2 py-0.5 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
               >
-                {isMobile ? 'Map' : 'Click for Map'}
+                Click for Map
               </div>
             </div>
           )}
@@ -2177,26 +2332,8 @@ export function UI() {
             </AnimatePresence>
           </div>
 
-          {/* Mobile-only Journal button — lives in the top-right cluster to
-              avoid colliding with the 5-button action bar at the bottom. */}
-          {isMobile && (
-            <button
-              onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
-              aria-pressed={showJournal}
-              className={`group relative w-11 h-11 rounded-full flex items-center justify-center
-                bg-[#1a1e2e] border-2
-                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
-                transition-all active:scale-95
-                ${showJournal
-                  ? 'border-amber-500/60 text-amber-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_0_12px_rgba(245,158,11,0.25)]'
-                  : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-400 hover:border-[#6a6545]/80'
-                }`}
-              title="Journal"
-            >
-              <BookOpen size={15} />
-            </button>
-          )}
         </div>
+        )}
       </div>
 
       {/* Port-map marker (top-center, desktop only) — tells the player which
@@ -2453,6 +2590,42 @@ export function UI() {
         tone="red"
         onDismiss={dismissNudge}
       />
+      <UiNudge
+        id="broadside-elevation"
+        active={activeNudge === 'broadside-elevation'}
+        title="Hold Space to Aim"
+        body="Hold SPACE and use Q or R to fire to port or starboard with cannon."
+        targetSelector="[data-nudge-target='broadside-elevation']"
+        tone="red"
+        onDismiss={dismissNudge}
+      />
+      <UiNudge
+        id="open-navigation"
+        active={activeNudge === 'open-navigation'}
+        title="Choose a Route"
+        body="Open Navigate to plot the next leg after choosing a commission."
+        targetSelector="[data-nudge-target='navigation']"
+        tone="amber"
+        onDismiss={dismissNudge}
+      />
+      <UiNudge
+        id="open-dashboard"
+        active={activeNudge === 'open-dashboard'}
+        title="Check the Ship"
+        body="Open Dashboard to review hull, crew, cargo, and mounted weapons."
+        targetSelector="[data-nudge-target='dashboard']"
+        tone="amber"
+        onDismiss={dismissNudge}
+      />
+      <UiNudge
+        id="open-journal"
+        active={activeNudge === 'open-journal'}
+        title="Read the Journal"
+        body="Open Journal to review discoveries, leads, and important notices."
+        targetSelector="[data-nudge-target='journal']"
+        tone="amber"
+        onDismiss={dismissNudge}
+      />
 
       {/* Notifications — three tiered stacks, each right-aligned */}
       {(() => {
@@ -2502,7 +2675,13 @@ export function UI() {
       <AnimatePresence>
         {showLocalMap && (
           <Suspense fallback={null}>
-            <WorldMap onClose={() => setShowLocalMap(false)} />
+            <WorldMap
+              onClose={() => setShowLocalMap(false)}
+              onOpenWorldMap={() => {
+                setShowLocalMap(false);
+                setShowWorldMap(true);
+              }}
+            />
           </Suspense>
         )}
         {showWorldMap && (
@@ -2528,6 +2707,13 @@ export function UI() {
       {/* Departure curtain — masks canvas mount + terrain gen after Set Sail */}
       <DepartureCurtain active={showVoyageCurtain} />
 
+      {/* Learn Panel — contextual Wikipedia reader */}
+      {showLearn && (
+        <Suspense fallback={null}>
+          <LearnPanel open={showLearn} onClose={() => setShowLearn(false)} />
+        </Suspense>
+      )}
+
       {/* Journal Panel (compact, above button) */}
       {showJournal && (
         <Suspense fallback={null}>
@@ -2537,7 +2723,16 @@ export function UI() {
 
       {/* Quests Panel — slide-out, sister to Journal. Renders above the
           Quests button. */}
-      <QuestsPanel open={showQuests} onClose={() => setShowQuests(false)} dockOffset={!isMobile && showJournal} />
+      <QuestsPanel
+        open={showQuests}
+        onClose={() => setShowQuests(false)}
+        dockOffset={!isMobile && showJournal}
+        onOpenChart={() => {
+          dismissNudge('open-navigation');
+          setShowQuests(false);
+          setShowWorldMap(true);
+        }}
+      />
 
       <HelpModal
         open={showHelp}
@@ -2573,8 +2768,9 @@ export function UI() {
           }}
         >
           <button
-            onClick={() => { sfxClick(); setShowJournal(!showJournal); }}
+            onClick={() => { sfxClick(); dismissNudge('open-journal'); setShowJournal(!showJournal); }}
             aria-pressed={showJournal}
+            data-nudge-target="journal"
             className={`group relative w-11 h-11 rounded-full flex items-center justify-center
               bg-[#1a1e2e] border-2
               shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
@@ -2621,9 +2817,10 @@ export function UI() {
               className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-[#0a0e18]/80 backdrop-blur-xl border border-[#2a2d3a]/60 rounded-xl px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             >
               <div className="flex items-center gap-3">
-                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" accentColor="#60a5fa" glowColor="96,165,250" onClick={() => setShowOverflowMenu(false)} />
+                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" accentColor="#60a5fa" glowColor="96,165,250" onClick={() => { setShowLearn(true); setShowOverflowMenu(false); }} />
                 <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => { setShowHelp(true); setShowOverflowMenu(false); }} />
                 <ViewModeButton />
+                <ActionBarButton icon={<BookOpen size={13} />} label="Journal" accentColor="#f59e0b" glowColor="245,158,11" nudgeTarget="journal" onClick={() => { sfxClick(); dismissNudge('open-journal'); setShowJournal(prev => !prev); setShowOverflowMenu(false); }} />
                 <ActionBarButton icon={<Scroll size={13} />} label="Commissions" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); setShowOverflowMenu(false); }} />
               </div>
             </motion.div>
@@ -2638,7 +2835,7 @@ export function UI() {
             {!isMobile && (
               <>
                 {/* Left group: Learn - Help - combat stance */}
-                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" />
+                <ActionBarButton icon={<GraduationCap size={13} />} label="Learn" hotkey="1" accentColor="#60a5fa" glowColor="96,165,250" onClick={() => setShowLearn(true)} />
                 <ActionBarButton icon={<HelpCircle size={13} />} label="Help" hotkey="2" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => setShowHelp(true)} />
                 <ActionBarButton
                   icon={playerMode === 'ship' ? <Swords size={13} /> : <Crosshair size={13} />}
@@ -2673,7 +2870,7 @@ export function UI() {
                 {/* Right group: View - Quests - Navigate */}
                 <ViewModeButton />
                 <ActionBarButton icon={<Scroll size={13} />} label="Commissions" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); }} />
-                <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
+                <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" nudgeTarget="navigation" onClick={() => { dismissNudge('open-navigation'); toggleWorldMap(); }} />
               </>
             )}
             {isMobile && (
@@ -2687,8 +2884,8 @@ export function UI() {
                   nudgeTarget="fight"
                   onClick={toggleCombatMode}
                 />
-                <ActionBarButton icon={<Compass size={13} />} label="Navigate" accentColor="#f87171" glowColor="248,113,113" onClick={toggleWorldMap} />
-                <ActionBarButton icon={<Users size={13} />} label="Dashboard" accentColor="#fbbf24" glowColor="251,191,36" onClick={() => { sfxOpen(); setDashboardState({}); }} />
+                <ActionBarButton icon={<Compass size={13} />} label="Navigate" accentColor="#f87171" glowColor="248,113,113" nudgeTarget="navigation" onClick={() => { dismissNudge('open-navigation'); toggleWorldMap(); }} />
+                <ActionBarButton icon={<Users size={13} />} label="Dashboard" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="dashboard" onClick={() => { dismissNudge('open-dashboard'); sfxOpen(); setDashboardState({}); }} />
                 <ActionBarButton icon={<MoreHorizontal size={13} />} label="More" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => setShowOverflowMenu(v => !v)} />
               </>
             )}
@@ -4216,6 +4413,29 @@ function StatBar({ icon, label, value, max, color, active, onClick }: { icon: Re
         </div>
       </div>
     </button>
+  );
+}
+
+function MobileStatBar({ icon, value, max, color }: { icon: React.ReactNode; value: number; max: number; color: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 flex items-center justify-between gap-1">
+        <span className="text-slate-400">{icon}</span>
+        <span className="text-[9px] font-mono text-slate-300 tabular-nums">{value}</span>
+      </div>
+      <div className="h-[5px] w-full overflow-hidden rounded-full bg-white/[0.08]">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{
+            width: `${pct}%`,
+            backgroundColor: color,
+            boxShadow: `0 0 7px ${color}50`,
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

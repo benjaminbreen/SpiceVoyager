@@ -86,6 +86,13 @@ export function BuildingDetailModal({
       <motion.div
         key={building.id}
         className="fixed inset-0 z-[100] flex items-center justify-center p-3 pointer-events-auto sm:p-6"
+        style={{
+          height: 'var(--app-height)',
+          paddingTop: 'calc(0.75rem + var(--sai-top))',
+          paddingBottom: 'calc(0.75rem + var(--sai-bottom))',
+          paddingLeft: 'calc(0.75rem + var(--sai-left))',
+          paddingRight: 'calc(0.75rem + var(--sai-right))',
+        }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -102,7 +109,7 @@ export function BuildingDetailModal({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: 10 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.25, 1] }}
-          className="relative grid w-[min(760px,calc(100vw-1.5rem))] max-h-[min(680px,calc(100vh-1.5rem))]
+          className="relative grid w-[min(760px,calc(100vw-1.5rem))] max-h-[min(680px,calc(var(--app-height)-var(--sai-top)-var(--sai-bottom)-1.5rem))]
             grid-cols-1 overflow-hidden rounded-xl border bg-[#0c0b08]/96
             shadow-[0_22px_70px_rgba(0,0,0,0.72),inset_0_1px_0_rgba(255,232,164,0.08)]
             md:grid-cols-[182px_minmax(0,1fr)]"

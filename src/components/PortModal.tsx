@@ -951,10 +951,10 @@ export function PortModal({ onDismiss, initialTab }: { onDismiss?: () => void; i
               their own overflow-y-auto. Without this swap the chat just grew
               the wrapper and pushed the suggestion/input bar below the fold. */}
           <div
-            className={`flex-1 min-h-0 px-3 md:px-5 py-3 md:py-4 ${
+            className={`flex-1 min-h-0 px-3 md:px-5 pt-3 md:pt-4 ${
               activeTab === 'tavern'
-                ? 'flex flex-col overflow-hidden'
-                : 'overflow-y-auto'
+                ? 'flex flex-col overflow-hidden pb-3 md:pb-4'
+                : 'overflow-y-auto pb-[calc(5.75rem+var(--sai-bottom))] md:pb-4'
             }`}
           >
             <AnimatePresence mode="wait">

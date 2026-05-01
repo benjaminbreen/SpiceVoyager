@@ -17,6 +17,7 @@ import type { Lead, LeadSource, QuestToastEntry } from '../types/leads';
 import { LEAD_CAPS } from '../types/leads';
 import { createStarterLead } from '../utils/seedLeads';
 import { saleResolvesStarterLead, leadsToExpire, formatRewardReveal, type SaleEvent } from '../utils/leadResolution';
+import type { VoyageResolution } from '../utils/voyageResolution';
 import { nationalityToCulture } from '../utils/portCoords';
 import type { DistrictKey } from '../utils/cityDistricts';
 export type { DistrictKey };
@@ -995,6 +996,8 @@ interface GameState {
   claimedPOIRewards: string[];
   // Last resolved outcome for a generated POI reward, used by the modal when reopened.
   poiRewardResults: Record<string, POIRewardClaimResult>;
+  // Undirected sea lanes the player has sailed at least once.
+  chartedRoutes: string[];
 
   // Reputation per nationality (-100 to +100, starts at 0)
   reputation: Partial<Record<Nationality, number>>;
@@ -1137,7 +1140,7 @@ interface GameState {
   resetRenderDebug: () => void;
   learnAboutCommodity: (commodityId: string, newLevel: KnowledgeLevel, source: string) => void;
   collectCrab: () => void;
-  fastTravel: (portId: string, opts?: { force?: boolean }) => void;
+  fastTravel: (portId: string, opts?: { force?: boolean; voyage?: VoyageResolution }) => void;
   setPaused: (paused: boolean) => void;
   setAnchored: (anchored: boolean) => void;
   setCombatMode: (combatMode: boolean) => void;
@@ -1789,6 +1792,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   discoveredPOIs: [],
   claimedPOIRewards: [],
   poiRewardResults: {},
+  chartedRoutes: [],
   reputation: buildStartingReputation(_startingFaction),
   npcPositions: [],
   npcShips: [],
@@ -2696,6 +2700,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       discoveredPOIs: [],
       claimedPOIRewards: [],
       poiRewardResults: {},
+      chartedRoutes: [],
       reputation: start.reputation,
       npcPositions: [],
       npcShips: [],
@@ -2809,11 +2814,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       return;
     }
     const travel = estimateSeaTravel(currentPortId, portId);
-    const travelDays = travel?.days ?? 1;
-    // Consume provisions for the journey
-    const dailyConsumption = Math.ceil(state.crew.length * 0.5);
-    const travelProvisions = dailyConsumption * travelDays;
+    const travelDays = opts?.voyage?.actualDays ?? travel?.days ?? 1;
+    const travelProvisions = opts?.voyage?.provisionCost ?? Math.ceil(state.crew.length * 0.5) * travelDays;
     const newProvisions = Math.max(0, state.provisions - travelProvisions);
+    const hullDamage = opts?.voyage?.hullDamage ?? 0;
+    const moraleDelta = opts?.voyage?.moraleDelta ?? 0;
+    const newHull = Math.max(0, state.stats.hull - hullDamage);
+    const voyageCrew = moraleDelta === 0
+      ? state.crew
+      : state.crew.map((member) => ({
+          ...member,
+          morale: Math.max(0, Math.min(100, member.morale + moraleDelta)),
+        }));
     // Roll fresh weather for the new harbor based on its climate. Leave
     // intensity at 0 so the rain (if any) fades in over a few seconds rather
     // than snapping on the moment the arrival curtain lifts.
@@ -2829,18 +2841,29 @@ export const useGameStore = create<GameState>((set, get) => ({
       dayCount: state.dayCount + travelDays,
       timeOfDay: 8,
       provisions: newProvisions,
+      stats: { ...state.stats, hull: newHull },
+      crew: voyageCrew,
       weather: arrivalWeather,
       windDirection: arrivalWind.direction,
       windSpeed: arrivalWind.speed,
+      chartedRoutes: opts?.voyage && !state.chartedRoutes.includes(opts.voyage.routeKey)
+        ? [...state.chartedRoutes, opts.voyage.routeKey]
+        : state.chartedRoutes,
     });
     syncLiveShipTransform(state.playerPos, state.playerRot, 0);
     const provWarn = newProvisions === 0 ? ' Provisions exhausted!' : newProvisions <= state.crew.length * 2 ? ` Provisions low (${newProvisions}).` : '';
-    get().addNotification(`Arrived at ${port.name} after ${travelDays} days at sea.${provWarn}`, newProvisions === 0 ? 'warning' : 'success');
+    const hullWarn = hullDamage > 0 ? ` Hull lost ${hullDamage}.` : '';
+    get().addNotification(`Arrived at ${port.name} after ${travelDays} days at sea.${provWarn}${hullWarn}`, newProvisions === 0 || hullDamage > 0 ? 'warning' : 'success');
     get().addJournalEntry(
       'navigation',
-      `After ${travelDays} days sailing, we have arrived at ${port.name}. The crew is relieved to see land again.`,
+      opts?.voyage
+        ? `After ${travelDays} days sailing from ${opts.voyage.fromPortName}, we arrived at ${port.name}. ${opts.voyage.events.map((event) => event.text).join(' ')}${opts.voyage.chartedRoute ? ` The ${opts.voyage.fromPortName}-${port.name} route is now charted in our books.` : ''}`
+        : `After ${travelDays} days sailing, we have arrived at ${port.name}. The crew is relieved to see land again.`,
       port.name,
     );
+    if (newHull <= 0) {
+      get().triggerGameOver('The ship foundered during the passage and sank before landfall.');
+    }
   },
   restAtInn: (port) => {
     const state = get();

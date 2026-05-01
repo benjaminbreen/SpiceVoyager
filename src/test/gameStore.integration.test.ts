@@ -278,6 +278,61 @@ describe('gameStore integration', () => {
     expect(state.journalEntries.at(-1)?.category).toBe('navigation');
   });
 
+  it('applies resolved voyage effects during fast travel', () => {
+    useGameStore.setState({
+      currentWorldPortId: 'goa',
+      provisions: 20,
+      crew: [
+        makeCrewMember({ id: 'captain', role: 'Captain', morale: 50 }),
+        makeCrewMember({ id: 'sailor', role: 'Sailor', morale: 45 }),
+      ],
+      stats: { ...useGameStore.getState().stats, hull: 70, maxHull: 100 },
+      journalEntries: [],
+      notifications: [],
+    } as Partial<StoreState>);
+
+    useGameStore.getState().fastTravel('malacca', {
+      voyage: {
+        fromPortId: 'goa',
+        toPortId: 'malacca',
+        routeKey: 'goa:malacca',
+        routeKnown: false,
+        chartedRoute: true,
+        fromPortName: 'Goa',
+        toPortName: 'Malacca',
+        fromRegion: 'indianOcean',
+        toRegion: 'eastIndies',
+        stance: 'press',
+        baseDays: 6,
+        actualDays: 5,
+        distanceKm: 3000,
+        risk: 'Moderate',
+        provisionCost: 7,
+        hullDamage: 4,
+        moraleDelta: -1,
+        roleEffects: ['No navigator aboard: kept a wider margin for error.'],
+        incident: {
+          title: 'Squall Line',
+          text: 'A dark wall of rain crosses the course.',
+          choices: [
+            { id: 'reef', label: 'Reef sails', detail: 'Lose time, spare the hull.', resultText: 'The crew shortened sail.' },
+            { id: 'drive', label: 'Drive through', detail: 'Save time, risk damage.', resultText: 'The helmsman held course.' },
+          ],
+        },
+        events: [{ day: 1, title: 'Press Sail', text: 'The captain pressed sail.', tone: 'warning' }],
+      },
+    });
+
+    const state = useGameStore.getState();
+    expect(state.currentWorldPortId).toBe('malacca');
+    expect(state.dayCount).toBe(6);
+    expect(state.provisions).toBe(13);
+    expect(state.stats.hull).toBe(66);
+    expect(state.crew.map((member) => member.morale)).toEqual([49, 44]);
+    expect(state.journalEntries.at(-1)?.message).toContain('pressed sail');
+    expect(state.chartedRoutes).toContain('goa:malacca');
+  });
+
   it('kills the captain, pauses the game, and promotes the most skilled survivor', () => {
     const captain = makeCrewMember({ id: 'captain', name: 'Captain', role: 'Captain', skill: 8 });
     const sailor = makeCrewMember({ id: 'sailor', name: 'Mateo', role: 'Sailor', skill: 18 });

@@ -246,7 +246,12 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
       exit={{ opacity: 0 }}
       transition={{ duration: 0.35 }}
       className="absolute inset-0 z-[60] flex items-center justify-center pointer-events-auto"
-      style={{ backgroundColor: 'rgba(6,5,4,0.65)', backdropFilter: 'blur(3px)' }}
+      style={{
+        height: 'var(--app-height)',
+        padding: 'calc(0.5rem + var(--sai-top)) 0.5rem calc(0.5rem + var(--sai-bottom))',
+        backgroundColor: 'rgba(6,5,4,0.65)',
+        backdropFilter: 'blur(3px)',
+      }}
       onClick={worldReady ? onDismiss : undefined}
     >
       {/* Port painting background */}
@@ -283,7 +288,7 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
         className="relative flex flex-col overflow-hidden"
         style={{
           width: 'min(610px, calc(100vw - 1rem))',
-          maxHeight: 'min(90vh, 880px)',
+          maxHeight: 'min(calc(var(--app-height) - var(--sai-top) - var(--sai-bottom) - 1rem), 880px)',
           backgroundColor: 'rgba(12,11,8,0.96)',
           backgroundImage: `linear-gradient(115deg, rgba(201,168,76,0.13), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.035), transparent 24%)`,
           border: `1px solid rgba(201,168,76,0.24)`,
@@ -562,7 +567,7 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
           variants={revealMotion}
           className="flex items-center justify-center"
           style={{
-            padding: 'clamp(10px, 2.5vw, 14px) clamp(14px, 4vw, 28px) clamp(14px, 3.5vw, 20px)',
+            padding: 'clamp(10px, 2.5vw, 14px) clamp(14px, 4vw, 28px) calc(clamp(14px, 3.5vw, 20px) + var(--sai-bottom))',
             borderTop: `1px solid ${parchment.rule}`,
             background: 'linear-gradient(to bottom, rgba(10,9,7,0), rgba(10,9,7,0.6))',
           }}

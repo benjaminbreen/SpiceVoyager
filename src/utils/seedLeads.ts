@@ -84,6 +84,7 @@ export function createStarterLead(currentDay: number, homePortId: string, factio
     task:
       `Make one profitable sale away from ${homePortName}. ` +
       `Buy low, choose another harbor, then sell for more than you paid. ` +
+      `Open the Navigation chart (press 7) to choose the next harbor. ` +
       `The sale itself completes the commission.`,
     sourceQuote: `The hold is not meant to sit idle. Bring back a profit before the season turns.`,
     giverName: `${issuer.name}, ${issuer.role} at ${homePortName}`,

@@ -19,7 +19,7 @@ function readSnapshot(forceMobile: boolean): MobileInfo {
   const narrow = window.innerWidth <= NARROW_MAX;
   const portrait = window.matchMedia('(orientation: portrait)').matches;
   return {
-    isMobile: forceMobile || (coarse && narrow),
+    isMobile: forceMobile || narrow || coarse,
     isTouch: coarse,
     orientation: portrait ? 'portrait' : 'landscape',
   };

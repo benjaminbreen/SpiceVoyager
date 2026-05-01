@@ -144,27 +144,27 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
   },
   mediterranean: {
     id: 'mediterranean',
-    label: 'Mediterranean',
-    description: 'Clear warm blue water, close to arid seas but darker and less electric.',
+    label: 'Tagus Blue',
+    description: 'Clear Atlantic-blue estuary water with restrained turquoise shallows.',
     terrain: {
-      deep: [0.02, 0.44, 0.70],
-      shallow: [0.08, 0.78, 0.80],
-      surf: [0.64, 0.95, 0.92],
+      deep: [0.01, 0.36, 0.64],
+      shallow: [0.05, 0.64, 0.74],
+      surf: [0.58, 0.88, 0.90],
     },
-   oceanOverlay: {
-      base: [0.22, 0.34, 0.34],
-      outerShallow: [0.17, 0.28, 0.31],
-      paleSurf: [0.52, 0.60, 0.57],
+    oceanOverlay: {
+      base: [0.08, 0.44, 0.58],
+      outerShallow: [0.07, 0.36, 0.48],
+      paleSurf: [0.48, 0.74, 0.78],
     },
     surface: {
-      day: [0.00, 0.46, 0.78],
-      dusk: [0.02, 0.30, 0.54],
-      night: [0.00, 0.03, 0.09],
-      fallbackHex: 0x0075c7,
+      day: [0.00, 0.40, 0.72],
+      dusk: [0.02, 0.26, 0.50],
+      night: [0.00, 0.03, 0.08],
+      fallbackHex: 0x0066b8,
     },
     map: {
-      deep: [0.02, 0.40, 0.68],
-      shallow: [0.12, 0.66, 0.80],
+      deep: [0.02, 0.34, 0.62],
+      shallow: [0.09, 0.56, 0.72],
     },
   },
 };

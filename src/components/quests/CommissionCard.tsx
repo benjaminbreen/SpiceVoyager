@@ -4,15 +4,17 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Compass } from 'lucide-react';
 import type { Lead } from '../../types/leads';
 import { QuestIcon } from './QuestIcon';
 import { getWorldPortById } from '../../utils/worldPorts';
+import { STARTER_LEAD_ID } from '../../utils/seedLeads';
 
 interface CommissionCardProps {
   lead: Lead;
   currentDay: number;
   onAbandon: (id: string) => void;
+  onOpenChart?: () => void;
 }
 
 function formatRewardChip(lead: Lead): string {
@@ -48,11 +50,12 @@ function targetLabel(lead: Lead): string | null {
   return null;
 }
 
-export function CommissionCard({ lead, currentDay, onAbandon }: CommissionCardProps) {
+export function CommissionCard({ lead, currentDay, onAbandon, onOpenChart }: CommissionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const reward = formatRewardChip(lead);
   const deadline = formatDeadline(lead, currentDay);
   const target = targetLabel(lead);
+  const canOpenChart = lead.id === STARTER_LEAD_ID && !!onOpenChart;
 
   return (
     <div className="rounded-xl bg-white/[0.025] hover:bg-white/[0.04] border border-white/[0.06]
@@ -143,7 +146,18 @@ export function CommissionCard({ lead, currentDay, onAbandon }: CommissionCardPr
               >
                 "{lead.sourceQuote}"
               </div>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {canOpenChart ? (
+                  <button
+                    type="button"
+                    onClick={onOpenChart}
+                    className="inline-flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/[0.08] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-amber-300/90 transition-colors hover:border-amber-400/50 hover:bg-amber-500/[0.14] hover:text-amber-200"
+                    style={{ fontFamily: '"DM Sans", sans-serif' }}
+                  >
+                    <Compass size={12} />
+                    Open chart
+                  </button>
+                ) : <span />}
                 <button
                   type="button"
                   onClick={() => onAbandon(lead.id)}

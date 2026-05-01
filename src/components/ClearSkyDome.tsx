@@ -77,21 +77,21 @@ export function ClearSkyDome() {
       } else if (waterPaletteId === 'tropical') {
         zenith.set('#0289e8'); horizon.set('#50c7ff'); lower.set('#7ed5ff');
       } else if (waterPaletteId === 'temperate') {
-        zenith.set('#6f8894'); horizon.set('#9fb4bc'); lower.set('#b5c3c8');
+        zenith.set('#1f6fa8'); horizon.set('#5fa6cf'); lower.set('#86bdd8');
       } else {
         zenith.set('#158bd8'); horizon.set('#68c4f2'); lower.set('#94d6f4');
       }
     } else if (sunH > 0.0) {
       const t = sunH / 0.3;
       const dayZenith = waterPaletteId === 'temperate'
-        ? '#6f8894'
+        ? '#1f6fa8'
         : waterPaletteId === 'monsoon'
         ? '#3d9fbb'
         : waterPaletteId === 'tropical'
         ? '#0289e8'
         : '#0693e3';
       const dayHorizon = waterPaletteId === 'temperate'
-        ? '#9fb4bc'
+        ? '#5fa6cf'
         : waterPaletteId === 'monsoon'
         ? '#75bfc9'
         : waterPaletteId === 'tropical'

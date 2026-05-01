@@ -316,13 +316,7 @@ export async function callGeminiTavern(
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return {
-      npcDialogue: '"I have nothing more to say right now." He stares into his drink.',
-      suggestedResponses: [
-        { label: 'What is the trade like in these waters?', type: 'question' },
-        { label: 'Good day to you', type: 'farewell' },
-      ],
-    };
+    return getOfflineTavernResponse(userMessage);
   }
 
   recordCall();
@@ -399,6 +393,44 @@ export async function callGeminiTavern(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function getOfflineTavernResponse(userMessage: string): TavernLLMResponse {
+  const text = userMessage.toLowerCase();
+  if (text.includes('show') || text.includes('what is this') || text.includes('specimen')) {
+    return {
+      npcDialogue: 'The trader turns the sample in the lamplight, then shakes his head. "You will want a proper house of learning for that. Tavern talk spoils the price of good cargo."',
+      suggestedResponses: [
+        { label: 'I will seek a better judge', type: 'farewell' },
+        { label: 'What news comes by sea?', type: 'question' },
+      ],
+    };
+  }
+  if (text.includes('drink') || text.includes('cup') || text.includes('round')) {
+    return {
+      npcDialogue: '"Your coin is welcome." The room warms a little, but no one offers more than dockside rumor tonight.',
+      suggestedResponses: [
+        { label: 'Then give me dockside rumor', type: 'question' },
+        { label: 'Drink in peace', type: 'farewell' },
+      ],
+    };
+  }
+  if (text.includes('trade') || text.includes('price') || text.includes('waters')) {
+    return {
+      npcDialogue: '"Ask at the market and read your journal. Men here talk loudly, but the ledgers tell you what hunger and monsoon have done."',
+      suggestedResponses: [
+        { label: 'The market will serve me better', type: 'farewell' },
+        { label: 'What ports are busy now?', type: 'question' },
+      ],
+    };
+  }
+  return {
+    npcDialogue: 'The tavern is too loud for useful talk tonight. You catch fragments of prices, storms, and unpaid wages, but nothing firm enough to trust.',
+    suggestedResponses: [
+      { label: 'Listen a while longer', type: 'question' },
+      { label: 'Return to the harbor', type: 'farewell' },
+    ],
+  };
 }
 
 /** Merge two AbortSignals — aborts when either fires. */

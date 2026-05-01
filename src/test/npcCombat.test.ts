@@ -4,6 +4,9 @@ import {
   cargoTemptationScore,
   chooseInitiativePosture,
   chooseProvokedPosture,
+  npcBowWeapon,
+  npcBroadsideCount,
+  npcBroadsideWeapon,
   shouldBreakOff,
 } from '../utils/npcCombat';
 import type { NPCShipIdentity } from '../utils/npcShipGenerator';
@@ -64,12 +67,20 @@ describe('npcCombat', () => {
     })).toBe('engage');
   });
 
-  it('makes an armed merchant evade rather than blindly flee', () => {
+  it('makes a light armed merchant evade rather than blindly fight', () => {
     expect(chooseProvokedPosture(ship({ role: 'blue-water merchant', armed: true, morale: 45, shipType: 'Patacher' }), {
       reputation: 0,
       provoked: true,
       hullFraction: 1,
     })).toBe('evade');
+  });
+
+  it('lets heavier armed merchants answer violence with gunfire', () => {
+    expect(chooseProvokedPosture(ship({ role: 'blue-water merchant', armed: true, morale: 55, shipType: 'Armed Merchantman' }), {
+      reputation: 0,
+      provoked: true,
+      hullFraction: 1,
+    })).toBe('engage');
   });
 
   it('breaks off badly damaged ships unless morale and role justify staying', () => {
@@ -178,5 +189,21 @@ describe('npcCombat', () => {
       playerFlag: 'Pirate',
       cargoTemptation: 0,
     })).toBe('flee');
+  });
+
+  it('assigns plausible NPC weapons by ship type and cannon ports', () => {
+    expect(npcBowWeapon(ship({ shipType: 'Dhow' }))).toBe('lantaka');
+    expect(npcBowWeapon(ship({ shipType: 'Junk' }))).toBe('cetbang');
+    expect(npcBowWeapon(ship({ shipType: 'Galleon' }))).toBe('falconet');
+    expect(npcBroadsideWeapon(ship({ shipType: 'Galleon' }))).toBe('demiCulverin');
+    expect(npcBroadsideWeapon(ship({ shipType: 'Ghurab' }))).toBe('saker');
+    expect(npcBroadsideCount(ship({
+      shipType: 'Galleon',
+      visual: { ...ship({}).visual, hasCannonPorts: true },
+    }))).toBe(3);
+    expect(npcBroadsideCount(ship({
+      shipType: 'Galleon',
+      visual: { ...ship({}).visual, hasCannonPorts: false },
+    }))).toBe(0);
   });
 });

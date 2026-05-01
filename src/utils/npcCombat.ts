@@ -1,4 +1,5 @@
 import type { Nationality } from '../store/gameStore';
+import type { WeaponType } from '../store/gameStore';
 import { COMMODITY_DEFS, type Commodity } from './commodities';
 import { factionRelationModifier } from './factionRelations';
 import type { NPCShipIdentity, RouteRole, ShipType } from './npcShipGenerator';
@@ -62,11 +63,12 @@ export function chooseProvokedPosture(
 
   const heavy = HEAVY_SHIP_TYPES.has(identity.shipType);
   if (identity.role === 'spice convoy') {
-    if (identity.morale >= 55 || heavy) return 'engage';
+    if (identity.morale >= 45 || heavy) return 'engage';
     return 'evade';
   }
   if (identity.role === 'blue-water merchant' || identity.role === 'smuggler') {
-    if (context.reputation <= -60 && identity.morale >= 60 && heavy) return 'engage';
+    if (heavy && identity.morale >= 50) return 'engage';
+    if (context.reputation <= -60 && identity.morale >= 45) return 'engage';
     return 'evade';
   }
   if (CIVILIAN_ROLES.has(identity.role)) return 'flee';
@@ -124,4 +126,24 @@ export function cargoTemptationScore(cargo: Partial<Record<Commodity, number>>, 
   const loadFraction = cargoCapacity > 0 ? Math.min(1, usedSpace / cargoCapacity) : 0;
   const valueScore = Math.min(70, totalValue / 12);
   return Math.max(0, Math.min(100, valueScore + loadFraction * 30));
+}
+
+export function npcBowWeapon(identity: Pick<NPCShipIdentity, 'shipType'>): WeaponType {
+  if (identity.shipType === 'Junk' || identity.shipType === 'Jong' || identity.shipType === 'Prau') return 'cetbang';
+  if (identity.shipType === 'Ghurab' || identity.shipType === 'Baghla' || identity.shipType === 'Dhow') return 'lantaka';
+  if (identity.shipType === 'Galleon' || identity.shipType === 'Armed Merchantman') return 'falconet';
+  return 'swivelGun';
+}
+
+export function npcBroadsideWeapon(identity: Pick<NPCShipIdentity, 'shipType'>): WeaponType {
+  if (identity.shipType === 'Galleon' || identity.shipType === 'Carrack') return 'demiCulverin';
+  if (identity.shipType === 'Armed Merchantman' || identity.shipType === 'Ghurab' || identity.shipType === 'Jong') return 'saker';
+  return 'minion';
+}
+
+export function npcBroadsideCount(identity: Pick<NPCShipIdentity, 'shipType' | 'visual'>): number {
+  if (!identity.visual.hasCannonPorts) return 0;
+  if (identity.shipType === 'Galleon' || identity.shipType === 'Carrack') return 3;
+  if (identity.shipType === 'Armed Merchantman' || identity.shipType === 'Jong' || identity.shipType === 'Ghurab') return 2;
+  return 1;
 }

@@ -30,7 +30,7 @@ import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
 import { FloatingCombatTextSystem, spawnFloatingCombatText } from './FloatingCombatText';
 import { WreckSalvageSystem } from './WreckSalvage';
 import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
-import { spawnBuildingShake, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
+import { spawnBuildingShake, spawnBuildingCollapse, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
   mouseWorldPos,
   mouseRay,
@@ -281,6 +281,27 @@ function shipWaterSplashScale(weaponType: WeaponType | LandWeaponType) {
   return shipWeapon === 'swivelGun' ? 0.45 : 0.75;
 }
 
+function ricochetProfile(weaponType: WeaponType | LandWeaponType) {
+  switch (weaponType) {
+    case 'saker':
+      return { maxWater: 2, maxLand: 1, shallow: 0.24, retainWater: 0.58, retainLand: 0.44, carry: 20 };
+    case 'basilisk':
+      return { maxWater: 3, maxLand: 1, shallow: 0.28, retainWater: 0.62, retainLand: 0.46, carry: 24 };
+    case 'demiCulverin':
+      return { maxWater: 2, maxLand: 1, shallow: 0.22, retainWater: 0.54, retainLand: 0.42, carry: 18 };
+    case 'minion':
+      return { maxWater: 1, maxLand: 1, shallow: 0.2, retainWater: 0.48, retainLand: 0.38, carry: 14 };
+    case 'demiCannon':
+      return { maxWater: 1, maxLand: 0, shallow: 0.18, retainWater: 0.42, retainLand: 0.32, carry: 12 };
+    default:
+      return null;
+  }
+}
+
+function projectileDamageScale(p: { damageScale?: number }) {
+  return p.damageScale ?? 1;
+}
+
 function spawnSplashCombatText(x: number, y: number, z: number) {
   const now = Date.now();
   if (now - lastFloatingSplashAt < FLOATING_SPLASH_COOLDOWN_MS) return;
@@ -295,6 +316,57 @@ function shipHitCombatText(weaponType: WeaponType | LandWeaponType, damage: numb
   }
   if (damage <= 4) return { label: 'Glancing Hit', tone: 'glance' as const };
   return { label: 'Hit', tone: 'hit' as const };
+}
+
+function tryRicochetProjectile(
+  p: (typeof projectiles)[number],
+  normal: THREE.Vector3,
+  material: 'water' | 'land',
+) {
+  if (!isBroadsideWeapon(p.weaponType) || p.owner === 'npc') return false;
+  const profile = ricochetProfile(p.weaponType);
+  if (!profile) return false;
+  const maxRicochets = material === 'water' ? profile.maxWater : profile.maxLand;
+  const ricochets = p.ricochets ?? 0;
+  if (ricochets >= maxRicochets) return false;
+
+  const horizontalSpeed = Math.hypot(p.vel.x, p.vel.z);
+  if (horizontalSpeed < 16 || p.vel.y >= 0) return false;
+  const impactSteepness = Math.abs(p.vel.y) / Math.max(0.001, horizontalSpeed);
+  const shallowLimit = profile.shallow * (material === 'water' ? 1 : 0.82);
+  if (impactSteepness > shallowLimit) return false;
+
+  const speed = p.vel.length();
+  const retain = material === 'water' ? profile.retainWater : profile.retainLand;
+  const reflected = _segmentDelta.copy(p.vel).normalize().reflect(normal).normalize();
+  const yaw = (Math.random() - 0.5) * (0.1 + ricochets * 0.05);
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const rx = reflected.x;
+  const rz = reflected.z;
+  reflected.x = rx * cos - rz * sin;
+  reflected.z = rx * sin + rz * cos;
+  reflected.y = Math.max(0.08, reflected.y + (material === 'water' ? 0.06 : 0.035));
+  reflected.normalize();
+
+  p.vel.copy(reflected).multiplyScalar(speed * retain);
+  p.ricochets = ricochets + 1;
+  p.damageScale = projectileDamageScale(p) * (material === 'water' ? 0.68 : 0.58);
+  p.distanceTraveled = 0;
+  p.maxDistance = profile.carry * (1 - Math.min(0.45, ricochets * 0.16));
+  p.pos.addScaledVector(normal, material === 'water' ? 0.18 : 0.28);
+  p.pos.y = Math.max(
+    p.pos.y,
+    material === 'water' ? SEA_LEVEL + 0.18 : aimSurfaceHeight(p.pos.x, p.pos.z) + 0.28,
+  );
+
+  if (material === 'water') {
+    spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType) * 0.72);
+  } else {
+    spawnLandSurfaceImpact(p.pos.x, p.pos.z, broadsideImpactScale(p.weaponType) * 0.42);
+  }
+  spawnFloatingCombatText(p.pos.x, p.pos.y + 0.25, p.pos.z, 'Ricochet', 'glance');
+  return true;
 }
 
 function aimSurfaceHeight(x: number, z: number) {
@@ -741,6 +813,16 @@ function pointHitsBuilding(point: THREE.Vector3) {
     }
   });
   return hitBuilding;
+}
+
+function buildingCanDeflect(building: Building) {
+  return building.type === 'fort' || building.type === 'landmark' || building.type === 'palace';
+}
+
+function estimateBuildingRicochetNormal(building: Building, point: THREE.Vector3, out: THREE.Vector3) {
+  out.set(point.x - building.position[0], 0.18, point.z - building.position[2]);
+  if (out.lengthSq() < 1e-6) out.set(0, 0.18, 1);
+  return out.normalize();
 }
 
 function pointHitsTree(point: THREE.Vector3) {
@@ -2113,6 +2195,9 @@ function ProjectileSystem() {
       // Ship weapons still die at the water plane; land weapons handle terrain
       // collision separately so hills and shorelines stop them correctly.
       if (!isLandWeapon && p.pos.y < 0) {
+        if (tryRicochetProjectile(p, _aimObjectNormal.set(0, 1, 0), 'water')) {
+          continue;
+        }
         if (isRocket) {
           // Rockets detonate on water too — bigger splash + fire FX.
           spawnSplash(p.pos.x, p.pos.z, 1.3);
@@ -2130,11 +2215,18 @@ function ProjectileSystem() {
       if (!isLandWeapon && p.maxDistance !== undefined && (p.distanceTraveled ?? 0) >= p.maxDistance) {
         const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
         if (surfaceY <= SEA_LEVEL + 0.2) {
+          if (tryRicochetProjectile(p, _aimObjectNormal.set(0, 1, 0), 'water')) {
+            continue;
+          }
           spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
           sfxCannonSplash();
           spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
         } else {
-          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
+          estimateAimSurfaceNormal(p.pos.x, p.pos.z, _aimObjectNormal);
+          if (tryRicochetProjectile(p, _aimObjectNormal, 'land')) {
+            continue;
+          }
+        spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
         }
         projectiles.splice(i, 1);
         continue;
@@ -2240,8 +2332,13 @@ function ProjectileSystem() {
           const impactIntensity = p.weaponType === 'musket' ? 0.9 : 0.55;
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.65);
-          applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType), buildingMaxHp(building));
+          const destroyed = applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType), buildingMaxHp(building));
           spawnBuildingShake(building.id, impactIntensity);
+          if (destroyed) {
+            spawnBuildingCollapse(building.id, impactIntensity);
+            spawnImpactBurst(p.pos.x, p.pos.y + 0.6, p.pos.z, impactIntensity * 1.4);
+            spawnSplinters(p.pos.x, p.pos.y + 0.4, p.pos.z, impactIntensity * 1.3);
+          }
           const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
           if (portFaction) adjustReputation(portFaction, -20);
           spawnFloatingCombatText(p.pos.x, p.pos.y + 0.45, p.pos.z, 'Structure Hit', 'structure');
@@ -2357,7 +2454,7 @@ function ProjectileSystem() {
         if (dx * dx + dz * dz < r * r && Math.abs(dy) < 2.1) {
           const projectileDef = WEAPON_DEFS[p.weaponType as WeaponType];
           const impactScale = projectileDef?.aimable ? 0.65 : 1.0;
-          const damage = Math.max(1, Math.floor((projectileDef?.damage ?? 1) * 0.5));
+          const damage = Math.max(1, Math.floor((projectileDef?.damage ?? 1) * 0.5 * projectileDamageScale(p)));
           w.hp = Math.max(0, w.hp - damage);
           w.hitAlert = Date.now() + 8000;
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactScale);
@@ -2386,11 +2483,19 @@ function ProjectileSystem() {
 
       const building = pointHitsBuilding(p.pos);
       if (building) {
+        if (buildingCanDeflect(building) && tryRicochetProjectile(p, estimateBuildingRicochetNormal(building, p.pos, _aimObjectNormal), 'land')) {
+          continue;
+        }
         const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.8 : broadsideImpactScale(p.weaponType) * 0.85;
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.7);
-        applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType), buildingMaxHp(building));
+        const destroyed = applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType) * projectileDamageScale(p), buildingMaxHp(building));
         spawnBuildingShake(building.id, impactIntensity);
+        if (destroyed) {
+          spawnBuildingCollapse(building.id, impactIntensity);
+          spawnImpactBurst(p.pos.x, p.pos.y + 0.6, p.pos.z, impactIntensity * 1.4);
+          spawnSplinters(p.pos.x, p.pos.y + 0.4, p.pos.z, impactIntensity * 1.3);
+        }
         const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
         const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
         if (portFaction) adjustReputation(portFaction, isAimable ? -10 : -25);
@@ -2416,8 +2521,14 @@ function ProjectileSystem() {
 
       const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
       if (p.pos.y <= surfaceY) {
+        estimateAimSurfaceNormal(p.pos.x, p.pos.z, _aimObjectNormal);
+        if (tryRicochetProjectile(p, _aimObjectNormal, surfaceY <= SEA_LEVEL + 0.2 ? 'water' : 'land')) {
+          continue;
+        }
           spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
-        spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
+        if (surfaceY <= SEA_LEVEL + 0.2) {
+          spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
+        }
         projectiles.splice(i, 1);
         continue;
       }
@@ -2435,7 +2546,7 @@ function ProjectileSystem() {
           const gunner = getCrewByRole(gState, 'Gunner');
           const gunnerMod = gunner ? 1.0 + (gunner.stats.strength / 200) + (gunner.stats.perception / 400) : 1.0;
           const abilityMod = captainHasAbility(gState, 'Broadside Master') ? 1.15 : 1.0;
-          const damage = Math.floor(WEAPON_DEFS[p.weaponType as WeaponType].damage * gunnerMod * abilityMod);
+          const damage = Math.max(1, Math.floor(WEAPON_DEFS[p.weaponType as WeaponType].damage * gunnerMod * abilityMod * projectileDamageScale(p)));
           npc.hull = Math.max(0, npc.hull - damage);
           // Reputation penalty scaled: swivel = -5, broadside = -15
           const repPenalty = isAimable ? -5 : -15;
@@ -2842,8 +2953,8 @@ function computeAtmosphere(
   const sunH = Math.sin(angle);
 
   // Climate-conditioned palette lookups. Strings only — cheap.
-  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#5e6c72' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
-  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#6e7a7a' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
+  const daySky = waterPaletteId === 'monsoon' ? '#5aaec0' : waterPaletteId === 'temperate' ? '#2d78a8' : waterPaletteId === 'tropical' ? '#5aade6' : '#6ab2dc';
+  const dayFog = waterPaletteId === 'monsoon' ? '#9ccfd0' : waterPaletteId === 'temperate' ? '#78a8bb' : waterPaletteId === 'tropical' ? '#a0ccde' : '#a8cede';
   const duskSky = waterPaletteId === 'monsoon' ? '#24445a' : waterPaletteId === 'temperate' ? '#354852' : '#1d3158';
   const duskFog = waterPaletteId === 'monsoon' ? '#263b46' : waterPaletteId === 'temperate' ? '#46565b' : '#202b42';
   const warmSky = waterPaletteId === 'monsoon' ? '#e6a06c' : waterPaletteId === 'temperate' ? '#c8a58a' : '#f0a36b';

@@ -29,6 +29,58 @@ const ORANGE_LEAF: readonly [number, number, number] = [0.20, 0.38, 0.15];
 const ORANGE_FRUIT: readonly [number, number, number] = [0.90, 0.42, 0.10];
 const SILVER: readonly [number, number, number] = [0.70, 0.72, 0.72];
 
+function GableRoof({ width, depth, height, axis, material, ridgeMaterial }: {
+  width: number;
+  depth: number;
+  height: number;
+  axis: 'x' | 'z';
+  material: THREE.Material;
+  ridgeMaterial: THREE.Material;
+}) {
+  const geometry = useMemo(() => {
+    const hw = width * 0.5;
+    const hd = depth * 0.5;
+    const verts = axis === 'x'
+      ? new Float32Array([
+          -hw, 0, -hd,  hw, 0, -hd,  hw, 0, hd,  -hw, 0, hd,
+          -hw, height, 0,  hw, height, 0,
+        ])
+      : new Float32Array([
+          -hw, 0, -hd,  hw, 0, -hd,  hw, 0, hd,  -hw, 0, hd,
+          0, height, -hd,  0, height, hd,
+        ]);
+    const indices = axis === 'x'
+      ? [
+          0, 1, 5, 0, 5, 4,
+          3, 2, 5, 3, 5, 4,
+          0, 4, 3,
+          1, 2, 5,
+          0, 3, 2, 0, 2, 1,
+        ]
+      : [
+          0, 4, 3, 3, 4, 5,
+          1, 2, 5, 1, 5, 4,
+          0, 1, 4,
+          3, 5, 2,
+          0, 3, 2, 0, 2, 1,
+        ];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    g.setIndex(indices);
+    g.computeVertexNormals();
+    return g;
+  }, [axis, depth, height, width]);
+
+  return (
+    <group>
+      <mesh geometry={geometry} material={material} />
+      <mesh position={[0, height + 0.05, 0]} material={ridgeMaterial}>
+        <boxGeometry args={axis === 'x' ? [width + 0.35, 0.2, 0.42] : [0.42, 0.2, depth + 0.35]} />
+      </mesh>
+    </group>
+  );
+}
+
 function CourtyardWing({ position, size, roofAxis = 'x' }: {
   position: readonly [number, number, number];
   size: readonly [number, number, number];
@@ -41,7 +93,7 @@ function CourtyardWing({ position, size, roofAxis = 'x' }: {
   const blue = chunkyMat(TILE_BLUE, { roughness: 0.9 });
   const [w, h, d] = size;
   const roofLong = roofAxis === 'x' ? w + 1.2 : d + 1.2;
-  const roofShort = roofAxis === 'x' ? d * 0.72 : w * 0.72;
+  const roofShort = roofAxis === 'x' ? d + 1.1 : w + 1.1;
 
   return (
     <group position={position as [number, number, number]}>
@@ -57,23 +109,9 @@ function CourtyardWing({ position, size, roofAxis = 'x' }: {
       <mesh position={[0, h + 0.15, d * 0.5 + 0.03]} material={blue}>
         <boxGeometry args={[w, 0.42, 0.08]} />
       </mesh>
-      <mesh
-        position={roofAxis === 'x' ? [0, h + 1.05, -d * 0.18] : [-w * 0.18, h + 1.05, 0]}
-        rotation={roofAxis === 'x' ? [0.55, 0, 0] : [0, 0, -0.55]}
-        material={roof}
-      >
-        <boxGeometry args={roofAxis === 'x' ? [roofLong, 0.35, roofShort] : [roofShort, 0.35, roofLong]} />
-      </mesh>
-      <mesh
-        position={roofAxis === 'x' ? [0, h + 1.05, d * 0.18] : [w * 0.18, h + 1.05, 0]}
-        rotation={roofAxis === 'x' ? [-0.55, 0, 0] : [0, 0, 0.55]}
-        material={roofDark}
-      >
-        <boxGeometry args={roofAxis === 'x' ? [roofLong, 0.35, roofShort] : [roofShort, 0.35, roofLong]} />
-      </mesh>
-      <mesh position={[0, h + 1.9, 0]} material={roofDark}>
-        <boxGeometry args={roofAxis === 'x' ? [roofLong, 0.24, 0.48] : [0.48, 0.24, roofLong]} />
-      </mesh>
+      <group position={[0, h + 0.1, 0]}>
+        <GableRoof width={roofAxis === 'x' ? roofLong : roofShort} depth={roofAxis === 'x' ? roofShort : roofLong} height={1.8} axis={roofAxis} material={roof} ridgeMaterial={roofDark} />
+      </group>
     </group>
   );
 }

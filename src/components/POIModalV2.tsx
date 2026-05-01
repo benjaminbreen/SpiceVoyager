@@ -145,6 +145,13 @@ export function POIModalV2({
       <motion.div
         key={poi.id}
         className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-auto p-3 sm:p-6"
+        style={{
+          height: 'var(--app-height)',
+          paddingTop: 'calc(0.75rem + var(--sai-top))',
+          paddingBottom: 'calc(0.75rem + var(--sai-bottom))',
+          paddingLeft: 'calc(0.75rem + var(--sai-left))',
+          paddingRight: 'calc(0.75rem + var(--sai-right))',
+        }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -162,8 +169,8 @@ export function POIModalV2({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: 10 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.25, 1] }}
-          className="relative grid w-[min(820px,calc(100vw-1.5rem))] max-h-[min(780px,calc(100vh-1.5rem))]
-            grid-cols-1 overflow-hidden rounded-xl md:min-h-[min(660px,calc(100vh-3rem))] md:w-[min(1040px,calc(100vw-3rem))] md:grid-cols-[210px_minmax(0,1fr)] md:overflow-visible lg:grid-cols-[230px_minmax(0,1fr)]
+          className="relative grid w-[min(820px,calc(100vw-1.5rem))] max-h-[min(780px,calc(var(--app-height)-var(--sai-top)-var(--sai-bottom)-1.5rem))]
+            grid-cols-1 overflow-hidden rounded-xl md:min-h-[min(660px,calc(var(--app-height)-var(--sai-top)-var(--sai-bottom)-3rem))] md:w-[min(1040px,calc(100vw-3rem))] md:grid-cols-[210px_minmax(0,1fr)] md:overflow-visible lg:grid-cols-[230px_minmax(0,1fr)]
             border bg-[#0c0b08]/96 shadow-[0_22px_70px_rgba(0,0,0,0.72),inset_0_1px_0_rgba(255,232,164,0.08)]"
           style={{
             borderColor: shell.accentSoft,
@@ -185,7 +192,7 @@ export function POIModalV2({
             port={port}
           />
 
-          <section className="relative min-w-0 flex max-h-[min(780px,calc(100vh-1.5rem))] flex-col">
+          <section className="relative min-w-0 flex max-h-[min(780px,calc(var(--app-height)-var(--sai-top)-var(--sai-bottom)-1.5rem))] flex-col">
             {hasModelPreview && (
               <div
                 className="pointer-events-auto absolute right-3 top-3 z-30 hidden h-44 w-[18rem] overflow-hidden md:block lg:h-48 lg:w-[21rem] xl:h-52 xl:w-[24rem]"
@@ -1182,7 +1189,7 @@ function useAccessState(poi: POIDefinition, port: Port | null) {
 
 function thresholdBody(poi: POIDefinition, kind: AccessKind): string {
   if (poi.hasKeeper === false) {
-    return `${poi.lore} You can inspect the place and add the observation to your record.`;
+    return `${poi.arrivalDescription ?? poi.lore} You can inspect the place and add the observation to your record.`;
   }
   if (kind === 'reputation') {
     return `The threshold is guarded by custom and reputation. ${poi.npcName} receives captains only when their standing is already known.`;
@@ -1191,7 +1198,7 @@ function thresholdBody(poi: POIDefinition, kind: AccessKind): string {
     return `The threshold has its own custom. Before conversation or instruction, ${poi.npcName} expects the proper offering.`;
   }
   if (poi.arrivalDescription) return poi.arrivalDescription;
-  return `${poi.npcName} receives visitors here. You may enter, speak, and ask for instruction if you can pay for the lessons.`;
+  return `You find ${poi.name.toLowerCase()} and take in the place before speaking to anyone. Entry is open, but formal instruction still has a cost.`;
 }
 
 function thresholdDescription(poi: POIDefinition, port: Port | null): string {

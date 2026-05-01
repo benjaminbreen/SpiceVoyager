@@ -155,7 +155,7 @@ export function Ship() {
   // Recoil state: slow drift away from land after collision
   const recoilVelX = useRef(0);
   const recoilVelZ = useRef(0);
-  const edgePressTime = useRef(0); // seconds spent pressed against map edge
+  const edgeWorldMapRequested = useRef(false);
   const windVector = useRef(new THREE.Vector2());
   const shipVelocityVector = useRef(new THREE.Vector2());
   const apparentWindVector = useRef(new THREE.Vector2());
@@ -1148,19 +1148,12 @@ export function Ship() {
         recoilVelX.current = (nx / nLen) * 2;
         recoilVelZ.current = (nz / nLen) * 2;
 
-        edgePressTime.current += delta;
-        if (edgePressTime.current > 1.5) {
-          // Sustained edge press → open world map for fast travel
+        if (!edgeWorldMapRequested.current) {
           useGameStore.getState().setRequestWorldMap(true);
-          edgePressTime.current = 0;
-        } else if (edgePressTime.current > 0.1 && edgePressTime.current < 0.2) {
-          useGameStore.getState().addNotification(
-            'Open waters ahead — consult your sea chart',
-            'info'
-          );
+          edgeWorldMapRequested.current = true;
         }
       } else {
-        edgePressTime.current = Math.max(0, edgePressTime.current - delta * 2);
+        edgeWorldMapRequested.current = false;
       }
 
       group.current.rotation.y = rotation.current;

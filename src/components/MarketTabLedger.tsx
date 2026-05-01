@@ -242,7 +242,7 @@ export function MarketTabLedger({
     <div data-testid="market-ledger" className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.46fr)]">
       <div
         data-testid="mobile-market-trade-dock"
-        className={`sticky top-0 z-20 -mx-1 rounded-lg border p-3 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl md:hidden ${
+        className={`-mx-1 rounded-lg border p-3 shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl md:hidden ${
           selected.knowledgeLevel === 0
             ? 'border-amber-400/20 bg-[#1a1208]/92'
             : 'border-white/[0.08] bg-[#080c14]/94'

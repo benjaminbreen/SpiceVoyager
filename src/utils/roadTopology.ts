@@ -36,6 +36,9 @@ import { ROAD_TIER_STYLE } from './roadStyle';
  *  Smaller = tighter terrain fit but more triangles. 1.0 is a good balance
  *  for the current terrain noise scale. */
 const MAX_SEG_LEN = 1.0;
+const MIN_SEG_LEN = 0.08;
+const MAX_SPIKE_SEG_LEN = 0.6;
+const SPIKE_DOT = -0.85;
 
 /** Maximum lateral distance at which an endpoint will weld to another road.
  *  Equal to ~1 cell of the generator's snap grid (2u) plus slack. */
@@ -110,8 +113,48 @@ export function densifyRoads(roads: Road[]): void {
       }
       out.push(b);
     }
-    r.points = out;
+    r.points = removeTinySegments(out);
   }
+}
+
+function removeTinySegments(points: [number, number, number][]): [number, number, number][] {
+  if (points.length < 2) return points;
+  const minDistSq = MIN_SEG_LEN * MIN_SEG_LEN;
+  const out: [number, number, number][] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const prev = out[out.length - 1];
+    const p = points[i];
+    const dx = p[0] - prev[0];
+    const dz = p[2] - prev[2];
+    if (dx * dx + dz * dz < minDistSq) {
+      out[out.length - 1] = p;
+      continue;
+    }
+    if (out.length >= 2) {
+      const beforePrev = out[out.length - 2];
+      const backDx = p[0] - beforePrev[0];
+      const backDz = p[2] - beforePrev[2];
+      if (backDx * backDx + backDz * backDz < minDistSq) {
+        out.pop();
+        out[out.length - 1] = p;
+        continue;
+      }
+      const prevDx = prev[0] - beforePrev[0];
+      const prevDz = prev[2] - beforePrev[2];
+      const prevLen = Math.hypot(prevDx, prevDz);
+      const nextLen = Math.hypot(dx, dz);
+      if (prevLen < MAX_SPIKE_SEG_LEN && nextLen < MAX_SPIKE_SEG_LEN) {
+        const dot = (prevDx / prevLen) * (dx / nextLen) + (prevDz / prevLen) * (dz / nextLen);
+        if (dot < SPIKE_DOT) {
+          out.pop();
+          out.push(p);
+          continue;
+        }
+      }
+    }
+    out.push(p);
+  }
+  return out.length >= 2 ? out : points;
 }
 
 // ── Welding + T-junctions ───────────────────────────────────────────────────

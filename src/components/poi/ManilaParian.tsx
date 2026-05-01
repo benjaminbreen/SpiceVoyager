@@ -33,6 +33,59 @@ function localTerrain(ax: number, az: number, rotationY: number) {
   };
 }
 
+function GableRoof({ width, depth, height, axis, material, ridgeMaterial }: {
+  width: number;
+  depth: number;
+  height: number;
+  axis: 'x' | 'z';
+  material: THREE.Material;
+  ridgeMaterial: THREE.Material;
+}) {
+  const geometry = useMemo(() => {
+    const hw = width * 0.5;
+    const hd = depth * 0.5;
+    const h = height;
+    const verts = axis === 'x'
+      ? new Float32Array([
+          -hw, 0, -hd,  hw, 0, -hd,  hw, 0, hd,  -hw, 0, hd,
+          -hw, h, 0,    hw, h, 0,
+        ])
+      : new Float32Array([
+          -hw, 0, -hd,  hw, 0, -hd,  hw, 0, hd,  -hw, 0, hd,
+          0, h, -hd,    0, h, hd,
+        ]);
+    const indices = axis === 'x'
+      ? [
+          0, 1, 5, 0, 5, 4,
+          3, 2, 5, 3, 5, 4,
+          0, 4, 3,
+          1, 2, 5,
+          0, 3, 2, 0, 2, 1,
+        ]
+      : [
+          0, 4, 3, 3, 4, 5,
+          1, 2, 5, 1, 5, 4,
+          0, 1, 4,
+          3, 5, 2,
+          0, 3, 2, 0, 2, 1,
+        ];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    g.setIndex(indices);
+    g.computeVertexNormals();
+    return g;
+  }, [axis, depth, height, width]);
+
+  return (
+    <group>
+      <mesh geometry={geometry} material={material} />
+      <mesh position={axis === 'x' ? [0, height + 0.05, 0] : [0, height + 0.05, 0]} material={ridgeMaterial}>
+        <boxGeometry args={axis === 'x' ? [width + 0.35, 0.18, 0.35] : [0.35, 0.18, depth + 0.35]} />
+      </mesh>
+    </group>
+  );
+}
+
 function MerchantHall({ position }: { position: readonly [number, number, number] }) {
   const wall = chunkyMat(WHITE_PLASTER, { roughness: 1 });
   const red = chunkyMat(RED_LACQUER, { roughness: 0.85 });
@@ -56,14 +109,11 @@ function MerchantHall({ position }: { position: readonly [number, number, number
           <cylinderGeometry args={[0.32, 0.38, 4.2, 8]} />
         </mesh>
       ))}
-      <mesh position={[0, 6.4, -1.4]} rotation={[0.50, 0, 0]} material={green}>
-        <boxGeometry args={[23.5, 0.45, 6.4]} />
-      </mesh>
-      <mesh position={[0, 6.4, 1.4]} rotation={[-0.50, 0, 0]} material={greenDark}>
-        <boxGeometry args={[23.5, 0.45, 6.4]} />
-      </mesh>
-      <mesh position={[0, 7.55, 0]} material={gold}>
-        <boxGeometry args={[23.5, 0.25, 0.55]} />
+      <group position={[0, 5.75, 0]}>
+        <GableRoof width={23.5} depth={9.2} height={2.2} axis="x" material={green} ridgeMaterial={greenDark} />
+      </group>
+      <mesh position={[0, 8.1, 0]} material={gold}>
+        <boxGeometry args={[23.8, 0.22, 0.5]} />
       </mesh>
       <mesh position={[0, 4.1, -4.45]} material={gold}>
         <boxGeometry args={[7.6, 0.65, 0.28]} />
@@ -88,12 +138,9 @@ function PaifangGate({ position }: { position: readonly [number, number, number]
       <mesh position={[0, 6.1, 0]} material={dark}>
         <boxGeometry args={[10.2, 0.65, 0.8]} />
       </mesh>
-      <mesh position={[0, 7.0, 0]} rotation={[0.25, 0, 0]} material={green}>
-        <boxGeometry args={[11.5, 0.35, 1.9]} />
-      </mesh>
-      <mesh position={[0, 7.45, 0]} material={gold}>
-        <boxGeometry args={[11.2, 0.22, 0.35]} />
-      </mesh>
+      <group position={[0, 6.65, 0]}>
+        <GableRoof width={11.5} depth={2.2} height={0.9} axis="x" material={green} ridgeMaterial={gold} />
+      </group>
       <mesh position={[0, 5.25, -0.45]} material={gold}>
         <boxGeometry args={[4.4, 1.0, 0.25]} />
       </mesh>

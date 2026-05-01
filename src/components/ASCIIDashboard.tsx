@@ -4097,12 +4097,20 @@ export function ASCIIDashboard({ open, onClose, initialTab, initialCrewId, initi
       <motion.div
         {...modalBackdropMotion}
         className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-6 pointer-events-auto"
-        style={{ backgroundColor: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(4px)' }}
+        style={{
+          height: 'var(--app-height)',
+          paddingTop: 'calc(0.5rem + var(--sai-top))',
+          paddingBottom: 'calc(0.5rem + var(--sai-bottom))',
+          paddingLeft: 'calc(0.5rem + var(--sai-left))',
+          paddingRight: 'calc(0.5rem + var(--sai-right))',
+          backgroundColor: 'rgba(0,0,0,0.88)',
+          backdropFilter: 'blur(4px)',
+        }}
         onClick={(e) => { if (e.target === e.currentTarget) { sfxClose(); onClose(); } }}
       >
         <motion.div
           {...modalPanelMotion}
-          className="relative w-full max-w-5xl h-full max-h-[88vh] overflow-hidden flex flex-col"
+          className="relative w-full max-w-5xl h-full max-h-[calc(var(--app-height)-var(--sai-top)-var(--sai-bottom)-1rem)] overflow-hidden flex flex-col"
           style={{
             background: 'linear-gradient(180deg, #0e0d0a 0%, #0a0908 40%, #080807 100%)',
             boxShadow: `0 30px 100px rgba(0,0,0,0.8), inset 0 1px 0 ${activeAccent}15, 0 0 1px ${activeAccent}20`,

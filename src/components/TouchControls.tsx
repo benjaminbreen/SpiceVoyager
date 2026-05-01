@@ -5,19 +5,13 @@ import { useGameStore } from '../store/gameStore';
 import { useIsMobile } from '../utils/useIsMobile';
 import { touchShipInput, touchWalkInput, resetTouchInput } from '../utils/touchInput';
 import { setFireHeld } from '../utils/combatState';
-import { Sailboat, Plus, Minus, Target, Swords, RotateCw } from 'lucide-react';
+import { Sailboat, Target, Swords, RotateCw } from 'lucide-react';
 
 // First time the layout flips to mobile (real device or "Force Mobile"), pull
 // the camera back so the smaller viewport isn't a claustrophobic close-up.
 // Skip if the user has already dollied further out themselves.
 const MOBILE_DEFAULT_ZOOM = 85;
 const MOBILE_ZOOM_BUMP_THRESHOLD = 80;
-
-// Zoom button step. Matches the wheel handler in GameScene.tsx so the feel is
-// consistent across input methods.
-const ZOOM_STEP_FACTOR = 0.12;  // 2× the wheel step since taps are coarser
-const ZOOM_MIN = 10;
-const ZOOM_MAX = 150;
 
 // Phase 4 — touch controls. Ship mode has two steering strategies:
 //   'tap'      — tap the ocean to set a target heading; sail button toggles throttle.
@@ -97,15 +91,14 @@ export function TouchControls() {
       )}
       {useTapSteer && <SailToggleButton />}
       {combatMode && <CombatTouchPanel playerMode={playerMode} />}
-      <ZoomButtons offsetSail={useTapSteer} offsetCombat={combatMode} />
     </div>
   );
 }
 
 // ── Virtual joystick ────────────────────────────────────────────────────────
 
-const JOY_RADIUS = 52;       // knob travel in px
-const JOY_BASE = 120;        // total base diameter in px
+const JOY_RADIUS = 42;       // knob travel in px
+const JOY_BASE = 96;         // total base diameter in px
 const JOY_INSET = 24;        // distance from viewport corner
 const ACTION_BAR_CLEARANCE = 76;
 
@@ -182,8 +175,8 @@ function VirtualJoystick({ target }: { target: 'walk' | 'ship' }) {
       <div
         className="absolute rounded-full bg-amber-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
         style={{
-          width: 44,
-          height: 44,
+          width: 38,
+          height: 38,
           left: '50%',
           top: '50%',
           transform: `translate(-50%, -50%) translate(${knob.x}px, ${knob.y}px)`,
@@ -227,56 +220,6 @@ function SailToggleButton() {
         {raised ? 'Sail Up' : 'Sail Down'}
       </span>
     </button>
-  );
-}
-
-// ── Zoom +/- buttons ────────────────────────────────────────────────────────
-// Two-finger pinch-zoom is implemented on the canvas in GameScene.tsx; these
-// buttons are the single-finger fallback. Stacked above the sail button so
-// they don't overlap it in ship tap mode.
-
-function ZoomButtons({ offsetSail, offsetCombat }: { offsetSail: boolean; offsetCombat: boolean }) {
-  const setCameraZoom = useGameStore(s => s.setCameraZoom);
-
-  const bump = (dir: 1 | -1) => {
-    const z = useGameStore.getState().cameraZoom;
-    const step = Math.max(3, z * ZOOM_STEP_FACTOR);
-    setCameraZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + dir * step)));
-  };
-
-  // Base bottom offset: clear the action bar. Shift further up when the sail
-  // button or combat cluster is present so zoom out sits immediately above.
-  const baseBottom = 24 + ACTION_BAR_CLEARANCE;
-  let zoomOutBottom = baseBottom;
-  if (offsetSail) zoomOutBottom = baseBottom + 96;
-  else if (offsetCombat) zoomOutBottom = baseBottom + 180; // combat cluster is taller
-  const zoomInBottom = zoomOutBottom + 60;
-
-  return (
-    <>
-      <button
-        data-testid="touch-zoom-in"
-        onPointerDown={() => bump(1)}
-        className="absolute w-12 h-12 rounded-full flex items-center justify-center pointer-events-auto
-          border-2 border-amber-900/60 bg-[#0a0e18]/60 text-amber-300/80 backdrop-blur-md
-          transition-all active:scale-95 active:bg-[#0a0e18]/80"
-        style={{ right: 28, bottom: zoomInBottom, touchAction: 'none' }}
-        title="Zoom in"
-      >
-        <Plus size={20} strokeWidth={2.5} />
-      </button>
-      <button
-        data-testid="touch-zoom-out"
-        onPointerDown={() => bump(-1)}
-        className="absolute w-12 h-12 rounded-full flex items-center justify-center pointer-events-auto
-          border-2 border-amber-900/60 bg-[#0a0e18]/60 text-amber-300/80 backdrop-blur-md
-          transition-all active:scale-95 active:bg-[#0a0e18]/80"
-        style={{ right: 28, bottom: zoomOutBottom, touchAction: 'none' }}
-        title="Zoom out"
-      >
-        <Minus size={20} strokeWidth={2.5} />
-      </button>
-    </>
   );
 }
 
