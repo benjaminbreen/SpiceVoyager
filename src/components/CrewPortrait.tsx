@@ -8,8 +8,21 @@
  * facial hair, and accessories for the c. 1612 Indian Ocean setting.
  */
 
-import React, { useMemo } from 'react';
+import React, { useId, useMemo } from 'react';
 import type { CrewMember, HealthFlag } from '../store/gameStore';
+import {
+  renderEyePatch,
+  renderFacialMark,
+  renderFreckles,
+  renderNeckJewelry,
+  renderNeckKerchief,
+  renderPipe,
+  renderTattoo,
+} from './portrait/accessories';
+import { getCulturalAccent, getRoleBgColor, renderCaptainFlag } from './portrait/backgrounds';
+import { renderEyeWithLid } from './portrait/eyes';
+import { applyPersonality } from './portrait/expression';
+import { headPath, renderEars, renderNose, renderWrinkles } from './portrait/face';
 import {
   mulberry32,
   crewToPortraitConfig,
@@ -17,6 +30,7 @@ import {
   getSkin,
   getEyeColor,
   getHairColor,
+  portraitConfigSignature,
   type PortraitConfig,
   type SkinPalette,
   type Personality,
@@ -39,11 +53,12 @@ interface CrewPortraitProps {
 }
 
 export function CrewPortrait({ member, size = 64, className = '', showBackground = true, expressionOverride }: CrewPortraitProps) {
+  const instanceId = useSvgInstanceId('crew-portrait');
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
-    if (expressionOverride) config.personality = expressionOverride;
-    return renderPortrait(config, showBackground, member.morale, member.health);
-  }, [member.id, member.name, member.role, member.quality, member.morale, member.health, showBackground, expressionOverride]);
+    const displayConfig = expressionOverride ? { ...config, personality: expressionOverride } : config;
+    return renderPortrait(displayConfig, showBackground, member.morale, member.health, instanceId);
+  }, [member, showBackground, expressionOverride, instanceId]);
 
   return (
     <svg
@@ -61,12 +76,13 @@ export function CrewPortrait({ member, size = 64, className = '', showBackground
 
 // Compact square version for crew rows — zoomed into head
 export function CrewPortraitSquare({ member, size = 32, className = '', expressionOverride }: Omit<CrewPortraitProps, 'showBackground'>) {
+  const instanceId = useSvgInstanceId('crew-portrait-square');
   const portrait = useMemo(() => {
     const config = crewToPortraitConfig(member);
-    if (expressionOverride) config.personality = expressionOverride;
+    const displayConfig = expressionOverride ? { ...config, personality: expressionOverride } : config;
     const showBg = config.role === 'Captain'; // captains get flag background even in compact view
-    return renderPortrait(config, showBg, member.morale, member.health);
-  }, [member.id, member.name, member.role, member.quality, member.morale, member.health, expressionOverride]);
+    return renderPortrait(displayConfig, showBg, member.morale, member.health, instanceId);
+  }, [member, expressionOverride, instanceId]);
 
   return (
     <svg
@@ -93,7 +109,9 @@ interface ConfigPortraitProps {
 }
 
 export function ConfigPortrait({ config, size = 64, className = '', showBackground = false, square = false }: ConfigPortraitProps) {
-  const portrait = useMemo(() => renderPortrait(config, showBackground), [config.seed, showBackground]);
+  const instanceId = useSvgInstanceId('config-portrait');
+  const configKey = portraitConfigSignature(config);
+  const portrait = useMemo(() => renderPortrait(config, showBackground, undefined, undefined, instanceId), [config, configKey, showBackground, instanceId]);
 
   return (
     <svg
@@ -111,7 +129,15 @@ export function ConfigPortrait({ config, size = 64, className = '', showBackgrou
 
 // ── Core renderer ────────────────────────────────────────
 
-function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number, health?: HealthFlag): React.ReactNode {
+function useSvgInstanceId(prefix: string): string {
+  return `${prefix}-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+}
+
+export function renderPortraitForTest(config: PortraitConfig, instanceId = 'test-portrait', showBg = false): React.ReactNode {
+  return renderPortrait(config, showBg, undefined, undefined, instanceId);
+}
+
+function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number, health?: HealthFlag, instanceId?: string): React.ReactNode {
   const rng = mulberry32(config.seed);
   const skin = getSkin(config);
   const eyeColor = getEyeColor(config);
@@ -263,7 +289,7 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   const noseY = eyeY + noseLength;
   const bgColor = getRoleBgColor(config);
   const culturalAccent = getCulturalAccent(config.culturalGroup);
-  const uid = `p${Math.abs(config.seed)}`;
+  const uid = `${instanceId ?? 'portrait'}-p${Math.abs(config.seed)}`.replace(/[^a-zA-Z0-9_-]/g, '');
 
   // ── Eye animation: gaze shifts + occasional brow raise ──
   // Low-morale crew get "shifty" eyes — multiple rapid glances per cycle.
@@ -347,8 +373,6 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
 
   // Light source position (percentage coordinates for gradient)
   const lightX = lightSide > 0 ? '72%' : '28%';
-  const shadowX = lightSide > 0 ? '15%' : '85%';
-
   return (
     <g>
       <defs>
@@ -682,347 +706,6 @@ function renderPortrait(config: PortraitConfig, showBg: boolean, morale?: number
   );
 }
 
-// ── Head shape ──────────────────────────────────────────
-
-function headPath(
-  cx: number, headTop: number, eyeY: number, chinY: number,
-  hw: number, jw: number, cw: number, fh: number, jowl: number,
-): string {
-  const topY = headTop;
-  return `M ${cx} ${topY}
-    C ${cx + hw * 0.8} ${topY - fh * 0.3}, ${cx + hw + 4} ${topY + fh * 1.5}, ${cx + cw} ${eyeY - 5}
-    C ${cx + cw + 1} ${eyeY + 20}, ${cx + jw + 6 + jowl} ${chinY - 20}, ${cx + jw + jowl * 0.5} ${chinY - 5}
-    C ${cx + jw * 0.5} ${chinY + 4}, ${cx + 4} ${chinY + 6}, ${cx} ${chinY + 6}
-    C ${cx - 4} ${chinY + 6}, ${cx - jw * 0.5} ${chinY + 4}, ${cx - jw - jowl * 0.5} ${chinY - 5}
-    C ${cx - jw - 6 - jowl} ${chinY - 20}, ${cx - cw - 1} ${eyeY + 20}, ${cx - cw} ${eyeY - 5}
-    C ${cx - hw - 4} ${topY + fh * 1.5}, ${cx - hw * 0.8} ${topY - fh * 0.3}, ${cx} ${topY} Z`;
-}
-
-// ── Ears ─────────────────────────────────────────────────
-
-function renderEars(
-  cx: number, earY: number, hw: number, earSize: number, skin: SkinPalette, uid: string,
-): React.ReactNode {
-  const earTop = earY - earSize * 0.4;
-  const earBot = earY + earSize * 0.6;
-  // Subsurface warmth — the outer cartilage glows with the blush tone because light passes through it.
-  // Thin strokes along the outer rim, stronger near the top helix where the ear is thinnest.
-  return (
-    <g key="ears">
-      {/* Left ear */}
-      <path
-        d={`M ${cx - hw} ${earTop} C ${cx - hw - 6} ${earTop + 2}, ${cx - hw - 7} ${earBot - 2}, ${cx - hw} ${earBot}
-            C ${cx - hw - 2} ${earBot - earSize * 0.15}, ${cx - hw - 2} ${earTop + earSize * 0.15}, ${cx - hw} ${earTop} Z`}
-        fill={`url(#skin-${uid})`}
-      />
-      {/* Translucent blush along the outer helix */}
-      <path
-        d={`M ${cx - hw - 1} ${earTop + 1} C ${cx - hw - 5.5} ${earTop + 3}, ${cx - hw - 6.5} ${earBot - 3}, ${cx - hw - 1} ${earBot - 1}`}
-        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
-      />
-      <path
-        d={`M ${cx - hw - 1} ${earTop + 3} C ${cx - hw - 4} ${earTop + 5}, ${cx - hw - 4} ${earBot - 4}, ${cx - hw - 1} ${earBot - 3}`}
-        stroke="rgba(0,0,0,0.12)" strokeWidth="0.8" fill="none"
-      />
-      {/* Right ear */}
-      <path
-        d={`M ${cx + hw} ${earTop} C ${cx + hw + 6} ${earTop + 2}, ${cx + hw + 7} ${earBot - 2}, ${cx + hw} ${earBot}
-            C ${cx + hw + 2} ${earBot - earSize * 0.15}, ${cx + hw + 2} ${earTop + earSize * 0.15}, ${cx + hw} ${earTop} Z`}
-        fill={`url(#skin-${uid})`}
-      />
-      <path
-        d={`M ${cx + hw + 1} ${earTop + 1} C ${cx + hw + 5.5} ${earTop + 3}, ${cx + hw + 6.5} ${earBot - 3}, ${cx + hw + 1} ${earBot - 1}`}
-        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
-      />
-      <path
-        d={`M ${cx + hw + 1} ${earTop + 3} C ${cx + hw + 4} ${earTop + 5}, ${cx + hw + 4} ${earBot - 4}, ${cx + hw + 1} ${earBot - 3}`}
-        stroke="rgba(0,0,0,0.12)" strokeWidth="0.8" fill="none"
-      />
-    </g>
-  );
-}
-
-// ── Nose ─────────────────────────────────────────────────
-
-function renderNose(
-  cx: number, eyeY: number, noseY: number, noseLength: number,
-  nw: number, nb: number, tip: number, curve: number,
-  philtrumDepth: number, mouthY: number, isBroken: boolean,
-  skin: SkinPalette,
-): React.ReactNode {
-  // Broken nose: bridge kinks mid-way rather than shifting uniformly, the way
-  // a poorly-set fracture actually heals. Direction is deterministic per portrait.
-  const brkDir = isBroken ? ((Math.round(cx) + Math.round(eyeY)) % 2 === 0 ? 1 : -1) : 0;
-  const brkKink = isBroken ? 3.2 : 0;            // lateral kink at the mid-bridge
-  const brkBulge = isBroken ? 2.2 : 0;           // thickness of the healed callus
-  const bridgeMidY = eyeY + noseLength * 0.38;
-  return (
-    <g key="nose">
-      {/* Bridge shadow — left side curves through the kink */}
-      <path
-        d={`M ${cx - nb} ${eyeY + 4}
-            Q ${cx - nb - curve + brkKink * brkDir} ${bridgeMidY}, ${cx - nw} ${noseY}
-            C ${cx - nw * 0.5} ${noseY + tip + 5}, ${cx + nw * 0.5} ${noseY + tip + 5}, ${cx + nw} ${noseY}
-            Q ${cx + nb + curve + brkKink * brkDir} ${bridgeMidY}, ${cx + nb} ${eyeY + 4} Z`}
-        fill="rgba(0,0,0,0.07)"
-      />
-      {/* Broken nose callus — visible ridge on the kinked side */}
-      {isBroken && (
-        <>
-          <ellipse cx={cx + brkKink * brkDir * 0.7} cy={bridgeMidY}
-            rx={nb + brkBulge} ry={3.2} fill="rgba(0,0,0,0.09)" />
-          <path d={`M ${cx + brkKink * brkDir * 0.4} ${eyeY + 6}
-                    Q ${cx + brkKink * brkDir * 1.1} ${bridgeMidY - 1},
-                      ${cx + brkKink * brkDir * 0.5} ${bridgeMidY + 4}`}
-            stroke="rgba(0,0,0,0.14)" strokeWidth="0.9" fill="none" strokeLinecap="round" />
-          {/* Subtle highlight on the opposite side — the valley of the kink */}
-          <path d={`M ${cx - brkKink * brkDir * 0.3} ${eyeY + 8}
-                    Q ${cx - brkKink * brkDir * 0.6} ${bridgeMidY},
-                      ${cx - brkKink * brkDir * 0.2} ${bridgeMidY + 5}`}
-            stroke={skin.light} strokeWidth="0.7" fill="none" opacity={0.35} />
-        </>
-      )}
-      {/* Nose tip bulb */}
-      <ellipse cx={cx} cy={noseY + tip * 0.4} rx={nw - 0.5} ry={3.5 + Math.abs(tip) * 0.3} fill="rgba(0,0,0,0.06)" />
-      {/* Subsurface warmth at the nose tip — light passing through the thin cartilage */}
-      <ellipse cx={cx} cy={noseY + tip * 0.3} rx={nw * 0.7} ry={2.2} fill={skin.blush} opacity={0.22} />
-      {/* Nostrils */}
-      <ellipse cx={cx - nw * 0.45} cy={noseY + 1.5} rx={2.5} ry={2} fill="rgba(0,0,0,0.18)" />
-      <ellipse cx={cx + nw * 0.45} cy={noseY + 1.5} rx={2.5} ry={2} fill="rgba(0,0,0,0.18)" />
-      {/* Nostril wings */}
-      <path d={`M ${cx - nw + 1} ${noseY - 1} C ${cx - nw - 1} ${noseY + 1}, ${cx - nw} ${noseY + 3}, ${cx - nw + 2} ${noseY + 3}`}
-        stroke="rgba(0,0,0,0.2)" strokeWidth="0.8" fill="none" />
-      <path d={`M ${cx + nw - 1} ${noseY - 1} C ${cx + nw + 1} ${noseY + 1}, ${cx + nw} ${noseY + 3}, ${cx + nw - 2} ${noseY + 3}`}
-        stroke="rgba(0,0,0,0.2)" strokeWidth="0.8" fill="none" />
-      {/* Philtrum — groove between nose and upper lip */}
-      <path
-        d={`M ${cx - 1.5} ${noseY + tip + 3} L ${cx - 2} ${mouthY - 3} M ${cx + 1.5} ${noseY + tip + 3} L ${cx + 2} ${mouthY - 3}`}
-        stroke="rgba(0,0,0,0.06)" strokeWidth={philtrumDepth} fill="none"
-      />
-    </g>
-  );
-}
-
-// ── Eyes with shape variation ────────────────────────────
-
-function renderEyeWithLid(
-  ex: number, ey: number, ew: number, eh: number,
-  slant: number, lidWeight: number, epicanthic: number,
-  irisColor: string, skin: SkinPalette,
-  browInner: number, browOuter: number,
-  hairColor: string, config: PortraitConfig,
-  underEyeBags: number,
-  isLeft: boolean, uid: string,
-  gazeX: number = 0, gazeY: number = 0,
-  eyeShape: 'round' | 'almond' | 'droopy' | 'wide' | 'hooded' = 'almond',
-  blinkDuration: number = 4, blinkDelay: number = 0,
-  gazeAnimation: string = '', browAnimation: string = '',
-): React.ReactNode {
-  const hw = ew / 2;
-  const dir = isLeft ? -1 : 1;
-  const key = isLeft ? 'eyeL' : 'eyeR';
-
-  const innerX = ex - hw * dir;
-  const outerX = ex + hw * dir;
-
-  // ── Shape-dependent parameters ──
-  // topSpread: how far the bezier curves bow outward (higher = rounder top)
-  // botSpread: same for bottom curve
-  // botOpen: how far down the bottom of the eye extends (fraction of eh)
-  // topPeak: where the highest point of the upper curve sits (0=inner, 1=outer)
-  //          controls whether the arc peaks toward the nose or toward the temple
-  let topSpread: number, botSpread: number, botOpen: number, topPeak: number, droopOuter: number;
-
-  switch (eyeShape) {
-    case 'round':
-      topSpread = 0.45; botSpread = 0.45; botOpen = 0.6; topPeak = 0.5; droopOuter = 0;
-      break;
-    case 'almond':
-      topSpread = 0.3; botSpread = 0.3; botOpen = 0.4; topPeak = 0.45; droopOuter = 0;
-      break;
-    case 'wide':
-      topSpread = 0.35; botSpread = 0.3; botOpen = 0.45; topPeak = 0.55; droopOuter = 0;
-      break;
-    case 'hooded':
-      topSpread = 0.3; botSpread = 0.3; botOpen = 0.4; topPeak = 0.4; droopOuter = 0;
-      break;
-    case 'droopy':
-      topSpread = 0.3; botSpread = 0.35; botOpen = 0.45; topPeak = 0.35; droopOuter = 2;
-      break;
-  }
-
-  // The visible eye opening — lid covers the top portion
-  // effEh is the height of the actual visible opening (sclera)
-  const effEh = eh * (1 - lidWeight * 0.5); // lid eats into the top
-
-  // Upper curve control points — the peak shifts based on topPeak
-  // Instead of always bowing up symmetrically, the peak can sit
-  // toward the inner corner (topPeak<0.5) or outer corner (topPeak>0.5)
-  const peakX = innerX + (outerX - innerX) * topPeak;
-  const topY = ey - effEh;           // highest point of visible eye opening
-  const topInnerY = ey - effEh * (1 - Math.abs(topPeak - 0.5) * 0.6) + slant * 0.3;
-  const topOuterY = ey - effEh * (1 - Math.abs(topPeak - 0.5) * 0.6) - slant * 0.3 + droopOuter * 0.4;
-
-  // Bottom of eye
-  const botInnerY = ey + effEh * botOpen + slant * 0.1 - epicanthic * 0.2;
-  const botOuterY = ey + effEh * botOpen - slant * 0.1 + droopOuter * 0.4;
-
-  // Corner positions
-  const innerCornerY = ey + epicanthic * 0.2;
-  const outerCornerY = ey + droopOuter;
-
-  // Socket shadow — subtle
-  const socket = (
-    <ellipse key={`${key}-sock`} cx={ex} cy={ey + 1} rx={hw + 2} ry={effEh + 2} fill="rgba(0,0,0,0.04)" />
-  );
-
-  // Sclera — the visible white of the eye
-  // Upper curve peaks based on topPeak position, not always at center
-  const cp1x = innerX + hw * topSpread * 2 * dir;  // first control point
-  const cp2x = outerX - hw * topSpread * 2 * dir;  // second control point
-  const scleraPath = `M ${innerX} ${innerCornerY}
-    C ${cp1x} ${topInnerY - epicanthic * 0.15}, ${cp2x} ${topOuterY}, ${outerX} ${outerCornerY}
-    C ${cp2x} ${botOuterY}, ${cp1x} ${botInnerY}, ${innerX} ${innerCornerY} Z`;
-
-  const sclera = <path key={`${key}-scl`} d={scleraPath} fill="#eeeae2" />;
-
-  // Iris — large and expressive, fills more of the eye opening
-  const irisR = Math.min(effEh * 0.85, hw * 0.52);
-  const pupilR = irisR * 0.38;
-  const irisX = ex + gazeX;
-  const irisY = ey + gazeY * 0.5 + droopOuter * 0.15;
-  const iris = (
-    <g key={`${key}-iris`} clipPath={`url(#${key}-clip-${uid})`}
-      style={gazeAnimation ? {
-        transformBox: 'fill-box' as any,
-        transformOrigin: '50% 50%',
-        animation: gazeAnimation,
-      } : undefined}>
-      {/* Iris outline for definition */}
-      <circle cx={irisX} cy={irisY} r={irisR + 0.8} fill="#1a1a1a" opacity={0.18} />
-      {/* Main iris */}
-      <circle cx={irisX} cy={irisY} r={irisR} fill={irisColor} />
-      {/* Inner iris ring for depth */}
-      <circle cx={irisX} cy={irisY} r={irisR * 0.7} fill="none" stroke={irisColor} strokeWidth="0.8" opacity={0.4} />
-      {/* Iris gradient — darker at edges */}
-      <circle cx={irisX} cy={irisY} r={irisR} fill="none" stroke="rgba(0,0,0,0.15)" strokeWidth={irisR * 0.3} />
-      {/* Pupil */}
-      <circle cx={irisX} cy={irisY} r={pupilR} fill="#080808" />
-      {/* Primary catchlight — large, warm-tinted */}
-      <ellipse cx={irisX + irisR * 0.22} cy={irisY - irisR * 0.22} rx={irisR * 0.28} ry={irisR * 0.24} fill="rgba(255,252,240,0.9)" />
-      {/* Secondary catchlight */}
-      <circle cx={irisX - irisR * 0.18} cy={irisY + irisR * 0.2} r={irisR * 0.12} fill="rgba(255,255,255,0.5)" />
-    </g>
-  );
-
-  // Clip path so iris doesn't overflow the sclera
-  const irisClip = (
-    <defs key={`${key}-clip-def-${uid}`}>
-      <clipPath id={`${key}-clip-${uid}`}>
-        <path d={scleraPath} />
-      </clipPath>
-    </defs>
-  );
-
-  // Blink lid — skin-colored overlay that briefly covers the eye
-  const blinkLid = (
-    <path
-      key={`${key}-blink-lid`}
-      d={scleraPath}
-      fill={skin.mid}
-      style={{
-        transformBox: 'fill-box' as any,
-        transformOrigin: '50% 0%',
-        animation: `blink-${uid} ${blinkDuration}s ease-in-out ${blinkDelay}s infinite`,
-      }}
-    />
-  );
-
-  // Upper eyelid — skin-colored, sits above the visible opening
-  // For hooded eyes, the lid is thick and opaque; for others it's subtler
-  const lidOpacity = eyeShape === 'hooded' ? 0.85 : 0.65;
-  // The lid covers from the top of the full eye socket down to the visible opening
-  const fullTopY = ey - eh; // top of the full socket (before lid cuts in)
-  const lidPath = `M ${innerX} ${innerCornerY}
-    C ${cp1x} ${fullTopY - epicanthic * 0.15}, ${cp2x} ${fullTopY - slant * 0.3}, ${outerX} ${outerCornerY}
-    C ${cp2x} ${topOuterY + 1}, ${cp1x} ${topInnerY + 1 - epicanthic * 0.1}, ${innerX} ${innerCornerY} Z`;
-
-  const lid = (
-    <path key={`${key}-lid`} d={lidPath} fill={skin.mid} opacity={lidOpacity} />
-  );
-
-  // Eyelid crease — above the lid
-  const creaseY = fullTopY - 2;
-  const creasePath = `M ${innerX + dir * 2} ${creaseY + slant * 0.2 - epicanthic * 0.1}
-    C ${cp1x} ${creaseY - 1}, ${cp2x} ${creaseY - slant * 0.2 + droopOuter * 0.2}, ${outerX - dir * 1} ${outerCornerY - 1.5}`;
-  const crease = eyeShape !== 'hooded' ? (
-    <path key={`${key}-crease`} d={creasePath}
-      stroke="rgba(0,0,0,0.12)" strokeWidth="0.7" fill="none" />
-  ) : null;
-
-  // For hooded eyes, a heavier fold line closer to the lash line
-  const hoodFold = eyeShape === 'hooded' ? (
-    <path key={`${key}-hood`}
-      d={`M ${innerX + dir * 1} ${innerCornerY - 0.5}
-          C ${cp1x} ${topInnerY - 0.5}, ${cp2x} ${topOuterY - 0.5 + droopOuter * 0.2}, ${outerX - dir * 1} ${outerCornerY - 0.5}`}
-      stroke="rgba(0,0,0,0.18)" strokeWidth="0.9" fill="none" />
-  ) : null;
-
-  // Lower lid line
-  const lowerLid = (
-    <path key={`${key}-lower`}
-      d={`M ${innerX + dir * 1} ${innerCornerY + 0.3}
-          C ${cp1x} ${botInnerY + 0.5}, ${cp2x} ${botOuterY + 0.5}, ${outerX - dir * 1} ${outerCornerY + 0.5}`}
-      stroke="rgba(0,0,0,0.10)" strokeWidth="0.5" fill="none"
-    />
-  );
-
-  // Lash line — follows the visible upper lid edge
-  const lashLine = (
-    <path key={`${key}-lash`}
-      d={`M ${innerX} ${innerCornerY}
-          C ${cp1x} ${topInnerY}, ${cp2x} ${topOuterY + droopOuter * 0.2}, ${outerX} ${outerCornerY}`}
-      stroke="rgba(0,0,0,0.4)" strokeWidth={config.gender === 'Female' ? 1.2 : 0.7} fill="none"
-    />
-  );
-
-  // Epicanthic fold
-  const fold = epicanthic > 0.5 ? (
-    <path key={`${key}-fold`}
-      d={`M ${innerX - dir * 1} ${ey} C ${innerX + dir * 2} ${ey - epicanthic - 0.5}, ${innerX + dir * 5} ${ey - epicanthic}, ${innerX + dir * 7} ${ey - epicanthic * 0.4}`}
-      stroke="rgba(0,0,0,0.12)" strokeWidth="0.8" fill="none" />
-  ) : null;
-
-  // Under-eye bags / dark circles
-  const bags = underEyeBags > 0 ? (
-    <path key={`${key}-bags`}
-      d={`M ${innerX + dir * 3} ${ey + effEh * botOpen}
-          C ${ex - dir * 2} ${ey + effEh * botOpen + 2.5}, ${ex + dir * 2} ${ey + effEh * botOpen + 2.5}, ${outerX - dir * 3} ${ey + effEh * botOpen}`}
-      stroke="rgba(0,0,0,0.18)" strokeWidth="0.6" fill="none" opacity={underEyeBags / 0.08 * 0.3}
-    />
-  ) : null;
-
-  // Eyebrow
-  const browThick = config.gender === 'Male' ? 2.5 : 1.6;
-  const browInnerX = ex - hw * 0.9 * dir;
-  const browOuterX = ex + hw * 1.15 * dir;
-  const browBaseY = fullTopY - 4;
-  const brow = (
-    <path key={`${key}-brow`}
-      d={`M ${browInnerX} ${browBaseY + browInner}
-          Q ${ex} ${browBaseY + Math.min(browInner, browOuter) - 3}, ${browOuterX} ${browBaseY + browOuter + droopOuter * 0.3}`}
-      style={browAnimation ? {
-        transformBox: 'fill-box' as any,
-        transformOrigin: '50% 100%',
-        animation: browAnimation,
-      } : undefined}
-      stroke={hairColor} strokeWidth={browThick} fill="none" strokeLinecap="round"
-    />
-  );
-
-  return <g key={key}>{irisClip}{socket}{sclera}{iris}{blinkLid}{lid}{crease}{hoodFold}{lashLine}{lowerLid}{fold}{bags}{brow}</g>;
-}
-
 // ── Mouth ────────────────────────────────────────────────
 
 function renderMouth(
@@ -1196,65 +879,6 @@ function renderMouth(
           </g>
         );
       })()}
-    </g>
-  );
-}
-
-// ── Wrinkles ─────────────────────────────────────────────
-
-function renderWrinkles(
-  cx: number, eyeY: number, noseY: number, mouthY: number,
-  eyeSpacing: number, noseWidth: number, headWidth: number, alpha: number,
-): React.ReactNode {
-  // Deeper ages reveal additional lines; alpha drives both opacity and line count.
-  const deep = alpha > 0.4;                       // 50s+ gets additional crow's feet / fold branches
-  const deeper = alpha > 0.6;                     // 60s gets the glabellar "11" lines and jowl creases
-  return (
-    <g key="wrinkles" stroke="rgba(0,0,0,0.22)" strokeWidth="0.7" fill="none" opacity={alpha}>
-      {/* Nasolabial folds — the main aging tell */}
-      <path d={`M ${cx - noseWidth - 3} ${noseY + 2} Q ${cx - 20} ${mouthY}, ${cx - 22} ${mouthY + 8}`} />
-      <path d={`M ${cx + noseWidth + 3} ${noseY + 2} Q ${cx + 20} ${mouthY}, ${cx + 22} ${mouthY + 8}`} />
-      {deep && (
-        <>
-          {/* Secondary parallel fold — a double crease at the cheek */}
-          <path d={`M ${cx - noseWidth - 1} ${noseY + 5} Q ${cx - 17} ${mouthY + 1}, ${cx - 18} ${mouthY + 7}`}
-            strokeWidth="0.5" opacity={0.75} />
-          <path d={`M ${cx + noseWidth + 1} ${noseY + 5} Q ${cx + 17} ${mouthY + 1}, ${cx + 18} ${mouthY + 7}`}
-            strokeWidth="0.5" opacity={0.75} />
-        </>
-      )}
-      {/* Forehead creases */}
-      <path d={`M ${cx - headWidth + 10} ${eyeY - 30} Q ${cx} ${eyeY - 32} ${cx + headWidth - 10} ${eyeY - 30}`} />
-      <path d={`M ${cx - headWidth + 14} ${eyeY - 24} Q ${cx} ${eyeY - 26} ${cx + headWidth - 14} ${eyeY - 24}`} />
-      {deep && (
-        <path d={`M ${cx - headWidth + 12} ${eyeY - 18} Q ${cx} ${eyeY - 20} ${cx + headWidth - 12} ${eyeY - 18}`}
-          strokeWidth="0.55" />
-      )}
-      {/* Glabellar "11" lines between the brows — only for older faces */}
-      {deeper && (
-        <>
-          <path d={`M ${cx - 2.5} ${eyeY - 12} l 0 7`} strokeWidth="0.65" />
-          <path d={`M ${cx + 2.5} ${eyeY - 12} l 0 7`} strokeWidth="0.65" />
-        </>
-      )}
-      {/* Crow's feet — simple at 30s/40s, fanning out at 50s+ */}
-      <path d={`M ${cx - eyeSpacing - 9} ${eyeY - 1} l -4 -2 M ${cx - eyeSpacing - 9} ${eyeY + 2} l -4 2`} />
-      <path d={`M ${cx + eyeSpacing + 9} ${eyeY - 1} l 4 -2 M ${cx + eyeSpacing + 9} ${eyeY + 2} l 4 2`} />
-      {deep && (
-        <>
-          <path d={`M ${cx - eyeSpacing - 10} ${eyeY} l -5 0`} strokeWidth="0.55" />
-          <path d={`M ${cx + eyeSpacing + 10} ${eyeY} l 5 0`} strokeWidth="0.55" />
-          <path d={`M ${cx - eyeSpacing - 9} ${eyeY + 5} l -4 3`} strokeWidth="0.55" />
-          <path d={`M ${cx + eyeSpacing + 9} ${eyeY + 5} l 4 3`} strokeWidth="0.55" />
-        </>
-      )}
-      {/* Jowl / marionette creases — pulled-down lines below the mouth corners */}
-      {deeper && (
-        <>
-          <path d={`M ${cx - 11} ${mouthY + 5} q -1 5 -2 10`} strokeWidth="0.6" />
-          <path d={`M ${cx + 11} ${mouthY + 5} q 1 5 2 10`} strokeWidth="0.6" />
-        </>
-      )}
     </g>
   );
 }
@@ -2538,502 +2162,6 @@ function renderClothing(
   }
 
   return <g key="clothing">{paths}</g>;
-}
-
-// ── Clay pipe ────────────────────────────────────────────
-
-function renderPipe(
-  rng: () => number, cx: number, mouthY: number,
-): React.ReactNode {
-  const flip = rng() > 0.5 ? 1 : -1;
-  const px = cx + flip * 8;
-  const py = mouthY + 1;
-  const ex = cx + flip * 42;
-  const ey = mouthY + 10;
-
-  return (
-    <g key="pipe">
-      {/* Pipe stem */}
-      <path d={`M ${px} ${py} L ${ex} ${ey}`}
-        stroke="#ddd4c4" strokeWidth="2.5" strokeLinecap="round" />
-      {/* Pipe bowl */}
-      <path d={`M ${ex} ${ey} L ${ex - flip * 3} ${ey - 6} L ${ex + flip * 3} ${ey - 5} L ${ex + flip * 5} ${ey + 1} Z`}
-        fill="#c8bea8" />
-      {/* Ember glow */}
-      <circle cx={ex + flip * 1} cy={ey - 5} r={2} fill="#e04400" opacity={0.7} />
-      {/* Smoke wisps */}
-      <path d={`M ${ex} ${ey - 4} Q ${ex - flip * 4} ${ey - 14} ${ex + flip * 2} ${ey - 22}`}
-        stroke="rgba(200,200,200,0.25)" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <path d={`M ${ex + flip * 2} ${ey - 6} Q ${ex + flip * 6} ${ey - 16} ${ex - flip * 1} ${ey - 26}`}
-        stroke="rgba(200,200,200,0.15)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-    </g>
-  );
-}
-
-// ── Eye patch ────────────────────────────────────────────
-
-function renderEyePatch(
-  rng: () => number, cx: number, eyeY: number, eyeSpacing: number, headWidth: number,
-): React.ReactNode {
-  const side = rng() > 0.5 ? -1 : 1;
-  const ex = cx + side * eyeSpacing;
-  const earX = cx + side * (headWidth + 2);
-
-  return (
-    <g key="eyepatch">
-      {/* Strap */}
-      <path d={`M ${ex - side * 8} ${eyeY - 6} L ${earX} ${eyeY - 10}`}
-        stroke="#2a2218" strokeWidth="1.8" />
-      <path d={`M ${ex - side * 8} ${eyeY + 5} L ${earX} ${eyeY + 2}`}
-        stroke="#2a2218" strokeWidth="1.8" />
-      {/* Patch */}
-      <ellipse cx={ex} cy={eyeY} rx={9} ry={7}
-        fill="#1a1610" stroke="#2a2218" strokeWidth="1" />
-    </g>
-  );
-}
-
-// ── Facial mark (mole/birthmark) ─────────────────────────
-
-function renderFacialMark(
-  config: PortraitConfig, cx: number, eyeY: number, headWidth: number, chinY: number,
-): React.ReactNode {
-  const markX = cx + config.facialMarkSide * (8 + config.facialMarkY * 12);
-  const range = chinY - eyeY;
-  const markY = eyeY + config.facialMarkY * range;
-  const r = 0.8 + (config.seed % 10) * 0.12;
-
-  return (
-    <circle key="facial-mark" cx={markX} cy={markY} r={r}
-      fill="rgba(60,30,10,0.4)" />
-  );
-}
-
-// ── Freckles / sun damage ────────────────────────────────
-
-function renderFreckles(
-  rng: () => number, cx: number, eyeY: number, headWidth: number, noseY: number,
-): React.ReactNode {
-  const dots: React.ReactNode[] = [];
-  const count = 12 + Math.floor(rng() * 15);
-  for (let i = 0; i < count; i++) {
-    const fx = cx + (rng() - 0.5) * headWidth * 1.4;
-    const fy = eyeY - 2 + rng() * (noseY - eyeY + 10);
-    // Cluster around nose/cheeks
-    const dist = Math.abs(fx - cx);
-    if (dist < headWidth * 0.8) {
-      dots.push(
-        <circle key={`frk-${i}`} cx={fx} cy={fy} r={0.5 + rng() * 0.6}
-          fill="rgba(140,90,50,0.25)" />
-      );
-    }
-  }
-  return <g key="freckles">{dots}</g>;
-}
-
-// ── Tattoo / cultural marking ────────────────────────────
-
-function renderTattoo(
-  config: PortraitConfig, rng: () => number,
-  cx: number, eyeY: number, headWidth: number, mouthY: number, chinY: number,
-): React.ReactNode {
-  const color = config.culturalGroup === 'Swahili' ? 'rgba(0,0,0,0.15)' :
-    config.culturalGroup === 'SoutheastAsian' ? 'rgba(20,40,80,0.2)' :
-    config.nationality === 'Japanese' ? 'rgba(20,50,80,0.18)' :
-    'rgba(20,60,40,0.15)';
-
-  switch (config.tattooType) {
-    case 'forehead': {
-      // Horizontal lines or dots across forehead
-      const y = eyeY - 28;
-      return (
-        <g key="tattoo">
-          <path d={`M ${cx - 10} ${y} L ${cx + 10} ${y}`} stroke={color} strokeWidth="1.2" />
-          <path d={`M ${cx - 7} ${y + 3} L ${cx + 7} ${y + 3}`} stroke={color} strokeWidth="0.8" />
-        </g>
-      );
-    }
-    case 'cheek': {
-      // Scarification marks — short parallel lines
-      const side = rng() > 0.5 ? 1 : -1;
-      const bx = cx + side * (headWidth - 10);
-      const by = eyeY + 14;
-      return (
-        <g key="tattoo">
-          <path d={`M ${bx} ${by} l ${side * 6} 0`} stroke={color} strokeWidth="1" />
-          <path d={`M ${bx} ${by + 3} l ${side * 6} 0`} stroke={color} strokeWidth="1" />
-          <path d={`M ${bx} ${by + 6} l ${side * 6} 0`} stroke={color} strokeWidth="1" />
-        </g>
-      );
-    }
-    case 'chin': {
-      // Chin tattoo — dot pattern or line
-      return (
-        <g key="tattoo">
-          <path d={`M ${cx - 6} ${chinY - 6} L ${cx} ${chinY + 1} L ${cx + 6} ${chinY - 6}`}
-            stroke={color} strokeWidth="1" fill="none" />
-          <circle cx={cx} cy={chinY - 2} r={1} fill={color} />
-        </g>
-      );
-    }
-    case 'arm':
-    default: {
-      // Visible on neck/collarbone area
-      const side = rng() > 0.5 ? 1 : -1;
-      return (
-        <g key="tattoo">
-          <path d={`M ${cx + side * 12} ${chinY + 10} C ${cx + side * 16} ${chinY + 14}, ${cx + side * 14} ${chinY + 20}, ${cx + side * 10} ${chinY + 18}`}
-            stroke={color} strokeWidth="1.2" fill="none" />
-          <circle cx={cx + side * 13} cy={chinY + 15} r={2} fill="none" stroke={color} strokeWidth="0.8" />
-        </g>
-      );
-    }
-  }
-}
-
-// ── Neck kerchief ────────────────────────────────────────
-
-function renderNeckKerchief(
-  config: PortraitConfig, cx: number, chinY: number,
-): React.ReactNode {
-  const color = config.kerchiefColor;
-  const ty = chinY + 12;
-  return (
-    <g key="kerchief">
-      {/* Knot */}
-      <path d={`M ${cx - 3} ${ty} L ${cx} ${ty + 6} L ${cx + 3} ${ty} Z`} fill={color} />
-      {/* Band */}
-      <path d={`M ${cx - 20} ${ty + 2} C ${cx - 10} ${ty - 2}, ${cx + 10} ${ty - 2}, ${cx + 20} ${ty + 2}`}
-        stroke={color} strokeWidth="3.5" fill="none" strokeLinecap="round" />
-      {/* Hanging ends */}
-      <path d={`M ${cx - 1} ${ty + 5} L ${cx - 4} ${ty + 14}`} stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <path d={`M ${cx + 1} ${ty + 5} L ${cx + 3} ${ty + 13}`} stroke={color} strokeWidth="2" strokeLinecap="round" />
-    </g>
-  );
-}
-
-// ── Neck jewelry ─────────────────────────────────────────
-
-function renderNeckJewelry(
-  config: PortraitConfig, rng: () => number, cx: number, chinY: number,
-): React.ReactNode {
-  const ny = chinY + 16;
-
-  switch (config.neckJewelryType) {
-    case 'cross': {
-      return (
-        <g key="neck-jewelry">
-          {/* Chain */}
-          <path d={`M ${cx - 12} ${chinY + 6} Q ${cx} ${ny + 2} ${cx + 12} ${chinY + 6}`}
-            stroke="#a89060" strokeWidth="0.8" fill="none" />
-          {/* Cross */}
-          <rect x={cx - 1.5} y={ny - 1} width={3} height={7} fill="#c8a840" rx={0.3} />
-          <rect x={cx - 3.5} y={ny + 1} width={7} height={2.5} fill="#c8a840" rx={0.3} />
-        </g>
-      );
-    }
-    case 'beads': {
-      const beads: React.ReactNode[] = [];
-      const beadCount = 7 + Math.floor(rng() * 4);
-      for (let i = 0; i < beadCount; i++) {
-        const t = i / (beadCount - 1);
-        const bx = cx - 14 + t * 28;
-        const by = chinY + 6 + Math.sin(t * Math.PI) * 10;
-        const beadColor = rng() > 0.5 ? '#c8a840' : rng() > 0.5 ? '#e04020' : '#2060a0';
-        beads.push(<circle key={`bead-${i}`} cx={bx} cy={by} r={1.5} fill={beadColor} />);
-      }
-      return <g key="neck-jewelry">{beads}</g>;
-    }
-    case 'coins': {
-      return (
-        <g key="neck-jewelry">
-          <path d={`M ${cx - 14} ${chinY + 5} Q ${cx} ${ny + 4} ${cx + 14} ${chinY + 5}`}
-            stroke="#a89060" strokeWidth="0.6" fill="none" />
-          {[-6, 0, 6].map(dx => (
-            <g key={`coin-${dx}`}>
-              <circle cx={cx + dx} cy={ny + 1 + Math.abs(dx) * 0.15} r={2.5}
-                fill="#d4a020" stroke="#a88020" strokeWidth="0.4" />
-              <circle cx={cx + dx} cy={ny + 1 + Math.abs(dx) * 0.15} r={1}
-                fill="none" stroke="#a88020" strokeWidth="0.3" />
-            </g>
-          ))}
-        </g>
-      );
-    }
-    case 'pendant':
-    default: {
-      const gemColor = rng() > 0.5 ? '#2060a0' : rng() > 0.5 ? '#206020' : '#a02020';
-      return (
-        <g key="neck-jewelry">
-          <path d={`M ${cx - 10} ${chinY + 6} Q ${cx} ${ny + 3} ${cx + 10} ${chinY + 6}`}
-            stroke="#a89060" strokeWidth="0.8" fill="none" />
-          <path d={`M ${cx - 3} ${ny} L ${cx} ${ny + 5} L ${cx + 3} ${ny} Z`}
-            fill={gemColor} stroke="#c8a840" strokeWidth="0.5" />
-        </g>
-      );
-    }
-  }
-}
-
-// ── Personality → expression ─────────────────────────────
-
-interface ExprCtrl {
-  setMouthCurve: (v: number) => void;
-  setMouthAsym: (v: number) => void;
-  setBrowL: (i: number, o: number) => void;
-  setBrowR: (i: number, o: number) => void;
-}
-
-function applyPersonality(p: Personality, rng: () => number, c: ExprCtrl) {
-  switch (p) {
-    case 'Friendly':   c.setMouthCurve(-2.5 - rng() * 2); c.setBrowL(-1, 1); c.setBrowR(-1, 1); break;
-    case 'Stern':      c.setMouthCurve(1.5 + rng()); c.setBrowL(3, -2); c.setBrowR(3, -2); break;
-    case 'Curious':    c.setMouthCurve(-0.5); c.setBrowL(-3, -1); c.setBrowR(0, 0); break;
-    case 'Smug':       c.setMouthCurve(-1); c.setMouthAsym(2); c.setBrowL(-1, -1); c.setBrowR(-1, -1); break;
-    case 'Melancholy': c.setMouthCurve(2); c.setBrowL(-2, 2); c.setBrowR(-2, 2); break;
-    case 'Weathered':  c.setMouthCurve(0.5); c.setBrowL(1, 0); c.setBrowR(1, 0); break;
-    case 'Fierce':     c.setMouthCurve(1); c.setMouthAsym(rng() * 1.5); c.setBrowL(4, -3); c.setBrowR(4, -3); break;
-    case 'Rage':       c.setMouthCurve(0.2); c.setMouthAsym((rng() - 0.5) * 1.2); c.setBrowL(7, -5); c.setBrowR(7, -5); break;
-    default: break;
-  }
-}
-
-// ── Role background ──────────────────────────────────────
-
-function getRoleBgColor(config: PortraitConfig): string {
-  switch (config.role) {
-    case 'Captain':   return '#2a2818';
-    case 'Navigator': return '#182028';
-    case 'Gunner':    return '#281818';
-    case 'Factor':    return '#182818';
-    case 'Surgeon':   return '#201820';
-    default:          return '#1a1e22';
-  }
-}
-
-// ── Cultural accent — subtle origin-region tint for the background ──
-
-function getCulturalAccent(group: PortraitConfig['culturalGroup']): { color: string; opacity: number } {
-  switch (group) {
-    case 'ArabPersian':    return { color: '#c89040', opacity: 0.18 };  // warm amber
-    case 'Indian':         return { color: '#d4882c', opacity: 0.16 };  // deep saffron
-    case 'Swahili':        return { color: '#a0603a', opacity: 0.18 };  // warm sienna
-    case 'NorthEuropean':  return { color: '#6888a8', opacity: 0.14 };  // cool steel-blue
-    case 'SouthEuropean':  return { color: '#887050', opacity: 0.15 };  // warm umber
-    case 'EastAsian':      return { color: '#508868', opacity: 0.14 };  // muted jade
-    case 'SoutheastAsian': return { color: '#5a9080', opacity: 0.15 };  // teal-green
-    default:               return { color: '#808080', opacity: 0.10 };
-  }
-}
-
-// ── Captain flag backgrounds — period-appropriate c.1612 flag designs ──
-
-function renderCaptainFlag(nationality: PortraitConfig['nationality'], uid: string): React.ReactNode {
-  const w = 200, h = 250;
-  switch (nationality) {
-    // Portuguese: blue and white with central shield (Quinas)
-    case 'Portuguese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#003399" />
-        <rect x={0} y={0} width={w * 0.4} height={h} fill="#006600" />
-        <circle cx={w * 0.4} cy={h * 0.42} r={28} fill="#ff0" />
-        <circle cx={w * 0.4} cy={h * 0.42} r={20} fill="#003399" />
-        {/* Five quinas (simplified) */}
-        {[-8, 8, 0, -6, 6].map((dx, i) => (
-          <circle key={i} cx={w * 0.4 + dx} cy={h * 0.42 + (i < 2 ? -6 : i === 2 ? 0 : 6)} r={3} fill="#fff" />
-        ))}
-      </g>);
-
-    // Dutch: Prince's Flag (orange-white-blue, pre-1648)
-    case 'Dutch':
-      return (<g key="flag">
-        <rect width={w} height={h / 3} fill="#c84b20" />
-        <rect y={h / 3} width={w} height={h / 3} fill="#fff" />
-        <rect y={h * 2 / 3} width={w} height={h / 3} fill="#1e3a7a" />
-      </g>);
-
-    // English: St George's Cross
-    case 'English':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#fff" />
-        <rect x={w * 0.44} y={0} width={w * 0.12} height={h} fill="#c8102e" />
-        <rect x={0} y={h * 0.44} width={w} height={h * 0.12} fill="#c8102e" />
-      </g>);
-
-    // Danish: Dannebrog
-    case 'Danish':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#c8102e" />
-        <rect x={w * 0.3} y={0} width={w * 0.1} height={h} fill="#fff" />
-        <rect x={0} y={h * 0.44} width={w} height={h * 0.1} fill="#fff" />
-      </g>);
-
-    // French: Royal blue with gold fleur-de-lis
-    case 'French':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a2a6c" />
-        {/* Three fleur-de-lis arrangement */}
-        {[[100, 80], [70, 140], [130, 140]].map(([fx, fy], i) => (
-          <g key={i} transform={`translate(${fx},${fy}) scale(0.7)`}>
-            <path d="M0,-12 C-4,-8 -6,-2 -8,4 C-4,2 -1,0 0,4 C1,0 4,2 8,4 C6,-2 4,-8 0,-12Z" fill="#d4a017" />
-            <circle cx={0} cy={6} r={2} fill="#d4a017" />
-          </g>
-        ))}
-      </g>);
-
-    // Spanish: Cross of Burgundy (Aspas de Borgoña) — red ragged cross on white
-    case 'Spanish':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#f5e6c8" />
-        <path d={`M 20,10 L ${w - 20},${h - 10} M ${w - 20},10 L 20,${h - 10}`}
-          stroke="#8b1a1a" strokeWidth={18} fill="none" strokeLinecap="round"
-          strokeDasharray="4,0" />
-        {/* Ragged edges on the cross — small bumps */}
-        <path d={`M 20,10 L ${w - 20},${h - 10}`}
-          stroke="#721515" strokeWidth={6} fill="none" strokeDasharray="3,5" />
-        <path d={`M ${w - 20},10 L 20,${h - 10}`}
-          stroke="#721515" strokeWidth={6} fill="none" strokeDasharray="3,5" />
-      </g>);
-
-    // Ottoman: red with white crescent and star
-    case 'Ottoman':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#c8102e" />
-        <circle cx={95} cy={h * 0.42} r={22} fill="#fff" />
-        <circle cx={103} cy={h * 0.42} r={18} fill="#c8102e" />
-        <polygon points="128,95 132,107 124,107" fill="#fff" />
-      </g>);
-
-    // Persian: lion and sun on white (Safavid era)
-    case 'Persian':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a5e1a" />
-        <rect x={20} y={30} width={w - 40} height={h - 60} fill="#f5f0e0" rx={4} />
-        <circle cx={100} cy={h * 0.42} r={18} fill="#d4a017" />
-        {/* Sun rays */}
-        {Array.from({ length: 12 }).map((_, i) => {
-          const angle = (i * 30) * Math.PI / 180;
-          return <line key={i} x1={100 + Math.cos(angle) * 18} y1={h * 0.42 + Math.sin(angle) * 18}
-            x2={100 + Math.cos(angle) * 26} y2={h * 0.42 + Math.sin(angle) * 26}
-            stroke="#d4a017" strokeWidth={2} />;
-        })}
-      </g>);
-
-    // Omani: red (Ya'arubi dynasty)
-    case 'Omani':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#c8102e" />
-        <rect x={0} y={0} width={w * 0.25} height={h} fill="#fff" />
-        {/* Khanjar (dagger) silhouette */}
-        <path d={`M ${w * 0.5} ${h * 0.3} L ${w * 0.5} ${h * 0.55} M ${w * 0.44} ${h * 0.32} C ${w * 0.47} ${h * 0.28} ${w * 0.53} ${h * 0.28} ${w * 0.56} ${h * 0.32}`}
-          stroke="#fff" strokeWidth={3} fill="none" strokeLinecap="round" />
-      </g>);
-
-    // Mughal: green with gold ornamentation
-    case 'Mughal':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a5e1a" />
-        {/* Central medallion */}
-        <circle cx={100} cy={h * 0.42} r={30} fill="none" stroke="#d4a017" strokeWidth={2} />
-        <circle cx={100} cy={h * 0.42} r={22} fill="none" stroke="#d4a017" strokeWidth={1.5} />
-        <circle cx={100} cy={h * 0.42} r={6} fill="#d4a017" />
-        {/* Corner ornaments */}
-        {[[30, 40], [170, 40], [30, 210], [170, 210]].map(([ox, oy], i) => (
-          <circle key={i} cx={ox} cy={oy} r={8} fill="none" stroke="#d4a017" strokeWidth={1} />
-        ))}
-      </g>);
-
-    // Gujarati: saffron/maroon trade banner
-    case 'Gujarati':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#8b4513" />
-        <rect x={15} y={20} width={w - 30} height={h - 40} fill="none" stroke="#d4a017" strokeWidth={2} rx={3} />
-        <circle cx={100} cy={h * 0.42} r={20} fill="#d4a017" opacity={0.6} />
-        <path d="M 90,95 L 100,80 L 110,95 L 105,95 L 105,115 L 95,115 L 95,95 Z" fill="#d4a017" opacity={0.8} />
-      </g>);
-
-    // Swahili: coastal trade banner — blue/white/gold
-    case 'Swahili':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a3a5a" />
-        <rect y={h * 0.3} width={w} height={h * 0.4} fill="#2a5a3a" />
-        {/* Dhow sail silhouette */}
-        <path d={`M 100,${h * 0.3} L 120,${h * 0.6} L 80,${h * 0.6} Z`} fill="#d4a017" opacity={0.5} />
-        <line x1={100} y1={h * 0.28} x2={100} y2={h * 0.62} stroke="#d4a017" strokeWidth={2} />
-      </g>);
-
-    // Malay: red and gold
-    case 'Malay':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#8b0000" />
-        <rect y={h * 0.45} width={w} height={h * 0.1} fill="#d4a017" />
-        <circle cx={100} cy={h * 0.25} r={16} fill="#d4a017" />
-        <circle cx={106} cy={h * 0.25} r={13} fill="#8b0000" />
-      </g>);
-
-    // Acehnese: green with gold crescent (Sultanate of Aceh)
-    case 'Acehnese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a5e1a" />
-        <circle cx={95} cy={h * 0.42} r={20} fill="#d4a017" />
-        <circle cx={102} cy={h * 0.42} r={16} fill="#1a5e1a" />
-        <polygon points="125,100 128,110 122,110" fill="#d4a017" />
-      </g>);
-
-    // Javanese: deep red/brown batik-inspired
-    case 'Javanese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#5a1a0a" />
-        {/* Diamond pattern (batik kawung inspired) */}
-        {[0, 1, 2, 3, 4].map(row =>
-          [0, 1, 2, 3].map(col => (
-            <circle key={`${row}-${col}`} cx={30 + col * 45} cy={30 + row * 50}
-              r={12} fill="none" stroke="#d4a017" strokeWidth={1} opacity={0.5} />
-          ))
-        )}
-      </g>);
-
-    // Moluccan: spice islands — blue sea with gold
-    case 'Moluccan':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#1a3a6a" />
-        <rect y={h * 0.6} width={w} height={h * 0.4} fill="#2a6a3a" />
-        {/* Clove/nutmeg star */}
-        <polygon points="100,70 106,90 126,90 110,102 116,122 100,110 84,122 90,102 74,90 94,90"
-          fill="#d4a017" opacity={0.7} />
-      </g>);
-
-    // Siamese: red with white elephant (Ayutthaya)
-    case 'Siamese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#8b0000" />
-        {/* Simplified elephant silhouette */}
-        <ellipse cx={100} cy={h * 0.42} rx={22} ry={18} fill="#fff" opacity={0.8} />
-        <ellipse cx={82} cy={h * 0.38} rx={8} ry={10} fill="#fff" opacity={0.8} />
-        <path d="M 78,98 Q 75,115 80,120" stroke="#fff" strokeWidth={3} fill="none" strokeLinecap="round" opacity={0.8} />
-      </g>);
-
-    // Chinese: Ming dynasty — yellow/dragon red
-    case 'Chinese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#d4a017" />
-        <rect x={10} y={10} width={w - 20} height={h - 20} fill="none" stroke="#8b0000" strokeWidth={4} />
-        {/* Simplified dragon circle */}
-        <circle cx={100} cy={h * 0.42} r={28} fill="none" stroke="#8b0000" strokeWidth={3} />
-        <circle cx={100} cy={h * 0.42} r={18} fill="none" stroke="#8b0000" strokeWidth={2} />
-        <circle cx={100} cy={h * 0.42} r={5} fill="#8b0000" />
-      </g>);
-
-    // Japanese: Hinomaru-style (Tokugawa era)
-    case 'Japanese':
-      return (<g key="flag">
-        <rect width={w} height={h} fill="#f5f0e0" />
-        <circle cx={100} cy={h * 0.42} r={35} fill="#bc002d" />
-      </g>);
-
-    default:
-      return (<g key="flag"><rect width={w} height={h} fill="#1a1e22" /></g>);
-  }
 }
 
 export default CrewPortrait;

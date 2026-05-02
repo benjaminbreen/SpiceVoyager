@@ -7,7 +7,7 @@
 //
 // Geometry reuse: a shrine is a synthetic spiritual `Building` injected into
 // the port's buildings array, drawn by the existing per-faith spiritual
-// branch in ProceduralCity.tsx, scaled uniformly via Building.geometryScale.
+// branch in buildCityParts.ts, scaled uniformly via Building.geometryScale.
 // No new bespoke geometry. The mosque/cathedral/shikhara/pagoda you see at
 // the in-city scale is the same mesh, just smaller and outside the city.
 //
@@ -57,7 +57,7 @@ const SCALE_FOOTPRINT: Record<ShrineScale, [number, number, number]> = {
 // ── Shrine variant axes ─────────────────────────────────────────────────────
 //
 // Five cheap, multiplicative axes that make every shrine visibly distinct
-// without authoring new geometry. The renderer in ProceduralCity.tsx reads
+// without authoring new geometry. The city building renderer reads
 // `Building.shrineVariant` from the spiritual branch and applies these.
 //
 //   keyFeatureScale : multiplier on the height of the faith's hero feature

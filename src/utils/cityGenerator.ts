@@ -124,7 +124,7 @@ const BUILDING_SIZES: Record<BuildingType, [number, number, number]> = {
   // Palaces reserve a large footprint so findSpot's +1 occupancy pad carves
   // out a proper courtyard clearing around them. Actual rendered geometry
   // uses hardcoded ~10×10 dimensions (see palace render branch in
-  // ProceduralCity.tsx) and ignores this scale — the 16×16 reservation here
+  // city/buildCityParts.ts) and ignores this scale — the 16×16 reservation here
   // is purely to widen the empty buffer between the palace and generic
   // housing, so the royal precinct reads as set-apart.
   palace: [16, 5, 16],
@@ -1854,7 +1854,7 @@ export function generateCity(
             }
             // Anchor at the *highest* cell inside the footprint, not the
             // average. Combined with a paving slab thick enough to bury
-            // below the lowest cell (see ProceduralCity), this keeps the
+            // below the lowest cell (see city/buildCityParts), this keeps the
             // visible top above every cell of terrain underneath so noise
             // can't poke through and flicker.
             return { ...center, height: maxH };

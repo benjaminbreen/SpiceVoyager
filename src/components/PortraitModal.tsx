@@ -6,8 +6,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CrewMember } from '../store/gameStore';
 import { CrewPortrait, crewToPortraitConfig, getSkin, getEyeColor, getHairColor } from './CrewPortrait';
-import type { PortraitConfig } from './CrewPortrait';
-import { SKIN_PALETTES, HAIR_COLORS, EYE_COLORS } from '../utils/portraitConfig';
 import { ASCII_COLORS as CLR } from './ascii-ui-kit';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
 
@@ -88,7 +86,7 @@ export function PortraitModal({ member, open, onClose }: PortraitModalProps) {
                   Portrait Generation
                 </div>
 
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                   <MetaRow label="Seed" value={config.seed.toString()} />
                   <MetaRow label="Cultural Group" value={config.culturalGroup} />
                   <MetaRow label="Gender" value={config.gender} />
@@ -183,12 +181,12 @@ function FeatureTag({ label }: { label: string }) {
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline gap-2">
+    <div className="flex items-baseline gap-2 min-w-0">
       <span className="text-[10px] tracking-[0.1em] uppercase shrink-0"
         style={{ color: CLR.dim, fontFamily: SANS, fontWeight: 500 }}>
         {label}
       </span>
-      <span className="text-[11px]"
+      <span className="text-[11px] min-w-0 break-words"
         style={{ color: CLR.bright, fontFamily: MONO }}>
         {value}
       </span>

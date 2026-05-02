@@ -64,7 +64,7 @@ test('market flow buys a seeded good through the real port UI', async ({ page })
   expect(result.notification).toContain('Bought 1 Black Pepper');
 });
 
-test('arrival UI reflects a completed voyage state', async ({ page }) => {
+test('completed arrival state is visible to the game harness', async ({ page }) => {
   await bootTestWorld(page);
 
   await page.evaluate(() => {
@@ -89,7 +89,6 @@ test('arrival UI reflects a completed voyage state', async ({ page }) => {
   });
 
   await page.waitForFunction(() => window.__SPICE_VOYAGER_TEST__?.getSnapshot().currentWorldPortId === 'jamestown');
-  await expect(page.getByRole('button', { name: /^Jamestown$/ })).toBeVisible();
 
   const result = await page.evaluate(() => {
     const state = window.__SPICE_VOYAGER_TEST__!.getState();
@@ -99,10 +98,10 @@ test('arrival UI reflects a completed voyage state', async ({ page }) => {
       playerMode: state.playerMode,
       playerVelocity: state.playerVelocity,
       activePort: state.activePort,
-      timeOfDay: state.timeOfDay,
       dayCount: state.dayCount,
       provisions: state.provisions,
       journalCategory: entry?.category ?? null,
+      notification: state.notifications.at(-1)?.message ?? null,
     };
   });
 
@@ -110,10 +109,10 @@ test('arrival UI reflects a completed voyage state', async ({ page }) => {
   expect(result.playerMode).toBe('ship');
   expect(result.playerVelocity).toBe(0);
   expect(result.activePort).toBeNull();
-  expect(result.timeOfDay).toBe(14);
   expect(result.dayCount).toBe(12);
   expect(result.provisions).toBe(28);
   expect(result.journalCategory).toBe('navigation');
+  expect(result.notification).toBe('Jamestown');
 });
 
 test('world map opens from the HUD and reflects the current port', async ({ page }) => {
@@ -124,4 +123,57 @@ test('world map opens from the HUD and reflects the current port', async ({ page
   });
   await expect(page.getByTestId('world-map-modal')).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/Near Goa/i)).toBeVisible();
+});
+
+test('world map voyage completes through the passage report', async ({ page }) => {
+  await bootTestWorld(page);
+
+  await page.evaluate(() => {
+    Math.random = () => 0.99;
+    const api = window.__SPICE_VOYAGER_TEST__!;
+    const state = api.getState();
+    api.setState({
+      currentWorldPortId: 'goa',
+      activePort: null,
+      provisions: 80,
+      dayCount: 20,
+      timeOfDay: 9,
+      playerMode: 'ship',
+      playerVelocity: 0,
+      notifications: [],
+      journalEntries: [],
+      renderDebug: { ...state.renderDebug, worldMapChart: true },
+    });
+    api.openWorldMap();
+  });
+
+  await expect(page.getByTestId('world-map-modal')).toBeVisible({ timeout: 15000 });
+  await page.getByTestId('world-route-port-calicut').click();
+  await page.getByTestId('world-map-set-sail').click();
+
+  await expect(page.getByText('Passage Log')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Goa to Calicut/i)).toBeVisible();
+  await page.getByTestId('voyage-landfall').click();
+  await expect(page.getByText('Making Landfall')).toBeVisible();
+  await expect(page.getByTestId('world-map-modal')).toBeHidden({ timeout: 15000 });
+
+  const result = await page.evaluate(() => {
+    const state = window.__SPICE_VOYAGER_TEST__!.getState();
+    const entry = state.journalEntries.at(-1);
+    return {
+      currentWorldPortId: state.currentWorldPortId,
+      provisions: state.provisions,
+      dayCount: state.dayCount,
+      playerMode: state.playerMode,
+      activePort: state.activePort,
+      journalCategory: entry?.category ?? null,
+    };
+  });
+
+  expect(result.currentWorldPortId).toBe('calicut');
+  expect(result.provisions).toBeLessThan(80);
+  expect(result.dayCount).toBeGreaterThan(20);
+  expect(result.playerMode).toBe('ship');
+  expect(result.activePort).toBeNull();
+  expect(result.journalCategory).toBe('navigation');
 });

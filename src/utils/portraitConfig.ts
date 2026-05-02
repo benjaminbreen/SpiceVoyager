@@ -74,7 +74,7 @@ export const SKIN_PALETTES: SkinPalette[] = [
 // Nationality → weighted skin tone distribution
 // Each entry: [paletteIndex, weight]. Higher weight = more common for that nationality.
 const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
-  // Northern Europeans: mostly fair, but sailors tan deeply; rare olive ("Black Irish")
+  // Northern Europeans: mostly fair, with some weathered and olive variants for long-serving sailors.
   English:    [[0, 40], [1, 25], [11, 12], [14, 15], [2, 5], [3, 3]],
   Dutch:      [[0, 45], [1, 25], [11, 10], [14, 12], [2, 5], [3, 3]],
   Danish:     [[0, 50], [1, 22], [11, 12], [14, 10], [2, 4], [3, 2]],
@@ -83,7 +83,7 @@ const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Spanish:    [[1, 25], [2, 35], [3, 20], [14, 8], [4, 7], [0, 5]],
   Portuguese: [[1, 22], [2, 32], [3, 22], [14, 10], [4, 8], [0, 6]],
   // Venetian: classic Mediterranean range — olive dominant, fair common,
-  // tanned-weathered for sailors, occasional darker (Aegean/Levantine admixture)
+  // tanned-weathered for sailors, with occasional darker Mediterranean variants.
   Venetian:   [[1, 25], [2, 32], [3, 18], [14, 12], [4, 8], [0, 5]],
   Pirate:     [[14, 24], [2, 22], [3, 18], [4, 14], [1, 10], [5, 8], [10, 4]],
   // Middle Eastern: wide range from fair-skinned urbanites to dark-skinned traders
@@ -93,7 +93,7 @@ const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   // South Asian: broad range reflecting enormous internal diversity
   Mughal:     [[2, 8], [3, 22], [4, 30], [12, 15], [5, 18], [6, 7]],
   Gujarati:   [[3, 15], [4, 28], [12, 15], [5, 22], [6, 12], [2, 5], [7, 3]],
-  // East African: wide range — coastal Swahili had Arab/Persian admixture
+  // East African: wide range for coastal Swahili port populations.
   Swahili:    [[4, 5], [5, 12], [13, 15], [6, 25], [7, 28], [8, 15]],
   // Southeast Asian: warm tones with more range
   Malay:      [[10, 30], [4, 25], [5, 25], [12, 10], [6, 7], [3, 3]],
@@ -163,7 +163,7 @@ export const HAIR_COLORS = [
 ];
 
 const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
-  // English: full Celtic/Anglo-Saxon range — black "Black Irish" to ginger to blond
+  // English: broad range from dark brown through ginger and blond.
   English:    [[0, 5], [1, 10], [2, 18], [3, 22], [4, 18], [5, 8], [6, 8], [7, 7], [8, 4]],
   // Dutch: famously blond, but brown is common too
   Dutch:      [[1, 5], [2, 10], [3, 14], [4, 18], [6, 5], [7, 22], [8, 22], [5, 4]],
@@ -204,6 +204,12 @@ export type AgeRange = '20s' | '30s' | '40s' | '50s' | '60s';
 export type Gender = 'Male' | 'Female';
 export type SocialClass = 'Working' | 'Merchant' | 'Noble';
 export type FaceShape = 'round' | 'oval' | 'long' | 'square' | 'heart' | 'diamond';
+
+const FACE_SHAPES: FaceShape[] = ['round', 'oval', 'long', 'square', 'heart', 'diamond'];
+const EUROPEAN_NATIONALITIES: Nationality[] = ['English', 'Dutch', 'Danish', 'French', 'Spanish', 'Portuguese'];
+const NORTH_EUROPEAN_NATIONALITIES: Nationality[] = ['English', 'Dutch', 'Danish'];
+const KERCHIEF_COLORS = ['#8b2020', '#1a3a5a', '#2a4a2a', '#5a3a1a', '#4a2a4a', '#1a4a4a'];
+const TATTOO_TYPES: Array<'forehead' | 'cheek' | 'chin' | 'arm'> = ['forehead', 'cheek', 'chin', 'arm'];
 
 // Cultural clothing/headwear group — more granular than just nationality
 export type CulturalGroup =
@@ -249,6 +255,41 @@ export interface PortraitConfig {
   faceShape: FaceShape;       // overall face archetype
 }
 
+export function portraitConfigSignature(config: PortraitConfig): string {
+  return [
+    config.seed,
+    config.nationality,
+    config.culturalGroup,
+    config.gender,
+    config.age,
+    config.personality,
+    config.socialClass,
+    config.skinIndex,
+    config.eyeColorIndex,
+    config.hairColorIndex,
+    config.role,
+    config.quality,
+    config.isScarred ? 1 : 0,
+    config.hasEarring ? 1 : 0,
+    config.isSailor ? 1 : 0,
+    config.hasPipe ? 1 : 0,
+    config.hasEyePatch ? 1 : 0,
+    config.hasGoldTooth ? 1 : 0,
+    config.hasFacialMark ? 1 : 0,
+    config.facialMarkSide,
+    config.facialMarkY.toFixed(4),
+    config.hasNeckJewelry ? 1 : 0,
+    config.neckJewelryType,
+    config.hasBrokenNose ? 1 : 0,
+    config.hasFreckles ? 1 : 0,
+    config.hasNeckKerchief ? 1 : 0,
+    config.kerchiefColor,
+    config.hasTattoo ? 1 : 0,
+    config.tattooType,
+    config.faceShape,
+  ].join('|');
+}
+
 // ── Distribution picker ──────────────────────────────────
 
 function pickFromDistribution(rng: () => number, dist: [number, number][]): number {
@@ -259,6 +300,76 @@ function pickFromDistribution(rng: () => number, dist: [number, number][]): numb
     if (r <= 0) return idx;
   }
   return dist[0][0];
+}
+
+interface PaletteRoll {
+  skinIndex: number;
+  eyeColorIndex: number;
+  hairColorIndex: number;
+}
+
+function rollPalettes(rng: () => number, nationality: Nationality): PaletteRoll {
+  return {
+    skinIndex: pickFromDistribution(rng, SKIN_DISTRIBUTION[nationality]),
+    eyeColorIndex: pickFromDistribution(rng, EYE_DISTRIBUTION[nationality]),
+    hairColorIndex: pickFromDistribution(rng, HAIR_DISTRIBUTION[nationality]),
+  };
+}
+
+function applyPaletteCorrelation(roll: PaletteRoll, nationality: Nationality, corrRng: number, age?: number | AgeRange): PaletteRoll {
+  let { skinIndex, eyeColorIndex, hairColorIndex } = roll;
+  const isEuropean = EUROPEAN_NATIONALITIES.includes(nationality);
+  const isNorthEuropean = NORTH_EUROPEAN_NATIONALITIES.includes(nationality);
+
+  // Keep generated portraits visually plausible without treating the weights as authoritative anthropology.
+  if (hairColorIndex === 6 && skinIndex > 2) skinIndex = corrRng > 0.5 ? 0 : 11;
+  if ((hairColorIndex === 7 || hairColorIndex === 8) && skinIndex > 2) skinIndex = corrRng > 0.6 ? 0 : 1;
+  if (isEuropean && skinIndex <= 1 && hairColorIndex <= 1 && corrRng > 0.5) eyeColorIndex = corrRng > 0.75 ? 4 : 3;
+  if (isNorthEuropean && skinIndex === 11 && corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 6 : 5;
+  if (isEuropean && skinIndex === 14 && typeof age === 'number' && age > 40 && corrRng > 0.5) {
+    hairColorIndex = Math.min(hairColorIndex + 1, 8);
+  }
+  if (isNorthEuropean && skinIndex === 0 && eyeColorIndex <= 2 && corrRng > 0.7) {
+    eyeColorIndex = corrRng > 0.85 ? 7 : 5;
+  }
+  if ((typeof age === 'number' && age >= 55) || age === '60s') {
+    if (corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 10 : 9;
+  } else if ((typeof age === 'number' && age >= 45) || age === '50s') {
+    if (corrRng > 0.7) hairColorIndex = 9;
+  }
+
+  return { skinIndex, eyeColorIndex, hairColorIndex };
+}
+
+function pickFaceShape(rng: () => number): FaceShape {
+  return FACE_SHAPES[Math.floor(rng() * FACE_SHAPES.length)];
+}
+
+function rollNeckJewelry(rng: () => number, culturalGroup: CulturalGroup, socialClass: SocialClass) {
+  const jewelryRoll = rng();
+  const hasNeckJewelry = (socialClass !== 'Working' && jewelryRoll > 0.6) ||
+    (culturalGroup === 'Swahili' && jewelryRoll > 0.4) ||
+    (culturalGroup === 'Indian' && jewelryRoll > 0.5) ||
+    jewelryRoll > 0.85;
+  const neckJewelryType: PortraitConfig['neckJewelryType'] =
+    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') ? (rng() > 0.3 ? 'cross' : 'pendant') :
+    culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'beads' : 'coins') :
+    culturalGroup === 'Indian' ? 'beads' :
+    culturalGroup === 'ArabPersian' ? (rng() > 0.5 ? 'pendant' : 'coins') :
+    rng() > 0.5 ? 'coins' : 'pendant';
+  return { hasNeckJewelry, neckJewelryType };
+}
+
+function rollTattoo(rng: () => number, culturalGroup: CulturalGroup, nationality: Nationality, isSailor: boolean) {
+  const tattooRoll = rng();
+  const hasTattoo = (culturalGroup === 'SoutheastAsian' && tattooRoll > 0.6) ||
+    (culturalGroup === 'Swahili' && tattooRoll > 0.55) ||
+    (nationality === 'Japanese' && tattooRoll > 0.5) ||
+    (isSailor && tattooRoll > 0.85);
+  const tattooType: PortraitConfig['tattooType'] = culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'cheek' : 'forehead') :
+    culturalGroup === 'SoutheastAsian' ? (rng() > 0.5 ? 'arm' : 'chin') :
+    TATTOO_TYPES[Math.floor(rng() * TATTOO_TYPES.length)];
+  return { hasTattoo, tattooType };
 }
 
 // ── Map nationality to cultural group ────────────────────
@@ -348,56 +459,22 @@ export function crewToPortraitConfig(member: CrewMember): PortraitConfig {
   const seed = hashString(member.id + member.name);
   const rng = mulberry32(seed);
 
-  // Consume a few RNG values for consistent ordering
-  let skinIndex = pickFromDistribution(rng, SKIN_DISTRIBUTION[member.nationality]);
-  let eyeColorIndex = pickFromDistribution(rng, EYE_DISTRIBUTION[member.nationality]);
-  let hairColorIndex = pickFromDistribution(rng, HAIR_DISTRIBUTION[member.nationality]);
-
-  // ── Phenotype correlation — nudge unlikely combinations toward realism ──
+  let { skinIndex, eyeColorIndex, hairColorIndex } = rollPalettes(rng, member.nationality);
   const corrRng = rng(); // single roll for all corrections to keep determinism clean
-  const isEuropean = ['English', 'Dutch', 'Danish', 'French', 'Spanish', 'Portuguese'].includes(member.nationality);
-  const isNorthEuropean = ['English', 'Dutch', 'Danish'].includes(member.nationality);
-
-  // Ginger/red hair (6) + dark skin is very rare — nudge skin fairer
-  if (hairColorIndex === 6 && skinIndex > 2) {
-    skinIndex = corrRng > 0.5 ? 0 : 11; // very fair or ruddy
-  }
-  // Blond hair (7,8) + dark skin — nudge fairer
-  if ((hairColorIndex === 7 || hairColorIndex === 8) && skinIndex > 2) {
-    skinIndex = corrRng > 0.6 ? 0 : 1;
-  }
-  // Very fair skin (0,11) on European + dark hair (0,1) = "Black Irish" type — boost green/hazel eyes
-  if (isEuropean && skinIndex <= 1 && hairColorIndex <= 1 && corrRng > 0.5) {
-    eyeColorIndex = corrRng > 0.75 ? 4 : 3; // green or hazel
-  }
-  // Ruddy skin (11) correlates with ginger/auburn hair in N. Europe
-  if (isNorthEuropean && skinIndex === 11 && corrRng > 0.4) {
-    hairColorIndex = corrRng > 0.7 ? 6 : 5; // ginger or auburn
-  }
-  // Weathered/tanned skin (14) on Europeans — they're outdoor sailors, boost older hair fading
-  if (isEuropean && skinIndex === 14 && member.age > 40 && corrRng > 0.5) {
-    // Sun-bleached streaking effect — shift hair one step lighter
-    hairColorIndex = Math.min(hairColorIndex + 1, 8);
-  }
-  // Very fair Europeans occasionally get light eyes even if not initially rolled
-  if (isNorthEuropean && skinIndex === 0 && eyeColorIndex <= 2 && corrRng > 0.7) {
-    eyeColorIndex = corrRng > 0.85 ? 7 : 5; // deep blue or gray-blue
-  }
-  // Age → gray/white hair override for older crew
-  if (member.age >= 55 && corrRng > 0.4) {
-    hairColorIndex = corrRng > 0.7 ? 10 : 9; // white or gray
-  } else if (member.age >= 45 && corrRng > 0.7) {
-    hairColorIndex = 9; // gray
-  }
+  ({ skinIndex, eyeColorIndex, hairColorIndex } = applyPaletteCorrelation(
+    { skinIndex, eyeColorIndex, hairColorIndex },
+    member.nationality,
+    corrRng,
+    member.age,
+  ));
 
   const personality = derivePersonality(rng, member.role, member.quality, member.stats);
   const age = ageToRange(member.age);
   const socialClass = deriveSocialClass(member.role, member.quality);
-  const faceShapes: FaceShape[] = ['round', 'oval', 'long', 'square', 'heart', 'diamond'];
-  const faceShape = faceShapes[Math.floor(rng() * faceShapes.length)];
+  const faceShape = pickFaceShape(rng);
   const culturalGroup = CULTURAL_GROUP_MAP[member.nationality];
 
-  // Gender: ~90% male for historical accuracy (women did serve on some vessels but rarely)
+  // Gender: mostly male for the shipboard labor pool modeled here; rare women are still represented.
   const gender: Gender = rng() > 0.92 ? 'Female' : 'Male';
 
   // Scars for combat veterans and old salts
@@ -431,17 +508,7 @@ export function crewToPortraitConfig(member: CrewMember): PortraitConfig {
   const facialMarkY = 0.2 + rng() * 0.6;
 
   // Neck jewelry
-  const jewelryRoll = rng();
-  const hasNeckJewelry = (socialClass !== 'Working' && jewelryRoll > 0.6) ||
-    (culturalGroup === 'Swahili' && jewelryRoll > 0.4) ||
-    (culturalGroup === 'Indian' && jewelryRoll > 0.5) ||
-    jewelryRoll > 0.85;
-  const neckJewelryType: 'cross' | 'beads' | 'coins' | 'pendant' =
-    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') ? (rng() > 0.3 ? 'cross' : 'pendant') :
-    culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'beads' : 'coins') :
-    culturalGroup === 'Indian' ? 'beads' :
-    culturalGroup === 'ArabPersian' ? (rng() > 0.5 ? 'pendant' : 'coins') :
-    rng() > 0.5 ? 'coins' : 'pendant';
+  const { hasNeckJewelry, neckJewelryType } = rollNeckJewelry(rng, culturalGroup, socialClass);
 
   // Broken nose — fighters
   const hasBrokenNose = (member.role === 'Gunner' || member.role === 'Sailor') &&
@@ -452,19 +519,10 @@ export function crewToPortraitConfig(member: CrewMember): PortraitConfig {
 
   // Neck kerchief — sailors and working class
   const hasNeckKerchief = isSailor && rng() > 0.55;
-  const kerchiefColors = ['#8b2020', '#1a3a5a', '#2a4a2a', '#5a3a1a', '#4a2a4a', '#1a4a4a'];
-  const kerchiefColor = kerchiefColors[Math.floor(rng() * kerchiefColors.length)];
+  const kerchiefColor = KERCHIEF_COLORS[Math.floor(rng() * KERCHIEF_COLORS.length)];
 
-  // Tattoo — cultural markings (Swahili scarification, Japanese irezumi, Malay/Polynesian)
-  const tattooRoll = rng();
-  const hasTattoo = (culturalGroup === 'SoutheastAsian' && tattooRoll > 0.6) ||
-    (culturalGroup === 'Swahili' && tattooRoll > 0.55) ||
-    (member.nationality === 'Japanese' && tattooRoll > 0.5) ||
-    (isSailor && tattooRoll > 0.85);
-  const tattooTypes: Array<'forehead' | 'cheek' | 'chin' | 'arm'> = ['forehead', 'cheek', 'chin', 'arm'];
-  const tattooType = culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'cheek' : 'forehead') :
-    culturalGroup === 'SoutheastAsian' ? (rng() > 0.5 ? 'arm' : 'chin') :
-    tattooTypes[Math.floor(rng() * tattooTypes.length)];
+  // Tattoo and facial/skin markings: broad visual shorthand, not a claim about every group member.
+  const { hasTattoo, tattooType } = rollTattoo(rng, culturalGroup, member.nationality, isSailor);
 
   return {
     seed,
@@ -579,19 +637,8 @@ export function tavernNpcToPortraitConfig(npc: TavernNpcPortraitInput): Portrait
   const seed = hashString(npc.id + npc.name);
   const rng = mulberry32(seed);
 
-  let skinIndex = pickFromDistribution(rng, SKIN_DISTRIBUTION[npc.nationality]);
-  let eyeColorIndex = pickFromDistribution(rng, EYE_DISTRIBUTION[npc.nationality]);
-  let hairColorIndex = pickFromDistribution(rng, HAIR_DISTRIBUTION[npc.nationality]);
-
-  // Phenotype correlation (same logic as crew portraits)
+  let { skinIndex, eyeColorIndex, hairColorIndex } = rollPalettes(rng, npc.nationality);
   const corrRng = rng();
-  const isEuropean = ['English', 'Portuguese', 'Dutch', 'Spanish', 'French', 'Danish'].includes(npc.nationality);
-  const isNorthEuropean = ['English', 'Dutch', 'Danish'].includes(npc.nationality);
-
-  if (hairColorIndex === 6 && skinIndex > 2) skinIndex = corrRng > 0.5 ? 0 : 11;
-  if ((hairColorIndex === 7 || hairColorIndex === 8) && skinIndex > 2) skinIndex = corrRng > 0.6 ? 0 : 1;
-  if (isEuropean && skinIndex <= 1 && hairColorIndex <= 1 && corrRng > 0.5) eyeColorIndex = corrRng > 0.75 ? 4 : 3;
-  if (isNorthEuropean && skinIndex === 11 && corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 6 : 5;
 
   const crewRole = TAVERN_ROLE_TO_CREW_ROLE[npc.roleTitle] ?? 'Sailor';
   const socialClass = TAVERN_ROLE_TO_CLASS[npc.roleTitle] ?? 'Working';
@@ -601,21 +648,22 @@ export function tavernNpcToPortraitConfig(npc: TavernNpcPortraitInput): Portrait
   // Age — tavern NPCs span a wider range than crew
   const ageRoll = rng();
   const age: AgeRange = ageRoll < 0.15 ? '20s' : ageRoll < 0.45 ? '30s' : ageRoll < 0.70 ? '40s' : ageRoll < 0.88 ? '50s' : '60s';
-
-  // Age → gray hair
-  if (age === '60s' && corrRng > 0.4) hairColorIndex = corrRng > 0.7 ? 10 : 9;
-  else if (age === '50s' && corrRng > 0.7) hairColorIndex = 9;
+  ({ skinIndex, eyeColorIndex, hairColorIndex } = applyPaletteCorrelation(
+    { skinIndex, eyeColorIndex, hairColorIndex },
+    npc.nationality,
+    corrRng,
+    age,
+  ));
 
   // Personality from role
   const personalityPool = TAVERN_ROLE_PERSONALITIES[npc.roleTitle] ?? ['Neutral', 'Friendly', 'Stern'];
   const personality = personalityPool[Math.floor(rng() * personalityPool.length)];
 
-  const faceShapes: FaceShape[] = ['round', 'oval', 'long', 'square', 'heart', 'diamond'];
-  const faceShape = faceShapes[Math.floor(rng() * faceShapes.length)];
+  const faceShape = pickFaceShape(rng);
 
   const isSailor = crewRole === 'Sailor' || crewRole === 'Gunner';
   const isScarred = (crewRole === 'Gunner' && rng() > 0.4) ||
-                    (isSailor && age >= '40s' && rng() > 0.5);
+                    (isSailor && ['40s', '50s', '60s'].includes(age) && rng() > 0.5);
   const hasEarring = (isSailor && rng() > 0.5) || rng() > 0.85;
 
   const hasPipe = isSailor && gender === 'Male' &&
@@ -630,34 +678,15 @@ export function tavernNpcToPortraitConfig(npc: TavernNpcPortraitInput): Portrait
   const facialMarkSide = rng() > 0.5 ? 1 : -1;
   const facialMarkY = 0.2 + rng() * 0.6;
 
-  const jewelryRoll = rng();
-  const hasNeckJewelry = (socialClass !== 'Working' && jewelryRoll > 0.6) ||
-    (culturalGroup === 'Swahili' && jewelryRoll > 0.4) ||
-    (culturalGroup === 'Indian' && jewelryRoll > 0.5) ||
-    jewelryRoll > 0.85;
-  const neckJewelryType: 'cross' | 'beads' | 'coins' | 'pendant' =
-    (culturalGroup === 'NorthEuropean' || culturalGroup === 'SouthEuropean') ? (rng() > 0.3 ? 'cross' : 'pendant') :
-    culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'beads' : 'coins') :
-    culturalGroup === 'Indian' ? 'beads' :
-    culturalGroup === 'ArabPersian' ? (rng() > 0.5 ? 'pendant' : 'coins') :
-    rng() > 0.5 ? 'coins' : 'pendant';
+  const { hasNeckJewelry, neckJewelryType } = rollNeckJewelry(rng, culturalGroup, socialClass);
 
   const hasBrokenNose = isSailor && rng() > 0.8;
   const hasFreckles = skinIndex <= 2 && rng() > 0.55;
 
   const hasNeckKerchief = isSailor && rng() > 0.55;
-  const kerchiefColors = ['#8b2020', '#1a3a5a', '#2a4a2a', '#5a3a1a', '#4a2a4a', '#1a4a4a'];
-  const kerchiefColor = kerchiefColors[Math.floor(rng() * kerchiefColors.length)];
+  const kerchiefColor = KERCHIEF_COLORS[Math.floor(rng() * KERCHIEF_COLORS.length)];
 
-  const tattooRoll = rng();
-  const hasTattoo = (culturalGroup === 'SoutheastAsian' && tattooRoll > 0.6) ||
-    (culturalGroup === 'Swahili' && tattooRoll > 0.55) ||
-    (npc.nationality === 'Japanese' && tattooRoll > 0.5) ||
-    (isSailor && tattooRoll > 0.85);
-  const tattooTypes: Array<'forehead' | 'cheek' | 'chin' | 'arm'> = ['forehead', 'cheek', 'chin', 'arm'];
-  const tattooType = culturalGroup === 'Swahili' ? (rng() > 0.5 ? 'cheek' : 'forehead') :
-    culturalGroup === 'SoutheastAsian' ? (rng() > 0.5 ? 'arm' : 'chin') :
-    tattooTypes[Math.floor(rng() * tattooTypes.length)];
+  const { hasTattoo, tattooType } = rollTattoo(rng, culturalGroup, npc.nationality, isSailor);
 
   return {
     seed,

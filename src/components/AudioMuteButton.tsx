@@ -68,9 +68,11 @@ function setMutedStorage(muted: boolean) {
 export function AudioMuteButton({
   variant = 'hud',
   showLabel = false,
+  size = 'default',
 }: {
   variant?: 'hud' | 'splash';
   showLabel?: boolean;
+  size?: 'default' | 'compact';
 }) {
   const [muted, setMuted] = useState(readMuted);
 
@@ -96,6 +98,8 @@ export function AudioMuteButton({
 
   const Icon = muted ? VolumeX : Volume2;
   const label = muted ? 'Unmute' : 'Mute';
+  const hudSizeClass = size === 'compact' ? 'w-9 h-9' : 'w-11 h-11';
+  const iconSize = size === 'compact' ? 14 : 16;
 
   if (variant === 'splash') {
     return (
@@ -139,7 +143,7 @@ export function AudioMuteButton({
       aria-pressed={muted}
       aria-label={label}
       title={label}
-      className={`group relative w-11 h-11 rounded-full flex items-center justify-center
+      className={`group relative ${hudSizeClass} rounded-full flex items-center justify-center
         bg-[#1a1e2e] border-2
         shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
         transition-all active:scale-95
@@ -148,7 +152,7 @@ export function AudioMuteButton({
           : 'border-[#4a4535]/60 text-[#8a8060] hover:text-amber-300 hover:border-amber-600/50'
         }`}
     >
-      <Icon size={16} />
+      <Icon size={iconSize} />
       <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
         {label}
       </span>

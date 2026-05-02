@@ -15,7 +15,7 @@
 // produces the same silhouette on the same hilltop. Each archetype declares
 // its own variant axes; nothing is shared except the part-count budget.
 //
-// Mounting pattern matches POIBeacons in ProceduralCity.tsx — POISilhouettes
+// Mounting pattern matches POIBeacons in city/renderers/CityMarkers.tsx — POISilhouettes
 // reads ports, resolves each POI's position, and dispatches by kind. POIs
 // that already have geometry (shrines, landmark-bound POIs) skip this pass.
 //
@@ -628,7 +628,7 @@ function CaravanseraiSilhouette({ poiId, position, rotationY }: {
 // ── Naturalist Camp (hinterland silhouette) ────────────────────────────────
 //
 // Naturalist halls (Apothecaries' Hall, Royal College, etc.) are rendered as
-// landmarks in ProceduralCity.tsx, not as POI silhouettes — POIs in this
+// landmarks in city/buildCityParts.ts, not as POI silhouettes — POIs in this
 // project are sites the player travels *to*, so urban halls live in city
 // geometry and only their landmark-bound POI metadata routes through here.
 // The camp variant below covers itinerant naturalists in the hinterland,

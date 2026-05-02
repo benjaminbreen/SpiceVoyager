@@ -5,8 +5,8 @@ import {
   X, Anchor, Coins, Shield, Users, Swords,
   StickyNote, Send, ScrollText,
 } from 'lucide-react';
-import { COMMODITY_DEFS, type Commodity } from '../utils/commodities';
 import { modalBackdropMotion, modalPanelMotion } from '../utils/uiMotion';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 
 const CATEGORY_CONFIG: Record<JournalCategory, { icon: typeof Anchor; color: string; label: string }> = {
   navigation: { icon: Anchor, color: '#60a5fa', label: 'Navigation' },
@@ -65,10 +65,7 @@ export function JournalModal({ open, onClose, initialEntry }: {
   const selectedEntry = selectedId ? journalEntries.find(e => e.id === selectedId) ?? null : null;
   const activeObligations = obligations.filter(o => o.status === 'active');
   const settledObligations = obligations.filter(o => o.status === 'settled');
-  const cargoWeight = Object.entries(cargo).reduce(
-    (sum, [commodity, qty]) => sum + qty * (COMMODITY_DEFS[commodity as Commodity]?.weight ?? 1),
-    0,
-  );
+  const cargoWeight = calculateCargoWeight(cargo);
 
   const handleSubmitNote = () => {
     if (!selectedEntry || !noteText.trim()) return;

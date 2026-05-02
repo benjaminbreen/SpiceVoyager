@@ -13,7 +13,7 @@
 // change in SEMANTIC_STYLE plus a render branch in SacredBuildingMarkers.
 //
 // This module is the single source of truth — both the label generator
-// (buildingLabels.ts → eyebrow + color) and the renderer (ProceduralCity
+// (buildingLabels.ts → eyebrow + color) and the renderer (city/renderers/CityMarkers
 // → marker dispatch) must read from here. Don't duplicate the list.
 
 import type { Building } from '../store/gameStore';

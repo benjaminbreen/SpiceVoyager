@@ -69,7 +69,7 @@ export function chunkyMat(rgb: readonly [number, number, number], opts: MatOpts 
 
 // ── Night factor ───────────────────────────────────────────────────────────
 //
-// Mirrors the formula used by CityTorches in ProceduralCity.tsx. Reads the
+// Mirrors the formula used by CityTorches in city/renderers/CityEffects.tsx. Reads the
 // store directly so the consumer can call this from inside useFrame without
 // re-subscribing the React tree on every tick.
 

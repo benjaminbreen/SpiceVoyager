@@ -22,7 +22,6 @@ import {
   REGION_LABELS,
   type WorldRegion,
 } from '../utils/worldPorts';
-import VoyageModal from './VoyageModal';
 import PassageInterstitial from './PassageInterstitial';
 import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution';
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
@@ -30,7 +29,6 @@ import { useIsMobile } from '../utils/useIsMobile';
 
 interface WorldMapModalChartProps {
   onClose: () => void;
-  onArrival?: (portName: string, swap: () => void) => Promise<void>;
 }
 
 // ── Palette ────────────────────────────────────────────────────────────────
@@ -110,7 +108,7 @@ const COMPASS_ROSE_PATH = `
   M 0,-28 L 4,-4 L 28,0 L 4,4 L 0,28 L -4,4 L -28,0 L -4,-4 Z
 `;
 
-export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartProps) {
+export function WorldMapModalChart({ onClose }: WorldMapModalChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [hoveredPort, setHoveredPort] = useState<string | null>(null);
@@ -138,7 +136,6 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
   const reachablePortIds = useMemo(() => getReachableWorldPortIds(nearestPortId), [nearestPortId]);
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
-  const [travelModal, setTravelModal] = useState<TravelModalState | null>(null);
   const [passageModal, setPassageModal] = useState<PassageModalState | null>(null);
 
   const travelInfo = useMemo(() => {
@@ -846,54 +843,14 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
     });
   };
 
-  const finishVoyage = (modal: TravelModalState, resolution: VoyageResolution) => {
-    if (modal.swapStarted) {
-      setTravelModal(null);
-      onClose();
-      return;
-    }
-    const swap = () => {
-      fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
-      setTravelModal(null);
-      onClose();
-    };
-    if (onArrival) {
-      void onArrival(modal.toPort, swap);
-    } else {
-      swap();
-    }
-  };
-
-  const handleTravelComplete = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
-  const handleTravelSkip = (resolution: VoyageResolution) => { if (travelModal) finishVoyage(travelModal, resolution); };
-  const handleTravelResolutionReady = (resolution: VoyageResolution) => {
-    if (!travelModal || travelModal.swapStarted) return;
-    fastTravel(travelModal.targetPortId, { force: travelModal.force, voyage: resolution });
-    setTravelModal({ ...travelModal, swapStarted: true });
-  };
-
-  const handlePassageDone = () => {
+  const handlePassageDone = async (resolution: VoyageResolution) => {
     if (!passageModal) return;
     const modal = passageModal;
+    fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
+    await new Promise(r => setTimeout(r, 650));
     setPassageModal(null);
-    if (modal.hasIncident) {
-      setTravelModal(modal);
-      return;
-    }
-    if (!modal.swapStarted) {
-      fastTravel(modal.targetPortId, { force: modal.force, voyage: modal.resolution });
-    }
     onClose();
   };
-
-  useEffect(() => {
-    if (!passageModal || passageModal.hasIncident || passageModal.swapStarted) return;
-    const id = window.setTimeout(() => {
-      fastTravel(passageModal.targetPortId, { force: passageModal.force, voyage: passageModal.resolution });
-      setPassageModal((current) => current === passageModal ? { ...current, swapStarted: true } : current);
-    }, 450);
-    return () => window.clearTimeout(id);
-  }, [fastTravel, passageModal]);
 
   useEffect(() => {
     const handleDown = (e: KeyboardEvent) => {
@@ -1374,19 +1331,6 @@ export function WorldMapModalChart({ onClose, onArrival }: WorldMapModalChartPro
           resolution={passageModal.resolution}
           hasIncident={passageModal.hasIncident}
           onDone={handlePassageDone}
-        />
-      )}
-      {travelModal && (
-        <VoyageModal
-          fromPort={travelModal.fromPort}
-          toPort={travelModal.toPort}
-          totalDays={travelModal.totalDays}
-          fromPortId={travelModal.fromPortId}
-          toPortId={travelModal.toPortId}
-          initialPhase="incident"
-          onResolutionReady={handleTravelResolutionReady}
-          onComplete={handleTravelComplete}
-          onSkip={handleTravelSkip}
         />
       )}
     </motion.div>

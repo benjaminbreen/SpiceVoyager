@@ -8,7 +8,7 @@ import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
-  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond, Crosshair, Swords, X
+  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond, Crosshair, Swords, X, AlertTriangle
 } from 'lucide-react';
 import { useIsMobile } from '../utils/useIsMobile';
 import { audioManager } from '../audio/AudioManager';
@@ -16,7 +16,7 @@ import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShip
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
 import { startIntroCinematic } from '../utils/cinematicIntroState';
-import { ArrivalCurtain, DepartureCurtain } from './ArrivalCurtain';
+import { DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
 import { CrewPortraitSquare } from './CrewPortrait';
@@ -47,6 +47,7 @@ import { getTestModeConfig } from '../test/testMode';
 import { getPOIById, type POIDefinition } from '../utils/poiDefinitions';
 import { findNearestPOI } from '../utils/proximityResolution';
 import { SEMANTIC_STYLE } from '../utils/semanticClasses';
+import { calculateCargoWeight } from '../utils/cargoWeight';
 
 const PortModal = lazy(() => import('./PortModal').then((module) => ({ default: module.PortModal })));
 const POIModal = lazy(() => import('./POIModalV2').then((module) => ({ default: module.POIModalV2 })));
@@ -131,6 +132,57 @@ function formatDate(dayCount: number): string {
   }
 
   return `${MONTH_NAMES[month]} ${day}, ${year}`;
+}
+
+type ShipStatusAlert = {
+  label: string;
+  detail: string;
+  tone: 'danger' | 'warning';
+};
+
+function deriveShipStatusAlert({
+  hull,
+  maxHull,
+  crewCount,
+  averageMorale,
+  cargoUsed,
+  cargoCapacity,
+  provisions,
+}: {
+  hull: number;
+  maxHull: number;
+  crewCount: number;
+  averageMorale: number;
+  cargoUsed: number;
+  cargoCapacity: number;
+  provisions: number;
+}): ShipStatusAlert | null {
+  const hullRatio = maxHull > 0 ? hull / maxHull : 0;
+  if (hullRatio <= 0.25) {
+    return { label: 'Hull critical', detail: `${hull}/${maxHull}`, tone: 'danger' };
+  }
+
+  if (crewCount <= 0) {
+    return { label: 'No crew aboard', detail: 'Ship cannot sail', tone: 'danger' };
+  }
+
+  if (averageMorale <= 20) {
+    return { label: 'Morale failing', detail: `${averageMorale}/100`, tone: 'warning' };
+  }
+
+  if (cargoCapacity > 0 && cargoUsed > cargoCapacity) {
+    return { label: 'Overloaded', detail: `${cargoUsed}/${cargoCapacity} cargo`, tone: 'warning' };
+  }
+
+  if (crewCount > 0 && provisions <= crewCount * 2) {
+    return {
+      label: provisions <= 0 ? 'Food exhausted' : 'Food low',
+      detail: `${provisions} food`,
+      tone: provisions <= 0 ? 'danger' : 'warning',
+    };
+  }
+
+  return null;
 }
 
 function isInsideBuildingFootprint(
@@ -1143,28 +1195,12 @@ export function UI() {
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
   const [showInstructions, setShowInstructions] = useState(() => !testMode.skipOpening);
-  const [arrivalCurtainPort, setArrivalCurtainPort] = useState<string | null>(null);
   // When skipping the opening (dev/test mode), begin the voyage immediately
   // so GameScene mounts without waiting for the splash screen flow.
   const _setVoyageBegunOnce = useGameStore(s => s.setVoyageBegun);
   useEffect(() => {
     if (testMode.skipOpening) _setVoyageBegunOnce();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Voyage arrival → cinematic curtain that masks the world-map → port swap.
-  // Caller passes the destination port name and the swap closure (fastTravel +
-  // close world map). We fade the curtain in, run the swap under cover, then
-  // fade out to reveal the new port.
-  const handleArrival = useCallback(async (portName: string, swap: () => void) => {
-    setArrivalCurtainPort(portName);
-    // Wait for curtain to reach opaque (fade-in is 550ms) before swapping
-    // the world map → port underneath.
-    await new Promise(r => setTimeout(r, 600));
-    swap();
-    // Brief hold so the new port has a frame to mount before we reveal it.
-    await new Promise(r => setTimeout(r, 550));
-    setArrivalCurtainPort(null);
   }, []);
 
   // Ship hitting map edge can request the world map be opened
@@ -1814,9 +1850,9 @@ export function UI() {
           sfxClick();
           cycleViewMode();
           break;
-        case '6': // Quests
-          sfxClick();
-          setShowQuests(prev => !prev);
+        case '6': // Settings
+          sfxOpen();
+          setShowSettings(true);
           break;
         case '7': // Navigate (world map)
           toggleWorldMap();
@@ -1829,7 +1865,17 @@ export function UI() {
 
   const activeLeadCount = leads.filter((lead) => lead.status === 'active').length;
   const knownCommodityCount = Object.values(knowledgeState).filter((level) => level > 0).length;
-  const cargoUsed = Object.values(cargo).reduce((sum, qty) => sum + qty, 0);
+  const cargoUsed = calculateCargoWeight(cargo);
+  const averageMorale = Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1));
+  const shipStatusAlert = deriveShipStatusAlert({
+    hull: stats.hull,
+    maxHull: stats.maxHull,
+    crewCount: crew.length,
+    averageMorale,
+    cargoUsed,
+    cargoCapacity: stats.cargoCapacity,
+    provisions,
+  });
   if (initialCargoUsedRef.current === null) initialCargoUsedRef.current = cargoUsed;
   if (initialCrewCountRef.current === null) initialCrewCountRef.current = crew.length;
   if (initialJournalCountRef.current === null) initialJournalCountRef.current = journalEntries.length;
@@ -1898,8 +1944,8 @@ export function UI() {
       {/* Top Bar */}
       <div className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex justify-between items-start'}>
         {isMobile && (
-          <div className="pointer-events-auto grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2">
-            <AudioMuteButton />
+          <div className="pointer-events-auto grid grid-cols-[36px_minmax(0,1fr)] items-center gap-2">
+            <AudioMuteButton size="compact" />
             <button
               type="button"
               onClick={() => { sfxOpen(); setShowWorldMap(true); }}
@@ -1912,18 +1958,6 @@ export function UI() {
                   {currentPortName}
                 </span>
               </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => { sfxOpen(); setShowSettings(true); }}
-              aria-label="Settings"
-              title="Settings"
-              className="relative h-11 w-11 rounded-full flex items-center justify-center justify-self-end
-                bg-[#1a1e2e]/90 border-2 border-[#4a4535]/60 text-[#9a9070]
-                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),0_2px_8px_rgba(0,0,0,0.55)]
-                transition-all active:scale-95"
-            >
-              <Settings size={16} />
             </button>
           </div>
         )}
@@ -2194,6 +2228,38 @@ export function UI() {
                         {ship.type}
                       </span>
                     </button>
+
+                    <AnimatePresence mode="wait">
+                      {shipStatusAlert && (
+                        <motion.div
+                          key={`${shipStatusAlert.label}-${shipStatusAlert.detail}`}
+                          initial={{ opacity: 0, x: -4 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -4 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
+                          className="ml-1 shrink-0 self-center"
+                        >
+                          <div
+                            className="flex h-9 w-[86px] flex-col items-center justify-center rounded-md border px-1 py-0.5 text-[7px] font-bold uppercase tracking-[0.07em] leading-none shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                            style={{
+                              color: shipStatusAlert.tone === 'danger' ? '#fecaca' : '#fcd34d',
+                              borderColor: shipStatusAlert.tone === 'danger' ? 'rgba(248,113,113,0.36)' : 'rgba(251,191,36,0.34)',
+                              background: shipStatusAlert.tone === 'danger' ? 'rgba(127,29,29,0.28)' : 'rgba(120,53,15,0.26)',
+                            }}
+                            title={`${shipStatusAlert.label}: ${shipStatusAlert.detail}`}
+                          >
+                            <motion.span
+                              animate={reduceMotion ? undefined : { opacity: [0.62, 1, 0.62] }}
+                              transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                              className="flex items-center"
+                            >
+                              <AlertTriangle size={11} strokeWidth={2.3} />
+                            </motion.span>
+                            <span className="mt-0.5 max-w-full truncate">{shipStatusAlert.label}</span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </>
                 )}
               </div>
@@ -2204,7 +2270,7 @@ export function UI() {
           <div className="flex items-center gap-5 px-4 py-2.5">
             <StatBar icon={<Shield size={15} />} label="Ship" value={stats.hull} max={stats.maxHull} color={statColors.hull}
               active={expandedStat === 'hull'} onClick={() => setExpandedStat(expandedStat === 'hull' ? null : 'hull')} />
-            <StatBar icon={<Users size={15} />} label="Morale" value={Math.round(crew.reduce((sum, c) => sum + c.morale, 0) / (crew.length || 1))} max={100} color={statColors.morale}
+            <StatBar icon={<Users size={15} />} label="Morale" value={averageMorale} max={100} color={statColors.morale}
               active={expandedStat === 'morale'} onClick={() => setExpandedStat(expandedStat === 'morale' ? null : 'morale')} />
             <StatBar icon={<Anchor size={15} />} label="Cargo" value={cargoUsed} max={stats.cargoCapacity} color={statColors.cargo}
               active={expandedStat === 'cargo'} onClick={() => setExpandedStat(expandedStat === 'cargo' ? null : 'cargo')} />
@@ -2243,23 +2309,7 @@ export function UI() {
         {!isMobile && (
         <div className="flex flex-col pointer-events-auto items-end gap-3">
           <div className="flex items-center gap-2">
-            <AudioMuteButton />
-            <button
-              type="button"
-              onClick={() => { sfxOpen(); setShowSettings(true); }}
-              onMouseEnter={sfxHover}
-              aria-label="Settings"
-              title="Settings"
-              className="group relative w-11 h-11 rounded-full flex items-center justify-center
-                bg-[#1a1e2e] border-2 border-[#4a4535]/60 text-[#8a8060] hover:text-slate-200 hover:border-slate-400/45
-                shadow-[inset_0_2px_4px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.05),0_2px_8px_rgba(0,0,0,0.6)]
-                transition-all active:scale-95"
-            >
-              <Settings size={16} />
-              <span className="absolute z-[80] -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                Settings
-              </span>
-            </button>
+            <AudioMuteButton size="compact" />
           </div>
           {minimapEnabled && (
             <div
@@ -2777,20 +2827,15 @@ export function UI() {
             {useWorldMapChart ? (
               <WorldMapModalChart
                 onClose={() => setShowWorldMap(false)}
-                onArrival={handleArrival}
               />
             ) : (
               <WorldMapModal
                 onClose={() => setShowWorldMap(false)}
-                onArrival={handleArrival}
               />
             )}
           </Suspense>
         )}
       </AnimatePresence>
-
-      {/* Arrival curtain — masks the world-map → port swap after a voyage */}
-      <ArrivalCurtain portName={arrivalCurtainPort} />
 
       {/* Departure curtain — masks canvas mount + terrain gen after Set Sail */}
       <DepartureCurtain active={showVoyageCurtain} />
@@ -2909,7 +2954,7 @@ export function UI() {
                 <ActionBarButton icon={<HelpCircle size={13} />} label="Help" accentColor="#a78bfa" glowColor="167,139,250" onClick={() => { setShowHelp(true); setShowOverflowMenu(false); }} />
                 <ViewModeButton />
                 <ActionBarButton icon={<BookOpen size={13} />} label="Journal" accentColor="#f59e0b" glowColor="245,158,11" nudgeTarget="journal" onClick={() => { sfxClick(); dismissNudge('open-journal'); setShowJournal(prev => !prev); setShowOverflowMenu(false); }} />
-                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); setShowOverflowMenu(false); }} />
+                <ActionBarButton icon={<Settings size={13} />} label="Settings" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); setShowOverflowMenu(false); }} />
               </div>
             </motion.div>
           )}
@@ -2955,9 +3000,9 @@ export function UI() {
             </button>
             {!isMobile && (
               <>
-                {/* Right group: View - Quests - Navigate */}
+                {/* Right group: View - Settings - Navigate */}
                 <ViewModeButton />
-                <ActionBarButton icon={<Scroll size={13} />} label="Commissions" hotkey="6" accentColor="#fbbf24" glowColor="251,191,36" nudgeTarget="commissions" onClick={() => { sfxClick(); dismissNudge('open-commissions'); setShowQuests(prev => !prev); }} />
+                <ActionBarButton icon={<Settings size={13} />} label="Settings" hotkey="6" accentColor="#9ca3af" glowColor="156,163,175" onClick={() => { sfxOpen(); setShowSettings(true); }} />
                 <ActionBarButton icon={<Compass size={13} />} label="Navigate" hotkey="7" accentColor="#f87171" glowColor="248,113,113" nudgeTarget="navigation" onClick={() => { dismissNudge('open-navigation'); toggleWorldMap(); }} />
               </>
             )}

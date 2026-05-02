@@ -1,7 +1,7 @@
 /**
  * roadStyle.ts — single source of truth for road tier geometry.
  *
- * Both the renderer (ProceduralCity.tsx) and the ground-height resolver
+ * Both the renderer (CityRoads.tsx) and the ground-height resolver
  * (roadSurface.ts) need the same width / yLift numbers — if they drift, the
  * player starts visibly sinking into road surfaces again. Keep them here.
  *

@@ -6,14 +6,14 @@
 // and three optional accents (boundary wall, prayer pole, outer courtyard).
 //
 // Tagging is index-based, not heuristic. Each per-faith block in
-// ProceduralCity.tsx uses an `addKey(...)` wrapper for hero-feature parts
+// buildCityParts.ts uses an `addKey(...)` wrapper for hero-feature parts
 // (bell tower, minaret, shikhara, pagoda spire, dome, etc.) and the default
 // `addPart(...)` for body parts. The wrapper records the part index in
 // `keyIndices`, which this util then routes to `keyFeatureScale`. Body
 // parts get `bodyProportion`. No Y-position guess.
 //
 // Why a util: the variant pass was ~70 lines living inline in the already-
-// 1800-line ProceduralCity.tsx, and the same logic is going to grow when
+// city building renderer, and the same logic is going to grow when
 // ruin/decay variants ship (Phase 4). Hoisting it now keeps the renderer
 // readable and gives ruin/decay a sibling util to live next to.
 //
@@ -34,7 +34,7 @@ interface MutablePart {
   color?: [number, number, number];
 }
 
-/** addPart closure shape from ProceduralCity.tsx — kept loose so the util
+/** addPart closure shape from CityPartBuilder — kept loose so the util
  *  doesn't reach into the renderer's internal Part / Geo / Mat unions. */
 type AddPart = (
   geo: 'box' | 'cylinder' | 'cone' | 'sphere' | 'dome',

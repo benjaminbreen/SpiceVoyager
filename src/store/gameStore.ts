@@ -45,148 +45,62 @@ import { calculateCargoWeight, cargoUnitWeight } from '../utils/cargoWeight';
 import { rollCrewRelationshipEvent, type CrewRelation, type CrewRelationshipStatus } from '../utils/crewRelations';
 import { maybeCreateCrewTroubleEvent, type CrewTroubleChoice, type CrewTroubleEvent } from '../utils/crewTrouble';
 import type { CityFieldKey } from '../utils/cityFieldTypes';
-import { LUT_PRESETS, type LUTParams, type LUTPresetId } from '../utils/proceduralLUT';
-import type { ClimateProfile } from '../utils/portArchetypes';
+import type { LUTParams, LUTPresetId } from '../utils/proceduralLUT';
+import { PORT_CULTURAL_REGION, PORT_FACTION } from './registries';
+import { lodgingCost, lodgingLabel } from './lodging';
+import { rollWeatherForPortId, rollWindForPortId, type WeatherState } from './weather';
+import {
+  LAND_WEAPON_DEFS,
+  WEAPON_DEFS,
+  WEAPON_PRICES,
+  type LandWeaponType,
+  type WeaponType,
+} from './armory';
+import { SHIP_UPGRADES, type ShipUpgradeType } from './shipUpgrades';
+import {
+  captainHasAbility,
+  captainHasTrait,
+  getCaptain,
+  getCrewByRole,
+  getRoleBonus,
+  grantCrewXp,
+  initialHearts,
+  maxHeartsForLevel,
+} from './crewRules';
+import { DEFAULT_RENDER_DEBUG } from './defaults';
 
-export type WeatherKind = 'clear' | 'rain';
-
-export interface WeatherState {
-  kind: WeatherKind;
-  /** Currently rendered intensity, eased toward targetIntensity. 0..1. */
-  intensity: number;
-  /** Target the easing converges on. Set on port arrival; intensity follows. */
-  targetIntensity: number;
-}
-
-interface WindState {
-  direction: number;
-  speed: number;
-}
-
-// Per-climate odds of arriving to rain. Monsoon climates roll high because
-// every port flagged 'monsoon' (Surat in Aug, Cochin Jun-Sep, Masulipatnam) is
-// already location/season-coded for wet weather; arid coasts almost never.
-const RAIN_CHANCE_BY_CLIMATE: Record<ClimateProfile, number> = {
-  monsoon: 0.65,
-  tropical: 0.30,
-  temperate: 0.25,
-  mediterranean: 0.15,
-  arid: 0.05,
-};
-
-function rollWeatherForPortId(portId: string | null): WeatherState {
-  const port = getWorldPortById(portId);
-  const climate: ClimateProfile = port?.climate ?? 'temperate';
-  const chance = RAIN_CHANCE_BY_CLIMATE[climate] ?? 0.2;
-  if (Math.random() < chance) {
-    // Drizzle (0.3) to downpour (1.0). Skews lighter so heavy rain is rarer.
-    const target = 0.3 + Math.pow(Math.random(), 1.5) * 0.7;
-    return { kind: 'rain', intensity: 0, targetIntensity: target };
-  }
-  return { kind: 'clear', intensity: 0, targetIntensity: 0 };
-}
-
-function rollWindForPortId(portId: string | null, weather: WeatherState): WindState {
-  const port = getWorldPortById(portId);
-  const climate: ClimateProfile = port?.climate ?? 'temperate';
-  const climateBase: Record<ClimateProfile, number> = {
-    monsoon: 0.58,
-    tropical: 0.48,
-    temperate: 0.52,
-    mediterranean: 0.44,
-    arid: 0.42,
-  };
-  const rainBoost = weather.targetIntensity * 0.25;
-  return {
-    direction: Math.random() * Math.PI * 2,
-    speed: Math.max(0.12, Math.min(1, climateBase[climate] + (Math.random() - 0.5) * 0.28 + rainBoost)),
-  };
-}
+export { PORT_CULTURAL_REGION, PORT_FACTION } from './registries';
+export { lodgingCost, lodgingLabel } from './lodging';
+export type { WeatherKind, WeatherState } from './weather';
+export {
+  LAND_WEAPON_DEFS,
+  PORT_ARMORY,
+  WEAPON_DEFS,
+  WEAPON_DESCRIPTIONS,
+  WEAPON_PRICES,
+  getPortArmory,
+} from './armory';
+export type { LandWeapon, LandWeaponType, Weapon, WeaponType } from './armory';
+export { SHIP_UPGRADES, getPortUpgrades } from './shipUpgrades';
+export type { ShipUpgrade, ShipUpgradeType } from './shipUpgrades';
+export {
+  HEARTS_BASE_MAX,
+  captainHasAbility,
+  captainHasTrait,
+  getCaptain,
+  getCrewByRole,
+  getRoleBonus,
+  grantCrewXp,
+  initialHearts,
+  maxHeartsForLevel,
+  updateCrewMember,
+} from './crewRules';
+export { DEFAULT_RENDER_DEBUG } from './defaults';
 
 export type { Commodity } from '../utils/commodities';
 export type { KnowledgeLevel } from '../utils/knowledgeSystem';
 
-// Map port IDs to their controlling nationality for reputation
-export const PORT_FACTION: Record<string, Nationality> = {
-  calicut: 'Gujarati',   // Zamorin kingdom, trade dominated by Gujarati & Mappila merchants
-  goa: 'Portuguese',
-  hormuz: 'Portuguese',  // Portuguese-occupied
-  malacca: 'Portuguese',
-  aden: 'Ottoman',
-  mocha: 'Ottoman',
-  zanzibar: 'Portuguese', // nominal Portuguese control
-  macau: 'Portuguese',
-  mombasa: 'Portuguese',
-  surat: 'Mughal',
-  muscat: 'Portuguese',  // Portuguese fort
-  aceh: 'Acehnese',
-  bantam: 'Javanese',
-  manila: 'Spanish',
-  // Nagasaki — Tokugawa shogunate port. Portuguese traders operate here under
-  // license in 1612 but the port itself is Japanese-ruled.
-  nagasaki: 'Japanese',
-  // Masulipatnam — Shia Qutb Shahi sultanate of Golconda. Tagged 'Mughal' as
-  // the closest available Nationality; the Deccani sultanates aren't a
-  // separate gameplay faction in v1.
-  masulipatnam: 'Mughal',
-  cochin: 'Portuguese',
-  mogadishu: 'Swahili',
-  kilwa: 'Swahili',
-  socotra: 'Portuguese',
-  diu: 'Portuguese',        // key Portuguese fortress off Gujarat
-  // European ports
-  lisbon: 'Portuguese',
-  amsterdam: 'Dutch',
-  seville: 'Spanish',
-  london: 'English',
-  venice: 'Venetian',
-  // West Africa
-  elmina: 'Portuguese',     // São Jorge da Mina fortress
-  luanda: 'Portuguese',     // São Paulo de Luanda
-  // Atlantic Americas
-  salvador: 'Portuguese',   // capital of Portuguese Brazil
-  havana: 'Spanish',        // treasure fleet base
-  cartagena: 'Spanish',     // fortified colonial port
-  jamestown: 'English',     // Virginia Company colony, ~300 settlers in 1612
-  // Cape route
-  cape: 'Portuguese',       // no permanent settlement but Portuguese-claimed
-};
-
-// Cultural region of the built environment — separate from controlling nationality.
-// Used for building labels, market names, family names, etc. A Portuguese-ruled port
-// (Goa, Malacca, Mombasa, Macau) still has a local Malabari/Malay/Swahili/Chinese
-// street-level culture. Forts and administrative warehouses may still read Portuguese
-// at the gameplay layer — see PORT_FACTION for that.
 export type CulturalRegion = 'Arab' | 'Swahili' | 'Gujarati' | 'Malabari' | 'Malay' | 'Chinese';
-
-export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
-  // Arab
-  aden: 'Arab',
-  hormuz: 'Arab',       // Persian island but Arab-Hormuzi trading culture
-  muscat: 'Arab',       // Omani
-  socotra: 'Arab',      // Mahri/Arab
-  // Swahili coast
-  mombasa: 'Swahili',
-  zanzibar: 'Swahili',
-  kilwa: 'Swahili',
-  mogadishu: 'Swahili',
-  // Gujarati
-  surat: 'Gujarati',
-  diu: 'Gujarati',
-  // Masulipatnam — Deccani/Telugu rather than Gujarati, but 'Gujarati' is the
-  // closest available CulturalRegion bucket for Indo-Islamic Deccan architecture.
-  masulipatnam: 'Gujarati',
-  // Malabari (Kerala / Konkani coast)
-  calicut: 'Malabari',
-  cochin: 'Malabari',
-  goa: 'Malabari',      // Konkani — closest match in this taxonomy
-  // Malay / insular SE Asia
-  malacca: 'Malay',
-  aceh: 'Malay',
-  bantam: 'Malay',
-  // Chinese
-  macau: 'Chinese',
-};
 
 export type Culture = 'Indian Ocean' | 'European' | 'West African' | 'Atlantic';
 export type PortScale = 'Small' | 'Medium' | 'Large' | 'Very Large' | 'Huge';
@@ -355,329 +269,6 @@ export interface Port {
   pois?: import('../utils/poiDefinitions').POIDefinition[];
 }
 
-// ── Armament system ──
-// Period-appropriate weapons for c. 1612 Indian Ocean trade:
-//   Swivel guns (verso/falconet): small anti-personnel, mounted on rail, aimed by hand.
-//     Starting weapon. Range ~50m. Low damage. Can aim with hold-spacebar.
-//   Demi-culverin: medium cannon, ~9 lb shot. Common on English/Dutch armed merchantmen.
-//   Saker: lighter cannon (~5 lb), fast reload, good range. Portuguese favorite.
-//   Minion: small cannon (~4 lb). Cheap, light, good for pinnaces.
-//   Demi-cannon: heavy (~32 lb). Galleon-class only. Devastating but slow, heavy.
-//   Basilisk: rare Portuguese bronze long gun. Extreme range.
-// Future: purchasable at different ports (culverins in Surat, sakers in Goa,
-//   basilisks rare in Lisbon-connected ports, etc.)
-// Lantaka (Arab/Indian Ocean) and cetbang (Malay/Javanese) are mechanically
-// identical to the European swivel gun — same 1–2 lb bronze breech-loader,
-// different cultural lineage. Kept as distinct entries so Indian Ocean ports
-// can sell a historically-named piece without changing behavior.
-export type WeaponType = 'swivelGun' | 'lantaka' | 'cetbang' | 'falconet' | 'fireRocket' | 'minion' | 'saker' | 'demiCulverin' | 'demiCannon' | 'basilisk';
-
-export interface Weapon {
-  type: WeaponType;
-  name: string;
-  damage: number;      // base damage per hit
-  range: number;       // effective range in world units
-  reloadTime: number;  // seconds between shots
-  weight: number;      // cargo capacity cost
-  aimable: boolean;    // true = swivel-style, aim with cursor; false = broadside only
-}
-
-export const WEAPON_DEFS: Record<WeaponType, Weapon> = {
-  swivelGun:    { type: 'swivelGun',    name: 'Swivel Gun',    damage: 5,  range: 90,  reloadTime: 0.5,  weight: 1,  aimable: true },
-  lantaka:      { type: 'lantaka',      name: 'Lantaka',       damage: 7,  range: 90,  reloadTime: 0.7,  weight: 1,  aimable: true },
-  cetbang:      { type: 'cetbang',      name: 'Cetbang',       damage: 8,  range: 90,  reloadTime: 0.8,  weight: 2,  aimable: true },
-  falconet:     { type: 'falconet',     name: 'Falconet',      damage: 11, range: 100, reloadTime: 1.4,  weight: 3,  aimable: true },
-  // Bamboo-tube war rocket. Aimed like a swivel but far longer reach, slower
-  // to reload, noticeably inaccurate, splash damage at impact.
-  fireRocket:   { type: 'fireRocket',   name: 'War Rocket',    damage: 12, range: 90,  reloadTime: 2.8, weight: 3,  aimable: true },
-  minion:       { type: 'minion',       name: 'Minion',        damage: 10, range: 55,  reloadTime: 5,  weight: 3,  aimable: false },
-  saker:        { type: 'saker',        name: 'Saker',         damage: 12, range: 80,  reloadTime: 6,  weight: 4,  aimable: false },
-  demiCulverin: { type: 'demiCulverin', name: 'Demi-Culverin', damage: 18, range: 95,  reloadTime: 8,  weight: 6,  aimable: false },
-  demiCannon:   { type: 'demiCannon',   name: 'Demi-Cannon',   damage: 30, range: 50,  reloadTime: 12, weight: 10, aimable: false },
-  basilisk:     { type: 'basilisk',     name: 'Basilisk',      damage: 22, range: 110, reloadTime: 10, weight: 8,  aimable: false },
-};
-
-// ── Weapon prices & availability ──
-// Prices in gold. Not every port sells every weapon.
-export const WEAPON_PRICES: Record<WeaponType, number> = {
-  swivelGun:    60,
-  lantaka:      60,
-  cetbang:      60,
-  falconet:     420,
-  fireRocket:   240,
-  minion:       180,
-  saker:        320,
-  demiCulverin: 650,
-  demiCannon:   1100,
-  basilisk:     1600,
-};
-
-// Which weapon types each port sells (by port id).
-// Ports not listed sell only minions and swivelGuns.
-export const PORT_ARMORY: Record<string, WeaponType[]> = {
-  goa:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'basilisk'],  // Portuguese arsenal
-  malacca:  ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker', 'demiCulverin'],   // Luso-Malay mix after 1511
-  hormuz:   ['lantaka', 'swivelGun', 'minion', 'saker'],                   // Luso-held but Arab armorers present
-  surat:    ['lantaka', 'minion', 'demiCulverin', 'demiCannon'],           // Mughal heavy guns
-  cochin:   ['swivelGun', 'minion', 'saker', 'demiCulverin'],
-  macau:    ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker', 'demiCannon'],
-  bantam:   ['cetbang', 'fireRocket', 'swivelGun', 'minion', 'saker'],
-  mombasa:  ['lantaka', 'minion', 'saker'],                                // Swahili coast
-  muscat:   ['lantaka', 'minion'],                                          // Omani armorers
-  aceh:     ['cetbang', 'swivelGun', 'minion', 'saker'],
-  aden:     ['lantaka', 'minion', 'demiCulverin'],                          // Ottoman garrison
-  zanzibar: ['lantaka', 'minion'],
-  calicut:  ['lantaka', 'minion'],
-  socotra:  ['lantaka', 'minion'],                                          // remote outpost, minimal arms
-  diu:      ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'], // major Portuguese fortress
-  mocha:    ['lantaka', 'minion'],                                          // Red Sea Arab port
-  // European ports
-  lisbon:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // imperial arsenal
-  amsterdam: ['swivelGun', 'falconet', 'minion', 'saker', 'demiCulverin', 'demiCannon', 'basilisk'],  // VOC arsenal
-  seville:   ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
-  london:    ['swivelGun', 'falconet', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
-  // West African ports
-  elmina:    ['swivelGun', 'minion'],                                                      // fortress garrison, limited stock
-  luanda:    [],                                                                           // no weapons trade
-  // Atlantic American ports
-  salvador:  ['swivelGun', 'minion', 'saker'],
-  havana:    ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],               // treasure fleet arsenal
-  cartagena: ['swivelGun', 'minion', 'saker', 'demiCulverin'],
-  // Cape route
-  cape:      [],                                                                           // no settlement, no weapons
-};
-const DEFAULT_PORT_ARMORY: WeaponType[] = ['swivelGun', 'minion'];
-
-export function getPortArmory(portId: string): WeaponType[] {
-  return PORT_ARMORY[portId] ?? DEFAULT_PORT_ARMORY;
-}
-
-// ── Lodging (rest-for-the-night) ──
-export function lodgingCost(scale: PortScale): number {
-  switch (scale) {
-    case 'Small': return 4;
-    case 'Medium': return 6;
-    case 'Large': return 8;
-    case 'Very Large': return 12;
-    case 'Huge': return 16;
-  }
-}
-
-export function lodgingLabel(culture: Culture): string {
-  switch (culture) {
-    case 'Indian Ocean': return 'sarai';
-    case 'European': return 'inn';
-    case 'West African': return 'guesthouse';
-    case 'Atlantic': return 'tavern lodgings';
-  }
-}
-
-// ── Human-readable weapon descriptions ──
-export const WEAPON_DESCRIPTIONS: Record<WeaponType, { flavor: string; rangeLabel: string; reloadLabel: string; weightLabel: string }> = {
-  swivelGun:    { flavor: 'Light anti-personnel gun, aimed by hand',     rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
-  lantaka:      { flavor: 'Bronze breech-loader of the Arab and Indian Ocean coasts', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
-  cetbang:      { flavor: 'Javanese bronze swivel — light, swift, deadly at close quarters', rangeLabel: 'Close',   reloadLabel: 'Rapid',     weightLabel: 'Negligible' },
-  falconet:     { flavor: 'Light European cannon adapted as a bow chaser — costly, but strong enough to batter buildings', rangeLabel: 'Long', reloadLabel: 'Moderate', weightLabel: 'Light' },
-  fireRocket:   { flavor: 'Bamboo-tube rocket — long reach and a fireball on impact, but flies wild', rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Light' },
-  minion:       { flavor: 'Small iron cannon, cheap and reliable',        rangeLabel: 'Medium',  reloadLabel: 'Moderate',  weightLabel: 'Light' },
-  saker:        { flavor: 'Fast-loading bronze gun favored by the Portuguese', rangeLabel: 'Long',    reloadLabel: 'Moderate',  weightLabel: 'Light' },
-  demiCulverin: { flavor: 'Versatile medium cannon with good range',     rangeLabel: 'Long',    reloadLabel: 'Slow',      weightLabel: 'Medium' },
-  demiCannon:   { flavor: 'Heavy siege gun — devastating at close range', rangeLabel: 'Medium',  reloadLabel: 'Very slow', weightLabel: 'Heavy' },
-  basilisk:     { flavor: 'Rare bronze long gun with extreme reach',      rangeLabel: 'Extreme', reloadLabel: 'Slow',      weightLabel: 'Medium' },
-};
-
-// ── Land Weapons (hunting) ──
-// Separate from ship armament: no broadside slot, no weight, carried by the
-// walking character. Extend this union to add new hunting weapons.
-export type LandWeaponType = 'musket' | 'bow';
-
-export interface LandWeapon {
-  type: LandWeaponType;
-  name: string;
-  damage: number;             // per-shot damage vs animals
-  range: number;              // effective range in world units (accuracy falls off past this)
-  reloadTime: number;         // seconds between shots
-  projectileSpeed: number;    // world units/sec
-  spread: number;             // random cone in radians added to aim
-  noise: number;              // 0-1, how much this scares animals within earshot
-  ammoCommodity: Commodity | null;  // null = no ammo consumed
-  ammoPerShot: number;
-  description: string;
-}
-
-export const LAND_WEAPON_DEFS: Record<LandWeaponType, LandWeapon> = {
-  musket: {
-    type: 'musket',
-    name: 'Matchlock Musket',
-    damage: 100,
-    range: 60,
-    reloadTime: 2.0,
-    projectileSpeed: 60,
-    spread: 0.035,
-    noise: 1.0,
-    ammoCommodity: 'Small Shot',
-    ammoPerShot: 1,
-    description: 'A matchlock firearm. Loud, slow to reload, but one ball can drop a buffalo.',
-  },
-  bow: {
-    type: 'bow',
-    name: 'Hunting Bow',
-    damage: 55,
-    range: 22,
-    reloadTime: 1.0,
-    projectileSpeed: 40,
-    spread: 0.05,
-    noise: 0.2,
-    ammoCommodity: null,
-    ammoPerShot: 0,
-    description: 'A simple hunting bow. Quiet, quick to draw, no powder required.',
-  },
-};
-
-// ── Ship Upgrades ──
-export type ShipUpgradeType =
-  | 'copperSheathing'
-  | 'reinforcedPlanking'
-  | 'newCanvas'
-  | 'lateenRigging'
-  | 'expandedHold'
-  | 'surgeonsChest'
-  | 'ironKnees'
-  | 'betterProvisions';
-
-export interface ShipUpgrade {
-  type: ShipUpgradeType;
-  name: string;
-  description: string;
-  effect: string;          // human-readable effect description
-  price: number;
-  apply: (stats: ShipStats) => Partial<ShipStats>;
-}
-
-export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
-  copperSheathing: {
-    type: 'copperSheathing',
-    name: 'Copper Sheathing',
-    description: 'Thin copper plates nailed to the hull below the waterline to ward off shipworm and barnacles.',
-    effect: '+20 max hull',
-    price: 500,
-    apply: (s) => ({ maxHull: s.maxHull + 20 }),
-  },
-  reinforcedPlanking: {
-    type: 'reinforcedPlanking',
-    name: 'Reinforced Planking',
-    description: 'Extra layer of teak or oak planking along the waterline for added protection.',
-    effect: '+30 max hull',
-    price: 850,
-    apply: (s) => ({ maxHull: s.maxHull + 30 }),
-  },
-  newCanvas: {
-    type: 'newCanvas',
-    name: 'New Canvas Sails',
-    description: 'Fresh sailcloth from local weavers replaces worn and patched canvas.',
-    effect: '+2 sailing speed',
-    price: 300,
-    apply: (s) => ({ speed: s.speed + 2 }),
-  },
-  lateenRigging: {
-    type: 'lateenRigging',
-    name: 'Lateen Rigging',
-    description: 'Triangular fore-and-aft sails for tacking against the wind.',
-    effect: '+0.4 maneuverability',
-    price: 380,
-    apply: (s) => ({ turnSpeed: s.turnSpeed + 0.4 }),
-  },
-  expandedHold: {
-    type: 'expandedHold',
-    name: 'Expanded Hold',
-    description: 'Carpenters reconfigure the lower deck to fit more cargo.',
-    effect: '+12 cargo capacity',
-    price: 650,
-    apply: (s) => ({ cargoCapacity: s.cargoCapacity + 12 }),
-  },
-  surgeonsChest: {
-    type: 'surgeonsChest',
-    name: "Surgeon's Chest",
-    description: 'A locked chest of medicines: theriac, mercury salve, laudanum, and surgical tools.',
-    effect: 'Crew heal faster at sea',
-    price: 220,
-    apply: () => ({}), // effect handled by crew health system
-  },
-  ironKnees: {
-    type: 'ironKnees',
-    name: 'Iron Knee Braces',
-    description: 'Wrought-iron brackets reinforcing the joints between ribs and deck beams.',
-    effect: '+15 max hull, +4 cargo capacity',
-    price: 700,
-    apply: (s) => ({ maxHull: s.maxHull + 15, cargoCapacity: s.cargoCapacity + 4 }),
-  },
-  betterProvisions: {
-    type: 'betterProvisions',
-    name: 'Improved Provisions',
-    description: 'Sealed casks, dried fruits, and salted fish — better stores mean longer voyages.',
-    effect: '+25 provisions',
-    price: 80,
-    apply: () => ({}), // handled specially — adds provisions
-  },
-};
-
-// Which upgrades each port might offer (pool to randomize from)
-const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
-  goa:      ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
-  cochin:   ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
-  diu:      ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'ironKnees', 'expandedHold', 'betterProvisions'],
-  surat:    ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
-  malacca:  ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
-  macau:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
-  hormuz:   ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
-  aden:     ['newCanvas', 'lateenRigging', 'betterProvisions'],
-  bantam:   ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
-  mombasa:  ['newCanvas', 'lateenRigging', 'betterProvisions'],
-  aceh:     ['newCanvas', 'expandedHold', 'betterProvisions'],
-  muscat:   ['newCanvas', 'lateenRigging', 'betterProvisions'],
-  calicut:  ['newCanvas', 'lateenRigging', 'surgeonsChest', 'betterProvisions'],
-  zanzibar: ['newCanvas', 'betterProvisions'],
-  socotra:  ['betterProvisions'],
-  // European ports
-  lisbon:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
-  amsterdam: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
-  seville:   ['newCanvas', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
-  london:    ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
-  // West African ports
-  elmina:    ['newCanvas', 'betterProvisions'],
-  luanda:    ['betterProvisions'],
-  // Atlantic American ports
-  salvador:  ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
-  havana:    ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
-  cartagena: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
-  // Cape route
-  cape:      ['betterProvisions'],
-};
-const DEFAULT_UPGRADE_POOL: ShipUpgradeType[] = ['newCanvas', 'betterProvisions'];
-
-// Deterministic shuffle based on port id + world seed
-function seededShuffle<T>(arr: T[], seed: number): T[] {
-  const result = [...arr];
-  let s = seed;
-  for (let i = result.length - 1; i > 0; i--) {
-    s = (s * 1103515245 + 12345) & 0x7fffffff;
-    const j = s % (i + 1);
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
-export function getPortUpgrades(portId: string, worldSeed: number): ShipUpgradeType[] {
-  const pool = PORT_UPGRADE_POOLS[portId] ?? DEFAULT_UPGRADE_POOL;
-  // Hash portId into a number for seeding
-  let portHash = 0;
-  for (let i = 0; i < portId.length; i++) portHash = ((portHash << 5) - portHash + portId.charCodeAt(i)) | 0;
-  const shuffled = seededShuffle(pool, worldSeed + portHash);
-  // Offer 2-4 upgrades depending on port size, always include betterProvisions if in pool
-  const maxCount = pool.length <= 3 ? pool.length : Math.min(4, Math.max(2, Math.floor(pool.length * 0.6)));
-  return shuffled.slice(0, maxCount);
-}
-
 // Max broadside cannons based on ship type
 const MAX_CANNONS: Record<string, number> = {
   Pinnace: 4,
@@ -792,18 +383,6 @@ export interface Humours {
 export interface Hearts {
   current: number;
   max: number;
-}
-
-export const HEARTS_BASE_MAX = 3;
-
-/** Max hearts scales linearly with level: 3 at L1, 4 at L2, ... */
-export function maxHeartsForLevel(level: number): number {
-  return HEARTS_BASE_MAX + Math.max(0, level - 1);
-}
-
-export function initialHearts(level: number): Hearts {
-  const max = maxHeartsForLevel(level);
-  return { current: max, max };
 }
 
 export interface CrewHistoryEntry {
@@ -988,7 +567,7 @@ export interface RenderDebugSettings {
   settingsV2: boolean;
 }
 
-interface GameState {
+export interface GameState {
   playerPos: [number, number, number];
   playerRot: number;
   playerVelocity: number;
@@ -1210,103 +789,6 @@ function deterministicRewardRoll(id: string): number {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0) / 0xffffffff;
-}
-
-const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
-  showDevPanel: false,
-  minimap: true,
-  shadows: true,
-  postprocessing: true,
-  bloom: true,
-  vignette: true,
-  ao: false,
-  brightnessContrast: true,
-  hueSaturation: true,
-  lutEnabled: false,
-  lutPreset: 'tropical',
-  lutParams: { ...LUT_PRESETS.tropical },
-  lutMode: 'auto',
-  advancedWater: true,
-  shipWake: true,
-  rain: false,
-  algae: true,
-  coralReefs: false,
-  reefCaustics: false,
-  wildlifeMotion: true,
-  cloudShadows: true,
-  cityGroundWear: true,
-  animalMarkers: true,
-  disableTransitions: false,
-  worldMapChart: true,
-  cityFieldOverlay: false,
-  cityFieldMode: 'prestige',
-  sacredMarkers: true,
-  poiBeacons: true,
-  poiVisibility: true,
-  settingsV2: true,
-};
-
-// ── Crew helper functions ──────────────────────────────────────────────
-export function getCaptain(state: { crew: CrewMember[] }): CrewMember | undefined {
-  return state.crew.find(c => c.role === 'Captain') ?? state.crew[0];
-}
-
-export function getCrewByRole(state: { crew: CrewMember[] }, role: CrewRole): CrewMember | undefined {
-  return state.crew.find(c => c.role === role);
-}
-
-/** Returns a multiplier (1.0–1.10) based on a crew member's stat in a given role. */
-export function getRoleBonus(state: { crew: CrewMember[] }, role: CrewRole, stat: keyof CrewStats): number {
-  const member = getCrewByRole(state, role);
-  if (!member) return 1.0;
-  return 1.0 + (member.stats[stat] / 200); // stat 1→1.005, stat 10→1.05, stat 20→1.10
-}
-
-export function captainHasTrait(state: { crew: CrewMember[] }, trait: CaptainTrait): boolean {
-  return getCaptain(state)?.traits.includes(trait) ?? false;
-}
-
-export function captainHasAbility(state: { crew: CrewMember[] }, ability: CaptainAbility): boolean {
-  return getCaptain(state)?.abilities.includes(ability) ?? false;
-}
-
-export function updateCrewMember(
-  crew: CrewMember[], id: string, updater: (m: CrewMember) => CrewMember
-): CrewMember[] {
-  return crew.map(c => c.id === id ? updater(c) : c);
-}
-
-/** Grant XP to a crew member, handling level-ups with skill bumps.
- *  Returns { crew, levelledUp } where levelledUp is the member's name if they levelled. */
-export function grantCrewXp(
-  crew: CrewMember[], memberId: string, xp: number
-): { crew: CrewMember[]; levelledUp: string | null; newLevel: number } {
-  let levelledUp: string | null = null;
-  let newLevel = 0;
-  const updated = crew.map(c => {
-    if (c.id !== memberId) return c;
-    const totalXp = c.xp + xp;
-    if (totalXp >= c.xpToNext) {
-      // Level up — bump skill by 2-4 points and a random stat by 1
-      const skillBump = 2 + Math.floor(Math.random() * 3);
-      const statKeys: (keyof CrewStats)[] = ['strength', 'perception', 'charisma', 'luck'];
-      const bumpStat = statKeys[Math.floor(Math.random() * statKeys.length)];
-      levelledUp = c.name;
-      newLevel = c.level + 1;
-      const newMaxHearts = maxHeartsForLevel(newLevel);
-      return {
-        ...c,
-        xp: totalXp - c.xpToNext,
-        level: c.level + 1,
-        xpToNext: Math.floor(c.xpToNext * 1.5),
-        skill: Math.min(100, c.skill + skillBump),
-        stats: { ...c.stats, [bumpStat]: Math.min(20, c.stats[bumpStat] + 1) },
-        hearts: { current: newMaxHearts, max: newMaxHearts },
-      };
-    }
-    return { ...c, xp: totalXp };
-  });
-  return { crew: updated, levelledUp, newLevel };
 }
 
 // Playable factions. Each has a humble starter (the common case) and a grand
