@@ -12,7 +12,7 @@ import { buildCityParts } from './buildCityParts';
 import { InstancedParts } from './renderers/InstancedParts';
 import { CityRoads } from './renderers/CityRoads';
 import { CityFieldOverlay } from './renderers/CityFieldOverlay';
-import { POIBeacons, SacredBuildingMarkers } from './renderers/CityMarkers';
+import { FortHostilityWarnings, POIBeacons, SacredBuildingMarkers } from './renderers/CityMarkers';
 import {
   BuildingCollapseDust,
   BuildingDamageSmoke,
@@ -51,11 +51,19 @@ export function ProceduralCity() {
     polygonOffsetUnits: -1,
   }), []);
 
+  const litWindowMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#2a1d12',
+    roughness: 0.9,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  }), []);
+
   const geos = useMemo(() => createBuildingGeometries(), []);
 
-  const mats = useMemo(() => createBuildingMaterials(darkMat), [darkMat]);
+  const mats = useMemo(() => createBuildingMaterials(darkMat, litWindowMat), [darkMat, litWindowMat]);
 
-  const overlayMats = useMemo(() => createBuildingMaterials(darkMat, true), [darkMat]);
+  const overlayMats = useMemo(() => createBuildingMaterials(darkMat, litWindowMat, true), [darkMat, litWindowMat]);
 
   // Animate window glow and shader sun-facing lift based on time of day.
   useFrame(() => {
@@ -73,8 +81,8 @@ export function ProceduralCity() {
 
     // Ramp up glow as sun drops below horizon
     const nightFactor = Math.max(0, Math.min(1, (0.1 - sunH) / 0.3));
-    darkMat.emissive.setRGB(0.95, 0.6, 0.2);
-    darkMat.emissiveIntensity = nightFactor * 0.7;
+    litWindowMat.emissive.setRGB(0.85, 0.48, 0.16);
+    litWindowMat.emissiveIntensity = nightFactor * 0.36;
 
     const latestDamageVersion = getBuildingDamageVersion();
     if (latestDamageVersion !== damageVersionRef.current) {
@@ -123,6 +131,7 @@ export function ProceduralCity() {
       })}
       <CityRoads ports={ports} />
       <CityFieldOverlay ports={ports} />
+      <FortHostilityWarnings ports={ports} />
       <SacredBuildingMarkers ports={ports} />
       <POIBeacons ports={ports} />
       <POISilhouettes ports={ports} />

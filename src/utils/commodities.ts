@@ -602,9 +602,9 @@ export interface PortTradeProfile {
 const SMALL_SHOT_PORTS = new Set([
   'calicut', 'goa', 'surat', 'diu', 'hormuz', 'muscat', 'mocha', 'aden',
   'zanzibar', 'mombasa', 'socotra', 'malacca', 'bantam', 'macau',
-  'london', 'jamestown', 'lisbon', 'amsterdam', 'seville', 'cochin',
-  'aceh', 'mogadishu', 'kilwa', 'elmina', 'luanda', 'salvador', 'havana', 'cartagena',
-  'nagasaki', 'masulipatnam',
+  'london', 'jamestown', 'lisbon', 'amsterdam', 'seville', 'venice',
+  'elmina', 'luanda', 'salvador', 'havana', 'cartagena',
+  'manila', 'nagasaki', 'masulipatnam',
 ]);
 
 const CANNON_SHOT_PRODUCERS = new Set([
@@ -612,9 +612,9 @@ const CANNON_SHOT_PRODUCERS = new Set([
 ]);
 
 const CANNON_SHOT_TRADERS = new Set([
-  'calicut', 'surat', 'hormuz', 'muscat', 'malacca', 'cochin', 'aceh',
+  'calicut', 'surat', 'hormuz', 'muscat', 'malacca',
   'mombasa', 'elmina', 'luanda', 'salvador', 'cartagena',
-  'nagasaki', 'masulipatnam',
+  'manila', 'nagasaki', 'masulipatnam', 'venice',
 ]);
 
 export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
@@ -816,47 +816,6 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
                // Seville is the natural sink for Manila-galleon Star Anise
                // arriving via Acapulco — biggest demand in Europe.
                'Star Anise'],
-  },
-
-  // ── Other Indian Ocean / Spice Islands (cont.) ──
-
-  // Cochin — Portuguese-controlled Malabar port, the original Estado foothold
-  // before Goa eclipsed it. Still a major pepper and cardamom producer.
-  cochin: {
-    produces: ['Black Pepper', 'Cardamom', 'Ginger', 'Cassia Fistula', 'Timber',
-               'Rice', 'Tamarind'],
-    trades:   ['Cinnamon', 'Iron', 'Small Shot', 'Aloes', 'Sugar'],
-    demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Musk', 'Saffron',
-               'Red Coral', 'Rose Water', 'Tea', 'Quicksilver'],
-  },
-
-  // Aceh — powerful Sumatran sultanate, a major pepper producer and a
-  // challenger to the Portuguese. Home of camphor and benzoin.
-  aceh: {
-    produces: ['Black Pepper', 'Camphor', 'Benzoin', 'Timber', 'Rice'],
-    trades:   ['Ginger', 'Aloes', 'Sugar'],
-    demands:  ['Indigo', 'Chinese Porcelain', 'Iron', 'Small Shot', 'Opium',
-               'Rose Water', 'Saffron', 'Red Coral', 'Tea', 'Ivory'],
-  },
-
-  // ── East African Swahili coast (cont.) ──
-
-  // Mogadishu — Somali Swahili port. Historically a major producer of
-  // frankincense and myrrh (Horn of Africa), plus ambergris from the beaches.
-  mogadishu: {
-    produces: ['Frankincense', 'Myrrh', 'Ivory', 'Ambergris'],
-    trades:   ['Aloes', 'Hides', 'Tamarind', 'Rice'],
-    demands:  ['Black Pepper', 'Chinese Porcelain', 'Iron', 'Small Shot',
-               'Indigo', 'Cloves', 'Sugar', 'Red Coral', 'Opium'],
-  },
-
-  // Kilwa — once the greatest city of the Swahili coast, in decline by 1612
-  // under Portuguese rule. Ivory trade persists. Sparser market, shadier feel.
-  kilwa: {
-    produces: ['Ivory'],
-    trades:   ['Ambergris', 'Aloes', 'Tamarind', 'Hides', 'Rice'],
-    demands:  ['Black Pepper', 'Iron', 'Small Shot', 'Chinese Porcelain',
-               'Sugar', 'Red Coral', 'Indigo', 'Cloves'],
   },
 
   // ── West Africa ──

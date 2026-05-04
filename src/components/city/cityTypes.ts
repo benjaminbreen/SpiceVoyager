@@ -1,6 +1,6 @@
 export interface Part {
-  geo: 'box' | 'cylinder' | 'cone' | 'gableRoof' | 'shedRoof' | 'sphere' | 'dome';
-  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw' | 'tileRoof' | 'thatchRoof' | 'woodRoof' | 'dark';
+  geo: 'box' | 'cylinder' | 'cone' | 'roundCone' | 'gableRoof' | 'shedRoof' | 'sphere' | 'dome';
+  mat: 'white' | 'mud' | 'wood' | 'terracotta' | 'stone' | 'straw' | 'tileRoof' | 'thatchRoof' | 'woodRoof' | 'dark' | 'litWindow';
   pos: [number, number, number];
   scale: [number, number, number];
   rot: [number, number, number];

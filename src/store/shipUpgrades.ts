@@ -86,18 +86,20 @@ export const SHIP_UPGRADES: Record<ShipUpgradeType, ShipUpgrade> = {
   },
 };
 
-const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
+export const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
   goa: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
-  cochin: ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
   diu: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'ironKnees', 'expandedHold', 'betterProvisions'],
   surat: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
   malacca: ['copperSheathing', 'newCanvas', 'lateenRigging', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
   macau: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  manila: ['newCanvas', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
+  nagasaki: ['newCanvas', 'reinforcedPlanking', 'expandedHold', 'betterProvisions'],
+  masulipatnam: ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
   hormuz: ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
   aden: ['newCanvas', 'lateenRigging', 'betterProvisions'],
+  mocha: ['newCanvas', 'lateenRigging', 'betterProvisions'],
   bantam: ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
   mombasa: ['newCanvas', 'lateenRigging', 'betterProvisions'],
-  aceh: ['newCanvas', 'expandedHold', 'betterProvisions'],
   muscat: ['newCanvas', 'lateenRigging', 'betterProvisions'],
   calicut: ['newCanvas', 'lateenRigging', 'surgeonsChest', 'betterProvisions'],
   zanzibar: ['newCanvas', 'betterProvisions'],
@@ -106,11 +108,13 @@ const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
   amsterdam: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
   seville: ['newCanvas', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
   london: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'surgeonsChest', 'ironKnees', 'betterProvisions'],
+  venice: ['newCanvas', 'expandedHold', 'surgeonsChest', 'betterProvisions'],
   elmina: ['newCanvas', 'betterProvisions'],
   luanda: ['betterProvisions'],
   salvador: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
   havana: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
   cartagena: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  jamestown: ['newCanvas', 'betterProvisions'],
   cape: ['betterProvisions'],
 };
 

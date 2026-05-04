@@ -42,7 +42,7 @@ export const WALL_PALETTES: Record<string, [number, number, number][]> = {
 
 export interface RoofStyle {
   color: [number, number, number];
-  geo: 'box' | 'cone';
+  geo: 'box' | 'cone' | 'roundCone' | 'gableRoof' | 'shedRoof';
   h: number;
   mat?: Part['mat'];   // optional material override (defaults to terracotta for cone, mud for box)
 }
@@ -119,7 +119,7 @@ export const AWNING_COLORS: Record<string, [number, number, number][]> = {
 export interface HouseVariant {
   weight: number;
   scaleMul?: [number, number, number];      // multiplier on base [w, h, d]
-  roofGeoOverride?: 'box' | 'cone';
+  roofGeoOverride?: 'box' | 'cone' | 'roundCone' | 'gableRoof' | 'shedRoof';
   roofHMul?: number;
   roofScaleMul?: [number, number, number];  // multiplier on final roof [w, h, d]
   roofYOffset?: number;
@@ -138,6 +138,14 @@ export interface BuildingStyleDef {
   wallPalette: [number, number, number][];
   roofPalette: RoofStyle[];
   houseVariants: HouseVariant[];
+  facadeKit?:
+    | 'iberian-colonial'
+    | 'northern-european'
+    | 'swahili-coral'
+    | 'west-african-compound'
+    | 'mughal-gujarati'
+    | 'malay-stilted'
+    | 'malabar-veranda';
   shutterPalette?: [number, number, number][];
   wallMatHint?: Part['mat'];       // material for roughness; color overrides per-instance
 }
@@ -170,26 +178,28 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.15, scaleMul: [0.86, 1.18, 0.90], roofScaleMul: [0.92, 1.24, 0.94] },
       { weight: 0.08, scaleMul: [1.28, 0.82, 1.20], roofScaleMul: [1.14, 0.86, 1.12] },
     ],
+    facadeKit: 'iberian-colonial',
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
   },
   'dutch-brick': {
     wallPalette: [
-      [0.60, 0.32, 0.24], [0.60, 0.32, 0.24], [0.60, 0.32, 0.24],
-      [0.68, 0.40, 0.30], [0.52, 0.26, 0.20],
-      [0.82, 0.76, 0.66],  // occasional whitewash
+      [0.56, 0.27, 0.20], [0.56, 0.27, 0.20], [0.56, 0.27, 0.20],
+      [0.64, 0.34, 0.25], [0.48, 0.22, 0.17],
+      [0.70, 0.42, 0.30], [0.78, 0.70, 0.60],  // occasional pale-rendered facade
     ],
     roofPalette: [
-      { color: [0.24, 0.21, 0.19], geo: 'cone', h: 1.65 },
-      { color: [0.26, 0.23, 0.21], geo: 'cone', h: 1.65 },
-      { color: [0.34, 0.29, 0.25], geo: 'cone', h: 1.55 },
-      { color: [0.18, 0.19, 0.18], geo: 'cone', h: 1.6, mat: 'wood' },
+      { color: [0.22, 0.20, 0.18], geo: 'cone', h: 1.35 },
+      { color: [0.25, 0.22, 0.20], geo: 'cone', h: 1.35 },
+      { color: [0.32, 0.27, 0.24], geo: 'cone', h: 1.28 },
+      { color: [0.18, 0.18, 0.17], geo: 'cone', h: 1.30, mat: 'wood' },
     ],
     houseVariants: [
-      { weight: 0.42, scaleMul: [0.95, 1.30, 0.98], roofScaleMul: [0.88, 1.08, 0.90], features: { ridgeCap: true } },
-      { weight: 0.34, scaleMul: [1.12, 1.05, 1.10], roofScaleMul: [0.94, 1.02, 0.94], features: { ridgeCap: true } },
-      { weight: 0.24, scaleMul: [1.25, 0.92, 1.20], roofScaleMul: [1.00, 0.95, 1.00] },
+      { weight: 0.38, scaleMul: [0.98, 1.42, 1.08], roofScaleMul: [1.00, 0.82, 1.08], roofYOffset: -0.08, features: { ridgeCap: true } },
+      { weight: 0.36, scaleMul: [1.08, 1.26, 1.14], roofScaleMul: [1.06, 0.80, 1.12], roofYOffset: -0.08, features: { ridgeCap: true } },
+      { weight: 0.26, scaleMul: [1.18, 1.12, 1.20], roofScaleMul: [1.12, 0.78, 1.16], roofYOffset: -0.06, features: { ridgeCap: true } },
     ],
+    facadeKit: 'northern-european',
     shutterPalette: NORTHERN_SHUTTERS,
     wallMatHint: 'mud',
   },
@@ -205,25 +215,26 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       [0.34, 0.24, 0.16],   // exposed dark oak frame
     ],
     // Pre-1666 London: thatch and wood shingle dominate. Tile was a luxury,
-    // not yet mandated. Soot from sea-coal hearths blackened most roofs.
+    // not yet mandated. Soot from sea-coal hearths darkened most roofs.
     roofPalette: [
-      { color: [0.46, 0.38, 0.24], geo: 'cone', h: 1.7, mat: 'straw' }, // weathered sooty thatch (dominant)
-      { color: [0.46, 0.38, 0.24], geo: 'cone', h: 1.7, mat: 'straw' },
-      { color: [0.38, 0.32, 0.22], geo: 'cone', h: 1.8, mat: 'straw' }, // soot-blackened thatch
-      { color: [0.55, 0.46, 0.30], geo: 'cone', h: 1.7, mat: 'straw' }, // newer dry thatch (occasional)
-      { color: [0.32, 0.26, 0.20], geo: 'cone', h: 1.5, mat: 'wood' },  // dark wood shingle
-      { color: [0.40, 0.42, 0.34], geo: 'cone', h: 1.5, mat: 'wood' },  // moss-greened shingle
-      { color: [0.52, 0.30, 0.22], geo: 'cone', h: 1.4 },               // clay tile (the wealthy minority)
+      { color: [0.42, 0.35, 0.24], geo: 'cone', h: 1.85, mat: 'straw' }, // weathered thatch (dominant)
+      { color: [0.42, 0.35, 0.24], geo: 'cone', h: 1.85, mat: 'straw' },
+      { color: [0.34, 0.29, 0.21], geo: 'cone', h: 1.95, mat: 'straw' }, // soot-darkened thatch
+      { color: [0.50, 0.42, 0.29], geo: 'cone', h: 1.8, mat: 'straw' },  // newer dry thatch (occasional)
+      { color: [0.30, 0.25, 0.20], geo: 'cone', h: 1.62, mat: 'wood' },  // dark wood shingle
+      { color: [0.36, 0.37, 0.31], geo: 'cone', h: 1.62, mat: 'wood' },  // moss-greened shingle
+      { color: [0.50, 0.29, 0.22], geo: 'cone', h: 1.5 },                // clay tile (the wealthy minority)
     ],
     // Variety matters at Huge scale: cramped tall City rowhouses, standard
     // two-bay cottages, and squat outer-parish dwellings.
     houseVariants: [
-      { weight: 0.22, scaleMul: [0.95, 1.42, 1.00], roofScaleMul: [0.90, 1.05, 0.92] }, // tall jettied rowhouse
-      { weight: 0.28, scaleMul: [1.08, 1.00, 1.08], roofScaleMul: [0.96, 1.00, 0.96] }, // standard two-bay
-      { weight: 0.25, scaleMul: [1.28, 1.02, 1.22], roofScaleMul: [1.00, 0.96, 1.00] }, // larger merchant house
-      { weight: 0.15, scaleMul: [1.30, 0.80, 1.30], roofScaleMul: [1.10, 0.92, 1.10] }, // squat outer-parish cottage
-      { weight: 0.10, scaleMul: [1.05, 1.62, 1.08], roofScaleMul: [0.86, 1.08, 0.88] }, // landmark-tall (church/inn read)
+      { weight: 0.22, scaleMul: [1.08, 1.24, 1.26], roofScaleMul: [1.02, 1.12, 1.24], features: { ridgeCap: true } }, // tall jettied rowhouse
+      { weight: 0.28, scaleMul: [1.20, 0.96, 1.34], roofScaleMul: [1.10, 1.10, 1.30], features: { ridgeCap: true } }, // standard two-bay
+      { weight: 0.25, scaleMul: [1.34, 0.96, 1.46], roofScaleMul: [1.18, 1.08, 1.40], features: { ridgeCap: true } }, // larger merchant house
+      { weight: 0.15, scaleMul: [1.28, 0.76, 1.46], roofScaleMul: [1.16, 1.08, 1.38], features: { ridgeCap: true } }, // squat outer-parish cottage
+      { weight: 0.10, scaleMul: [1.14, 1.34, 1.30], roofScaleMul: [1.00, 1.14, 1.26], features: { ridgeCap: true } }, // landmark-tall (church/inn read)
     ],
+    facadeKit: 'northern-european',
     shutterPalette: NORTHERN_SHUTTERS,
     wallMatHint: 'white',
   },
@@ -247,6 +258,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.14, scaleMul: [0.88, 1.15, 0.92], roofScaleMul: [0.94, 1.20, 0.96] },
       { weight: 0.08, scaleMul: [1.28, 0.82, 1.24], roofScaleMul: [1.16, 0.86, 1.14], features: { veranda: true } },
     ],
+    facadeKit: 'iberian-colonial',
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
   },
@@ -264,6 +276,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.7, scaleMul: [1.15, 0.85, 1.15], roofScaleMul: [1.08, 1.0, 1.08], features: { flatRoofParapet: true } },
       { weight: 0.3, roofScaleMul: [0.98, 1.0, 0.98], features: { flatRoofParapet: true } },
     ],
+    facadeKit: 'swahili-coral',
     wallMatHint: 'white',
   },
   'arab-cubic': {
@@ -296,6 +309,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.62, roofScaleMul: [1.04, 1.0, 1.04], features: { flatRoofParapet: true } },
       { weight: 0.38, roofScaleMul: [0.96, 1.0, 0.96], features: { flatRoofParapet: true, windCatcher: true } },
     ],
+    facadeKit: 'malabar-veranda',
     wallMatHint: 'mud',
   },
   'malabar-hindu': {
@@ -333,6 +347,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.30, roofScaleMul: [1.12, 0.90, 1.12] },
       { weight: 0.25, scaleMul: [1.2, 1.0, 1.2], roofScaleMul: [1.05, 0.92, 1.05] },
     ],
+    facadeKit: 'mughal-gujarati',
     wallMatHint: 'white',
   },
   'malay-stilted': {
@@ -351,24 +366,28 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.28, scaleMul: [1.2, 0.9, 1.2], roofScaleMul: [1.24, 0.88, 1.24], features: { stilts: true, deepEaves: true } },
       { weight: 0.10, scaleMul: [0.95, 1.05, 0.95], roofScaleMul: [1.08, 1.0, 1.08], features: { stilts: true } },
     ],
+    facadeKit: 'malay-stilted',
     wallMatHint: 'wood',
   },
   'west-african-round': {
     wallPalette: [
-      [0.72, 0.55, 0.35], [0.72, 0.55, 0.35],
-      [0.68, 0.50, 0.30], [0.80, 0.68, 0.48],
-      [0.62, 0.48, 0.32],
+      [0.72, 0.55, 0.35], [0.76, 0.58, 0.36],
+      [0.68, 0.50, 0.30], [0.82, 0.64, 0.42],
+      [0.62, 0.48, 0.32], [0.84, 0.46, 0.26],
+      [0.70, 0.34, 0.20], [0.88, 0.54, 0.30],
     ],
     roofPalette: [
-      { color: [0.72, 0.62, 0.36], geo: 'cone', h: 1.5, mat: 'straw' },
-      { color: [0.64, 0.52, 0.30], geo: 'cone', h: 1.6, mat: 'straw' },
-      { color: [0.54, 0.42, 0.24], geo: 'cone', h: 1.45, mat: 'straw' },
+      { color: [0.72, 0.62, 0.36], geo: 'roundCone', h: 1.55, mat: 'straw' },
+      { color: [0.82, 0.68, 0.34], geo: 'roundCone', h: 1.62, mat: 'straw' },
+      { color: [0.92, 0.76, 0.40], geo: 'roundCone', h: 1.50, mat: 'straw' },
+      { color: [0.64, 0.52, 0.30], geo: 'roundCone', h: 1.45, mat: 'straw' },
     ],
     houseVariants: [
-      { weight: 0.55, roofScaleMul: [1.06, 0.96, 1.06], features: { roundHut: true } },
-      { weight: 0.25, roofScaleMul: [0.96, 1.08, 0.96], features: { roundHut: true } },
-      { weight: 0.20, roofScaleMul: [1.08, 0.92, 1.08] },
+      { weight: 0.38, scaleMul: [0.88, 0.88, 0.88], roofScaleMul: [1.16, 0.88, 1.16], features: { roundHut: true } },
+      { weight: 0.34, scaleMul: [0.98, 0.82, 0.98], roofScaleMul: [1.22, 0.82, 1.22], features: { roundHut: true } },
+      { weight: 0.28, scaleMul: [0.82, 0.96, 0.82], roofScaleMul: [1.10, 0.94, 1.10], features: { roundHut: true } },
     ],
+    facadeKit: 'west-african-compound',
     wallMatHint: 'mud',
   },
   'luso-brazilian': {
@@ -390,6 +409,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.22, scaleMul: [0.9, 0.85, 0.9], roofScaleMul: [1.10, 0.96, 1.10] },
       { weight: 0.16, scaleMul: [0.84, 1.12, 0.88], roofScaleMul: [0.94, 1.18, 0.96] },
     ],
+    facadeKit: 'iberian-colonial',
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
   },
@@ -422,6 +442,7 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       { weight: 0.20, scaleMul: [1.10, 1.75, 1.10], roofScaleMul: [1.10, 0.72, 1.08], roofYOffset: -0.08, features: { ridgeCap: true } },
       { weight: 0.15, scaleMul: [0.70, 2.30, 0.80], roofScaleMul: [1.05, 0.68, 1.02], roofYOffset: -0.12, features: { ridgeCap: true } },
     ],
+    facadeKit: 'iberian-colonial',
     shutterPalette: EU_SHUTTER_COLORS,
     wallMatHint: 'white',
   },

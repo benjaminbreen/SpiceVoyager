@@ -26,11 +26,9 @@ export const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   cityGroundWear: true,
   animalMarkers: true,
   disableTransitions: false,
-  worldMapChart: true,
   cityFieldOverlay: false,
   cityFieldMode: 'prestige',
   sacredMarkers: true,
   poiBeacons: true,
   poiVisibility: true,
-  settingsV2: true,
 };

@@ -16,6 +16,7 @@ import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShip
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
 import { startIntroCinematic } from '../utils/cinematicIntroState';
+import { isArrivalCinematicActive } from '../utils/arrivalCinematicState';
 import { DepartureCurtain } from './ArrivalCurtain';
 import { FactionFlag } from './FactionFlag';
 import { FACTIONS } from '../constants/factions';
@@ -33,7 +34,7 @@ import { QuestsPanel } from './QuestsPanel';
 import { QuestToast } from './QuestToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
-import { activeBowWeapon, bowWeaponReload, broadsideReload, getCurrentElevationCharge, landWeaponReload } from '../utils/combatState';
+import { activeBowWeapon, bowWeaponReload, broadsideReload, getCurrentElevationCharge, hostileFortThreat, landWeaponReload } from '../utils/combatState';
 import {
   getLiveShipTransform,
   getLiveWalkingTransform,
@@ -56,11 +57,9 @@ const BuildingDetailModal = lazy(() => import('./BuildingDetailModal').then((mod
 const ASCIIDashboard = lazy(() => import('./ASCIIDashboard').then((module) => ({ default: module.ASCIIDashboard })));
 const LearnPanel = lazy(() => import('./LearnPanel').then((module) => ({ default: module.LearnPanel })));
 const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default: module.JournalPanel })));
-const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const SettingsModalV2 = lazy(() => import('./SettingsModalV2').then((module) => ({ default: module.SettingsModalV2 })));
-const WorldMap = lazy(() => import('./WorldMap').then((module) => ({ default: module.WorldMap })));
+const LocalMap = lazy(() => import('./LocalMap').then((module) => ({ default: module.LocalMap })));
 const WorldMapModal = lazy(() => import('./WorldMapModal').then((module) => ({ default: module.WorldMapModal })));
-const WorldMapModalChart = lazy(() => import('./WorldMapModalChart').then((module) => ({ default: module.WorldMapModalChart })));
 
 const PORT_RADIUS_SQ = 20 * 20;
 const WALKING_PORT_SEARCH_RADIUS_SQ = 120 * 120;
@@ -755,6 +754,62 @@ function IncomingFireIndicatorHud() {
   );
 }
 
+function HostileFortBanner() {
+  const { isMobile } = useIsMobile();
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((value) => value + 1), 180);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const threat = hostileFortThreat;
+  if (!threat || Date.now() - threat.updatedAt > 650) return null;
+
+  const firing = threat.firing;
+  const label = firing ? 'FORT BATTERY FIRING' : 'HOSTILE FORT WATCHING';
+  const detail = `${threat.portName} · ${threat.reputation} reputation · ${threat.batteryCount} ${threat.batteryCount === 1 ? 'battery' : 'batteries'}`;
+  const blink = tick % 2 === 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -18, scale: 0.94 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -18, scale: 0.94 }}
+      transition={{ type: 'spring', stiffness: 260, damping: 22 }}
+      className={`pointer-events-none absolute ${isMobile ? 'top-3' : 'top-20'} left-1/2 z-50 -translate-x-1/2`}
+    >
+      <div className="relative">
+        <div className={`absolute inset-0 rounded-lg blur-xl ${firing ? 'bg-red-600/25' : 'bg-orange-600/18'}`} />
+        <div
+          className={`relative rounded-lg border px-5 py-2 backdrop-blur-md
+            ${firing
+              ? 'border-red-400/65 bg-[#210b0b]/90 shadow-[0_0_30px_rgba(239,68,68,0.28),inset_0_1px_0_rgba(255,180,180,0.1)]'
+              : 'border-orange-400/50 bg-[#1a1208]/90 shadow-[0_0_24px_rgba(234,138,30,0.22),inset_0_1px_0_rgba(255,180,80,0.1)]'
+            }`}
+        >
+          <pre className="select-none text-center font-mono text-[11px] leading-tight" style={{ textShadow: firing ? '0 0 8px rgba(248,113,113,0.65)' : '0 0 8px rgba(234,138,30,0.52)' }}>
+            <span className={firing ? 'text-red-300/65' : 'text-orange-300/60'}>{blink ? '╬══╬' : '╫══╫'}</span>
+            <span className={`mx-2 font-bold ${firing ? 'text-red-200' : 'text-orange-200'}`}>⚑</span>
+            <motion.span
+              animate={{ opacity: firing ? [1, 0.52, 1] : [1, 0.72, 1] }}
+              transition={{ duration: firing ? 0.75 : 1.4, repeat: Infinity }}
+              className={`font-bold tracking-[0.2em] ${firing ? 'text-red-300' : 'text-orange-300'}`}
+            >
+              {label}
+            </motion.span>
+            <span className={`mx-2 font-bold ${firing ? 'text-red-200' : 'text-orange-200'}`}>⚑</span>
+            <span className={firing ? 'text-red-300/65' : 'text-orange-300/60'}>{blink ? '╬══╬' : '╫══╫'}</span>
+          </pre>
+          <div className={`mt-0.5 text-center font-mono text-[9px] uppercase tracking-wider ${firing ? 'text-red-300/70' : 'text-orange-300/65'}`}>
+            {detail}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 type CombatTone = 'ship' | 'hunt';
 
 function CombatChip({ children, tone = 'ship', strong = false }: { children: ReactNode; tone?: CombatTone; strong?: boolean }) {
@@ -1158,9 +1213,7 @@ export function UI() {
   const activeLandWeapon = useGameStore((state) => state.activeLandWeapon);
   const portCount = useGameStore((state) => state.ports.length);
   const showDevPanel = useGameStore((state) => state.renderDebug.showDevPanel);
-  const settingsV2 = useGameStore((state) => state.renderDebug.settingsV2);
   const minimapEnabled = useGameStore((state) => state.renderDebug.minimap);
-  const useWorldMapChart = useGameStore((state) => state.renderDebug.worldMapChart);
   const cityFieldOverlayEnabled = useGameStore((state) => state.renderDebug.cityFieldOverlay);
   const cityFieldMode = useGameStore((state) => state.renderDebug.cityFieldMode);
   const plumbBobsEnabled = useGameStore((state) => state.renderDebug.sacredMarkers);
@@ -1195,6 +1248,9 @@ export function UI() {
   const [showLocalMap, setShowLocalMap] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
   const [showInstructions, setShowInstructions] = useState(() => !testMode.skipOpening);
+  const [arrivalFadeActive, setArrivalFadeActive] = useState(false);
+  const [arrivalFadeOpaque, setArrivalFadeOpaque] = useState(false);
+  const arrivalFadeTimeoutRef = useRef<number | null>(null);
   // When skipping the opening (dev/test mode), begin the voyage immediately
   // so GameScene mounts without waiting for the splash screen flow.
   const _setVoyageBegunOnce = useGameStore(s => s.setVoyageBegun);
@@ -1223,6 +1279,32 @@ export function UI() {
       window.removeEventListener('__SPICE_VOYAGER_TEST_OPEN_LOCAL_MAP__', openLocalMapForTest);
     };
   }, [testMode.enabled]);
+
+  useEffect(() => {
+    const startArrivalFade = () => {
+      if (arrivalFadeTimeoutRef.current !== null) {
+        window.clearTimeout(arrivalFadeTimeoutRef.current);
+      }
+      setArrivalFadeActive(true);
+      setArrivalFadeOpaque(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setArrivalFadeOpaque(false));
+      });
+      arrivalFadeTimeoutRef.current = window.setTimeout(() => {
+        setArrivalFadeActive(false);
+        arrivalFadeTimeoutRef.current = null;
+      }, 5200);
+    };
+
+    window.addEventListener('spice-voyager:arrival-cinematic', startArrivalFade);
+    return () => {
+      window.removeEventListener('spice-voyager:arrival-cinematic', startArrivalFade);
+      if (arrivalFadeTimeoutRef.current !== null) {
+        window.clearTimeout(arrivalFadeTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const [dashboardState, setDashboardState] = useState<{ tab?: string; crewId?: string; commodity?: string } | null>(null);
   const showDashboard = !!dashboardState;
   const setShowDashboard = (v: boolean) => setDashboardState(v ? {} : null);
@@ -1446,11 +1528,11 @@ export function UI() {
   const handleIntroFadeEnd = useCallback(() => {
     setIntroFadePhase((phase) => {
       if (phase === 'in') {
-        // Fully black — swap modal off, drop camera to a tight gameplay zoom
+        // Fully black — swap modal off, drop camera to the intro's final gameplay zoom
         // (the cinematic ends at whatever cameraZoom is now), start the
         // cinematic, then begin fading out.
         setShowCommission(false);
-        useGameStore.getState().setCameraZoom(28);
+        useGameStore.getState().setCameraZoom(42);
         audioManager.transitionToOverworld();
         startIntroCinematic();
         return 'out';
@@ -1549,12 +1631,13 @@ export function UI() {
       } = useGameStore.getState();
       const playerPos = getLiveShipTransform().pos;
       const walkingPos = getLiveWalkingTransform().pos;
+      const arrivalInteractionLocked = isArrivalCinematicActive();
 
       if (playerMode === 'ship') {
         // Ship mode: port proximity opens the market modal (original behavior)
         const nearest = findNearbyPort(playerPos, ports);
 
-        if (nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
+        if (!arrivalInteractionLocked && nearest && nearest.id !== currentActivePort?.id && nearest.id !== dismissedPortRef.current) {
           sfxPortArrival();
           setActiveBuildingToast(null);
           setActivePort(nearest);
@@ -1618,7 +1701,7 @@ export function UI() {
 
           if (tabForBuilding !== undefined) {
             // Buildings that open the full port modal
-            if (port.id !== currentActivePort?.id && port.id !== dismissedPortRef.current) {
+            if (!arrivalInteractionLocked && port.id !== currentActivePort?.id && port.id !== dismissedPortRef.current) {
               sfxPortArrival();
               setPortEntryTab(tabForBuilding);
               setActiveBuildingToast(null);
@@ -2579,6 +2662,12 @@ export function UI() {
         {!startupOverlayActive && playerMode === 'ship' && <IncomingFireIndicatorHud />}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {!startupOverlayActive && playerMode === 'ship' && !activePort && !showLocalMap && !showWorldMap && !showDashboard && (
+          <HostileFortBanner />
+        )}
+      </AnimatePresence>
+
       {/* Anchor Indicator — top-center ASCII banner */}
       <AnimatePresence>
         {anchored && playerMode === 'ship' && !combatMode && (
@@ -2813,7 +2902,7 @@ export function UI() {
       <AnimatePresence>
         {showLocalMap && (
           <Suspense fallback={null}>
-            <WorldMap
+            <LocalMap
               onClose={() => setShowLocalMap(false)}
               onOpenWorldMap={() => {
                 setShowLocalMap(false);
@@ -2824,15 +2913,9 @@ export function UI() {
         )}
         {showWorldMap && (
           <Suspense fallback={null}>
-            {useWorldMapChart ? (
-              <WorldMapModalChart
-                onClose={() => setShowWorldMap(false)}
-              />
-            ) : (
-              <WorldMapModal
-                onClose={() => setShowWorldMap(false)}
-              />
-            )}
+            <WorldMapModal
+              onClose={() => setShowWorldMap(false)}
+            />
           </Suspense>
         )}
       </AnimatePresence>
@@ -3029,10 +3112,7 @@ export function UI() {
       {/* Settings Modal */}
       {showSettings && (
         <Suspense fallback={null}>
-          {settingsV2
-            ? <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} />
-            : <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
-          }
+          <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} />
         </Suspense>
       )}
 
@@ -3102,6 +3182,21 @@ export function UI() {
           zIndex: 9999,
         }}
       />
+
+      {arrivalFadeActive && (
+        <div
+          aria-hidden
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#000',
+            opacity: arrivalFadeOpaque ? 1 : 0,
+            transition: 'opacity 5s cubic-bezier(0.16, 1, 0.3, 1)',
+            pointerEvents: 'none',
+            zIndex: 10001,
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3302,8 +3397,10 @@ function OpeningKeycap({ children }: { children: React.ReactNode }) {
 
 function RenderTestPanel() {
   const renderDebug = useGameStore((state) => state.renderDebug);
+  const cameraRotation = useGameStore((state) => state.cameraRotation);
   const updateRenderDebug = useGameStore((state) => state.updateRenderDebug);
   const resetRenderDebug = useGameStore((state) => state.resetRenderDebug);
+  const normalizedDegrees = ((cameraRotation * 180 / Math.PI) % 360 + 360) % 360;
 
   return (
     <div className="absolute left-4 top-24 z-40 flex max-h-[calc(100vh-7rem)] w-[280px] flex-col overflow-y-auto overscroll-contain rounded-2xl border border-white/[0.08] bg-[#08101a]/88 p-4 shadow-[0_18px_42px_rgba(0,0,0,0.45)] backdrop-blur-md pointer-events-auto [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.18)_transparent]">
@@ -3318,6 +3415,20 @@ function RenderTestPanel() {
         >
           Hide
         </button>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Camera View</div>
+        <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[11px]">
+          <div>
+            <div className="text-slate-500">angle</div>
+            <div className="mt-0.5 text-slate-200">{normalizedDegrees.toFixed(1)}deg</div>
+          </div>
+          <div>
+            <div className="text-slate-500">radians</div>
+            <div className="mt-0.5 text-slate-200">{cameraRotation.toFixed(3)}</div>
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 flex gap-2">

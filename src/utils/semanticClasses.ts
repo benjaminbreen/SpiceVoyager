@@ -99,6 +99,9 @@ export function buildingSemanticClass(b: Building): SemanticClass | null {
   if (b.type === 'spiritual') return 'religious';
   if (b.type === 'palace') return 'royal';
   if (b.type === 'landmark' && b.landmarkId) return LANDMARK_CLASS[b.landmarkId] ?? null;
+  if (b.institution === 'factory' || b.institution === 'company-house') return 'mercantile';
+  if (b.institution === 'customs' || b.institution === 'captaincy') return 'civic';
+  if (b.institution === 'treasury' || b.institution === 'authority') return 'royal';
   // Generic forts are civic/military installations — every port has at most
   // 1-2, so tagging them doesn't flood. Named forts that happen to have a
   // landmarkId are already covered above via LANDMARK_CLASS.

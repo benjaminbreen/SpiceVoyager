@@ -1,17 +1,33 @@
 import { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore, WEAPON_DEFS, type Nationality, type Commodity, type WeaponType } from '../store/gameStore';
-import type { NPCShipIdentity, NPCShipVisual } from '../utils/npcShipGenerator';
+import { useGameStore, type Nationality, type Commodity } from '../store/gameStore';
+import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
-import { broadsideQueue, npcLivePositions, spawnProjectile } from '../utils/combatState';
-import { getMeshHalf, getTerrainHeight } from '../utils/terrain';
-import { sfxCannonFire, sfxShipSink } from '../audio/SoundEffects';
-import { spawnSplash } from '../utils/splashState';
+import { npcLivePositions } from '../utils/combatState';
+import { sfxShipSink } from '../audio/SoundEffects';
 import { addCameraImpulse } from '../utils/cameraShakeState';
 import { spawnWreckSalvage } from './WreckSalvage';
 import { spawnFloatingCombatText } from './FloatingCombatText';
-import { SEA_LEVEL } from '../constants/world';
+import { NPCShipModel } from './npcShip/NPCShipModel';
+import { detailLevelForDistance, type NPCShipDetailLevel } from './npcShip/detailLevel';
+import { useNpcShipEvents } from './npcShip/useNpcShipEvents';
+import {
+  updateAlertRing,
+  updateDamageMotion,
+  updateHealthBar,
+  updateSelectionRing,
+  updateSinkingShip,
+  updateSmokeParticles,
+  updateTorch,
+} from './npcShip/npcShipFrameEffects';
+import {
+  angleAwayFromLand,
+  canNpcMoveTo,
+  findWaterTarget,
+  speedForNpcPosture,
+} from '../utils/npcShipNavigation';
+import { tryNpcFireAtPlayer } from '../utils/npcShipFiring';
 import {
   COLLISION_REPUTATION_TARGET,
   cargoTemptationScore,
@@ -21,8 +37,6 @@ import {
   npcBroadsideCount,
   npcBroadsideWeapon,
   shouldStayHostile,
-  type CollisionResponse,
-  type WarningResponse,
   type NpcCombatPosture,
 } from '../utils/npcCombat';
 
@@ -31,78 +45,15 @@ const HAIL_RADIUS = 14;     // show "Press T to Talk" prompt — bumped with NPC
 const COLLISION_RADIUS = 4.8; // bumped with NPC visual scale (1.2×) to match larger silhouettes
 const NPC_NPC_COLLISION_RADIUS = 6;
 const NPC_NPC_COLLISION_PUSH = 1.6;
-const NPC_DRAFT_BLOCK_HEIGHT = -0.8;
 const NPC_COLLISION_DAMAGE = 10;
 const NPC_TARGET_RADIUS = 100;
 const NPC_FLEE_TARGET_RADIUS = 80;
-const WATER_TARGET_ATTEMPTS = 10;
-const MAP_EDGE_MARGIN = 0.94;
-const NPC_BOW_FIRE_RANGE = 62;
-const NPC_BROADSIDE_MIN_RANGE = 24;
-const NPC_BROADSIDE_MAX_RANGE = 105;
-const NPC_BOW_FIRE_ARC = Math.PI / 6;
-const NPC_BROADSIDE_FIRE_ARC = Math.PI / 4.5;
-const NPC_LEAD_TIME = 0.7;
-const NPC_FIRE_JITTER = 0.095;
-const NPC_BROADSIDE_STAGGER_MS = 170;
-const NPC_INTENT_LEAD_MS = 550;
 const NPC_INTENT_TEXT_COOLDOWN_MS = 2500;
 const NPC_TORCH_LIGHT_RANGE = 70;
-
-const NPC_HULL_PROBE_POINTS: [number, number][] = [
-  [0, 3.5],   // Bow
-  [0, -2],    // Stern
-  [-1.5, 0],  // Port
-  [1.5, 0],   // Starboard
-];
 
 // ── Selection state (shared across all NPCShip instances) ──
 let selectedNpcId: string | null = null;
 let selectionSetAt = 0;
-
-function isNavigableWater(x: number, z: number) {
-  const boundaryDist = getMeshHalf() * MAP_EDGE_MARGIN;
-  if (Math.abs(x) > boundaryDist || Math.abs(z) > boundaryDist) return false;
-  return getTerrainHeight(x, z) <= NPC_DRAFT_BLOCK_HEIGHT;
-}
-
-function findWaterTarget(originX: number, originZ: number, radius: number, preferredAngle?: number): [number, number] | null {
-  for (let attempt = 0; attempt < WATER_TARGET_ATTEMPTS; attempt++) {
-    const spread = preferredAngle === undefined ? Math.PI * 2 : Math.PI * (0.25 + attempt * 0.12);
-    const angle = preferredAngle === undefined
-      ? Math.random() * Math.PI * 2
-      : preferredAngle + (Math.random() - 0.5) * spread;
-    const distance = radius * (0.45 + Math.random() * 0.65);
-    const x = originX + Math.sin(angle) * distance;
-    const z = originZ + Math.cos(angle) * distance;
-    if (isNavigableWater(x, z)) return [x, z];
-  }
-  return null;
-}
-
-function canNpcMoveTo(x: number, z: number, rotation: number) {
-  for (const [px, pz] of NPC_HULL_PROBE_POINTS) {
-    const worldX = x + Math.sin(rotation) * pz + Math.cos(rotation) * px;
-    const worldZ = z + Math.cos(rotation) * pz - Math.sin(rotation) * px;
-    if (!isNavigableWater(worldX, worldZ)) return false;
-  }
-  return true;
-}
-
-function angleDelta(a: number, b: number) {
-  let d = a - b;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-function npcProjectileSpeed(weaponType: WeaponType, distance: number) {
-  if (WEAPON_DEFS[weaponType].aimable) return WEAPON_DEFS[weaponType].range * 3.25;
-  const gravity = 24;
-  const angleRad = THREE.MathUtils.degToRad(7.5);
-  const sin2 = Math.max(0.12, Math.sin(angleRad * 2));
-  return THREE.MathUtils.clamp(Math.sqrt((distance * gravity) / sin2), 32, 96);
-}
 
 function readablePostureLabel(posture: NpcCombatPosture, committed: boolean) {
   if (committed && (posture === 'engage' || posture === 'pursue' || posture === 'evade')) return 'Won\'t Back Down';
@@ -112,301 +63,6 @@ function readablePostureLabel(posture: NpcCombatPosture, committed: boolean) {
   if (posture === 'flee') return 'Running Away';
   if (posture === 'warn') return 'Warning';
   return null;
-}
-
-function CannonPorts({ visual, zPositions }: { visual: NPCShipVisual; zPositions: number[] }) {
-  if (!visual.hasCannonPorts) return null;
-  return (
-    <>
-      {zPositions.map((z) => (
-        <group key={z}>
-          <mesh position={[-1.22, 0.7, z]}>
-            <boxGeometry args={[0.06, 0.16, 0.28]} />
-            <meshStandardMaterial color="#101010" roughness={0.8} />
-          </mesh>
-          <mesh position={[1.22, 0.7, z]}>
-            <boxGeometry args={[0.06, 0.16, 0.28]} />
-            <meshStandardMaterial color="#101010" roughness={0.8} />
-          </mesh>
-        </group>
-      ))}
-    </>
-  );
-}
-
-function SternFlag({ visual }: { visual: NPCShipVisual }) {
-  return (
-    <group position={[0, 2.9, -2.45]}>
-      <mesh position={[0, 0.35, 0]} rotation={[0, 0, 0.18]}>
-        <boxGeometry args={[0.05, 0.9, 0.05]} />
-        <meshStandardMaterial color="#3e2723" />
-      </mesh>
-      <mesh position={[0.28, 0.65, 0]} rotation={[0, 0, 0.08]}>
-        <boxGeometry args={[0.55, 0.34, 0.035]} />
-        <meshStandardMaterial color={visual.flagColor} roughness={0.8} />
-      </mesh>
-      <mesh position={[0.28, 0.65, 0.025]} rotation={[0, 0, 0.08]}>
-        <boxGeometry args={[0.3, 0.06, 0.04]} />
-        <meshStandardMaterial color={visual.flagAccentColor} roughness={0.8} />
-      </mesh>
-    </group>
-  );
-}
-
-function LateenSail({ visual, position, scale = 1, angle = -0.46 }: { visual: NPCShipVisual; position: [number, number, number]; scale?: number; angle?: number }) {
-  return (
-    <group position={position} rotation={[0, 0, angle]}>
-      <mesh>
-        <boxGeometry args={[2.7 * scale, 1.55 * scale, 0.08]} />
-        <meshStandardMaterial color={visual.sailColor} roughness={1} />
-      </mesh>
-      <mesh position={[0, 0.82 * scale, 0.03]}>
-        <boxGeometry args={[2.85 * scale, 0.08, 0.09]} />
-        <meshStandardMaterial color={visual.sailTrimColor} roughness={1} />
-      </mesh>
-    </group>
-  );
-}
-
-function DhowLikeModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
-  const large = shipType === 'Baghla' || shipType === 'Ghurab';
-  const hw = large ? 1.95 : 1.6; // hull width
-  const hl = large ? 5.2 : 4.4;  // hull length
-  return (
-    <group scale={visual.scale}>
-      {/* Main hull — shortened to make room for tapered bow */}
-      <mesh position={[0, 0.45, -0.3]} castShadow receiveShadow>
-        <boxGeometry args={[hw, 0.8, hl * 0.78]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Tapered bow — cone tapering to a sharp prow, raked slightly upward */}
-      <mesh position={[0, 0.55, hl * 0.32]} rotation={[-0.15, 0, 0]} castShadow receiveShadow>
-        <coneGeometry args={[hw * 0.52, hl * 0.38, 4]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Curved stem post — thin upward-raking spar at the prow tip */}
-      <mesh position={[0, 1.05, hl * 0.46]} rotation={[-0.4, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.04, 0.06, 1.2, 6]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
-      </mesh>
-      {/* Stern rail */}
-      <mesh position={[0, 0.95, -1.8]} castShadow receiveShadow>
-        <boxGeometry args={[large ? 1.8 : 1.45, 0.28, 0.22]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
-      </mesh>
-      {/* Main mast — raked slightly forward (characteristic of dhows) */}
-      <mesh position={[0, 2.4, 0.4]} rotation={[0.08, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.08, 0.1, 3.7, 7]} />
-        <meshStandardMaterial color="#3e2723" />
-      </mesh>
-      <LateenSail visual={visual} position={[0.45, 2.85, 0.65]} scale={large ? 1.1 : 0.95} />
-      {visual.mastCount > 1 && (
-        <>
-          <mesh position={[0, 2.0, -1.25]} castShadow>
-            <cylinderGeometry args={[0.06, 0.08, 2.7, 7]} />
-            <meshStandardMaterial color="#3e2723" />
-          </mesh>
-          <LateenSail visual={visual} position={[-0.35, 2.25, -1.1]} scale={0.7} angle={0.42} />
-        </>
-      )}
-      <CannonPorts visual={visual} zPositions={[-1.3, -0.35, 0.6]} />
-      <SternFlag visual={visual} />
-    </group>
-  );
-}
-
-function JunkModel({ visual }: { visual: NPCShipVisual }) {
-  return (
-    <group scale={visual.scale}>
-      {/* Main hull — wider at waterline (flat-bottomed junk characteristic) */}
-      <mesh position={[0, 0.35, 0]} castShadow receiveShadow>
-        <boxGeometry args={[2.55, 0.6, 5.0]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Upper hull — slightly narrower (tumblehome) */}
-      <mesh position={[0, 0.78, 0]} castShadow receiveShadow>
-        <boxGeometry args={[2.25, 0.4, 4.8]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* High flat transom — the junk's most distinctive feature */}
-      <mesh position={[0, 1.25, -2.45]} castShadow receiveShadow>
-        <boxGeometry args={[2.35, 1.4, 0.2]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
-      </mesh>
-      {/* Stern cabin */}
-      <mesh position={[0, 1.1, -1.85]} castShadow receiveShadow>
-        <boxGeometry args={[2.0, 0.7, 0.9]} />
-        <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
-      </mesh>
-      {/* Bluff bow platform (kept flat — historically accurate) */}
-      <mesh position={[0, 0.92, 2.35]} castShadow receiveShadow>
-        <boxGeometry args={[1.9, 0.35, 0.42]} />
-        <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
-      </mesh>
-      {/* Masts with batten sails */}
-      {[-0.85, 0.95].map((z, mastIdx) => (
-        <group key={z} position={[0, 0, z]}>
-          <mesh position={[0, 2.35, 0]} castShadow>
-            <cylinderGeometry args={[0.08, 0.1, 3.5 - mastIdx * 0.25, 7]} />
-            <meshStandardMaterial color="#3e2723" />
-          </mesh>
-          {/* Sail panels with bamboo batten ribs between them */}
-          {[-0.55, 0, 0.55].map((y, panelIdx) => (
-            <group key={y}>
-              <mesh position={[0.05, 2.6 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
-                <boxGeometry args={[2.15 - panelIdx * 0.18, 0.38, 0.08]} />
-                <meshStandardMaterial color={panelIdx === 1 ? visual.sailColor : visual.sailTrimColor} roughness={1} />
-              </mesh>
-              {/* Bamboo batten rib */}
-              <mesh position={[0.05, 2.38 + y - mastIdx * 0.15, 0]} rotation={[0, 0, 0.05]}>
-                <boxGeometry args={[2.2 - panelIdx * 0.16, 0.04, 0.1]} />
-                <meshStandardMaterial color="#5c4a2e" roughness={0.8} />
-              </mesh>
-            </group>
-          ))}
-        </group>
-      ))}
-      <CannonPorts visual={visual} zPositions={[-1.2, 0, 1.2]} />
-      <SternFlag visual={visual} />
-    </group>
-  );
-}
-
-function PrauModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
-  const jong = shipType === 'Jong';
-  const hw = jong ? 2.15 : 1.2;
-  const hl = jong ? 5.2 : 4.6;
-  return (
-    <group scale={visual.scale}>
-      {/* Main hull — shortened for tapered bow */}
-      <mesh position={[0, 0.42, -0.2]} castShadow receiveShadow>
-        <boxGeometry args={[hw, 0.72, hl * 0.75]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Sharp pointed bow — narrow cone, praus had very fine entries */}
-      <mesh position={[0, 0.42, hl * 0.3]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
-        <coneGeometry args={[hw * 0.38, hl * 0.35, 4]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Raised bow platform / carved prow ornament */}
-      <mesh position={[0, 0.85, hl * 0.42]} rotation={[-0.3, 0, 0]} castShadow>
-        <boxGeometry args={[hw * 0.35, 0.5, 0.6]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.85} />
-      </mesh>
-      {/* Stern — slightly tapered */}
-      <mesh position={[0, 0.52, -hl * 0.42]} rotation={[-Math.PI / 2, 0, 0]} castShadow>
-        <coneGeometry args={[hw * 0.45, hl * 0.18, 4]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {visual.hasOutrigger && (
-        <>
-          {/* Outrigger floats */}
-          {[-1.45, 1.45].map((x) => (
-            <mesh key={x} position={[x, 0.22, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-              <cylinderGeometry args={[0.08, 0.08, 4.1, 8]} />
-              <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
-            </mesh>
-          ))}
-          {/* Cross-spars */}
-          {[-1.2, 0.6].map((z) => (
-            <mesh key={z} position={[0, 0.48, z]} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <cylinderGeometry args={[0.035, 0.035, 3.1, 6]} />
-              <meshStandardMaterial color="#3e2723" roughness={0.9} />
-            </mesh>
-          ))}
-        </>
-      )}
-      {/* Mast — slightly canted (characteristic of tanja rig) */}
-      <mesh position={[0, 2.15, 0.35]} rotation={[0.06, 0, 0.04]} castShadow>
-        <cylinderGeometry args={[0.07, 0.09, 3.2, 7]} />
-        <meshStandardMaterial color="#3e2723" />
-      </mesh>
-      {/* Lug sail */}
-      <mesh position={[0.35, 2.7, 0.45]} rotation={[0, 0, -0.25]}>
-        <boxGeometry args={[2.05, 1.45, 0.08]} />
-        <meshStandardMaterial color={visual.sailColor} roughness={1} />
-      </mesh>
-      {jong && (
-        <LateenSail visual={visual} position={[-0.35, 2.25, -1.25]} scale={0.72} angle={0.36} />
-      )}
-      <SternFlag visual={visual} />
-    </group>
-  );
-}
-
-function EuropeanModel({ visual, shipType }: { visual: NPCShipVisual; shipType: string }) {
-  const galleon = shipType === 'Galleon' || shipType === 'Carrack' || shipType === 'Armed Merchantman';
-  const hw = galleon ? 2.35 : 1.85;
-  const hl = galleon ? 5.9 : 4.9;
-  return (
-    <group scale={visual.scale}>
-      {/* Main hull — shortened to leave room for bow taper */}
-      <mesh position={[0, 0.58, -0.25]} castShadow receiveShadow>
-        <boxGeometry args={[hw, 1.05, hl * 0.8]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Bow taper — wedge narrowing to the beakhead */}
-      <mesh position={[0, 0.5, hl * 0.3]} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
-        <coneGeometry args={[hw * 0.52, hl * 0.28, 4]} />
-        <meshStandardMaterial color={visual.hullColor} roughness={0.9} />
-      </mesh>
-      {/* Beakhead — the pointed spar projecting forward below the bowsprit */}
-      <mesh position={[0, 0.65, hl * 0.46]} castShadow receiveShadow>
-        <boxGeometry args={[hw * 0.35, 0.45, 0.55]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
-      </mesh>
-      {/* Bowsprit — angled spar projecting forward and upward from the bow */}
-      <mesh position={[0, 1.35, hl * 0.42]} rotation={[-0.55, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.05, 0.07, galleon ? 2.8 : 2.0, 6]} />
-        <meshStandardMaterial color="#3e2723" />
-      </mesh>
-      {/* Forecastle */}
-      <mesh position={[0, 1.15, hl * 0.28]} castShadow receiveShadow>
-        <boxGeometry args={[galleon ? 1.75 : 1.25, 0.55, 0.75]} />
-        <meshStandardMaterial color={visual.trimColor} roughness={0.9} />
-      </mesh>
-      {/* Stern castle */}
-      {visual.hasSternCastle && (
-        <mesh position={[0, 1.4, -2.35]} castShadow receiveShadow>
-          <boxGeometry args={[galleon ? 2.2 : 1.65, galleon ? 1.35 : 1.15, 0.9]} />
-          <meshStandardMaterial color={visual.deckColor} roughness={0.9} />
-        </mesh>
-      )}
-      {/* Masts and sails */}
-      {[-1.45, 0.2, 1.55].slice(0, visual.mastCount).map((z, idx) => (
-        <group key={z} position={[0, 0, z]}>
-          <mesh position={[0, 2.45, 0]} castShadow>
-            <cylinderGeometry args={[0.08, 0.11, idx === 1 ? 4.3 : 3.7, 8]} />
-            <meshStandardMaterial color="#3e2723" />
-          </mesh>
-          <mesh position={[0, 3.0, 0]} rotation={[0, 0, idx === 2 ? 0.18 : 0]}>
-            <boxGeometry args={[idx === 1 ? 2.35 : 1.9, idx === 2 ? 1.05 : 1.25, 0.08]} />
-            <meshStandardMaterial color={visual.sailColor} roughness={1} />
-          </mesh>
-          <mesh position={[0, 3.68, 0]}>
-            <boxGeometry args={[idx === 1 ? 2.5 : 2.05, 0.08, 0.1]} />
-            <meshStandardMaterial color={visual.sailTrimColor} roughness={1} />
-          </mesh>
-        </group>
-      ))}
-      <CannonPorts visual={visual} zPositions={[-1.8, -0.8, 0.2, 1.2]} />
-      <SternFlag visual={visual} />
-    </group>
-  );
-}
-
-function NPCShipModel({ identity }: { identity: NPCShipIdentity }) {
-  switch (identity.visual.family) {
-    case 'junk':
-      return <JunkModel visual={identity.visual} />;
-    case 'prau':
-      return <PrauModel visual={identity.visual} shipType={identity.shipType} />;
-    case 'european':
-      return <EuropeanModel visual={identity.visual} shipType={identity.shipType} />;
-    case 'dhow':
-    default:
-      return <DhowLikeModel visual={identity.visual} shipType={identity.shipType} />;
-  }
 }
 
 export function NPCShip({
@@ -434,6 +90,8 @@ export function NPCShip({
   // Hull state
   const hullRef = useRef(identity.maxHull);
   const [sinking, setSinking] = useState(false);
+  const [detailLevel, setDetailLevel] = useState<NPCShipDetailLevel>('near');
+  const detailLevelRef = useRef<NPCShipDetailLevel>('near');
   const sinkProgress = useRef(0); // 0→1 over sink animation
   const sinkSplashFired = useRef(false);
 
@@ -504,15 +162,15 @@ export function NPCShip({
       obj.castShadow = false;
       obj.receiveShadow = false;
     });
-  }, []);
+  }, [detailLevel]);
 
-  const setCombatPosture = (posture: NpcCombatPosture, until: number) => {
+  const setCombatPosture = useMemo(() => (posture: NpcCombatPosture, until: number) => {
     combatPosture.current = posture;
     const effectiveUntil = committedHostile.current && posture !== 'flee' ? Number.POSITIVE_INFINITY : until;
     postureUntil.current = effectiveUntil;
     alertUntil.current = Math.max(alertUntil.current, effectiveUntil);
     nextTargetSearchAt.current = 0;
-  };
+  }, []);
 
   const markProvoked = (reputation: number, hullFraction: number) => {
     hostileContact.current = true;
@@ -535,107 +193,6 @@ export function NPCShip({
     }));
   };
 
-  const tryFireAtPlayer = (now: number, currentPos: THREE.Vector3, playerPos: readonly [number, number, number], playerRot: number, playerVel: number, distToPlayer: number) => {
-    if (!identity.armed || sinking || hullRef.current <= 0) return;
-
-    const playerForward = _avoidVec.current.set(Math.sin(playerRot), 0, Math.cos(playerRot));
-    const predictedTarget = _tmpVec.current.set(
-      playerPos[0] + playerForward.x * playerVel * NPC_LEAD_TIME,
-      1.25,
-      playerPos[2] + playerForward.z * playerVel * NPC_LEAD_TIME,
-    );
-    const aimVec = predictedTarget.clone().sub(new THREE.Vector3(currentPos.x, 1.25, currentPos.z));
-    const horizontalDistance = Math.hypot(aimVec.x, aimVec.z);
-    if (horizontalDistance < 0.001) return;
-
-    const bearing = Math.atan2(aimVec.x, aimVec.z);
-    const heading = group.current?.rotation.y ?? 0;
-
-    if (broadsideCount > 0 && distToPlayer >= NPC_BROADSIDE_MIN_RANGE && distToPlayer <= NPC_BROADSIDE_MAX_RANGE && now >= nextBroadsideFireAt.current) {
-      const portAngle = heading + Math.PI / 2;
-      const starboardAngle = heading - Math.PI / 2;
-      const portDiff = Math.abs(angleDelta(bearing, portAngle));
-      const starboardDiff = Math.abs(angleDelta(bearing, starboardAngle));
-      const sideAngle = portDiff < starboardDiff ? portAngle : starboardAngle;
-      const sideDiff = Math.min(portDiff, starboardDiff);
-      if (sideDiff <= NPC_BROADSIDE_FIRE_ARC) {
-        if (broadsideIntentReadyAt.current === 0 || now > broadsideIntentReadyAt.current + 1000) {
-          broadsideIntentReadyAt.current = now + NPC_INTENT_LEAD_MS;
-          showIntentText(now, 'Guns Run Out', currentPos);
-          return;
-        }
-        if (now < broadsideIntentReadyAt.current) return;
-        broadsideIntentReadyAt.current = 0;
-        const def = WEAPON_DEFS[broadsideWeapon];
-        nextBroadsideFireAt.current = now + def.reloadTime * 1000 * THREE.MathUtils.lerp(0.9, 1.25, Math.random());
-        const sideDir = new THREE.Vector3(Math.sin(sideAngle), 0, Math.cos(sideAngle)).normalize();
-        const hullHalfWidth = Math.max(1.1, identity.visual.scale * 1.15);
-        const shipLength = Math.max(4.5, identity.visual.scale * 5.0);
-        for (let idx = 0; idx < broadsideCount; idx++) {
-          const t = broadsideCount === 1 ? 0.5 : idx / (broadsideCount - 1);
-          const alongShip = (t - 0.5) * shipLength;
-          const origin = new THREE.Vector3(
-            currentPos.x + Math.sin(heading) * alongShip + sideDir.x * hullHalfWidth,
-            1.2,
-            currentPos.z + Math.cos(heading) * alongShip + sideDir.z * hullHalfWidth,
-          );
-          const spread = (Math.random() - 0.5) * NPC_FIRE_JITTER;
-          const dirAngle = sideAngle + spread;
-          const angleRad = THREE.MathUtils.degToRad(7.5 + (Math.random() - 0.5) * 2.2);
-          const horizontal = Math.cos(angleRad);
-          const direction = new THREE.Vector3(
-            Math.sin(dirAngle) * horizontal,
-            Math.sin(angleRad),
-            Math.cos(dirAngle) * horizontal,
-          ).normalize();
-          broadsideQueue.push({
-            fireAt: now + idx * NPC_BROADSIDE_STAGGER_MS,
-            origin,
-            direction,
-            speed: npcProjectileSpeed(broadsideWeapon, horizontalDistance),
-            weaponType: broadsideWeapon,
-            owner: 'npc',
-            ownerId: identity.id,
-            maxDistance: Math.min(def.range * 1.25, horizontalDistance * 1.3),
-            fired: false,
-          });
-        }
-        return;
-      }
-    }
-
-    if (distToPlayer <= NPC_BOW_FIRE_RANGE && now >= nextBowFireAt.current && Math.abs(angleDelta(bearing, heading)) <= NPC_BOW_FIRE_ARC) {
-      if (bowIntentReadyAt.current === 0 || now > bowIntentReadyAt.current + 1000) {
-        bowIntentReadyAt.current = now + NPC_INTENT_LEAD_MS;
-        showIntentText(now, 'Taking Aim', currentPos);
-        return;
-      }
-      if (now < bowIntentReadyAt.current) return;
-      bowIntentReadyAt.current = 0;
-      const def = WEAPON_DEFS[bowWeapon];
-      nextBowFireAt.current = now + def.reloadTime * 1000 * THREE.MathUtils.lerp(1.4, 2.4, Math.random());
-      const yaw = bearing + (Math.random() - 0.5) * NPC_FIRE_JITTER;
-      const pitch = THREE.MathUtils.degToRad(3 + Math.random() * 2);
-      const horizontal = Math.cos(pitch);
-      const origin = new THREE.Vector3(
-        currentPos.x + Math.sin(heading) * Math.max(2.6, identity.visual.scale * 2.8),
-        1.45,
-        currentPos.z + Math.cos(heading) * Math.max(2.6, identity.visual.scale * 2.8),
-      );
-      const direction = new THREE.Vector3(
-        Math.sin(yaw) * horizontal,
-        Math.sin(pitch),
-        Math.cos(yaw) * horizontal,
-      ).normalize();
-      spawnProjectile(origin, direction, npcProjectileSpeed(bowWeapon, horizontalDistance), bowWeapon, {
-        owner: 'npc',
-        ownerId: identity.id,
-        maxDistance: Math.min(def.range * 1.15, horizontalDistance * 1.35),
-      });
-      sfxCannonFire();
-    }
-  };
-
   // Deselect when clicking elsewhere (deferred so R3F onClick fires first)
   useEffect(() => {
     const handler = () => {
@@ -649,71 +206,14 @@ export function NPCShip({
     return () => window.removeEventListener('pointerdown', handler);
   }, []);
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { npcId?: string; response?: CollisionResponse } | undefined;
-      if (detail?.npcId !== identity.id) return;
-      const now = Date.now();
-      const hullFraction = hullRef.current / identity.maxHull;
-      let posture: NpcCombatPosture;
-      if (detail.response === 'apologize' || detail.response === 'pay') {
-        posture = identity.armed && hullFraction > 0.35 ? 'evade' : 'flee';
-      } else if (detail.response === 'threaten') {
-        markProvoked(useGameStore.getState().getReputation(identity.flag) - 40, hullFraction);
-        posture = chooseProvokedPosture(identity, {
-          reputation: useGameStore.getState().getReputation(identity.flag) - 40,
-          provoked: true,
-          hullFraction,
-        });
-      } else {
-        markProvoked(useGameStore.getState().getReputation(identity.flag), hullFraction);
-        posture = identity.armed && identity.morale >= 55 && hullFraction > 0.35 ? 'engage' : 'flee';
-      }
-      setCombatPosture(posture, now + ALERT_DURATION);
-      useGameStore.getState().addNotification(
-        detail.response === 'apologize' || detail.response === 'pay'
-          ? `The ${identity.shipName} keeps clear, still cursing your helm.`
-          : posture === 'flee'
-          ? `The ${identity.shipName} breaks away, shouting curses.`
-          : `The ${identity.shipName} clears for action.`,
-        'warning',
-      );
-    };
-    window.addEventListener('npc-collision-response', handler);
-    return () => window.removeEventListener('npc-collision-response', handler);
-  }, [identity]);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { npcId?: string; response?: WarningResponse } | undefined;
-      if (detail?.npcId !== identity.id) return;
-      const now = Date.now();
-      const hullFraction = hullRef.current / identity.maxHull;
-      let posture: NpcCombatPosture;
-      if (detail.response === 'alterCourse' || detail.response === 'payToll') {
-        posture = 'evade';
-      } else if (detail.response === 'threaten') {
-        markProvoked(useGameStore.getState().getReputation(identity.flag) - 35, hullFraction);
-        posture = chooseProvokedPosture(identity, {
-          reputation: useGameStore.getState().getReputation(identity.flag) - 35,
-          provoked: true,
-          hullFraction,
-        });
-      } else {
-        markProvoked(useGameStore.getState().getReputation(identity.flag), hullFraction);
-        posture = identity.armed && identity.morale >= 45 && hullFraction > 0.35 ? 'pursue' : 'evade';
-      }
-      setCombatPosture(posture, now + ALERT_DURATION);
-      useGameStore.getState().addNotification(
-        posture === 'evade'
-          ? `The ${identity.shipName} sheers off but keeps watch.`
-          : `The ${identity.shipName} presses closer, ready for violence.`,
-        'warning',
-      );
-    };
-    window.addEventListener('npc-warning-response', handler);
-    return () => window.removeEventListener('npc-warning-response', handler);
-  }, [identity]);
+  useNpcShipEvents({
+    identity,
+    hullRef,
+    hostileContact,
+    committedHostile,
+    setCombatPosture,
+    alertDuration: ALERT_DURATION,
+  });
 
   useFrame((state, delta) => {
     if (!group.current) return;
@@ -724,98 +224,28 @@ export function NPCShip({
 
     // ── Sinking animation (3 phases) ──
     if (sinking) {
-      sinkProgress.current += delta * 0.22; // ~4.5 seconds total
-      const t = sinkProgress.current;
-      const side = damageTiltSide.current;
-
-      if (t < 0.3) {
-        // Phase 1: settle low in water, heavy list
-        const p = t / 0.3;
-        const ease = p * p; // ease-in
-        group.current.position.y = -ease * 1.5;
-        group.current.rotation.z = side * ease * 0.6;
-        group.current.rotation.x = ease * 0.15;
-      } else if (t < 0.7) {
-        // Phase 2: capsize — roll hard, bow rises
-        const p = (t - 0.3) / 0.4;
-        const ease = 1 - (1 - p) * (1 - p); // ease-out
-        group.current.position.y = -1.5 - ease * 3.0;
-        group.current.rotation.z = side * (0.6 + ease * 0.8);
-        group.current.rotation.x = 0.15 + ease * 0.5;
-      } else {
-        // Phase 3: slip beneath the surface
-        const p = Math.min(1, (t - 0.7) / 0.3);
-        const ease = p * p;
-        group.current.position.y = -4.5 - ease * 4;
-        group.current.rotation.z = side * 1.4;
-        group.current.rotation.x = 0.65 + ease * 0.2;
-      }
-
-      // Spawn splash when hull meets waterline
-      if (t > 0.25 && !sinkSplashFired.current) {
-        sinkSplashFired.current = true;
-        const pos = group.current.position;
-        spawnSplash(pos.x, pos.z, 0.8);
-      }
-
-      // Bubble particles while sinking
-      if (bubbleMeshRef.current) {
-        if (!bubbleInitialized.current) {
-          bubbleInitialized.current = true;
-          for (let i = 0; i < BUBBLE_COUNT; i++) {
-            bubbleParticles.current.push({
-              pos: new THREE.Vector3(0, -1000, 0),
-              vel: new THREE.Vector3(),
-              life: 0,
-            });
-          }
-        }
-        const shipPos = group.current.position;
-        // Continuously spawn bubbles while sinking
+      if (!bubbleInitialized.current) {
+        bubbleInitialized.current = true;
         for (let i = 0; i < BUBBLE_COUNT; i++) {
-          const bp = bubbleParticles.current[i];
-          if (bp.life <= 0 && t > 0.15 && t < 0.95) {
-            bp.pos.set(
-              shipPos.x + (Math.random() - 0.5) * 4,
-              SEA_LEVEL - 0.1,
-              shipPos.z + (Math.random() - 0.5) * 4,
-            );
-            bp.vel.set(
-              (Math.random() - 0.5) * 0.5,
-              1.5 + Math.random() * 2,
-              (Math.random() - 0.5) * 0.5,
-            );
-            bp.life = 0.4 + Math.random() * 0.6;
-            break; // one spawn per frame
-          }
+          bubbleParticles.current.push({
+            pos: new THREE.Vector3(0, -1000, 0),
+            vel: new THREE.Vector3(),
+            life: 0,
+          });
         }
-        let needsUpdate = false;
-        for (let i = 0; i < BUBBLE_COUNT; i++) {
-          const bp = bubbleParticles.current[i];
-          if (bp.life > 0) {
-            bp.life -= delta;
-            bp.pos.addScaledVector(bp.vel, delta);
-            bp.vel.x *= 1 - 2 * delta;
-            bp.vel.z *= 1 - 2 * delta;
-            bubbleDummy.position.copy(bp.pos);
-            const s = Math.max(0, bp.life) * 0.25;
-            bubbleDummy.scale.set(s, s, s);
-            bubbleDummy.updateMatrix();
-            bubbleMeshRef.current.setMatrixAt(i, bubbleDummy.matrix);
-            needsUpdate = true;
-          } else if (bp.pos.y > -100) {
-            bp.pos.set(0, -1000, 0);
-            bubbleDummy.position.copy(bp.pos);
-            bubbleDummy.scale.set(0, 0, 0);
-            bubbleDummy.updateMatrix();
-            bubbleMeshRef.current.setMatrixAt(i, bubbleDummy.matrix);
-            needsUpdate = true;
-          }
-        }
-        if (needsUpdate) bubbleMeshRef.current.instanceMatrix.needsUpdate = true;
       }
-
-      if (t >= 1) {
+      const doneSinking = updateSinkingShip({
+        group: group.current,
+        delta,
+        sinkProgress,
+        sinkSplashFired,
+        damageTiltSide,
+        bubbleMesh: bubbleMeshRef.current,
+        bubbleParticles: bubbleParticles.current,
+        bubbleDummy,
+        bubbleCount: BUBBLE_COUNT,
+      });
+      if (doneSinking) {
         npcLivePositions.delete(identity.id);
         group.current.visible = false;
       }
@@ -829,6 +259,11 @@ export function NPCShip({
     const dxPlayer = currentPos.x - playerPos[0];
     const dzPlayer = currentPos.z - playerPos[2];
     const distToPlayer = Math.sqrt(dxPlayer * dxPlayer + dzPlayer * dzPlayer);
+    const nextDetailLevel = detailLevelForDistance(distToPlayer);
+    if (nextDetailLevel !== detailLevelRef.current) {
+      detailLevelRef.current = nextDetailLevel;
+      setDetailLevel(nextDetailLevel);
+    }
 
     // Distant ships update every 3rd frame; accumulate delta so motion stays smooth.
     if (distToPlayer > 200) {
@@ -1036,7 +471,26 @@ export function NPCShip({
     }
 
     if (playerMode === 'ship' && (activePosture === 'engage' || activePosture === 'pursue' || activePosture === 'evade')) {
-      tryFireAtPlayer(now, currentPos, playerPos, playerTransformLive.rot, playerTransformLive.vel, distToPlayer);
+      if (identity.armed && !sinking && hullRef.current > 0) {
+        tryNpcFireAtPlayer({
+          now,
+          identity,
+          currentPos,
+          heading: group.current.rotation.y,
+          playerPos,
+          playerRot: playerTransformLive.rot,
+          playerVel: playerTransformLive.vel,
+          distToPlayer,
+          bowWeapon,
+          broadsideWeapon,
+          broadsideCount,
+          nextBowFireAt,
+          nextBroadsideFireAt,
+          bowIntentReadyAt,
+          broadsideIntentReadyAt,
+          showIntentText,
+        });
+      }
     }
 
     // ── Movement AI ──
@@ -1107,13 +561,7 @@ export function NPCShip({
       }
     }
 
-    const currentSpeed = activePosture === 'flee'
-      ? speed * 2.5
-      : activePosture === 'evade'
-        ? speed * 1.7
-        : activePosture === 'engage' || activePosture === 'pursue'
-          ? speed * 1.25
-          : speed;
+    const currentSpeed = speedForNpcPosture(activePosture, speed);
 
     const direction = _tmpVec.current.subVectors(targetRef.current, currentPos).normalize();
     const targetRotation = Math.atan2(direction.x, direction.z);
@@ -1127,6 +575,17 @@ export function NPCShip({
     const moveZ = Math.cos(group.current.rotation.y) * currentSpeed * delta;
     let nextX = currentPos.x + moveX;
     let nextZ = currentPos.z + moveZ;
+
+    if (liveEntry?.impulseUntil && now < liveEntry.impulseUntil) {
+      const impulseX = liveEntry.impulseX ?? 0;
+      const impulseZ = liveEntry.impulseZ ?? 0;
+      nextX += impulseX * delta;
+      nextZ += impulseZ * delta;
+      const damping = Math.exp(-delta * 2.8);
+      liveEntry.impulseX = Math.abs(impulseX) < 0.02 ? 0 : impulseX * damping;
+      liveEntry.impulseZ = Math.abs(impulseZ) < 0.02 ? 0 : impulseZ * damping;
+      damageTilt.current += THREE.MathUtils.clamp((impulseX * Math.cos(group.current.rotation.y) - impulseZ * Math.sin(group.current.rotation.y)) * 0.004, -0.025, 0.025);
+    }
 
     // ── NPC-to-NPC collision/separation ──
     // Use the live position map as a lightweight broad phase. Ships steer/push
@@ -1169,12 +628,7 @@ export function NPCShip({
       group.current.position.x = nextX;
       group.current.position.z = nextZ;
     } else if (now >= nextTargetSearchAt.current) {
-      const sampleDist = 2;
-      const hL = getTerrainHeight(currentPos.x - sampleDist, currentPos.z);
-      const hR = getTerrainHeight(currentPos.x + sampleDist, currentPos.z);
-      const hF = getTerrainHeight(currentPos.x, currentPos.z + sampleDist);
-      const hB = getTerrainHeight(currentPos.x, currentPos.z - sampleDist);
-      const awayFromLandAngle = Math.atan2(hL - hR, hB - hF);
+      const awayFromLandAngle = angleAwayFromLand(currentPos.x, currentPos.z);
       const waterTarget = findWaterTarget(currentPos.x, currentPos.z, NPC_TARGET_RADIUS, awayFromLandAngle);
       if (waterTarget) {
         targetRef.current.set(waterTarget[0], 0, waterTarget[1]);
@@ -1190,22 +644,16 @@ export function NPCShip({
 
     // ── Damage tilt — ships list as they take damage ──
     const hullFrac = hullRef.current / identity.maxHull;
-    if (hullFrac < 0.85) {
-      // Target tilt increases as hull drops: 0 at 85%, up to ~0.35 rad at 0%
-      damageTiltTarget.current = (1 - hullFrac / 0.85) * 0.35;
-    } else {
-      damageTiltTarget.current = 0;
-    }
-    // Smooth approach to target tilt
-    damageTilt.current += (damageTiltTarget.current - damageTilt.current) * delta * 2;
-
-    // Bobbing — damage adds persistent list + lower waterline
-    const sinkOffset = damageTilt.current * 1.2; // settle lower as damage increases
-    group.current.position.y = Math.sin(state.clock.elapsedTime * 2 + initialPosition[0]) * 0.2 - sinkOffset;
-    group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.5 + initialPosition[2]) * 0.05
-      + damageTilt.current * damageTiltSide.current;
-    group.current.rotation.x = Math.cos(state.clock.elapsedTime * 1.2 + initialPosition[0]) * 0.05
-      + damageTilt.current * 0.15;
+    updateDamageMotion({
+      group: group.current,
+      hullFrac,
+      delta,
+      elapsedTime: state.clock.elapsedTime,
+      initialPosition,
+      damageTilt,
+      damageTiltTarget,
+      damageTiltSide,
+    });
 
     // ── Damage smoke — rising from damaged ships ──
     if (hullFrac < 0.7 && !smokeActive) {
@@ -1223,96 +671,31 @@ export function NPCShip({
           });
         }
       }
-      // Spawn rate increases with damage
-      const spawnRate = hullFrac < 0.3 ? 3 : hullFrac < 0.5 ? 2 : 1; // particles per frame attempt
-      let spawned = 0;
-      for (let i = 0; i < SMOKE_COUNT && spawned < spawnRate; i++) {
-        const sp = smokeParticles.current[i];
-        if (sp.life <= 0) {
-          const shipPos = currentPos;
-          sp.pos.set(
-            shipPos.x + (Math.random() - 0.5) * 2.5,
-            shipPos.y + 1.5 + Math.random() * 1.5,
-            shipPos.z + (Math.random() - 0.5) * 2.5,
-          );
-          sp.vel.set(
-            (Math.random() - 0.5) * 0.4,
-            1.2 + Math.random() * 1.5,
-            (Math.random() - 0.5) * 0.4,
-          );
-          sp.maxLife = 1.5 + Math.random() * 1.5;
-          sp.life = sp.maxLife;
-          spawned++;
-        }
-      }
-      // Update smoke particles
-      let needsUpdate = false;
-      for (let i = 0; i < SMOKE_COUNT; i++) {
-        const sp = smokeParticles.current[i];
-        if (!sp) continue;
-        if (sp.life > 0) {
-          sp.life -= delta;
-          sp.pos.addScaledVector(sp.vel, delta);
-          // Slow drift and spread
-          sp.vel.x += (Math.random() - 0.5) * delta * 0.8;
-          sp.vel.z += (Math.random() - 0.5) * delta * 0.8;
-          sp.vel.y *= 1 - 0.3 * delta; // decelerate upward
-          smokeDummy.position.copy(sp.pos);
-          // Grow then fade: start small, expand to max, then shrink
-          const lifeRatio = sp.life / sp.maxLife;
-          const growPhase = Math.min(1, (1 - lifeRatio) * 4); // quick grow at start
-          const fadePhase = Math.max(0, lifeRatio); // fade toward end
-          const s = growPhase * fadePhase * 0.8;
-          smokeDummy.scale.set(s, s, s);
-          smokeDummy.updateMatrix();
-          smokeMeshRef.current!.setMatrixAt(i, smokeDummy.matrix);
-          needsUpdate = true;
-        } else if (sp.pos.y > -100) {
-          sp.pos.set(0, -1000, 0);
-          smokeDummy.position.copy(sp.pos);
-          smokeDummy.scale.set(0, 0, 0);
-          smokeDummy.updateMatrix();
-          smokeMeshRef.current!.setMatrixAt(i, smokeDummy.matrix);
-          needsUpdate = true;
-        }
-      }
-      if (needsUpdate) smokeMeshRef.current.instanceMatrix.needsUpdate = true;
+      updateSmokeParticles({
+        mesh: smokeMeshRef.current,
+        particles: smokeParticles.current,
+        dummy: smokeDummy,
+        count: SMOKE_COUNT,
+        hullFrac,
+        delta,
+        shipPos: currentPos,
+      });
     }
 
     // Alert ring visibility
-    if (alertRingRef.current) {
-      const showAlert = isAlerted && distToPlayer < 180;
-      alertRingRef.current.visible = showAlert;
-      if (showAlert) {
-        const pulse = 0.5 + Math.sin(state.clock.elapsedTime * 6) * 0.3;
-        (alertRingRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
-      }
-    }
+    updateAlertRing(alertRingRef.current, isAlerted, distToPlayer, state.clock.elapsedTime);
 
     // Selection ring visibility
-    if (selectRingRef.current) {
-      const isSelected = selectedNpcId === identity.id;
-      selectRingRef.current.visible = isSelected;
-      if (isSelected) {
-        selectRingRef.current.rotation.z = state.clock.elapsedTime * 0.5;
-        const pulse = 0.4 + Math.sin(state.clock.elapsedTime * 3) * 0.15;
-        (selectRingRef.current.material as THREE.MeshBasicMaterial).opacity = pulse;
-      }
-    }
+    updateSelectionRing(selectRingRef.current, selectedNpcId === identity.id, state.clock.elapsedTime);
 
     // Torch at night
-    const theta = ((timeOfDay - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(theta);
-    const torchIntensity = sunH < 0.15 ? Math.min(1, (0.15 - sunH) * 3) : 0;
-    const torchVisible = torchIntensity > 0.01 && distToPlayer < NPC_TORCH_LIGHT_RANGE;
-    if (torchRef.current) {
-      torchRef.current.intensity = torchVisible ? torchIntensity * 2 : 0;
-      torchRef.current.visible = torchVisible;
-    }
-    if (torchMeshRef.current) {
-      torchMeshRef.current.emissiveIntensity = torchIntensity * 3;
-      torchMeshRef.current.visible = torchIntensity > 0.01;
-    }
+    updateTorch({
+      light: torchRef.current,
+      material: torchMeshRef.current,
+      timeOfDay,
+      distToPlayer,
+      range: NPC_TORCH_LIGHT_RANGE,
+    });
 
     // Update live position for projectile hit detection
     npcLivePositions.set(identity.id, {
@@ -1325,26 +708,19 @@ export function NPCShip({
       hull: hullRef.current,
       maxHull: identity.maxHull,
       hitAlert: liveEntry?.hitAlert,
+      impulseX: liveEntry?.impulseX,
+      impulseZ: liveEntry?.impulseZ,
+      impulseUntil: liveEntry?.impulseUntil,
     });
 
     // ── Health bar (billboard toward camera) ──
-    if (healthBarGroupRef.current) {
-      const showBar = hullFrac < 1 && distToPlayer < 60;
-      healthBarGroupRef.current.visible = showBar;
-      if (showBar && healthBarFgRef.current) {
-        healthBarFgRef.current.scale.x = Math.max(0.01, hullFrac);
-        healthBarFgRef.current.position.x = -(1 - hullFrac) * 1.5;
-        // Color: green → yellow → red
-        const mat = healthBarFgRef.current.material as THREE.MeshBasicMaterial;
-        if (hullFrac > 0.5) {
-          mat.color.setRGB(1 - (hullFrac - 0.5) * 2, 1, 0);
-        } else {
-          mat.color.setRGB(1, hullFrac * 2, 0);
-        }
-        // Billboard: face camera
-        healthBarGroupRef.current.lookAt(state.camera.position);
-      }
-    }
+    updateHealthBar({
+      group: healthBarGroupRef.current,
+      foreground: healthBarFgRef.current,
+      hullFrac,
+      distToPlayer,
+      camera: state.camera,
+    });
   });
 
   const handleClick = (e: any) => {
@@ -1390,7 +766,7 @@ export function NPCShip({
             <meshBasicMaterial color="#00ff00" />
           </mesh>
         </group>
-        <NPCShipModel identity={identity} />
+        <NPCShipModel identity={identity} detailLevel={detailLevel} />
         {/* Night torch */}
         <group position={[0.5, 2.2, -1]}>
           <pointLight

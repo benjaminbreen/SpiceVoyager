@@ -1494,93 +1494,183 @@ export function sfxRiggingCreak() {
   src.stop(t + 0.5);
 }
 
-/** Anchor weigh — chain hauling up + creak. */
-/** Single broadside cannon report — deeper, heavier than swivel gun.
- *  Call once per cannon in a rolling broadside with ~150ms spacing. */
-export function sfxBroadsideCannon() {
-  const ac = getCtx();
-  const v = masterVolume * 0.45;
-  const t = ac.currentTime;
+type ShipSfxWeapon =
+  | 'swivelGun'
+  | 'lantaka'
+  | 'cetbang'
+  | 'falconet'
+  | 'fireRocket'
+  | 'minion'
+  | 'saker'
+  | 'demiCulverin'
+  | 'demiCannon'
+  | 'basilisk';
 
-  // Deep boom — lower and longer than swivel
+type ProjectileImpactSurface = 'water' | 'land' | 'ship' | 'structure' | 'foliage' | 'body' | 'ricochet';
+
+const GUN_SFX_PROFILE: Record<ShipSfxWeapon, {
+  bodyFreq: number;
+  tailFreq: number;
+  volume: number;
+  blast: number;
+  crackFreq: number;
+  ringFreq: number;
+  duration: number;
+  metal: number;
+}> = {
+  swivelGun:    { bodyFreq: 120, tailFreq: 45, volume: 0.38, blast: 0.62, crackFreq: 1800, ringFreq: 2400, duration: 0.32, metal: 0.12 },
+  lantaka:      { bodyFreq: 105, tailFreq: 38, volume: 0.42, blast: 0.68, crackFreq: 1450, ringFreq: 1900, duration: 0.38, metal: 0.22 },
+  cetbang:      { bodyFreq: 95,  tailFreq: 34, volume: 0.44, blast: 0.72, crackFreq: 1300, ringFreq: 1750, duration: 0.42, metal: 0.24 },
+  falconet:     { bodyFreq: 82,  tailFreq: 28, volume: 0.52, blast: 0.82, crackFreq: 1050, ringFreq: 1500, duration: 0.54, metal: 0.16 },
+  fireRocket:   { bodyFreq: 70,  tailFreq: 22, volume: 0.5,  blast: 0.75, crackFreq: 600,  ringFreq: 2600, duration: 0.6,  metal: 0.08 },
+  minion:       { bodyFreq: 70,  tailFreq: 24, volume: 0.55, blast: 0.86, crackFreq: 620,  ringFreq: 1000, duration: 0.58, metal: 0.08 },
+  saker:        { bodyFreq: 62,  tailFreq: 21, volume: 0.62, blast: 0.94, crackFreq: 540,  ringFreq: 920,  duration: 0.66, metal: 0.08 },
+  demiCulverin: { bodyFreq: 54,  tailFreq: 18, volume: 0.72, blast: 1.06, crackFreq: 440,  ringFreq: 760,  duration: 0.82, metal: 0.07 },
+  demiCannon:   { bodyFreq: 42,  tailFreq: 15, volume: 0.86, blast: 1.22, crackFreq: 320,  ringFreq: 520,  duration: 1.02, metal: 0.05 },
+  basilisk:     { bodyFreq: 48,  tailFreq: 16, volume: 0.78, blast: 1.1,  crackFreq: 380,  ringFreq: 620,  duration: 0.98, metal: 0.08 },
+};
+
+function shipSfxProfile(weaponType: string) {
+  return GUN_SFX_PROFILE[(weaponType in GUN_SFX_PROFILE ? weaponType : 'swivelGun') as ShipSfxWeapon];
+}
+
+function randomDetune(amount: number) {
+  return 1 + (Math.random() - 0.5) * amount;
+}
+
+function delayedNoise(ac: AudioContext, delay: number, duration: number, volume: number, filterFreq: number, filterQ: number) {
+  globalThis.setTimeout(() => noise(ac, duration, volume, filterFreq, filterQ), delay * 1000);
+}
+
+function delayedPing(ac: AudioContext, delay: number, freq: number, duration: number, volume: number, type: OscillatorType = 'sine') {
+  globalThis.setTimeout(() => ping(ac, freq, duration, volume, type), delay * 1000);
+}
+
+export function sfxShipGunFire(weaponType: string) {
+  if (weaponType === 'fireRocket') {
+    sfxRocketFire();
+    return;
+  }
+
+  const ac = getCtx();
+  const profile = shipSfxProfile(weaponType);
+  const v = masterVolume * profile.volume;
+  const t = ac.currentTime;
+  const isBroadside = profile.volume >= GUN_SFX_PROFILE.minion.volume;
+
   const boom = ac.createOscillator();
   boom.type = 'sine';
-  boom.frequency.setValueAtTime(55 + Math.random() * 15, t);
-  boom.frequency.exponentialRampToValueAtTime(20, t + 0.6);
+  boom.frequency.setValueAtTime(profile.bodyFreq * randomDetune(0.08), t);
+  boom.frequency.exponentialRampToValueAtTime(profile.tailFreq, t + profile.duration);
   const boomGain = ac.createGain();
   boomGain.gain.setValueAtTime(v, t);
-  boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+  boomGain.gain.exponentialRampToValueAtTime(0.001, t + profile.duration + 0.08);
   boom.connect(boomGain).connect(ac.destination);
   boom.start(t);
-  boom.stop(t + 0.6);
+  boom.stop(t + profile.duration + 0.1);
 
-  // Heavy blast noise — wider band than swivel
-  noise(ac, 0.2, v * 0.7, 500 + Math.random() * 200, 1.0);
+  noise(ac, 0.055 + profile.duration * 0.12, v * profile.blast, profile.crackFreq * randomDetune(0.2), 0.75);
+  noise(ac, profile.duration * 0.7, v * (isBroadside ? 0.42 : 0.28), 160 + profile.crackFreq * 0.18, 0.5);
+  delayedNoise(ac, 0.05, profile.duration * 0.72, v * (isBroadside ? 0.36 : 0.16), 95, 0.45);
+  delayedNoise(ac, 0.12, profile.duration * 0.75, v * (isBroadside ? 0.18 : 0.08), 720, 0.8);
 
-  // Sub-bass thump — felt more than heard
   const sub = ac.createOscillator();
   sub.type = 'sine';
-  sub.frequency.setValueAtTime(35, t);
-  sub.frequency.exponentialRampToValueAtTime(15, t + 0.3);
+  sub.frequency.setValueAtTime(profile.tailFreq * 1.25, t);
+  sub.frequency.exponentialRampToValueAtTime(14, t + profile.duration * 0.72);
   const subGain = ac.createGain();
-  subGain.gain.setValueAtTime(v * 0.5, t);
-  subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  subGain.gain.setValueAtTime(v * (isBroadside ? 0.55 : 0.32), t);
+  subGain.gain.exponentialRampToValueAtTime(0.001, t + profile.duration * 0.95);
   sub.connect(subGain).connect(ac.destination);
   sub.start(t);
-  sub.stop(t + 0.35);
+  sub.stop(t + profile.duration);
+
+  if (profile.metal > 0) {
+    ping(ac, profile.ringFreq * randomDetune(0.16), 0.08, v * profile.metal, weaponType === 'lantaka' || weaponType === 'cetbang' ? 'triangle' : 'sine');
+    delayedPing(ac, 0.035, profile.ringFreq * 0.62 * randomDetune(0.12), 0.09, v * profile.metal * 0.55, 'triangle');
+  }
+
+  if (weaponType === 'basilisk') {
+    delayedNoise(ac, 0.08, 0.34, v * 0.18, 260, 0.7);
+  }
 }
 
-export function sfxCannonFire() {
+export function sfxShipGunImpact(surface: ProjectileImpactSurface, weaponType: string) {
   const ac = getCtx();
-  const v = masterVolume * 0.4;
+  const profile = shipSfxProfile(weaponType);
+  const heavy = Math.max(0.65, Math.min(1.9, profile.volume / 0.42));
+  const v = masterVolume * 0.34 * heavy;
   const t = ac.currentTime;
 
-  // Low boom — the main cannon report
-  const boom = ac.createOscillator();
-  boom.type = 'sine';
-  boom.frequency.setValueAtTime(80, t);
-  boom.frequency.exponentialRampToValueAtTime(30, t + 0.4);
-  const boomGain = ac.createGain();
-  boomGain.gain.setValueAtTime(v, t);
-  boomGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-  boom.connect(boomGain).connect(ac.destination);
-  boom.start(t);
-  boom.stop(t + 0.5);
-
-  // Noise burst — the crack/blast
-  noise(ac, 0.15, v * 0.6, 800, 1.5);
-
-  // High metallic ping — swivel gun ring
-  ping(ac, 2200, 0.08, v * 0.15, 'sine');
-  ping(ac, 1400, 0.12, v * 0.1, 'triangle');
+  switch (surface) {
+    case 'water': {
+      noise(ac, 0.2 + heavy * 0.08, v * 0.5, 240, 0.45);
+      noise(ac, 0.16, v * 0.24, 900, 0.55);
+      delayedNoise(ac, 0.035, 0.18, v * 0.22, 1700, 0.55);
+      delayedNoise(ac, 0.11, 0.2, v * 0.12, 360, 0.35);
+      break;
+    }
+    case 'land': {
+      ping(ac, 70, 0.16, v * 0.38, 'sine');
+      noise(ac, 0.12 + heavy * 0.05, v * 0.5, 280, 0.85);
+      noise(ac, 0.18, v * 0.34, 1900, 1.25);
+      delayedNoise(ac, 0.045, 0.12, v * 0.18, 3600, 1.0);
+      break;
+    }
+    case 'ship': {
+      noise(ac, 0.2, v * 0.75, 260, 0.65);
+      noise(ac, 0.2, v * 0.8, 1050, 1.45);
+      delayedNoise(ac, 0.035, 0.18, v * 0.52, 2300, 1.8);
+      delayedNoise(ac, 0.1, 0.2, v * 0.28, 520, 0.55);
+      delayedPing(ac, 0.045, 380 * randomDetune(0.18), 0.08, v * 0.08, 'triangle');
+      break;
+    }
+    case 'structure': {
+      noise(ac, 0.18, v * 0.9, 320, 0.55);
+      noise(ac, 0.22, v * 0.88, 950, 1.2);
+      delayedNoise(ac, 0.035, 0.16, v * 0.62, 2200, 1.7);
+      delayedNoise(ac, 0.085, 0.2, v * 0.42, 520, 0.7);
+      delayedNoise(ac, 0.14, 0.16, v * 0.24, 3100, 1.25);
+      break;
+    }
+    case 'foliage': {
+      noise(ac, 0.12, v * 0.32, 1800, 1.2);
+      noise(ac, 0.08, v * 0.34, 4200, 2.4);
+      delayedNoise(ac, 0.05, 0.15, v * 0.16, 900, 0.8);
+      break;
+    }
+    case 'body': {
+      ping(ac, 105, 0.08, v * 0.24, 'sine');
+      noise(ac, 0.08, v * 0.28, 700, 0.8);
+      noise(ac, 0.035, v * 0.2, 2400, 1.2);
+      break;
+    }
+    case 'ricochet': {
+      noise(ac, 0.12, v * 0.72, 650, 0.8);
+      noise(ac, 0.1, v * 0.5, 1800, 1.4);
+      delayedNoise(ac, 0.04, 0.16, v * 0.34, 320, 0.55);
+      delayedPing(ac, 0.025, 900 * randomDetune(0.25), 0.08, v * 0.12, 'triangle');
+      break;
+    }
+  }
 }
 
-export function sfxCannonImpact() {
-  const ac = getCtx();
-  const v = masterVolume * 0.35;
-  const t = ac.currentTime;
-
-  // Thud
-  const thud = ac.createOscillator();
-  thud.type = 'sine';
-  thud.frequency.setValueAtTime(120, t);
-  thud.frequency.exponentialRampToValueAtTime(40, t + 0.25);
-  const thudGain = ac.createGain();
-  thudGain.gain.setValueAtTime(v, t);
-  thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-  thud.connect(thudGain).connect(ac.destination);
-  thud.start(t);
-  thud.stop(t + 0.3);
-
-  // Splintering wood — noise burst
-  noise(ac, 0.2, v * 0.5, 1200, 2);
+/** Single broadside cannon report — deeper, heavier than swivel gun.
+ *  Call once per cannon in a rolling broadside with ~150ms spacing. */
+export function sfxBroadsideCannon(weaponType = 'saker') {
+  sfxShipGunFire(weaponType);
 }
 
-export function sfxCannonSplash() {
-  const ac = getCtx();
-  const v = masterVolume * 0.2;
-  // Water splash — short filtered noise
-  noise(ac, 0.25, v, 600, 0.8);
+export function sfxCannonFire(weaponType = 'swivelGun') {
+  sfxShipGunFire(weaponType);
+}
+
+export function sfxCannonImpact(weaponType = 'saker') {
+  sfxShipGunImpact('ship', weaponType);
+}
+
+export function sfxCannonSplash(weaponType = 'saker') {
+  sfxShipGunImpact('water', weaponType);
 }
 
 /** War rocket launch — scaled-up swivel fire: harder initial boom,

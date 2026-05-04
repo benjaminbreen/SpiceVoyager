@@ -53,7 +53,7 @@ function terrainHoverLabel(terrain: TerrainData): string {
   }
 }
 
-interface WorldMapProps {
+interface LocalMapProps {
   onClose: () => void;
   onOpenWorldMap?: () => void;
 }
@@ -133,7 +133,7 @@ function currentPortLabel(portName?: string) {
   return portName ? portName.toUpperCase() : 'LOCAL CHART';
 }
 
-export function WorldMap({ onClose, onOpenWorldMap }: WorldMapProps) {
+export function LocalMap({ onClose, onOpenWorldMap }: LocalMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });

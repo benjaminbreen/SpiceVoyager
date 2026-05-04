@@ -41,7 +41,7 @@ describe('proceduralPOIs', () => {
   it('stays within the scale cap and produces valid generated POIs', () => {
     const pois = generateProceduralPOIsForPort(basePort, 1612).pois;
 
-    expect(pois.length).toBeLessThanOrEqual(2);
+    expect(pois.length).toBeLessThanOrEqual(3);
     for (const poi of pois) {
       expect(poi.generated).toBe(true);
       expect(poi.hasKeeper).toBe(false);
@@ -55,5 +55,13 @@ describe('proceduralPOIs', () => {
     const pois = generateProceduralPOIsForPort(basePort, 42).pois;
     expect(new Set(pois.map((poi) => poi.id)).size).toBe(pois.length);
   });
-});
 
+  it('can add a route-specific wreck outside the regular scale cap', () => {
+    const pois = generateProceduralPOIsForPort(basePort, 1612).pois;
+    const wreck = pois.find((poi) => poi.kind === 'wreck');
+
+    expect(wreck).toBeDefined();
+    expect(wreck?.name).not.toBe('Grounded Wreck');
+    expect(wreck?.reward?.type).toBe('cargo');
+  });
+});

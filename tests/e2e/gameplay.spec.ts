@@ -142,7 +142,6 @@ test('world map voyage completes through the passage report', async ({ page }) =
       playerVelocity: 0,
       notifications: [],
       journalEntries: [],
-      renderDebug: { ...state.renderDebug, worldMapChart: true },
     });
     api.openWorldMap();
   });
@@ -152,9 +151,8 @@ test('world map voyage completes through the passage report', async ({ page }) =
   await page.getByTestId('world-map-set-sail').click();
 
   await expect(page.getByText('Passage Log')).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText(/Goa to Calicut/i)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Goa to Calicut/i })).toBeVisible();
   await page.getByTestId('voyage-landfall').click();
-  await expect(page.getByText('Making Landfall')).toBeVisible();
   await expect(page.getByTestId('world-map-modal')).toBeHidden({ timeout: 15000 });
 
   const result = await page.evaluate(() => {

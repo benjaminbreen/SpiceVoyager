@@ -1,5 +1,5 @@
 // Module-level singletons populated by World.tsx during world generation
-// and read by other systems (Player, ShiftSelectOverlay, GameScene, WorldMap).
+// and read by other systems (Player, ShiftSelectOverlay, GameScene, LocalMap).
 // Kept outside the React tree so they're cheap to read each frame without
 // re-renders or store subscriptions.
 

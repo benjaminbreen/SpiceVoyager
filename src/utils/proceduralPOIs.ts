@@ -43,6 +43,14 @@ interface Archetype {
   prefersWater?: boolean;
 }
 
+interface WreckProfile {
+  variant: string;
+  name: string;
+  sub: string;
+  lore: string;
+  reward: POIReward;
+}
+
 export interface GeneratedProceduralPOIs {
   pois: POIDefinition[];
 }
@@ -224,10 +232,19 @@ const ARCHETYPES: Archetype[] = [
   },
 ];
 
+const WRECK_ARCHETYPE = ARCHETYPES.find((a) => a.kind === 'wreck');
+
+const WRECK_COMMON_BY_SCALE: Record<PortScale, number> = {
+  Small: 0.35,
+  Medium: 0.50,
+  Large: 0.65,
+  'Very Large': 0.80,
+  Huge: 0.90,
+};
+
 export function generateProceduralPOIsForPort(port: PortInput, worldSeed: number): GeneratedProceduralPOIs {
   const rng = mulberry32((worldSeed * 13007) ^ hashStr(port.id) ^ 0x51f15e);
   const target = rollCount(port.scale, rng);
-  if (target === 0) return { pois: [] };
 
   const picked: Archetype[] = [];
   const bucketOrder = shuffledBuckets(rng);
@@ -241,6 +258,14 @@ export function generateProceduralPOIsForPort(port: PortInput, worldSeed: number
     if (!candidate) break;
     picked.push(candidate);
   }
+  if (
+    WRECK_ARCHETYPE
+    && !picked.some((a) => a.kind === 'wreck')
+    && archetypeWeight(WRECK_ARCHETYPE, port) > 0
+    && rng() < WRECK_COMMON_BY_SCALE[port.scale]
+  ) {
+    picked.push(WRECK_ARCHETYPE);
+  }
 
   const pois: POIDefinition[] = [];
   const occupied = port.buildings.map((b) => ({ x: b.position[0], z: b.position[2], radius: 34 }));
@@ -248,12 +273,14 @@ export function generateProceduralPOIsForPort(port: PortInput, worldSeed: number
     const placed = placeArchetype(port, archetype, rng, occupied);
     if (!placed) continue;
     occupied.push({ x: placed[0], z: placed[1], radius: 70 });
-    const id = `${port.id}-proc-${pois.length}-${archetype.variant}`;
+    const wreckProfile = archetype.kind === 'wreck' ? buildWreckProfile(port, rng) : null;
+    const variant = wreckProfile?.variant ?? archetype.variant;
+    const id = `${port.id}-proc-${pois.length}-${variant}`;
     const location: POILocation = { kind: 'hinterland', position: placed };
     pois.push({
       id,
-      name: archetype.name,
-      sub: archetype.sub,
+      name: wreckProfile?.name ?? archetype.name,
+      sub: wreckProfile?.sub ?? archetype.sub,
       kind: archetype.kind,
       class: archetype.className ?? 'civic',
       port: port.id,
@@ -263,16 +290,102 @@ export function generateProceduralPOIsForPort(port: PortInput, worldSeed: number
       cost: { type: 'gold', amount: 0 },
       npcName: 'The site itself',
       npcRole: 'unattended place',
-      lore: generatedLore(archetype, port.name),
+      lore: wreckProfile?.lore ?? generatedLore(archetype, port.name),
       medallionKey: archetype.medallionKey,
       generated: true,
-      poiVariant: archetype.variant,
+      poiVariant: variant,
       hasKeeper: false,
-      reward: archetype.reward ?? { type: 'none' },
+      reward: wreckProfile?.reward ?? archetype.reward ?? { type: 'none' },
     });
   }
 
   return { pois };
+}
+
+function buildWreckProfile(port: PortInput, rng: () => number): WreckProfile {
+  const route = pickWreckRoute(port, rng);
+  const cargo = route.cargo[Math.floor(rng() * route.cargo.length)] ?? 'Timber';
+  const isLargeFind = rng() < 0.22;
+  const amountMax = isLargeFind ? 3 : 2;
+  return {
+    variant: route.variant,
+    name: route.name,
+    sub: route.sub,
+    lore: `${route.lore} The surf has already taken the easy pieces; what remains is scattered cargo, cordage, and broken planking. Salvage is useful, but nobody ashore will swear who owned it.`,
+    reward: {
+      type: 'cargo',
+      commodityId: cargo,
+      min: 1,
+      max: amountMax,
+      chance: route.chance,
+    },
+  };
+}
+
+function pickWreckRoute(port: PortInput, rng: () => number): {
+  variant: string;
+  name: string;
+  sub: string;
+  lore: string;
+  cargo: Commodity[];
+  chance: number;
+} {
+  const inventory = port.inventory;
+  const has = (commodity: Commodity) => (inventory[commodity] ?? 0) > 0;
+  const routeOptions = [
+    {
+      weight: has('Black Pepper') || has('Cardamom') || has('Ginger') ? 5 : 1,
+      variant: 'malabar-wreck',
+      name: 'Pepper Wreck',
+      sub: 'a cargo hull broken on the shoals',
+      lore: `A coastal trader went aground outside ${port.name}, probably running pepper and ginger before the weather turned.`,
+      cargo: ['Black Pepper', 'Ginger', 'Cardamom', 'Rice', 'Timber'] as Commodity[],
+      chance: 0.48,
+    },
+    {
+      weight: has('Chinese Porcelain') || has('Tea') || has('Star Anise') ? 5 : 1,
+      variant: 'china-wreck',
+      name: 'Porcelain Wreck',
+      sub: 'blue-white shards among the timbers',
+      lore: `The wreckage looks like an eastern cargo boat or a tender from a larger ship, with broken porcelain and tea chests washing loose near ${port.name}.`,
+      cargo: ['Chinese Porcelain', 'Tea', 'Star Anise', 'Camphor', 'Rice'] as Commodity[],
+      chance: 0.40,
+    },
+    {
+      weight: has('Coffee') || has('Frankincense') || has('Myrrh') ? 5 : 1,
+      variant: 'arabian-wreck',
+      name: 'Arabian Wreck',
+      sub: 'lateen spars and resin-scented debris',
+      lore: `A small Arabian or Red Sea vessel broke up here, leaving resin sacks and coffee-stained planks in the shallows near ${port.name}.`,
+      cargo: ['Coffee', 'Frankincense', 'Myrrh', 'Aloes', 'Rice'] as Commodity[],
+      chance: 0.44,
+    },
+    {
+      weight: has('Sugar') || has('Tobacco') || has('Virginia Tobacco') ? 5 : 1,
+      variant: 'atlantic-wreck',
+      name: 'Atlantic Wreck',
+      sub: 'barrels, leaf bundles, and split hull planks',
+      lore: `An Atlantic vessel missed safe water off ${port.name}, spilling sugar, tobacco, and ship stores into the tide line.`,
+      cargo: ['Sugar', 'Tobacco', 'Virginia Tobacco', 'Hides', 'Timber'] as Commodity[],
+      chance: 0.46,
+    },
+    {
+      weight: 2,
+      variant: 'stores-wreck',
+      name: 'Stores Wreck',
+      sub: 'ship stores scattered in shallow water',
+      lore: `This was not a rich prize, but a working vessel lost near ${port.name}; its useful cargo is mostly provisions and repair stores.`,
+      cargo: ['Rice', 'Salted Meat', 'Timber', 'Iron', 'Small Shot'] as Commodity[],
+      chance: 0.58,
+    },
+  ];
+  const total = routeOptions.reduce((sum, option) => sum + option.weight, 0);
+  let roll = rng() * total;
+  for (const option of routeOptions) {
+    roll -= option.weight;
+    if (roll <= 0) return option;
+  }
+  return routeOptions[routeOptions.length - 1];
 }
 
 function rollCount(scale: PortScale, rng: () => number): number {
@@ -390,4 +503,3 @@ function mulberry32(seed: number): () => number {
     return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
   };
 }
-

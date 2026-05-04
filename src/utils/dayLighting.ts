@@ -12,11 +12,12 @@ export interface DayLighting {
   moonPosition: THREE.Vector3;
   moonIntensity: number;
   shadowRadius: number;
+  shadowIntensity: number;
 }
 
 type LightProfile = {
   ambCol: THREE.Color; groundCol: THREE.Color; ambBase: number; ambScale: number;
-  sunCol: THREE.Color; sunBase: number; sunScale: number; shadowRadius: number;
+  sunCol: THREE.Color; sunBase: number; sunScale: number; shadowRadius: number; shadowIntensity: number;
 };
 
 // Climate-dependent lighting profiles — each shapes sky fill, ground bounce,
@@ -27,30 +28,35 @@ const LIGHT_PROFILES: Record<string, LightProfile> = {
     ambBase: 0.42, ambScale: 0.10,
     sunCol: new THREE.Color(1.0, 0.92, 0.72), sunBase: 1.24, sunScale: 0.88,
     shadowRadius: 4.2,
+    shadowIntensity: 0.84,
   },
   monsoon: {
     ambCol: new THREE.Color(0.50, 0.66, 0.72), groundCol: new THREE.Color(0.34, 0.36, 0.24),
     ambBase: 0.24, ambScale: 0.055,
     sunCol: new THREE.Color(1.0, 0.88, 0.62), sunBase: 1.24, sunScale: 0.82,
     shadowRadius: 4.3,
+    shadowIntensity: 0.88,
   },
   temperate: {
     ambCol: new THREE.Color(0.62, 0.68, 0.78), groundCol: new THREE.Color(0.38, 0.34, 0.28),
     ambBase: 0.31, ambScale: 0.055,
     sunCol: new THREE.Color(0.90, 0.88, 0.84), sunBase: 1.02, sunScale: 0.68,
     shadowRadius: 5.8,
+    shadowIntensity: 0.90,
   },
   arid: {
-    ambCol: new THREE.Color(0.58, 0.56, 0.50), groundCol: new THREE.Color(0.50, 0.40, 0.26),
-    ambBase: 0.24, ambScale: 0.085,
+    ambCol: new THREE.Color(0.72, 0.76, 0.78), groundCol: new THREE.Color(0.78, 0.63, 0.38),
+    ambBase: 0.42, ambScale: 0.12,
     sunCol: new THREE.Color(1.0, 0.88, 0.65), sunBase: 1.38, sunScale: 0.92,
     shadowRadius: 3.6,
+    shadowIntensity: 0.66,
   },
   mediterranean: {
     ambCol: new THREE.Color(0.66, 0.78, 0.96), groundCol: new THREE.Color(0.78, 0.72, 0.58),
     ambBase: 0.40, ambScale: 0.10,
     sunCol: new THREE.Color(1.0, 0.86, 0.58), sunBase: 1.36, sunScale: 0.92,
     shadowRadius: 3.6,
+    shadowIntensity: 0.80,
   },
 };
 
@@ -137,5 +143,6 @@ export function computeDayLighting({ timeOfDay, worldSeed, waterPaletteId }: Day
     moonPosition: moonPos,
     moonIntensity: moonInt,
     shadowRadius: lp.shadowRadius,
+    shadowIntensity: lp.shadowIntensity,
   };
 }

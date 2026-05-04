@@ -320,7 +320,7 @@ Three types are placed as 0-1 per port based on external data tables, all follow
 Floating glowing purple octahedron + camera-billboarded halo above every building whose semantic class has `marker === 'diamond'`. Instanced — one draw call for diamonds, one for halos. Toggleable at Settings → Display → Map Markers → "Sacred Site Markers". Defaults on. State in `RenderDebugSettings.sacredMarkers`.
 
 #### Hover labels
-`BuildingTooltip.tsx` reads `b.label`, `b.labelSub`, `b.labelEyebrow`, `b.labelEyebrowColor`. `drawBuildingLabel()` in `worldLabelTextures.ts` renders the eyebrow (if present) as a glowing all-caps prefix above the title; canvas height bumps from 84 → 104 when an eyebrow is present. Label text comes from `buildingLabels.ts` via `generateBuildingLabel()` — dispatches on type with per-type naming pools + cultural/regional variations + named-landmark / faith / palace-style overrides.
+`BuildingTooltip.tsx` reads `b.label`, `b.labelSub`, `b.labelEyebrow`, `b.labelEyebrowColor` and renders the hover panel with Drei `<Html>`, plus a lightweight 3D glow box around the hovered building. Label text comes from `buildingLabels.ts` via `generateBuildingLabel()` — dispatches on type with per-type naming pools + cultural/regional variations + named-landmark / faith / palace-style overrides.
 
 ### District system
 Every non-generic building carries a `district: DistrictKey`. Seven districts in `cityDistricts.ts`:
@@ -479,7 +479,7 @@ Points of Interest — sites the player sails or walks to that are *not* tradabl
 
 **Vocabulary** — three terms get conflated easily, so pin them down:
 - **3D world** — the single contiguous playable space (~1100×1100 units, `WORLD_HALF = 550` in `worldMapTerrainCache.ts`). All ports placed within it by `distributePortPositions` in `mapGenerator.ts`. The player physically sails/walks here.
-- **World map overlay** (`WorldMap.tsx`) — a 2D top-down UI overlay opened by the **Navigate** button (hotkey 7, `UI.tsx:2055`). Shows port-buttons (clickable, fires `fastTravel`) and POI markers (cyan dots for discovered POIs). It is UI chrome, not a gameplay surface — POIs cannot "live" on it.
+- **Local map overlay** (`LocalMap.tsx`) — a 2D top-down harbor/terrain chart opened from the minimap. Shows terrain, current port context, discovered POIs, wildlife clusters, and a button to open the global sailing chart.
 - **Port zone** — the playable region around a port: city footprint + hinterland + nearshore water, all part of the single 3D world. **Hinterland** is the part of the zone outside the city's exclusion radius. POIs always anchor to a port zone.
 
 **Bespoke vs procedural.** One axis the system actually has:
@@ -505,7 +505,7 @@ Overlap: a city landmark that's *also* a POI (Goa's Bom Jesus is a landmark you 
 
 **Shared infrastructure POIs reuse**:
 - `SemanticClass` + `SEMANTIC_STYLE` from `semanticClasses.ts` — POIs carry `class: SemanticClass` and get the same eyebrow color + marker as classified buildings. A pilgrimage shrine POI (`religious`) gets the same purple plumbob as an in-city mosque. A merchant-guild POI (`mercantile`) gets the same teal eyebrow as the English Factory landmark.
-- `buildingLabels.ts` label-texture pipeline — `createWorldLabelTexture({ eyebrow, eyebrowColor })` already accepts arbitrary classes.
+- `BuildingTooltip.tsx` hover-label path — eyebrow text and color already come from semantic-class fields on buildings.
 - `SacredBuildingMarkers` renderer in `ProceduralCity.tsx` — extended to iterate POI positions alongside buildings, filtered by the same `marker === 'diamond'` gate. Zero new visual code for religious POIs.
 
 #### Procedural archetypes — catalog

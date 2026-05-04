@@ -41,17 +41,17 @@ type ShrineScale = 'wayside' | 'village' | 'pilgrimage';
 // Pilgrimage sites out-scale the in-city version because they're standalone
 // monuments, not buildings squeezed into a city block.
 const SCALE_GEOMETRY: Record<ShrineScale, number> = {
-  wayside: 1.0,
-  village: 1.4,
-  pilgrimage: 1.8,
+  wayside: 1.5,
+  village: 2.1,
+  pilgrimage: 2.7,
 };
 
 // AABB footprint for the synthetic spiritual building. Tracks geometryScale so
 // walking-detection lands on the shrine's visible footprint.
 const SCALE_FOOTPRINT: Record<ShrineScale, [number, number, number]> = {
-  wayside:    [9, 9, 10],
-  village:    [12, 12, 14],
-  pilgrimage: [16, 16, 18],
+  wayside:    [14, 14, 15],
+  village:    [18, 18, 21],
+  pilgrimage: [24, 24, 27],
 };
 
 // ── Shrine variant axes ─────────────────────────────────────────────────────

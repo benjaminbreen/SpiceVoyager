@@ -48,9 +48,10 @@ export const swivelAimTarget = new THREE.Vector3();
 export let swivelAimValid = false;
 export let activeBowWeapon: WeaponType = 'swivelGun';
 
-// Active projectiles (max ~30 in flight — broadsides spawn many at once)
+// Active projectiles. Broadsides spawn many at once, and hostile forts can now
+// add shore fire while NPC ships are also active.
 export const projectiles: Projectile[] = [];
-const MAX_PROJECTILES = 30;
+const MAX_PROJECTILES = 45;
 
 // ── Gunfire alerts ──────────────────────────────────────────────────────────
 // Every projectile spawn broadcasts a short-lived alert at its origin.
@@ -63,6 +64,51 @@ export interface GunfireAlert {
 }
 export const gunfireAlerts: GunfireAlert[] = [];
 const MAX_ALERTS = 8;
+
+export interface HostileFortThreat {
+  portName: string;
+  reputation: number;
+  firing: boolean;
+  batteryCount: number;
+  x: number;
+  z: number;
+  updatedAt: number;
+}
+
+export let hostileFortThreat: HostileFortThreat | null = null;
+
+export function setHostileFortThreat(threat: HostileFortThreat | null): void {
+  hostileFortThreat = threat;
+}
+
+export interface FortBatteryTarget {
+  id: string;
+  portName: string;
+  buildingId: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  updatedAt: number;
+}
+
+export const fortBatteryTargets = new Map<string, FortBatteryTarget>();
+export const disabledFortBatteries = new Set<string>();
+
+export function registerFortBatteryTarget(target: FortBatteryTarget): void {
+  fortBatteryTargets.set(target.id, target);
+}
+
+export function pruneFortBatteryTargets(now = Date.now(), maxAgeMs = 700): void {
+  for (const [id, target] of fortBatteryTargets) {
+    if (now - target.updatedAt > maxAgeMs) fortBatteryTargets.delete(id);
+  }
+}
+
+export function disableFortBattery(id: string): void {
+  disabledFortBatteries.add(id);
+  fortBatteryTargets.delete(id);
+}
 
 export function broadcastGunfire(x: number, z: number, radius = 90, durationMs = 7000): void {
   const now = Date.now();
@@ -78,11 +124,12 @@ export function spawnProjectile(
   direction: THREE.Vector3,
   speed: number,
   weaponType: ProjectileWeaponType = 'swivelGun',
-  opts: { owner?: 'player' | 'npc'; ownerId?: string; maxDistance?: number } = {},
+  opts: { owner?: 'player' | 'npc'; ownerId?: string; maxDistance?: number; damageScale?: number } = {},
 ) {
   // Rockets fly slower but longer — give them more life so they reach the
   // extreme range their damage/reload cost pays for.
-  const life = weaponType === 'fireRocket' ? 4.0 : 2.5;
+  const baseLife = weaponType === 'fireRocket' ? 4.0 : 2.5;
+  const life = opts.maxDistance ? Math.max(baseLife, opts.maxDistance / Math.max(speed, 1) + 0.35) : baseLife;
   const p: Projectile = {
     pos: origin.clone(),
     vel: direction.clone().multiplyScalar(speed),
@@ -93,7 +140,7 @@ export function spawnProjectile(
     distanceTraveled: opts.maxDistance ? 0 : undefined,
     maxDistance: opts.maxDistance,
     ricochets: 0,
-    damageScale: 1,
+    damageScale: opts.damageScale ?? 1,
     trailClock: weaponType === 'fireRocket' ? 0 : undefined,
   };
   if (projectiles.length >= MAX_PROJECTILES) {
@@ -185,6 +232,9 @@ export interface NpcLiveEntry {
   hull: number;
   maxHull: number;
   sunk?: boolean;
+  impulseX?: number;
+  impulseZ?: number;
+  impulseUntil?: number;
 }
 export const npcLivePositions: Map<string, NpcLiveEntry> = new Map();
 

@@ -291,7 +291,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'arid',
     culture: 'Indian Ocean',
     buildingStyle: 'persian-gulf',
-    scale: 'Medium',
+    scale: 'Large',
     description: 'Barren island fortress guarding the entrance to the Persian Gulf. Strategic chokepoint for the spice trade.',
     openDirection: 'S',
     islandShape: 'ovoid',
@@ -394,7 +394,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'monsoon',
     culture: 'European',
     buildingStyle: 'luso-colonial',
-    scale: 'Medium',
+    scale: 'Large',
     description: 'Portuguese trading post on a narrow peninsula in the Pearl River estuary. Gateway to the China trade.',
     openDirection: 'S',
     aspectRatio: 2.2,            // narrow peninsula, longer than wide
@@ -644,7 +644,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'tropical',
     culture: 'Indian Ocean',
     buildingStyle: 'malay-stilted',
-    scale: 'Medium',
+    scale: 'Large',
     description: 'Javanese pepper port on a sheltered bay at the western tip of Java. Contested by English, Dutch, and local sultans.',
     openDirection: 'N',
     coastCurvature: 0.6,
@@ -918,7 +918,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'tropical',
     culture: 'West African',
     buildingStyle: 'west-african-round',
-    scale: 'Small',
+    scale: 'Large',
     description: 'São Jorge da Mina rises white and angular above the rocky headland, its walls stained with tropical damp. Akan traders arrive from the forest interior with gold dust wrapped in leaves, exchanging it for Indian textiles, Venetian beads, and iron bars in the courtyard below the keep. Fishing canoes line the beach on either side of the fortress. The Portuguese garrison is small and nervous — Dutch ships have been probing the coast more often. The forest behind the settlement is dense, pressing up to the cleared ground.',
     openDirection: 'S',
     enclosure: 0.1,
@@ -934,7 +934,7 @@ export const CORE_PORTS: PortDefinition[] = [
     climate: 'tropical',
     culture: 'West African',
     buildingStyle: 'west-african-round',
-    scale: 'Small',
+    scale: 'Large',
     description: 'The Ilha de Luanda — a long, low sand spit — shelters the bay from the open Atlantic. The settlement is sparse: a fortress, a Jesuit college, a few streets of stone buildings in dry heat. This is a slaving port — pombeiros march coffles down from the interior to holding pens near the beach, where captives wait for ships bound to Bahia and Pernambuco. Nzimbu shells harvested from the island circulate as currency. The Benguela Current keeps the coast surprisingly cool and arid.',
     openDirection: 'W',
     coastCurvature: 0.4,
@@ -1898,9 +1898,9 @@ export function getArchetypeShape(
       // Composed of three coherent landmasses with organic outlines:
       //  1. Lido — curved barrier chain near wrz ≈ -0.05, broken into several
       //     islands by three porti (tidal inlets).
-      //  2. City — one solid cluster at (~-0.04, 0.24), carved by a sinuous
+      //  2. City — a compact cluster at (~-0.04, 0.24), carved by a sinuous
       //     Grand Canal and thin ridge-noise rii, not fragmented into scraps.
-      //  3. Mainland — terra firma beyond wrz ≈ 0.58, with marshy inlets.
+      //  3. Mainland — terra firma set well back behind the lagoon, with marshy inlets.
 
       // ── Lido (barrier chain) ─────────────────────────────────────────────
       // Gentle arc: slightly bows seaward near the ends so the chain reads as
@@ -1908,7 +1908,7 @@ export function getArchetypeShape(
       const lidoArcZ = -0.05 - 0.03 * (wrx * wrx) * 4;
       // Width varies along length — fattest near center (the Lido proper),
       // thinning toward Pellestrina and Sottomarina at the ends.
-      const lidoHalfW = 0.075 * (1 - 0.45 * Math.abs(wrx));
+      const lidoHalfW = 0.052 * (1 - 0.45 * Math.abs(wrx));
       const lidoNoise = cn * 0.35;
       const lidoDist = Math.abs(wrz - lidoArcZ);
       // Three porti (historical Lido, Malamocco, Chioggia inlets)
@@ -1919,30 +1919,30 @@ export function getArchetypeShape(
       const lidoEnv = 1 - smoothstep(lidoHalfW * 0.25, lidoHalfW + Math.abs(lidoNoise), lidoDist);
       // Low-freq dropout gives natural width variation without hollowing it.
       const lidoWobble = 0.85 + _coastNoise(localX * 0.018 + 77, localZ * 0.022) * 0.15;
-      const lidoStrength = lidoEnv * lidoWobble * (1 - 0.95 * portiMax) * 0.85;
+      const lidoStrength = lidoEnv * lidoWobble * (1 - 0.95 * portiMax) * 0.78;
 
       // ── Mainland (terra firma) with marshy inlets ────────────────────────
       // Coast offset by low-freq noise so shoreline has peninsulas and bays
       // rather than a single ruler-straight smoothstep transition.
       const marshOffset = _featureNoise(localX * 0.009 + 420, localZ * 0.011 - 160) * 0.14;
-      const coastLine = 0.58 + cn * 0.45 + marshOffset;
-      const mainland = smoothstep(coastLine, coastLine + 0.22, wrz) * 0.95;
+      const coastLine = 0.72 + cn * 0.35 + marshOffset;
+      const mainland = smoothstep(coastLine, coastLine + 0.16, wrz) * 0.86;
 
       // ── City core (solid contiguous mass) ────────────────────────────────
       const cityCx = -0.04;
       const cityCz = 0.24;
       const dCx = wrx - cityCx;
       const dCz = wrz - cityCz;
-      // Elliptical envelope — elongated along lagoon axis, slightly larger
-      // than before so building density has room to breathe.
-      const cityRadius = Math.sqrt(dCx * dCx * 0.80 + dCz * dCz * 1.50);
+      // Elliptical envelope — compact enough that Venice reads as islands in
+      // water, not a dry plain with canals etched through it.
+      const cityRadius = Math.sqrt(dCx * dCx * 0.88 + dCz * dCz * 1.62);
       // Organic outline: modulate the envelope with coast noise so the island
       // silhouette wobbles rather than reading as a clean ellipse.
       const outlineWobble = _coastNoise(localX * 0.022 + 60, localZ * 0.022 - 40) * 0.06;
-      const cityEnv = smoothstep(0.36 + outlineWobble, 0.12 + outlineWobble, cityRadius);
-      // Solid mass — no fragmentation noise. Peak stays at 0.90 so even the
+      const cityEnv = smoothstep(0.35 + outlineWobble, 0.10 + outlineWobble, cityRadius);
+      // Solid mass — no fragmentation noise. Peak stays high so even the
       // outline is comfortably buildable, not teetering near sea level.
-      const cityMass = cityEnv * 0.90;
+      const cityMass = cityEnv * 0.96;
 
       // Grand Canal: a single sinuous S-cut running through the city core,
       // dividing it roughly into sestieri. Width ~0.018 in normalized coords.
@@ -1950,12 +1950,12 @@ export function getArchetypeShape(
       const gcCenterline = cityCx + Math.sin(gcPhase) * 0.07;
       const gcDist = Math.abs(wrx - gcCenterline);
       const gcWidth = 0.020 + Math.sin(gcPhase * 0.6) * 0.004;
-      const grandCanal = (1 - smoothstep(gcWidth * 0.4, gcWidth, gcDist)) * cityEnv * 0.55;
+      const grandCanal = (1 - smoothstep(gcWidth * 0.4, gcWidth, gcDist)) * cityEnv * 0.72;
 
       // Thin rii (secondary canals) carved by ridge noise — narrow lines, not
       // blobs. These create texture without dissecting the island.
       const riiRidge = 1 - Math.abs(_ridgeNoise(localX * 0.048 + 120, localZ * 0.052 - 80));
-      const riiCarve = smoothstep(0.88, 0.98, riiRidge) * cityEnv * 0.30;
+      const riiCarve = smoothstep(0.88, 0.98, riiRidge) * cityEnv * 0.38;
 
       shape = Math.max(lidoStrength, mainland, cityMass) - grandCanal - riiCarve - 0.05;
       break;

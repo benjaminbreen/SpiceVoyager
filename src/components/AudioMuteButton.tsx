@@ -6,6 +6,7 @@ import { getSfxVolume, setSfxVolume, sfxClick, sfxHover } from '../audio/SoundEf
 
 const MUTE_KEY = 'spice-voyager-audio-muted';
 const VOLUME_KEY = 'spice-voyager-audio-volumes';
+const DEFAULT_SAVED_VOLUMES: SavedVolumes = { music: 0.04, ambient: 0.22, sfx: 0.5 };
 
 type SavedVolumes = {
   music: number;
@@ -24,16 +25,16 @@ function readSavedVolumes(): SavedVolumes {
   }
 
   const raw = window.localStorage.getItem(VOLUME_KEY);
-  if (!raw) return { music: 0.1, ambient: 0.3, sfx: 0.5 };
+  if (!raw) return DEFAULT_SAVED_VOLUMES;
   try {
     const parsed = JSON.parse(raw) as Partial<SavedVolumes>;
     return {
-      music: clampVolume(parsed.music ?? 0.1),
-      ambient: clampVolume(parsed.ambient ?? 0.3),
-      sfx: clampVolume(parsed.sfx ?? 0.5),
+      music: normalizeSavedMusicVolume(parsed.music),
+      ambient: normalizeSavedAmbientVolume(parsed.ambient),
+      sfx: clampVolume(parsed.sfx ?? DEFAULT_SAVED_VOLUMES.sfx),
     };
   } catch {
-    return { music: 0.1, ambient: 0.3, sfx: 0.5 };
+    return DEFAULT_SAVED_VOLUMES;
   }
 }
 
@@ -44,6 +45,18 @@ function saveVolumes(volumes: SavedVolumes) {
 
 function clampVolume(value: number) {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function normalizeSavedMusicVolume(value: number | undefined) {
+  if (value === undefined) return DEFAULT_SAVED_VOLUMES.music;
+  const clamped = clampVolume(value);
+  return clamped >= 0.095 && clamped <= 0.105 ? DEFAULT_SAVED_VOLUMES.music : clamped;
+}
+
+function normalizeSavedAmbientVolume(value: number | undefined) {
+  if (value === undefined) return DEFAULT_SAVED_VOLUMES.ambient;
+  const clamped = clampVolume(value);
+  return clamped >= 0.29 && clamped <= 0.31 ? DEFAULT_SAVED_VOLUMES.ambient : clamped;
 }
 
 function currentVolumes(): SavedVolumes {

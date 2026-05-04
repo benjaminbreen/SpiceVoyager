@@ -1,6 +1,6 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8AO, LUT } from '@react-three/postprocessing';
-import { buildLUT, lutParamsKey, lerpLUTParams, LUT_PRESETS, LUT_NEUTRAL, computeMoodDelta, addLUTParams, lutDiffersFromNeutral } from '../utils/proceduralLUT';
+import { buildLUT, lutParamsKey, lerpLUTParams, LUT_PRESETS, LUT_NEUTRAL, LUT_DEFAULT_BASE, computeMoodDelta, addLUTParams, lutDiffersFromNeutral } from '../utils/proceduralLUT';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
 import { RainOverlay } from './RainOverlay';
@@ -9,10 +9,10 @@ import { getTreeImpactTargets } from '../state/worldRegistries';
 import { Player } from './Player';
 import { Pedestrians } from './Pedestrians';
 import { HinterlandScenes } from './HinterlandScenes';
-import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building } from '../store/gameStore';
+import { useGameStore, getCrewByRole, captainHasTrait, captainHasAbility, getRoleBonus, PORT_FACTION, type Building, type Nationality } from '../store/gameStore';
 import { resolveCampaignPortId } from '../utils/worldPorts';
 import { ambientEngine } from '../audio/AmbientEngine';
-import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact, sfxRocketWhistle } from '../audio/SoundEffects';
+import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnchorDrop, sfxAnchorWeigh, sfxCannonFire, sfxCannonImpact, sfxCannonSplash, sfxBroadsideCannon, sfxShipGunImpact, sfxMusket, sfxBowRelease, sfxHarvest, sfxRocketFire, sfxRocketImpact, sfxRocketWhistle } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
@@ -52,6 +52,9 @@ import {
   wildlifeKillQueue,
   landWeaponReload,
   bowWeaponReload,
+  disableFortBattery,
+  disabledFortBatteries,
+  fortBatteryTargets,
   fireHeld,
   setFireHeld,
   broadsideQueue,
@@ -59,6 +62,7 @@ import {
   elevationHoldStart,
   setElevationHoldStart,
   getCurrentElevationCharge,
+  pruneFortBatteryTargets,
 } from '../utils/combatState';
 import { WEAPON_DEFS, LAND_WEAPON_DEFS, type WeaponType, type LandWeaponType } from '../store/gameStore';
 import { lootForKill } from '../utils/huntLoot';
@@ -73,6 +77,7 @@ import {
 } from '../utils/performanceStats';
 import { addCameraFovPulse, addCameraShake, sampleCameraShake, sampleCameraFovPulse } from '../utils/cameraShakeState';
 import { sampleIntroCinematic, skipIntroCinematic, isIntroCinematicActive } from '../utils/cinematicIntroState';
+import { sampleArrivalCinematic } from '../utils/arrivalCinematicState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
@@ -318,6 +323,12 @@ function shipHitCombatText(weaponType: WeaponType | LandWeaponType, damage: numb
   return { label: 'Hit', tone: 'hit' as const };
 }
 
+function capReputationAt(nationality: Nationality, ceiling: number) {
+  const state = useGameStore.getState();
+  const current = state.getReputation(nationality);
+  if (current > ceiling) state.adjustReputation(nationality, ceiling - current);
+}
+
 function tryRicochetProjectile(
   p: (typeof projectiles)[number],
   normal: THREE.Vector3,
@@ -361,8 +372,10 @@ function tryRicochetProjectile(
   );
 
   if (material === 'water') {
+    sfxShipGunImpact('water', p.weaponType);
     spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType) * 0.72);
   } else {
+    sfxShipGunImpact('ricochet', p.weaponType);
     spawnLandSurfaceImpact(p.pos.x, p.pos.z, broadsideImpactScale(p.weaponType) * 0.42);
   }
   spawnFloatingCombatText(p.pos.x, p.pos.y + 0.25, p.pos.z, 'Ricochet', 'glance');
@@ -797,6 +810,38 @@ function npcProjectileDamage(weaponType: WeaponType | LandWeaponType) {
   return WEAPON_DEFS[weaponType].damage;
 }
 
+function projectileImpulseStrength(weaponType: WeaponType | LandWeaponType, damage: number) {
+  const isBroadside = weaponType in WEAPON_DEFS && !WEAPON_DEFS[weaponType as WeaponType].aimable;
+  const base = isBroadside ? 1.2 : 0.45;
+  return THREE.MathUtils.clamp(base + damage * 0.055, 0.45, isBroadside ? 5.2 : 2.6);
+}
+
+function applyNpcHitImpulse(
+  npc: { impulseX?: number; impulseZ?: number; impulseUntil?: number },
+  vel: THREE.Vector3,
+  strength: number,
+) {
+  const dx = vel.x;
+  const dz = vel.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.001) return;
+  npc.impulseX = THREE.MathUtils.clamp((npc.impulseX ?? 0) + (dx / len) * strength, -6, 6);
+  npc.impulseZ = THREE.MathUtils.clamp((npc.impulseZ ?? 0) + (dz / len) * strength, -6, 6);
+  npc.impulseUntil = Date.now() + 650;
+}
+
+function dispatchPlayerShipHitImpulse(vel: THREE.Vector3, strength: number) {
+  const len = Math.hypot(vel.x, vel.z);
+  if (len < 0.001) return;
+  window.dispatchEvent(new CustomEvent('player-ship-hit-impulse', {
+    detail: {
+      dirX: vel.x / len,
+      dirZ: vel.z / len,
+      strength,
+    },
+  }));
+}
+
 function pointHitsBuilding(point: THREE.Vector3) {
   let hitBuilding: Building | null = null;
   eachNearbyBuilding((building) => {
@@ -813,6 +858,28 @@ function pointHitsBuilding(point: THREE.Vector3) {
     }
   });
   return hitBuilding;
+}
+
+function findBuildingById(buildingId: string) {
+  for (const port of useGameStore.getState().ports) {
+    const building = port.buildings.find((b) => b.id === buildingId);
+    if (building) return building;
+  }
+  return null;
+}
+
+function pointHitsFortBattery(point: THREE.Vector3) {
+  pruneFortBatteryTargets();
+  for (const target of fortBatteryTargets.values()) {
+    if (disabledFortBatteries.has(target.id)) continue;
+    const dx = point.x - target.x;
+    const dy = point.y - target.y;
+    const dz = point.z - target.z;
+    if (dx * dx + dy * dy + dz * dz <= target.radius * target.radius) {
+      return target;
+    }
+  }
+  return null;
 }
 
 function buildingCanDeflect(building: Building) {
@@ -1286,6 +1353,14 @@ function CameraController() {
   }, [gl, setCameraZoom]);
 
   useFrame((_, delta) => {
+    const arrival = sampleArrivalCinematic(delta);
+    if (arrival.active) {
+      zoomTarget.current = arrival.zoom;
+      rotationTarget.current = arrival.rotation;
+      setCameraZoom(arrival.zoom);
+      setCameraRotation(arrival.rotation);
+    }
+
     // Smooth zoom lerp — gentle ease-out
     const currentZoom = useGameStore.getState().cameraZoom;
     if (Math.abs(zoomTarget.current - currentZoom) > 0.05) {
@@ -1704,10 +1779,16 @@ function tryFireBowWeapon() {
       cargo: { ...state.cargo, [ammoCommodity]: (state.cargo[ammoCommodity] ?? 0) - 1 },
     });
     spawnProjectile(_swivelMuzzleOrigin, _swivelFireDir, bowWeaponLaunchSpeed(bowWeapon), bowWeapon);
-    sfxCannonFire();
+    sfxCannonFire(bowWeapon);
   }
-  // Notify Ship.tsx to spawn muzzle flash particles
-  window.dispatchEvent(new CustomEvent('swivel-fired'));
+  // Notify Ship.tsx to spawn muzzle flash particles and apply a light recoil.
+  window.dispatchEvent(new CustomEvent('swivel-fired', {
+    detail: {
+      weaponType: bowWeapon,
+      dirX: _swivelFireDir.x,
+      dirZ: _swivelFireDir.z,
+    },
+  }));
 }
 
 // ── Broadside fire ─────────────────────────────────────────────────────────
@@ -1811,7 +1892,13 @@ function tryFireBroadside(side: 'port' | 'starboard') {
   });
 
   // Notify Ship.tsx for smoke effects
-  window.dispatchEvent(new CustomEvent('broadside-fired', { detail: { side } }));
+  window.dispatchEvent(new CustomEvent('broadside-fired', {
+    detail: {
+      side,
+      gunCount: broadsideWeapons.length,
+      totalWeight: broadsideWeapons.reduce((sum, wt) => sum + WEAPON_DEFS[wt].weight, 0),
+    },
+  }));
   addCameraShake(Math.min(0.62, 0.28 + broadsideWeapons.length * 0.045));
   addCameraFovPulse(-1.4);
   const elevMsg = elevCharge > 0.15 ? ` — elevated ${Math.round(THREE.MathUtils.lerp(5, 48, Math.pow(elevCharge, 0.85)))}°` : '';
@@ -2149,12 +2236,12 @@ function ProjectileSystem() {
           maxDistance: shot.maxDistance,
         });
         spawnMuzzleBurst(shot.origin.x, shot.origin.y, shot.origin.z, shot.direction.x, shot.direction.y, shot.direction.z, 1.35);
-        sfxBroadsideCannon();
+        sfxBroadsideCannon(shot.weaponType);
         shot.fired = true;
       }
     }
 
-    const { adjustReputation, addNotification, damageShip } = useGameStore.getState();
+    const { addNotification, damageShip } = useGameStore.getState();
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
@@ -2205,7 +2292,7 @@ function ProjectileSystem() {
           sfxRocketImpact();
         } else {
           spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
-          sfxCannonSplash();
+          sfxCannonSplash(p.weaponType);
         }
         spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
         projectiles.splice(i, 1);
@@ -2219,14 +2306,15 @@ function ProjectileSystem() {
             continue;
           }
           spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType));
-          sfxCannonSplash();
+          sfxCannonSplash(p.weaponType);
           spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
         } else {
           estimateAimSurfaceNormal(p.pos.x, p.pos.z, _aimObjectNormal);
           if (tryRicochetProjectile(p, _aimObjectNormal, 'land')) {
             continue;
           }
-        spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
+          sfxShipGunImpact('land', p.weaponType);
+          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
         }
         projectiles.splice(i, 1);
         continue;
@@ -2240,23 +2328,26 @@ function ProjectileSystem() {
       if ((p.owner ?? 'player') === 'npc') {
         if (pointHitsPlayerShip(p.pos)) {
           const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
-          const damage = npcProjectileDamage(p.weaponType);
+          const damage = Math.round(npcProjectileDamage(p.weaponType) * projectileDamageScale(p));
           if (isRocket) {
             sfxRocketImpact();
             spawnRocketFireBurst(p.pos.x, p.pos.y + 0.4, p.pos.z, 1.2);
           } else {
-            sfxCannonImpact();
+            sfxCannonImpact(p.weaponType);
           }
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.55 : broadsideImpactScale(p.weaponType) * 0.8);
           damageShip(damage);
+          dispatchPlayerShipHitImpulse(p.vel, projectileImpulseStrength(p.weaponType, damage));
           spawnFloatingCombatText(p.pos.x, p.pos.y + 0.7, p.pos.z, 'Hull Breach', 'player');
-          addNotification(`Enemy shot strikes the hull! -${damage} hull`, 'warning');
+          const source = p.ownerId?.startsWith('fort:') ? 'Fort shot' : 'Enemy shot';
+          addNotification(`${source} strikes the hull! -${damage} hull`, 'warning');
           projectiles.splice(i, 1);
           continue;
         }
 
         const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
         if (p.pos.y <= surfaceY) {
+          sfxShipGunImpact(surfaceY <= SEA_LEVEL + 0.2 ? 'water' : 'land', p.weaponType);
           spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : 0.7);
           projectiles.splice(i, 1);
           continue;
@@ -2276,9 +2367,10 @@ function ProjectileSystem() {
           const r = w.radius;
           if (dx * dx + dz * dz < r * r && Math.abs(dy) < 1.5) {
             const def = LAND_WEAPON_DEFS[p.weaponType as LandWeaponType];
-            const damage = def.damage;
-            w.hp = Math.max(0, w.hp - damage);
+          const damage = def.damage;
+          w.hp = Math.max(0, w.hp - damage);
             w.hitAlert = Date.now() + 8000;
+            sfxShipGunImpact('body', p.weaponType);
             spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, p.weaponType === 'musket' ? 0.65 : 0.4);
             if (w.hp <= 0) {
               w.dead = true;
@@ -2306,10 +2398,12 @@ function ProjectileSystem() {
         if (hit) continue;
         const npc = pointHitsNpcShip(p.pos);
         if (npc) {
+          sfxShipGunImpact('ship', p.weaponType);
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, p.weaponType === 'musket' ? 0.35 : 0.18);
           npc.hull = Math.max(0, npc.hull - LAND_SHIP_DAMAGE[p.weaponType as LandWeaponType]);
+          applyNpcHitImpulse(npc, p.vel, projectileImpulseStrength(p.weaponType, LAND_SHIP_DAMAGE[p.weaponType as LandWeaponType]));
           npc.hitAlert = Date.now() + 10000;
-          adjustReputation(npc.flag as any, -5);
+          capReputationAt(npc.flag as Nationality, -60);
           const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
           const combatText = shipHitCombatText(p.weaponType, LAND_SHIP_DAMAGE[p.weaponType as LandWeaponType], npc.hull <= 0);
           spawnFloatingCombatText(p.pos.x, p.pos.y + 0.5, p.pos.z, combatText.label, combatText.tone);
@@ -2319,10 +2413,11 @@ function ProjectileSystem() {
         }
         const pedIdx = pointHitsPedestrian(p.pos.x, p.pos.y, p.pos.z);
         if (pedIdx >= 0) {
+          sfxShipGunImpact('body', p.weaponType);
           spawnImpactBurst(p.pos.x, p.pos.y + 0.8, p.pos.z, 0.5);
           markKillPedestrian(pedIdx);
           const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
-          if (portFaction) adjustReputation(portFaction, -50);
+          if (portFaction) capReputationAt(portFaction, -100);
           addNotification('A bystander has been shot down.', 'error');
           projectiles.splice(i, 1);
           continue;
@@ -2330,6 +2425,7 @@ function ProjectileSystem() {
         const building = pointHitsBuilding(p.pos);
         if (building) {
           const impactIntensity = p.weaponType === 'musket' ? 0.9 : 0.55;
+          sfxShipGunImpact('structure', p.weaponType);
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.65);
           const destroyed = applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType), buildingMaxHp(building));
@@ -2340,7 +2436,7 @@ function ProjectileSystem() {
             spawnSplinters(p.pos.x, p.pos.y + 0.4, p.pos.z, impactIntensity * 1.3);
           }
           const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
-          if (portFaction) adjustReputation(portFaction, -20);
+          if (portFaction) capReputationAt(portFaction, destroyed ? -100 : -75);
           spawnFloatingCombatText(p.pos.x, p.pos.y + 0.45, p.pos.z, 'Structure Hit', 'structure');
           projectiles.splice(i, 1);
           continue;
@@ -2350,6 +2446,7 @@ function ProjectileSystem() {
           const impactIntensity = tree.kind === 'palm'
             ? (p.weaponType === 'musket' ? 1.2 : 0.78)
             : (p.weaponType === 'musket' ? 0.95 : 0.6);
+          sfxShipGunImpact('foliage', p.weaponType);
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.6 : 0.45));
           applyTreeDamage(tree.kind, tree.index, treeDamageForWeapon(p.weaponType), p.vel.x, p.vel.z);
@@ -2362,6 +2459,7 @@ function ProjectileSystem() {
         }
         const surfaceY = aimSurfaceHeight(p.pos.x, p.pos.z);
         if (p.pos.y <= surfaceY) {
+          sfxShipGunImpact(surfaceY <= SEA_LEVEL + 0.2 ? 'water' : 'land', p.weaponType);
           spawnLandSurfaceImpact(p.pos.x, p.pos.z, p.weaponType === 'musket' ? 0.55 : 0.35);
           projectiles.splice(i, 1);
           continue;
@@ -2420,7 +2518,8 @@ function ProjectileSystem() {
           const damage = Math.floor(baseDamage * falloff);
           if (damage <= 0) continue;
           npc.hull = Math.max(0, npc.hull - damage);
-          adjustReputation(npc.flag as any, -10);
+          applyNpcHitImpulse(npc, p.vel, projectileImpulseStrength(p.weaponType, damage) * (npc === directHitNpc ? 1 : 0.55));
+          capReputationAt(npc.flag as Nationality, -60);
           const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
           const combatText = shipHitCombatText(p.weaponType, damage, npc.hull <= 0, npc === directHitNpc);
           spawnFloatingCombatText(p.pos.x, p.pos.y + 0.5, p.pos.z, combatText.label, combatText.tone);
@@ -2457,6 +2556,7 @@ function ProjectileSystem() {
           const damage = Math.max(1, Math.floor((projectileDef?.damage ?? 1) * 0.5 * projectileDamageScale(p)));
           w.hp = Math.max(0, w.hp - damage);
           w.hitAlert = Date.now() + 8000;
+          sfxShipGunImpact('body', p.weaponType);
           spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactScale);
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactScale * 0.7);
           if (w.hp <= 0) {
@@ -2481,12 +2581,36 @@ function ProjectileSystem() {
       }
       if (hit) continue;
 
+      const fortBattery = pointHitsFortBattery(p.pos);
+      if (fortBattery) {
+        disableFortBattery(fortBattery.id);
+        if (isRocket) sfxRocketImpact();
+        else sfxShipGunImpact('structure', p.weaponType);
+        const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 1.0 : broadsideImpactScale(p.weaponType) * 1.1;
+        spawnRocketFireBurst(p.pos.x, p.pos.y + 0.45, p.pos.z, 1.25);
+        spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 1.4);
+        spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 1.2);
+        addCameraShake(0.42);
+        const parentBuilding = findBuildingById(fortBattery.buildingId);
+        if (parentBuilding) {
+          applyBuildingDamage(parentBuilding.id, buildingDamageForWeapon(p.weaponType as WeaponType) * projectileDamageScale(p) * 0.55, buildingMaxHp(parentBuilding));
+          spawnBuildingShake(parentBuilding.id, impactIntensity);
+        }
+        const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
+        if (portFaction) capReputationAt(portFaction, -100);
+        spawnFloatingCombatText(p.pos.x, p.pos.y + 0.8, p.pos.z, 'Battery Silenced', 'critical');
+        addNotification(`${fortBattery.portName} battery silenced.`, 'success', { subtitle: 'FORT GUN DISABLED' });
+        projectiles.splice(i, 1);
+        continue;
+      }
+
       const building = pointHitsBuilding(p.pos);
       if (building) {
         if (buildingCanDeflect(building) && tryRicochetProjectile(p, estimateBuildingRicochetNormal(building, p.pos, _aimObjectNormal), 'land')) {
           continue;
         }
         const impactIntensity = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.8 : broadsideImpactScale(p.weaponType) * 0.85;
+        sfxShipGunImpact('structure', p.weaponType);
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity);
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.7);
         const destroyed = applyBuildingDamage(building.id, buildingDamageForWeapon(p.weaponType as WeaponType) * projectileDamageScale(p), buildingMaxHp(building));
@@ -2497,8 +2621,7 @@ function ProjectileSystem() {
           spawnSplinters(p.pos.x, p.pos.y + 0.4, p.pos.z, impactIntensity * 1.3);
         }
         const portFaction = PORT_FACTION[resolveCampaignPortId(useGameStore.getState())];
-        const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
-        if (portFaction) adjustReputation(portFaction, isAimable ? -10 : -25);
+        if (portFaction) capReputationAt(portFaction, destroyed ? -100 : -75);
         spawnFloatingCombatText(p.pos.x, p.pos.y + 0.45, p.pos.z, 'Structure Hit', 'structure');
         projectiles.splice(i, 1);
         continue;
@@ -2508,6 +2631,7 @@ function ProjectileSystem() {
       if (tree) {
         const baseImpact = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.95 : broadsideImpactScale(p.weaponType);
         const impactIntensity = tree.kind === 'palm' ? baseImpact * 1.15 : baseImpact;
+        sfxShipGunImpact('foliage', p.weaponType);
         spawnSplinters(p.pos.x, p.pos.y, p.pos.z, impactIntensity * 0.85);
         spawnImpactBurst(p.pos.x, p.pos.y, p.pos.z, impactIntensity * (tree.kind === 'palm' ? 0.62 : 0.48));
         applyTreeDamage(tree.kind, tree.index, treeDamageForWeapon(p.weaponType as WeaponType), p.vel.x, p.vel.z);
@@ -2525,7 +2649,8 @@ function ProjectileSystem() {
         if (tryRicochetProjectile(p, _aimObjectNormal, surfaceY <= SEA_LEVEL + 0.2 ? 'water' : 'land')) {
           continue;
         }
-          spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
+        sfxShipGunImpact(surfaceY <= SEA_LEVEL + 0.2 ? 'water' : 'land', p.weaponType);
+        spawnLandSurfaceImpact(p.pos.x, p.pos.z, WEAPON_DEFS[p.weaponType as WeaponType]?.aimable ? 0.45 : broadsideImpactScale(p.weaponType) * 0.65);
         if (surfaceY <= SEA_LEVEL + 0.2) {
           spawnSplashCombatText(p.pos.x, p.pos.y, p.pos.z);
         }
@@ -2538,7 +2663,7 @@ function ProjectileSystem() {
         const dx = p.pos.x - npc.x;
         const dz = p.pos.z - npc.z;
         if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
-          sfxCannonImpact();
+          sfxCannonImpact(p.weaponType);
           const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.5 : broadsideImpactScale(p.weaponType) * 0.9);
           // Deal damage based on projectile's weapon type + gunner/ability bonuses
@@ -2548,9 +2673,8 @@ function ProjectileSystem() {
           const abilityMod = captainHasAbility(gState, 'Broadside Master') ? 1.15 : 1.0;
           const damage = Math.max(1, Math.floor(WEAPON_DEFS[p.weaponType as WeaponType].damage * gunnerMod * abilityMod * projectileDamageScale(p)));
           npc.hull = Math.max(0, npc.hull - damage);
-          // Reputation penalty scaled: swivel = -5, broadside = -15
-          const repPenalty = isAimable ? -5 : -15;
-          adjustReputation(npc.flag as any, repPenalty);
+          applyNpcHitImpulse(npc, p.vel, projectileImpulseStrength(p.weaponType as WeaponType, damage));
+          capReputationAt(npc.flag as Nationality, npc.hull <= 0 ? -100 : -60);
           const hullPct = Math.round((npc.hull / npc.maxHull) * 100);
           if (npc.hull > 0) {
             addNotification(`Hit the ${npc.shipName}! Hull: ${hullPct}%`, 'warning');
@@ -2897,6 +3021,7 @@ function TimeController() {
         playerPos: s.playerPos,
         walkingPos: s.walkingPos,
         ports: s.ports,
+        worldSeed: s.worldSeed,
         speed: s.stats.speed,
         playerRot: s.playerRot,
         timeOfDay: s.timeOfDay,
@@ -3029,7 +3154,7 @@ function computeAtmosphere(
     out.brightness = 0.01;
     out.contrast = waterPaletteId === 'monsoon' || waterPaletteId === 'mediterranean' ? 0.055 : 0.02;
     out.hue = 0;
-    out.saturation = waterPaletteId === 'monsoon' || waterPaletteId === 'mediterranean' ? 0.08 : 0.02;
+    out.saturation = waterPaletteId === 'monsoon' ? 0.08 : 0.02;
   } else if (sunH > -0.05) {
     const t = Math.max(0, Math.min(1, (0.3 - sunH) / 0.35));
     out.brightness = -0.005 * t;
@@ -3319,6 +3444,7 @@ function PostProcessing({
   const lutParamsManual = useGameStore((state) => state.renderDebug.lutParams);
   const lutMode = useGameStore((state) => state.renderDebug.lutMode);
   const weatherIntensityForLut = useGameStore((state) => state.weather.intensity);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
 
   const lutAuto = lutMode === 'auto';
   // Auto mode: layer two signals onto the neutral base —
@@ -3331,8 +3457,11 @@ function PostProcessing({
   const moodDelta = lutAuto
     ? computeMoodDelta(quantizedTime, weatherIntensityForLut)
     : LUT_NEUTRAL;
+  const lutBase = waterPaletteId === 'monsoon' || waterPaletteId === 'temperate'
+    ? LUT_DEFAULT_BASE
+    : LUT_NEUTRAL;
   const lutParams = lutAuto
-    ? lerpLUTParams(addLUTParams(LUT_NEUTRAL, moodDelta), LUT_PRESETS.monsoon, weatherIntensityForLut)
+    ? lerpLUTParams(addLUTParams(lutBase, moodDelta), LUT_PRESETS.monsoon, weatherIntensityForLut)
     : lutParamsManual;
   const lutEffectiveOn = lutAuto
     ? lutDiffersFromNeutral(lutParams)

@@ -759,13 +759,6 @@ function GameplayTab({
         <CtrlRow label="Minimap" desc="Small live chart in the sailing HUD.">
           <Toggle value={renderDebug.minimap} onChange={v => onUpdate({ minimap: v })} />
         </CtrlRow>
-        <CtrlRow label="World Map" desc="Brass portolan chart or the older flat modal." last>
-          <SegControl
-            options={[{ value: 'chart', label: 'Chart' }, { value: 'classic', label: 'Classic' }]}
-            value={renderDebug.worldMapChart ? 'chart' : 'classic'}
-            onChange={v => onUpdate({ worldMapChart: v === 'chart' })}
-          />
-        </CtrlRow>
       </div>
     </div>
   );
@@ -814,17 +807,6 @@ function DevTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
-        <SectionRule label="UI" />
-        <CtrlRow label="Settings Panel" desc="Switch between redesigned (V2) and original (V1) for A/B comparison." last>
-          <SegControl
-            options={[{ value: 'true', label: 'V2' }, { value: 'false', label: 'V1' }]}
-            value={renderDebug.settingsV2 ? 'true' : 'false'}
-            onChange={v => onUpdate({ settingsV2: v === 'true' })}
-          />
-        </CtrlRow>
-      </div>
-
-      <div>
         <SectionRule label="Mobile Preview" />
         <CtrlRow label="Force Mobile Layout" desc="Treat this session as mobile regardless of screen size.">
           <Toggle value={forceMobileLayout} onChange={v => { sfxClick(); setForceMobileLayout(v); }} />
@@ -842,13 +824,6 @@ function DevTab({
         <SectionRule label="Render Testing" />
         <CtrlRow label="Live Render Panel" desc="In-game overlay with graphics toggles.">
           <Toggle value={renderDebug.showDevPanel} onChange={v => onUpdate({ showDevPanel: v })} />
-        </CtrlRow>
-        <CtrlRow label="World Map Variant" desc="Brass portolan chart or classic flat modal.">
-          <SegControl
-            options={[{ value: 'chart', label: 'Chart' }, { value: 'classic', label: 'Classic' }]}
-            value={renderDebug.worldMapChart ? 'chart' : 'classic'}
-            onChange={v => onUpdate({ worldMapChart: v === 'chart' })}
-          />
         </CtrlRow>
         <CtrlRow label="Disable Transitions" desc="Kill all CSS transitions for snapshot testing." last>
           <Toggle value={renderDebug.disableTransitions} onChange={v => onUpdate({ disableTransitions: v })} />

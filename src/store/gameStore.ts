@@ -109,6 +109,7 @@ export type BuildingType = 'dock' | 'warehouse' | 'fort' | 'estate' | 'house' | 
 
 export type HousingClass = 'poor' | 'common' | 'merchant' | 'elite';
 export type HouseholdKind = 'residence' | 'shop' | 'workshop' | 'farmstead' | 'laboring' | 'elite';
+export type BuildingInstitution = 'customs' | 'factory' | 'captaincy' | 'company-house' | 'treasury' | 'authority';
 
 export interface BuildingHousehold {
   kind: HouseholdKind;
@@ -144,6 +145,10 @@ export interface Building {
   landmarkId?: string;       // e.g. 'tower-of-london' — triggers unique geometry
   faith?: string;            // for type === 'spiritual'; keys render geometry
   palaceStyle?: string;      // for type === 'palace'; keys render authority-building geometry from palaceStyles.ts
+  /** Optional role/authority tag layered onto an existing building type.
+   *  Keeps institutional variation (customs houses, factories, captaincies)
+   *  out of the BuildingType union so geometry stays procedural. */
+  institution?: BuildingInstitution;
   /** Crop type for farmhouses — drives both the label and the field renderer.
    *  Only set when the picked label corresponds to a crop we have geometry
    *  for. Other farmhouses fall back to plain labels with no rendered field.
@@ -551,7 +556,6 @@ export interface RenderDebugSettings {
   cityGroundWear: boolean;
   animalMarkers: boolean;
   disableTransitions: boolean;
-  worldMapChart: boolean;
   cityFieldOverlay: boolean;
   cityFieldMode: CityFieldKey | 'district';
   /** Floating religious plumb bobs above sacred sites. */
@@ -562,9 +566,8 @@ export interface RenderDebugSettings {
    *  the bespoke shrine geometry that backs procedural shrines. POIs are
    *  *world content* (the structures exist in fiction), not optional UI
    *  affordances, so default true. Separate from marker/beacon toggles so a player
-   *  who turns markers off doesn't lose visible buildings. */
+  *  who turns markers off doesn't lose visible buildings. */
   poiVisibility: boolean;
-  settingsV2: boolean;
 }
 
 export interface GameState {

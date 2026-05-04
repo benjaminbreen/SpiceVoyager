@@ -5,7 +5,7 @@ import { lerpColor } from './cityRandom';
 export const BUILDING_SHAKE_DURATION = 0.28;
 export const BUILDING_SHAKE_SWAY = 0.18;
 
-export type BuildingMaterialKind = Exclude<Part['mat'], 'dark'>;
+export type BuildingMaterialKind = Exclude<Part['mat'], 'dark' | 'litWindow'>;
 
 export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   grain: number;
@@ -18,7 +18,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
 }> = {
   white: {
     grain: 0.015,
-    lowerShade: 0.006,
+    lowerShade: 0.003,
     topLift: 0.26,
     shadeLift: 0.18,
     warmLift: [1.12, 1.08, 1.00],
@@ -27,7 +27,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   },
   mud: {
     grain: 0.090,
-    lowerShade: 0.090,
+    lowerShade: 0.045,
     topLift: 0.025,
     shadeLift: 0.0,
     warmLift: [1.02, 0.99, 0.94],
@@ -36,7 +36,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   },
   wood: {
     grain: 0.120,
-    lowerShade: 0.070,
+    lowerShade: 0.040,
     topLift: 0.015,
     shadeLift: 0.0,
     warmLift: [1.03, 0.98, 0.90],
@@ -54,7 +54,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   },
   stone: {
     grain: 0.070,
-    lowerShade: 0.060,
+    lowerShade: 0.035,
     topLift: 0.025,
     shadeLift: 0.0,
     warmLift: [1.02, 1.00, 0.96],
@@ -63,7 +63,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   },
   straw: {
     grain: 0.095,
-    lowerShade: 0.045,
+    lowerShade: 0.030,
     topLift: 0.050,
     shadeLift: 0.0,
     warmLift: [1.08, 1.03, 0.88],
@@ -72,7 +72,7 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   },
   tileRoof: {
     grain: 0.070,
-    lowerShade: 0.035,
+    lowerShade: 0.022,
     topLift: 0.040,
     shadeLift: 0.0,
     warmLift: [1.08, 0.96, 0.90],
@@ -80,17 +80,17 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
     sunLift: 0.05,
   },
   thatchRoof: {
-    grain: 0.140,
-    lowerShade: 0.070,
-    topLift: 0.030,
+    grain: 0.085,
+    lowerShade: 0.050,
+    topLift: 0.020,
     shadeLift: 0.0,
-    warmLift: [1.06, 1.02, 0.84],
-    roughnessVariation: 0.10,
-    sunLift: 0.05,
+    warmLift: [1.04, 1.01, 0.90],
+    roughnessVariation: 0.075,
+    sunLift: 0.035,
   },
   woodRoof: {
     grain: 0.115,
-    lowerShade: 0.060,
+    lowerShade: 0.038,
     topLift: 0.020,
     shadeLift: 0.0,
     warmLift: [1.02, 0.98, 0.92],
@@ -142,35 +142,153 @@ function createTileRoofTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function finishSurfaceTexture(canvas: HTMLCanvasElement, repeat = 1.4): THREE.CanvasTexture {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat, repeat);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function createLimewashTexture(): THREE.CanvasTexture {
+  const rng = mulberryTextureRng(0x11fef0);
+  const size = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#f4f0e4';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 900; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = 3 + rng() * 12;
+    const warm = rng() < 0.58;
+    const a = 0.035 + rng() * 0.055;
+    ctx.fillStyle = warm
+      ? `rgba(255, ${235 + Math.floor(rng() * 14)}, ${198 + Math.floor(rng() * 26)}, ${a})`
+      : `rgba(${200 + Math.floor(rng() * 35)}, ${215 + Math.floor(rng() * 25)}, 235, ${a})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.45 + rng() * 0.7), rng() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (let i = 0; i < 120; i++) {
+    const v = 220 + Math.floor(rng() * 30);
+    ctx.fillStyle = `rgba(${v}, ${v - 6}, ${v - 18}, 0.18)`;
+    ctx.fillRect(rng() * size, rng() * size, 1 + rng() * 3, 1);
+  }
+  return finishSurfaceTexture(canvas, 1.25);
+}
+
+function createStoneSurfaceTexture(): THREE.CanvasTexture {
+  const rng = mulberryTextureRng(0x57011e);
+  const size = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#b9b4a7';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 1400; i++) {
+    const v = 145 + Math.floor(rng() * 95);
+    const a = 0.05 + rng() * 0.12;
+    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.98)}, ${Math.floor(v * 0.90)}, ${a})`;
+    ctx.fillRect(rng() * size, rng() * size, rng() < 0.75 ? 1 : 2, 1);
+  }
+  for (let i = 0; i < 70; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    ctx.strokeStyle = `rgba(245, 238, 210, ${0.08 + rng() * 0.08})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (rng() - 0.5) * 16, y + (rng() - 0.5) * 10);
+    ctx.stroke();
+  }
+  return finishSurfaceTexture(canvas, 1.35);
+}
+
+function createMudPlasterTexture(): THREE.CanvasTexture {
+  const rng = mulberryTextureRng(0xc1a7);
+  const size = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#c7a477';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 1200; i++) {
+    const v = 130 + Math.floor(rng() * 95);
+    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.78)}, ${Math.floor(v * 0.48)}, ${0.045 + rng() * 0.09})`;
+    ctx.fillRect(rng() * size, rng() * size, 1 + Math.floor(rng() * 2), 1);
+  }
+  for (let i = 0; i < 180; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    ctx.strokeStyle = `rgba(236, 205, 145, ${0.10 + rng() * 0.10})`;
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (rng() - 0.5) * 10, y + 2 + rng() * 8);
+    ctx.stroke();
+  }
+  return finishSurfaceTexture(canvas, 1.45);
+}
+
+function createWoodSurfaceTexture(): THREE.CanvasTexture {
+  const rng = mulberryTextureRng(0x600d);
+  const size = 160;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#8c6b4f';
+  ctx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += 12) {
+    ctx.fillStyle = `rgba(245, 220, 180, ${0.035 + rng() * 0.05})`;
+    ctx.fillRect(0, y, size, 1);
+    ctx.fillStyle = `rgba(40, 24, 12, ${0.06 + rng() * 0.08})`;
+    ctx.fillRect(0, y + 7 + Math.floor(rng() * 3), size, 1);
+  }
+  for (let i = 0; i < 420; i++) {
+    const y = rng() * size;
+    const x = rng() * size;
+    ctx.strokeStyle = `rgba(${60 + Math.floor(rng() * 80)}, ${42 + Math.floor(rng() * 60)}, ${24 + Math.floor(rng() * 38)}, ${0.05 + rng() * 0.10})`;
+    ctx.lineWidth = 0.5 + rng() * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 18 + rng() * 42, y + (rng() - 0.5) * 3);
+    ctx.stroke();
+  }
+  return finishSurfaceTexture(canvas, 1.5);
+}
+
 function createThatchRoofTexture(): THREE.CanvasTexture {
   const rng = mulberryTextureRng(0x71a7c4);
   const size = 192;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#d8ca91';
+  ctx.fillStyle = '#c7b882';
   ctx.fillRect(0, 0, size, size);
   for (let y = 10; y < size; y += 24) {
-    ctx.fillStyle = 'rgba(56, 42, 20, 0.26)';
-    ctx.fillRect(0, y, size, 3);
-    ctx.fillStyle = 'rgba(255, 245, 190, 0.12)';
-    ctx.fillRect(0, y + 3, size, 2);
+    ctx.fillStyle = 'rgba(56, 42, 20, 0.13)';
+    ctx.fillRect(0, y, size, 2);
+    ctx.fillStyle = 'rgba(255, 245, 190, 0.07)';
+    ctx.fillRect(0, y + 2, size, 1);
   }
-  for (let i = 0; i < 1500; i++) {
+  for (let i = 0; i < 900; i++) {
     const x = rng() * size;
     const y = rng() * size;
     const len = 14 + rng() * 34;
     const shade = 64 + Math.floor(rng() * 110);
-    ctx.strokeStyle = `rgba(${shade}, ${Math.floor(shade * 0.86)}, ${Math.floor(shade * 0.46)}, ${0.20 + rng() * 0.26})`;
-    ctx.lineWidth = 0.8 + rng() * 1.0;
+    ctx.strokeStyle = `rgba(${shade}, ${Math.floor(shade * 0.86)}, ${Math.floor(shade * 0.50)}, ${0.10 + rng() * 0.14})`;
+    ctx.lineWidth = 0.55 + rng() * 0.65;
     ctx.beginPath();
     ctx.moveTo(x, y);
     ctx.lineTo(x + (rng() - 0.5) * 7, y + len);
     ctx.stroke();
   }
-  for (let i = 0; i < 450; i++) {
+  for (let i = 0; i < 260; i++) {
     const v = 95 + Math.floor(rng() * 130);
-    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.86)}, ${Math.floor(v * 0.52)}, 0.18)`;
+    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.86)}, ${Math.floor(v * 0.52)}, 0.10)`;
     ctx.fillRect(rng() * size, rng() * size, 2, 1);
   }
   const tex = new THREE.CanvasTexture(canvas);
@@ -224,17 +342,17 @@ export function addBuildingMaterialLighting(
     kind === 'tileRoof' ? `
         float roofCourse = 1.0 - smoothstep(0.018, 0.055, abs(fract((vBuildingLocalPos.y + 0.5) * 7.5) - 0.5));
         float roofRunBreak = 1.0 - smoothstep(0.012, 0.040, abs(fract((vBuildingLocalPos.x + 0.5) * 5.5) - 0.5));
-        diffuseColor.rgb *= 1.0 - roofCourse * 0.075 - roofRunBreak * 0.035;
+        diffuseColor.rgb *= 1.0 - roofCourse * 0.040 - roofRunBreak * 0.020;
       `
     : kind === 'thatchRoof' ? `
-        float thatchCourse = 1.0 - smoothstep(0.020, 0.070, abs(fract((vBuildingLocalPos.y + 0.5) * 5.2) - 0.5));
+        float thatchCourse = 1.0 - smoothstep(0.020, 0.075, abs(fract((vBuildingLocalPos.y + 0.5) * 4.2) - 0.5));
         float thatchFiber = buildingNoise(vec2(vBuildingLocalPos.x * 18.0, vBuildingLocalPos.y * 7.0)) * 2.0 - 1.0;
-        diffuseColor.rgb *= 1.0 - thatchCourse * 0.060 + thatchFiber * 0.045;
+        diffuseColor.rgb *= 1.0 - thatchCourse * 0.035 + thatchFiber * 0.025;
       `
     : kind === 'woodRoof' ? `
         float shingleCourse = 1.0 - smoothstep(0.016, 0.050, abs(fract((vBuildingLocalPos.y + 0.5) * 6.2) - 0.5));
         float shingleBreak = 1.0 - smoothstep(0.012, 0.040, abs(fract((vBuildingLocalPos.x + 0.5) * 4.8) - 0.5));
-        diffuseColor.rgb *= 1.0 - shingleCourse * 0.080 - shingleBreak * 0.035;
+        diffuseColor.rgb *= 1.0 - shingleCourse * 0.045 - shingleBreak * 0.020;
       `
     : '';
   mat.onBeforeCompile = (shader) => {
@@ -299,9 +417,26 @@ export function addBuildingMaterialLighting(
           min(diffuseColor.rgb * vec3(${t.warmLift[0].toFixed(3)}, ${t.warmLift[1].toFixed(3)}, ${t.warmLift[2].toFixed(3)}), vec3(1.0)),
           topBand * ${t.topLift.toFixed(3)}
         );
-        float sunVisible = smoothstep(0.03, 0.25, uBuildingSunDir.y);
-        float sunFacing = pow(max(dot(normalize(vBuildingWorldNormal), normalize(uBuildingSunDir)), 0.0), 0.75) * sunVisible;
+        vec3 buildingNormal = normalize(vBuildingWorldNormal);
+        vec3 buildingSunDir = normalize(uBuildingSunDir);
+        float sunVisible = smoothstep(0.03, 0.25, buildingSunDir.y);
+        float wrappedSun = clamp((dot(buildingNormal, buildingSunDir) + 0.34) / 1.34, 0.0, 1.0);
+        float sunFacing = pow(wrappedSun, 0.85) * sunVisible;
         diffuseColor.rgb *= 1.0 + sunFacing * ${t.sunLift.toFixed(3)};
+        float skyFacing = smoothstep(-0.20, 0.70, buildingNormal.y);
+        float sideFacing = 1.0 - abs(buildingNormal.y);
+        vec2 wallNormal = normalize(buildingNormal.xz + vec2(0.0001));
+        vec2 wallSun = normalize(buildingSunDir.xz + vec2(0.0001));
+        float wallSunFacing = dot(wallNormal, wallSun) * 0.5 + 0.5;
+        float verticalWall = smoothstep(0.45, 0.92, sideFacing);
+        float sideContrast = mix(0.92, 1.14, wallSunFacing) * sunVisible;
+        diffuseColor.rgb *= mix(1.0, sideContrast, verticalWall * 0.34);
+        float skyFill = (skyFacing * 0.055 + sideFacing * 0.035) * sunVisible;
+        diffuseColor.rgb = mix(
+          diffuseColor.rgb,
+          min(diffuseColor.rgb * vec3(1.08, 1.12, 1.16), vec3(1.0)),
+          skyFill
+        );
         ${roofDetailSnippet}
       }`
     );
@@ -327,7 +462,7 @@ export function damagedColor(base: [number, number, number], fraction: number): 
 
 export function applyGroundWeathering(base: [number, number, number], part: Part): [number, number, number] {
   if (!part.buildingId || !part.shakeCenter) return base;
-  if (part.mat === 'dark') return base;
+  if (part.mat === 'dark' || part.mat === 'litWindow') return base;
 
   const buildingMidY = part.shakeCenter[1];
   const normalizedHeight = THREE.MathUtils.clamp((part.pos[1] - (buildingMidY - 2.6)) / 3.2, 0, 1);
@@ -363,7 +498,7 @@ export function isDelicateDetailPart(part: Part, centerY: number) {
 
 export function isWindowLikePart(part: Part, centerY: number) {
   const volume = part.scale[0] * part.scale[1] * part.scale[2];
-  return part.mat === 'dark' && volume < 0.08 && part.scale[1] <= 0.8 && part.pos[1] > centerY - 1.2;
+  return (part.mat === 'dark' || part.mat === 'litWindow') && volume < 0.08 && part.scale[1] <= 0.8 && part.pos[1] > centerY - 1.2;
 }
 
 export function createBuildingGeometries() {
@@ -422,6 +557,7 @@ export function createBuildingGeometries() {
     box: new THREE.BoxGeometry(1, 1, 1),
     cylinder: new THREE.CylinderGeometry(1, 1, 1, 8),
     cone: new THREE.CylinderGeometry(0, 1, 1, 4),
+    roundCone: new THREE.CylinderGeometry(0, 1, 1, 18),
     gableRoof: createGableRoofGeometry(),
     shedRoof: createShedRoofGeometry(),
     sphere: new THREE.SphereGeometry(1, 16, 16),
@@ -429,23 +565,28 @@ export function createBuildingGeometries() {
   };
 }
 
-export function createBuildingMaterials(darkMat: THREE.MeshStandardMaterial, overlay = false) {
+export function createBuildingMaterials(darkMat: THREE.MeshStandardMaterial, litWindowMat: THREE.MeshStandardMaterial, overlay = false) {
   const offset = overlay
     ? { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }
     : {};
+  const limewashTexture = createLimewashTexture();
+  const mudTexture = createMudPlasterTexture();
+  const woodTexture = createWoodSurfaceTexture();
+  const stoneTexture = createStoneSurfaceTexture();
   const tileTexture = createTileRoofTexture();
   const thatchTexture = createThatchRoofTexture();
   const woodRoofTexture = createWoodRoofTexture();
   return {
-    white: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.94, ...offset }), 'white'),
-    mud: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c2a077', roughness: 1.0, ...offset }), 'mud'),
-    wood: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#5c4033', roughness: 0.86, ...offset }), 'wood'),
+    white: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: limewashTexture, roughness: 0.82, ...offset }), 'white'),
+    mud: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: mudTexture, roughness: 1.0, ...offset }), 'mud'),
+    wood: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: woodTexture, roughness: 0.82, ...offset }), 'wood'),
     terracotta: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c85a4c', roughness: 0.84, ...offset }), 'terracotta'),
-    stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#909090', roughness: 0.94, ...offset }), 'stone'),
+    stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: stoneTexture, roughness: 0.84, ...offset }), 'stone'),
     straw: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, ...offset }), 'straw'),
-    tileRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: tileTexture, roughness: 0.92, ...offset }), 'tileRoof'),
+    tileRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: tileTexture, roughness: 0.62, ...offset }), 'tileRoof'),
     thatchRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: thatchTexture, roughness: 1.0, ...offset }), 'thatchRoof'),
     woodRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: woodRoofTexture, roughness: 0.96, ...offset }), 'woodRoof'),
     dark: darkMat,
+    litWindow: litWindowMat,
   };
 }

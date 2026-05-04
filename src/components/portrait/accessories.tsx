@@ -3,22 +3,24 @@ import type { PortraitConfig } from '../../utils/portraitConfig';
 
 export function renderPipe(rng: () => number, cx: number, mouthY: number): React.ReactNode {
   const flip = rng() > 0.5 ? 1 : -1;
-  const px = cx + flip * 8;
-  const py = mouthY + 1;
-  const ex = cx + flip * 42;
-  const ey = mouthY + 10;
+  const px = cx + flip * 6;
+  const py = mouthY + 1.5;
+  const ex = cx + flip * (30 + rng() * 5);
+  const ey = mouthY + 7 + rng() * 2;
+  const bowlW = 5 + rng() * 1.2;
 
   return (
     <g key="pipe">
       <path d={`M ${px} ${py} L ${ex} ${ey}`}
-        stroke="#ddd4c4" strokeWidth="2.5" strokeLinecap="round" />
-      <path d={`M ${ex} ${ey} L ${ex - flip * 3} ${ey - 6} L ${ex + flip * 3} ${ey - 5} L ${ex + flip * 5} ${ey + 1} Z`}
-        fill="#c8bea8" />
-      <circle cx={ex + flip * 1} cy={ey - 5} r={2} fill="#e04400" opacity={0.7} />
+        stroke="#c8b89a" strokeWidth="2" strokeLinecap="round" />
+      <path d={`M ${ex - flip * 1} ${ey + 1}
+          C ${ex - flip * bowlW} ${ey - 3}, ${ex - flip * (bowlW - 1)} ${ey - 8}, ${ex + flip * 2} ${ey - 7}
+          C ${ex + flip * 5} ${ey - 5}, ${ex + flip * 5} ${ey + 1}, ${ex - flip * 1} ${ey + 1} Z`}
+        fill="#8a6848" stroke="#4a321f" strokeWidth="0.7" />
+      <ellipse cx={ex + flip * 1.5} cy={ey - 7} rx={3.2} ry={1.4} fill="#2a1a10" opacity={0.8} />
+      <circle cx={ex + flip * 1.6} cy={ey - 7.2} r={1.1} fill="#d86020" opacity={0.55} />
       <path d={`M ${ex} ${ey - 4} Q ${ex - flip * 4} ${ey - 14} ${ex + flip * 2} ${ey - 22}`}
-        stroke="rgba(200,200,200,0.25)" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <path d={`M ${ex + flip * 2} ${ey - 6} Q ${ex + flip * 6} ${ey - 16} ${ex - flip * 1} ${ey - 26}`}
-        stroke="rgba(200,200,200,0.15)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        stroke="rgba(210,210,200,0.18)" strokeWidth="1.4" fill="none" strokeLinecap="round" />
     </g>
   );
 }
@@ -29,15 +31,19 @@ export function renderEyePatch(
   const side = rng() > 0.5 ? -1 : 1;
   const ex = cx + side * eyeSpacing;
   const earX = cx + side * (headWidth + 2);
+  const strapBackY = eyeY - 12 + rng() * 3;
+  const strapLowY = eyeY + 5 + rng() * 2;
 
   return (
     <g key="eyepatch">
-      <path d={`M ${ex - side * 8} ${eyeY - 6} L ${earX} ${eyeY - 10}`}
-        stroke="#2a2218" strokeWidth="1.8" />
-      <path d={`M ${ex - side * 8} ${eyeY + 5} L ${earX} ${eyeY + 2}`}
-        stroke="#2a2218" strokeWidth="1.8" />
-      <ellipse cx={ex} cy={eyeY} rx={9} ry={7}
-        fill="#1a1610" stroke="#2a2218" strokeWidth="1" />
+      <path d={`M ${ex - side * 7} ${eyeY - 5} L ${earX} ${strapBackY}`}
+        stroke="#201912" strokeWidth="1.4" />
+      <path d={`M ${ex - side * 7} ${eyeY + 5} L ${earX} ${strapLowY}`}
+        stroke="#201912" strokeWidth="1.1" opacity={0.85} />
+      <ellipse cx={ex} cy={eyeY} rx={8.2} ry={6.7}
+        fill="#11100d" stroke="#34281d" strokeWidth="1" />
+      <path d={`M ${ex - side * 4} ${eyeY - 4} Q ${ex} ${eyeY - 6} ${ex + side * 4} ${eyeY - 3}`}
+        stroke="rgba(255,230,190,0.08)" strokeWidth="0.8" fill="none" />
     </g>
   );
 }

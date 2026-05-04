@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, type Variants } from 'framer-motion';
-import { Anchor, CalendarDays, Check, HeartPulse, Loader2, MapPinned, Package, Sailboat, Shield } from 'lucide-react';
+import { Anchor, CalendarDays, Check, HeartPulse, Loader2, Package, Sailboat, Shield } from 'lucide-react';
 import { FACTIONS } from '../constants/factions';
 import { PORT_FACTION, type Nationality } from '../store/gameStore';
 import { parchment } from '../theme/tokens';
 import { formatGameDateLong } from '../utils/gameDate';
 import { getPortBannerCandidates } from '../utils/portAssets';
 import { applyVoyageIncidentChoice, type VoyageEventTone, type VoyageResolution } from '../utils/voyageResolution';
+import { getSeaRouteFeatureLabels } from '../utils/worldPorts';
 
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 const SERIF = '"Fraunces", serif';
@@ -163,12 +164,12 @@ function ReportRow({
   detail?: string;
 }) {
   return (
-    <div className="rounded-xl border px-3 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]" style={{ borderColor: 'rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.028)' }}>
-      <div className="flex items-center gap-2 uppercase" style={{ color: parchment.dimGold, fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: '0.16em' }}>
+    <div className="rounded-lg border px-3 py-2.5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]" style={{ borderColor: 'rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.026)' }}>
+      <div className="flex items-center gap-2 uppercase" style={{ color: parchment.dimGold, fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: '0.12em' }}>
         <Icon size={12} strokeWidth={1.8} />
         {label}
       </div>
-      <div className="mt-1 text-[20px] font-[560] leading-none" style={{ color: tone, fontFamily: SERIF }}>{value}</div>
+      <div className="mt-1 text-[18px] font-[560] leading-none" style={{ color: tone, fontFamily: SERIF }}>{value}</div>
       {detail && <div className="mt-1 text-[11px] leading-snug" style={{ color: '#9ca3af', fontFamily: SANS }}>{detail}</div>}
     </div>
   );
@@ -183,38 +184,48 @@ function PrimaryButton({
   children: React.ReactNode;
   onClick: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const isLit = hovered && !busy;
+
   return (
     <motion.button
       type="button"
       data-testid="voyage-landfall"
       onClick={onClick}
       disabled={busy}
-      whileTap={!busy ? { scale: 0.985 } : undefined}
-      className="relative mt-5 flex min-h-[52px] w-full items-center justify-center gap-3 overflow-hidden rounded-xl border px-5 text-[12px] font-bold uppercase tracking-[0.28em] transition-colors disabled:cursor-wait"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      whileHover={!busy ? { y: -2 } : undefined}
+      whileTap={!busy ? { scale: 0.975 } : undefined}
+      className="relative mt-6 flex min-h-[54px] w-full items-center justify-center gap-3 overflow-hidden rounded-[5px] border px-5 text-[12px] font-bold uppercase transition-all disabled:cursor-wait"
       style={{
         fontFamily: MONO,
-        color: busy ? 'rgba(245,217,160,0.62)' : '#f5d9a0',
-        background: 'rgba(16, 14, 22, 0.92)',
-        borderColor: busy ? 'rgba(122,100,50,0.45)' : '#7a6432',
+        letterSpacing: '0.24em',
+        color: busy ? 'rgba(245,217,160,0.62)' : isLit ? '#ffffff' : '#f5d9a0',
+        background: isLit ? 'rgba(30, 23, 12, 0.94)' : 'rgba(16, 14, 22, 0.92)',
+        borderColor: busy ? 'rgba(122,100,50,0.45)' : isLit ? '#f5d9a0' : '#c9a84c',
         boxShadow: busy
           ? '0 0 0 1px rgba(122,100,50,0.2) inset, 0 2px 8px rgba(0,0,0,0.4)'
-          : '0 0 0 1px rgba(201,168,76,0.36) inset, 0 1px 0 rgba(255,238,184,0.34) inset, 0 -1px 0 rgba(78,54,20,0.45) inset, 0 0 0 4px rgba(201,168,76,0.12) inset, 0 0 18px rgba(201,168,76,0.24), 0 2px 10px rgba(0,0,0,0.5)',
+          : `0 0 0 1px rgba(201,168,76,0.42) inset, 0 1px 0 rgba(255,238,184,0.36) inset, 0 -1px 0 rgba(78,54,20,0.45) inset, 0 0 ${isLit ? 28 : 16}px rgba(201,168,76,${isLit ? 0.36 : 0.2}), 0 3px 12px rgba(0,0,0,0.56)`,
+        transition: 'all 0.18s ease',
       }}
     >
       {!busy && (
         <motion.span
           aria-hidden
-          animate={{ opacity: [0.5, 0.78, 0.5] }}
+          animate={{ opacity: isLit ? [0.7, 1, 0.7] : [0.42, 0.72, 0.42] }}
           transition={{ duration: 2.4, ease: 'easeInOut', repeat: Infinity }}
-          className="absolute inset-[2px] rounded-[10px]"
+          className="absolute inset-[2px] rounded-[3px] transition-opacity"
           style={{
-            background: 'linear-gradient(115deg, rgba(255,244,216,0.26), rgba(201,168,76,0.05) 36%, transparent 58%), linear-gradient(180deg, rgba(255,232,176,0.12), transparent 42%, rgba(55,35,12,0.18))',
-            boxShadow: '0 0 0 1px rgba(255,230,170,0.15) inset',
+            background: isLit
+              ? 'linear-gradient(115deg, rgba(255,244,216,0.34), rgba(201,168,76,0.12) 38%, transparent 62%), linear-gradient(180deg, rgba(255,232,176,0.18), transparent 46%, rgba(55,35,12,0.2))'
+              : 'linear-gradient(115deg, rgba(255,244,216,0.2), rgba(201,168,76,0.06) 36%, transparent 58%), linear-gradient(180deg, rgba(255,232,176,0.1), transparent 42%, rgba(55,35,12,0.16))',
+            boxShadow: `0 0 0 1px rgba(255,230,170,${isLit ? 0.26 : 0.15}) inset`,
           }}
         />
       )}
       <span className="relative z-10 flex items-center gap-3">
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
         {children}
       </span>
     </motion.button>
@@ -246,6 +257,7 @@ export default function PassageInterstitial({
   const onDoneRef = useRef(onDone);
   const doneRef = useRef(false);
   const [phase, setPhase] = useState<'passage' | 'incident' | 'report' | 'landing'>('passage');
+  const [passageLabelIndex, setPassageLabelIndex] = useState(0);
   const [resolvedVoyage, setResolvedVoyage] = useState(resolution);
 
   useEffect(() => {
@@ -255,6 +267,7 @@ export default function PassageInterstitial({
   useEffect(() => {
     setResolvedVoyage(resolution);
     setPhase('passage');
+    setPassageLabelIndex(0);
     doneRef.current = false;
   }, [resolution]);
 
@@ -272,6 +285,47 @@ export default function PassageInterstitial({
     return () => window.clearTimeout(id);
   }, [durationMs, hasIncident]);
 
+  const passageStatusLabels = useMemo(() => {
+    const features = getSeaRouteFeatureLabels(resolution.fromPortId, toPortId);
+    const firstFeature = features[0] ?? 'open water';
+    const secondFeature = features.find((feature) => feature !== firstFeature) ?? null;
+    return [
+      `Departing ${fromPort}`,
+      `Crossing ${firstFeature}`,
+      secondFeature ? `Making ${secondFeature}` : `Standing for ${toPort}`,
+      'Harbor in sight',
+    ];
+  }, [fromPort, resolution.fromPortId, toPort, toPortId]);
+
+  useEffect(() => {
+    if (phase !== 'passage') return;
+    setPassageLabelIndex(0);
+    const ids = passageStatusLabels.slice(1).map((_, index) => {
+      const progress = [0.32, 0.62, 0.86][index] ?? 0.86;
+      return window.setTimeout(() => {
+        setPassageLabelIndex(index + 1);
+      }, Math.max(350, Math.round(durationMs * progress)));
+    });
+    return () => ids.forEach((id) => window.clearTimeout(id));
+  }, [durationMs, passageStatusLabels, phase]);
+
+  useEffect(() => {
+    if (phase !== 'report') return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== 'Escape') return;
+      event.preventDefault();
+      void finish(resolvedVoyage);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    const autoCloseId = window.setTimeout(() => {
+      void finish(resolvedVoyage);
+    }, 7000);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.clearTimeout(autoCloseId);
+    };
+  }, [phase, resolvedVoyage]);
+
   function chooseIncident(choiceId: string) {
     const next = applyVoyageIncidentChoice(resolution, choiceId);
     setResolvedVoyage(next);
@@ -279,18 +333,12 @@ export default function PassageInterstitial({
   }
 
   const arrivalDay = currentDay + resolvedVoyage.actualDays;
-  const reportRows = useMemo(() => {
-    const rows: Array<{ icon: typeof Anchor; label: string; value: string; tone?: string; detail?: string }> = [
+  const reportRows = useMemo<Array<{ icon: typeof Anchor; label: string; value: string; tone?: string; detail?: string }>>(() => [
       { icon: Anchor, label: 'At sea', value: `${resolvedVoyage.actualDays} days`, detail: `${fromPort} to ${toPort}` },
       { icon: Package, label: 'Stores', value: `-${resolvedVoyage.provisionCost}`, tone: resolvedVoyage.provisionCost > 0 ? parchment.warm : parchment.teal, detail: 'provisions consumed' },
       { icon: Shield, label: 'Hull', value: resolvedVoyage.hullDamage > 0 ? `-${resolvedVoyage.hullDamage}` : 'No damage', tone: resolvedVoyage.hullDamage > 0 ? parchment.warm : parchment.teal },
       { icon: HeartPulse, label: 'Crew morale', value: resolvedVoyage.moraleDelta > 0 ? `+${resolvedVoyage.moraleDelta}` : `${resolvedVoyage.moraleDelta}`, tone: resolvedVoyage.moraleDelta < 0 ? '#e89b9b' : resolvedVoyage.moraleDelta > 0 ? parchment.teal : parchment.txt },
-    ];
-    if (resolvedVoyage.chartedRoute) {
-      rows.push({ icon: MapPinned, label: 'Route', value: 'Charted', tone: parchment.teal, detail: `${fromPort}-${toPort}` });
-    }
-    return rows;
-  }, [fromPort, resolvedVoyage, toPort]);
+    ], [fromPort, resolvedVoyage, toPort]);
 
   return (
     <motion.div
@@ -321,7 +369,7 @@ export default function PassageInterstitial({
         initial="hidden"
         animate="show"
         exit="exit"
-        className="relative w-full max-w-[620px] overflow-hidden rounded-xl px-5 py-5 text-center sm:px-6 sm:py-6"
+        className="relative w-full max-w-[620px] overflow-hidden rounded-xl px-5 py-6 text-center sm:px-6 sm:py-8"
         style={{
           backgroundColor: 'rgba(12,11,8,0.95)',
           backgroundImage: 'linear-gradient(115deg, rgba(201,168,76,0.13), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.035), transparent 24%)',
@@ -365,7 +413,9 @@ export default function PassageInterstitial({
               </div>
               <div className="mx-auto mt-4 h-px max-w-[300px]" style={{ background: `linear-gradient(to right, transparent, ${parchment.gold}80, transparent)` }} />
               <p className="mt-3 text-[12px] uppercase tracking-[0.16em]" style={{ color: hasIncident ? parchment.warm : parchment.teal }}>
-                {hasIncident ? 'A matter at sea requires orders' : 'Harbor in sight'}
+                {hasIncident && passageLabelIndex >= passageStatusLabels.length - 1
+                  ? 'A matter at sea requires orders'
+                  : passageStatusLabels[passageLabelIndex]}
               </p>
               <div className="mx-auto mt-3 h-1 max-w-[260px] overflow-hidden rounded-full" style={{ background: 'rgba(201,168,76,0.12)' }} aria-hidden>
                 <motion.div
@@ -406,18 +456,15 @@ export default function PassageInterstitial({
 
           {phase === 'report' && (
             <motion.div key="report" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.24 }}>
-              <h2 className="mx-auto mt-3 max-w-[500px] text-[30px] font-[560] leading-tight sm:text-[38px]" style={{ color: '#e8ddbf', fontFamily: SERIF, fontVariationSettings: '"opsz" 72, "SOFT" 18, "WONK" 1' }}>
+              <h2 className="mx-auto mt-7 max-w-[380px] text-[30px] font-[560] leading-tight sm:max-w-[420px] sm:text-[38px]" style={{ color: '#e8ddbf', fontFamily: SERIF, fontVariationSettings: '"opsz" 72, "SOFT" 18, "WONK" 1' }}>
                 {fromPort} to {toPort}
               </h2>
-              <p className="mx-auto mt-2 max-w-[470px] text-[13px] leading-relaxed text-slate-400" style={{ fontFamily: SANS }}>
-                The ship's clerk enters the voyage before the harbor boat comes alongside.
-              </p>
-              <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="mt-6 grid grid-cols-2 gap-2.5">
                 {reportRows.map((row) => (
                   <ReportRow key={row.label} {...row} />
                 ))}
               </div>
-              <div className="mt-5 max-h-[220px] space-y-2 overflow-y-auto pr-1">
+              <div className="mt-4 max-h-[250px] space-y-2 overflow-y-auto pr-1">
                 {resolvedVoyage.events.map((event, index) => (
                   <motion.div
                     key={`${event.day}:${event.title}:${index}`}

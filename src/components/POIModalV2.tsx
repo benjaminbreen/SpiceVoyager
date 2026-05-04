@@ -210,9 +210,8 @@ export function POIModalV2({
               </div>
             )}
 
-            {!hasModelPreview && <CroppedMedallionOverlay shell={shell} asset={medallionAsset} />}
-
             <header className={`relative border-b border-white/[0.08] px-5 py-4 md:px-8 md:py-6 ${hasModelPreview ? 'md:pr-[19rem] lg:pr-[22rem] xl:pr-[25rem]' : ''}`}>
+              {!hasModelPreview && <CroppedMedallionOverlay shell={shell} asset={medallionAsset} />}
               <button
                 onClick={() => { sfxClose(); onDismiss(); }}
                 onMouseEnter={() => sfxHover()}

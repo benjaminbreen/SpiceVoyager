@@ -16,6 +16,7 @@ import {
   PATH_INTERIOR_BIAS,
   ROAD_DENSITY,
 } from './cityLayout';
+import { applyPortRoleCounts, applyPortRoleInstitutions } from './portRoles';
 
 function mulberry32(a: number) {
   return function() {
@@ -30,6 +31,41 @@ function hashStr(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
   return h >>> 0;
+}
+
+function pointAtPolyline(points: [number, number][], t: number): [number, number] {
+  if (points.length === 0) return [0, 0];
+  if (points.length === 1) return points[0];
+  const clamped = Math.max(0, Math.min(1, t));
+  const lengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const len = Math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1]);
+    lengths.push(len);
+    total += len;
+  }
+  let target = total * clamped;
+  for (let i = 0; i < lengths.length; i++) {
+    const len = lengths[i];
+    if (target <= len || i === lengths.length - 1) {
+      const localT = len < 1e-6 ? 0 : target / len;
+      return [
+        points[i][0] + (points[i + 1][0] - points[i][0]) * localT,
+        points[i][1] + (points[i + 1][1] - points[i][1]) * localT,
+      ];
+    }
+    target -= len;
+  }
+  return points[points.length - 1];
+}
+
+function normalAtPolyline(points: [number, number][], t: number): [number, number] {
+  if (points.length < 2) return [1, 0];
+  const idx = Math.max(0, Math.min(points.length - 2, Math.floor(Math.max(0, Math.min(1, t)) * (points.length - 1))));
+  const dx = points[idx + 1][0] - points[idx][0];
+  const dz = points[idx + 1][1] - points[idx][1];
+  const len = Math.hypot(dx, dz);
+  return len < 1e-6 ? [1, 0] : [-dz / len, dx / len];
 }
 
 // `spiritual` and `landmark` sit at 0 across all scales — their counts are
@@ -91,6 +127,7 @@ const BRIDGE_ENTRY_PENALTY = 18;
 // the same scale. Cuts spaghetti-routing where multiple roads converge on
 // the same handful of bridges.
 const CANAL_ROAD_DENSITY_MULT = 0.7;
+const AMSTERDAM_QUAY_ROAD_OFFSET = 6.0;
 
 // Generator footprint per scale. Half-width in grid cells; world size is
 // (2 * GRID_RADIUS * cellSize) units per side. Huge ports need ~4× the area
@@ -539,7 +576,16 @@ export function generateCity(
   const prng = mulberry32(seed);
   const buildings: Building[] = [];
   const roads: Road[] = [];
-  const counts = SCALE_COUNTS[scale];
+  const baseCounts = applyPortRoleCounts(SCALE_COUNTS[scale], portId);
+  const denseCanalCity = portId === 'amsterdam' || portId === 'venice';
+  const counts: Record<BuildingType, number> = portId === 'venice'
+    ? {
+        ...baseCounts,
+        house: Math.max(baseCounts.house, 104),
+        farmhouse: 0,
+        shack: Math.min(baseCounts.shack, 2),
+      }
+    : baseCounts;
   const baseRoadCounts = ROAD_COUNTS[scale];
   // Canal cities historically used canals as primary transport corridors;
   // reduce surface-road density so the network doesn't pile every street
@@ -1786,6 +1832,41 @@ export function generateCity(
     }
   }
 
+  if (denseCanalCity && canalLayout && canalLayout.canals.length > 0) {
+    let quayIdx = 0;
+    const quayRoadOffset = portId === 'venice' ? 4.8 : AMSTERDAM_QUAY_ROAD_OFFSET;
+    const addCanalQuayRoad = (points: [number, number][]) => {
+      const cells: Cell[] = [];
+      let lastKey = '';
+      for (const [px, pz] of points) {
+        const cell = snap(px, pz);
+        if (!cell || !cell.isLand || cell.isBeach || cell.occupied) continue;
+        const key = `${cell.x},${cell.z}`;
+        if (key === lastKey) continue;
+        cells.push(cell);
+        lastKey = key;
+      }
+      if (cells.length < 2) return;
+      registerCells(cells);
+      roads.push(pathToRoad(`${portId}_quay_${quayIdx++}`, 'path', cells, 0, bridgeCells));
+    };
+
+    for (const canal of canalLayout.canals) {
+      const sampleCount = Math.max(8, Math.floor(canal.polyline.length * 0.7));
+      for (const side of [-1, 1] as const) {
+        const points: [number, number][] = [];
+        for (let i = 0; i < sampleCount; i++) {
+          const t = sampleCount === 1 ? 0 : i / (sampleCount - 1);
+          const [px, pz] = pointAtPolyline(canal.polyline, t);
+          const [nx, nz] = normalAtPolyline(canal.polyline, t);
+          const offset = canal.halfWidth + quayRoadOffset;
+          points.push([px + nx * offset * side, pz + nz * offset * side]);
+        }
+        addCanalQuayRoad(points);
+      }
+    }
+  }
+
   // ── 3b. Plazas ─────────────────────────────────────────────────────────────
   // Open squares sited at road junctions and landmark cues. Placed AFTER the
   // road network (so we can find junctions) but BEFORE houses (so their
@@ -1932,16 +2013,30 @@ export function generateCity(
   const anchorsByTier: Record<'avenue' | 'road' | 'path', RoadAnchor[]> = {
     avenue: [], road: [], path: [],
   };
+  const canalQuayAnchors: RoadAnchor[] = [];
   for (const r of roads) {
     if (r.tier === 'bridge') continue;
     // Houses cluster more heavily on avenues & roads than on paths. Tighter
     // spacing on the main street tiers produces continuous frontage walls;
     // paths keep looser spacing so alleys read as open space. Offsets match
     // the wider road tiers so frontages sit just off the kerb, not in it.
-    const spacing = r.tier === 'avenue' ? 3.2 : r.tier === 'road' ? 3.2 : 4.2;
-    const offset  = r.tier === 'avenue' ? 5.0 : r.tier === 'road' ? 3.7 : 3.0;
+    const spacing = denseCanalCity
+      ? portId === 'venice'
+        ? r.tier === 'avenue' ? 2.35 : r.tier === 'road' ? 2.35 : 2.55
+        : r.tier === 'avenue' ? 2.6 : r.tier === 'road' ? 2.6 : 2.8
+      : r.tier === 'avenue' ? 3.2 : r.tier === 'road' ? 3.2 : 4.2;
+    const offset = denseCanalCity
+      ? portId === 'venice'
+        ? r.tier === 'avenue' ? 4.0 : r.tier === 'road' ? 2.75 : 2.25
+        : r.tier === 'avenue' ? 4.4 : r.tier === 'road' ? 3.0 : 2.45
+      : r.tier === 'avenue' ? 5.0 : r.tier === 'road' ? 3.7 : 3.0;
     const bucket = anchorsByTier[r.tier as 'avenue' | 'road' | 'path'];
-    bucket.push(...sampleRoadAnchors(r, spacing, offset));
+    const anchors = sampleRoadAnchors(r, spacing, offset);
+    if (denseCanalCity && r.id.startsWith(`${portId}_quay_`)) {
+      canalQuayAnchors.push(...anchors);
+    } else {
+      bucket.push(...anchors);
+    }
   }
   // Shuffle within each tier — preserves tier ordering but randomizes which
   // sides/slots get filled first so repeated roads don't always fill left-first.
@@ -1951,10 +2046,12 @@ export function generateCity(
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
   };
+  shuffleInPlace(canalQuayAnchors);
   shuffleInPlace(anchorsByTier.avenue);
   shuffleInPlace(anchorsByTier.road);
   shuffleInPlace(anchorsByTier.path);
   const houseAnchors: RoadAnchor[] = [
+    ...canalQuayAnchors,
     ...anchorsByTier.avenue,
     ...anchorsByTier.road,
     ...anchorsByTier.path,
@@ -1970,7 +2067,7 @@ export function generateCity(
     if (scale === 'Small' || scale === 'Medium' || scale === 'Large') return base;
     const radiusWorld = gridRadius * cellSize;
     const centrality = Math.max(0, Math.min(1, 1 - cellDistToCenter / (radiusWorld * 0.72)));
-    const maxGrowth = scale === 'Huge' ? 0.58 : 0.42;
+    const maxGrowth = portId === 'venice' ? 0.22 : scale === 'Huge' ? 0.58 : 0.42;
     const factor = 1 + centrality * maxGrowth;
     return [base[0] * factor, base[1], base[2] * factor];
   };
@@ -1990,7 +2087,11 @@ export function generateCity(
     // slightly deeper. Footprint stays within the grid cell so the standard
     // full-footprint occupancy check below guarantees neighbours can't
     // overlap — flush (zero padding) is the densest they can get.
-    if (type === 'house' && anchor.tier === 'avenue') {
+    if (type === 'house' && denseCanalCity) {
+      size = portId === 'venice'
+        ? [size[0] * 1.04, size[1] * 1.35, size[2] * 1.02]
+        : [size[0] * 0.92, size[1] * 1.08, size[2] * 0.96];
+    } else if (type === 'house' && anchor.tier === 'avenue') {
       size = [size[0] * 0.85, size[1] * 1.15, size[2] * 1.1];
     }
 
@@ -2012,7 +2113,7 @@ export function generateCity(
     // Avenue rowhouses reserve only their footprint (pad=0) so neighbours
     // can stand flush; road/path houses keep the 1-cell breathing buffer so
     // alleys read as breathing alleys rather than continuous walls.
-    const pad = anchor.tier === 'avenue' ? 0 : 1;
+    const pad = (anchor.tier === 'avenue' || denseCanalCity) ? 0 : 1;
     for (let r = -radiusZ - pad; r <= radiusZ + pad; r++) {
       for (let c = -radiusX - pad; c <= radiusX + pad; c++) {
         const check = gridMap.get(`${cell.x + c * cellSize},${cell.z + r * cellSize}`);
@@ -2021,7 +2122,8 @@ export function generateCity(
     }
     // Less jitter on higher-tier roads — avenues are the frontage wall and
     // must read as a continuous row, paths can kink freely.
-    const jitter = anchor.tier === 'avenue' ? 0.03
+    const jitter = denseCanalCity ? 0.025
+                 : anchor.tier === 'avenue' ? 0.03
                  : anchor.tier === 'road'   ? 0.07
                  : 0.18;
     buildings.push({
@@ -2177,6 +2279,8 @@ export function generateCity(
     }
   }
 
+  applyPortRoleInstitutions(buildings, portX, portZ, portId);
+
   // ── 7. Labels ──────────────────────────────────────────────────────────────
   for (const b of buildings) {
     // Farmhouses already received their label in pass 5 from pickFarmCrop so
@@ -2194,7 +2298,7 @@ export function generateCity(
       const result = generateBuildingLabel(
         b.id, b.type, culture, portName,
         b.position[1], distToCenter, moisture, labelSeed, nationality, region,
-        { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle, portId },
+        { faith: b.faith, landmarkId: b.landmarkId, palaceStyle: b.palaceStyle, portId, institution: b.institution },
       );
       b.label = result.label;
       b.labelSub = result.sub;

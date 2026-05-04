@@ -179,6 +179,11 @@ export function Ship() {
   const apparentWindVector = useRef(new THREE.Vector2());
   const shipForwardVector = useRef(new THREE.Vector2());
   const shipRightVector = useRef(new THREE.Vector2());
+
+  const applyShipImpulse = (x: number, z: number, max = 7) => {
+    recoilVelX.current = THREE.MathUtils.clamp(recoilVelX.current + x, -max, max);
+    recoilVelZ.current = THREE.MathUtils.clamp(recoilVelZ.current + z, -max, max);
+  };
   
   // Input state
   const keys = useRef({ w: false, a: false, s: false, d: false, shift: false });
@@ -735,7 +740,7 @@ export function Ship() {
 
   // Muzzle flash on swivel gun fire
   useEffect(() => {
-    const handleFired = () => {
+    const handleFired = (e: Event) => {
       if (!group.current) return;
       const shipPos = group.current.position;
       const shipRot = rotation.current;
@@ -756,6 +761,12 @@ export function Ship() {
       const dirX = Math.sin(aimAngle) * cosP;
       const dirY = sinP;
       const dirZ = Math.cos(aimAngle) * cosP;
+      const eventDetail = (e as CustomEvent).detail as { weaponType?: string; dirX?: number; dirZ?: number } | undefined;
+      const recoilScale = eventDetail?.weaponType === 'fireRocket' ? 0.18 : eventDetail?.weaponType === 'falconet' ? 0.52 : 0.32;
+      const recoilX = Number.isFinite(eventDetail?.dirX) ? eventDetail!.dirX! : dirX;
+      const recoilZ = Number.isFinite(eventDetail?.dirZ) ? eventDetail!.dirZ! : dirZ;
+      applyShipImpulse(-recoilX * recoilScale, -recoilZ * recoilScale, 5);
+      heelVelocity.current += (Math.random() - 0.5) * recoilScale * 0.05;
 
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
         const p = muzzleParticles.current[i];
@@ -784,14 +795,22 @@ export function Ship() {
   useEffect(() => {
     const handleBroadside = (e: Event) => {
       if (!group.current) return;
-      const side = (e as CustomEvent).detail?.side as 'port' | 'starboard';
+      const detail = (e as CustomEvent).detail as { side?: 'port' | 'starboard'; gunCount?: number; totalWeight?: number } | undefined;
+      const side = detail?.side as 'port' | 'starboard';
       const shipPos = group.current.position;
       const shipRot = rotation.current;
       // Perpendicular direction
       const sideAngle = side === 'port' ? shipRot + Math.PI / 2 : shipRot - Math.PI / 2;
       const sideX = Math.sin(sideAngle);
       const sideZ = Math.cos(sideAngle);
-      addCameraImpulse(-sideX, -sideZ, 0.22, 0.02);
+      const impulse = THREE.MathUtils.clamp(
+        0.75 + (detail?.gunCount ?? 1) * 0.18 + (detail?.totalWeight ?? 0) * 0.025,
+        0.85,
+        3.3,
+      );
+      applyShipImpulse(-sideX * impulse, -sideZ * impulse, 7);
+      heelVelocity.current += (side === 'port' ? -1 : 1) * THREE.MathUtils.clamp(impulse * 0.07, 0.08, 0.24);
+      addCameraImpulse(-sideX, -sideZ, 0.22 + impulse * 0.04, 0.02);
 
       // Burst particles outward from the firing side
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
@@ -816,6 +835,21 @@ export function Ship() {
     };
     window.addEventListener('broadside-fired', handleBroadside);
     return () => window.removeEventListener('broadside-fired', handleBroadside);
+  }, []);
+
+  useEffect(() => {
+    const handleHitImpulse = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { dirX?: number; dirZ?: number; strength?: number } | undefined;
+      const dx = detail?.dirX ?? 0;
+      const dz = detail?.dirZ ?? 0;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.001) return;
+      const strength = THREE.MathUtils.clamp(detail?.strength ?? 2.2, 0.8, 5.5);
+      applyShipImpulse((dx / len) * strength, (dz / len) * strength, 8);
+      heelVelocity.current += (Math.random() > 0.5 ? 1 : -1) * Math.min(0.3, strength * 0.055);
+    };
+    window.addEventListener('player-ship-hit-impulse', handleHitImpulse);
+    return () => window.removeEventListener('player-ship-hit-impulse', handleHitImpulse);
   }, []);
 
   // Reset net state on unmount (world reload / teleport)

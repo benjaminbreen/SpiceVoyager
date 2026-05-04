@@ -32,14 +32,15 @@ const AFTER_NIGHT_SRC = '/music/After%20the%20Night.mp3';
 // Splash intro track (world-map-other-sky.mp3) layers over the ambient-engine
 // waves bed during the ClaudeSplashGlobe screen, so it gets a lower multiplier
 // than the previous Opening did.
-const SPLASH_TRACK_GAIN = 0.55;
+const DEFAULT_MUSIC_VOLUME = 0.04;
+const SPLASH_TRACK_GAIN = 0.35;
 
 class AudioManager {
   private splashTrack: HTMLAudioElement | null = null;
   private overworldTrack: HTMLAudioElement | null = null;
   private overworldTimer: ReturnType<typeof setTimeout> | null = null;
   private splashPlaying = false;
-  private musicVolume = 0.10;
+  private musicVolume = DEFAULT_MUSIC_VOLUME;
   private trackIndex = -1;
   private transitioning = false;
   private fightTrack: HTMLAudioElement | null = null;
@@ -426,7 +427,9 @@ class AudioManager {
       const entry = OVERWORLD_TRACKS[this.trackIndex];
       if (entry) this.overworldTrack.volume = this.musicVolume * entry.gain;
     }
+    if (this.fightTrack) this.fightTrack.volume = this.musicVolume * 0.35;
     if (this.portTrack) this.portTrack.volume = this.musicVolume * this.portTrackGain;
+    if (this.innTrack) this.innTrack.volume = this.musicVolume * 0.45;
   }
 
   getMusicVolume() {

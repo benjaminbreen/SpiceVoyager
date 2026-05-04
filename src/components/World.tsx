@@ -47,6 +47,7 @@ type WearFeature = {
   radius: number;
   strength: number;
   kind: 'road' | 'building';
+  urbanProfile?: 'venice';
 };
 
 function cityWearColor(waterPaletteId: string, kind: WearFeature['kind']): [number, number, number] {
@@ -84,7 +85,7 @@ function addWearFeature(
   }
 }
 
-function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, roads: Road[]) {
+function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, roads: Road[], urbanProfile?: WearFeature['urbanProfile']) {
   for (const road of roads) {
     const pts = road.points;
     if (!pts || pts.length < 2 || road.tier === 'bridge') continue;
@@ -96,6 +97,8 @@ function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number,
       road.tier === 'avenue' ? 0.86 :
       road.tier === 'road' ? 0.72 :
       0.54;
+    const radiusBoost = urbanProfile === 'venice' ? 1.55 : 1;
+    const strengthBoost = urbanProfile === 'venice' ? 1.22 : 1;
     for (let i = 0; i < pts.length - 1; i++) {
       const [ax, , az] = pts[i];
       const [bx, , bz] = pts[i + 1];
@@ -106,19 +109,23 @@ function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number,
         addWearFeature(grid, cellSize, {
           x: ax + (bx - ax) * t,
           z: az + (bz - az) * t,
-          radius,
-          strength,
+          radius: radius * radiusBoost,
+          strength: Math.min(1, strength * strengthBoost),
           kind: 'road',
+          urbanProfile,
         });
       }
     }
   }
 }
 
-function addBuildingWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, buildings: Building[]) {
+function addBuildingWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, buildings: Building[], urbanProfile?: WearFeature['urbanProfile']) {
   for (const b of buildings) {
     const [x, , z] = b.position;
     const footprint = Math.max(b.scale[0], b.scale[2]);
+    const veniceAnchor =
+      urbanProfile === 'venice' &&
+      (b.type === 'house' || b.type === 'palace' || b.type === 'landmark' || b.type === 'market' || b.type === 'plaza' || b.type === 'spiritual');
     const anchorBoost =
       b.type === 'dock' || b.type === 'warehouse' || b.type === 'market' || b.type === 'plaza' ? 1.35 :
       b.type === 'fort' || b.type === 'palace' || b.type === 'landmark' ? 1.15 :
@@ -126,13 +133,15 @@ function addBuildingWearFeatures(grid: Map<string, WearFeature[]>, cellSize: num
     addWearFeature(grid, cellSize, {
       x,
       z,
-      radius: footprint * 0.95 + 6.0 * anchorBoost,
+      radius: footprint * (urbanProfile === 'venice' ? 1.55 : 0.95) + (urbanProfile === 'venice' ? 12.0 : 6.0) * anchorBoost,
       strength:
+        veniceAnchor ? 0.92 :
         b.type === 'plaza' ? 0.92 :
         b.type === 'dock' || b.type === 'warehouse' || b.type === 'market' ? 0.78 :
         b.type === 'house' || b.type === 'shack' || b.type === 'farmhouse' ? 0.56 :
         0.62,
       kind: 'building',
+      urbanProfile,
     });
   }
 }
@@ -150,8 +159,9 @@ function applyCityGroundWear(
   const cellSize = 18;
   const grid = new Map<string, WearFeature[]>();
   for (const port of ports) {
-    addRoadWearFeatures(grid, cellSize, port.roads ?? []);
-    addBuildingWearFeatures(grid, cellSize, port.buildings ?? []);
+    const urbanProfile = port.id === 'venice' ? 'venice' : undefined;
+    addRoadWearFeatures(grid, cellSize, port.roads ?? [], urbanProfile);
+    addBuildingWearFeatures(grid, cellSize, port.buildings ?? [], urbanProfile);
   }
 
   const roadTarget = cityWearColor(waterPaletteId, 'road');
@@ -166,6 +176,8 @@ function applyCityGroundWear(
     const gz = Math.floor(z / cellSize);
     let roadWear = 0;
     let buildingWear = 0;
+    let veniceRoadWear = 0;
+    let veniceBuildingWear = 0;
     for (let ox = -1; ox <= 1; ox++) {
       for (let oz = -1; oz <= 1; oz++) {
         const bucket = grid.get(`${gx + ox},${gz + oz}`);
@@ -177,24 +189,45 @@ function applyCityGroundWear(
           if (dist >= feature.radius) continue;
           const t = 1 - dist / feature.radius;
           const falloff = t * t * (3 - 2 * t);
-          if (feature.kind === 'road') roadWear = Math.max(roadWear, falloff * feature.strength);
-          else buildingWear = Math.max(buildingWear, falloff * feature.strength);
+          const weighted = falloff * feature.strength;
+          if (feature.kind === 'road') roadWear = Math.max(roadWear, weighted);
+          else buildingWear = Math.max(buildingWear, weighted);
+          if (feature.urbanProfile === 'venice') {
+            if (feature.kind === 'road') veniceRoadWear = Math.max(veniceRoadWear, weighted);
+            else veniceBuildingWear = Math.max(veniceBuildingWear, weighted);
+          }
         }
       }
     }
     const wear = Math.max(roadWear, buildingWear);
     if (wear <= 0.01) continue;
     const heightFade = 1 - Math.min(1, Math.max(0, (height - 9) / 12));
-    const amount = Math.min(0.92, wear * heightFade * 1.25);
+    const veniceWear = Math.max(veniceRoadWear, veniceBuildingWear);
+    const amount = Math.min(0.96, wear * heightFade * (veniceWear > 0 ? 1.65 : 1.25));
     const mixTotal = roadWear + buildingWear;
     const roadMix = mixTotal > 0 ? roadWear / mixTotal : 0.5;
-    const target: [number, number, number] = [
+    const veniceMixTotal = veniceRoadWear + veniceBuildingWear;
+    const veniceMix = veniceMixTotal > 0 ? veniceRoadWear / veniceMixTotal : 0.5;
+    const veniceTarget: [number, number, number] = [
+      0.47 + (0.66 - 0.47) * veniceMix,
+      0.42 + (0.60 - 0.42) * veniceMix,
+      0.34 + (0.52 - 0.34) * veniceMix,
+    ];
+    const genericTarget: [number, number, number] = [
       buildingTarget[0] + (roadTarget[0] - buildingTarget[0]) * roadMix,
       buildingTarget[1] + (roadTarget[1] - buildingTarget[1]) * roadMix,
       buildingTarget[2] + (roadTarget[2] - buildingTarget[2]) * roadMix,
     ];
+    const wetEdge = veniceWear > 0 && height < SEA_LEVEL + 1.0 ? Math.min(0.45, (1.0 - Math.max(0, height - SEA_LEVEL)) * 0.45) : 0;
+    const target: [number, number, number] = veniceWear > 0
+      ? [
+          veniceTarget[0] + (0.33 - veniceTarget[0]) * wetEdge,
+          veniceTarget[1] + (0.34 - veniceTarget[1]) * wetEdge,
+          veniceTarget[2] + (0.32 - veniceTarget[2]) * wetEdge,
+        ]
+      : genericTarget;
     scratch.setRGB(colors.getX(i), colors.getY(i), colors.getZ(i));
-    const dustLift = amount * (waterPaletteId === 'temperate' ? 0.035 : 0.06);
+    const dustLift = veniceWear > 0 ? amount * 0.015 : amount * (waterPaletteId === 'temperate' ? 0.035 : 0.06);
     scratch.r = scratch.r + (target[0] - scratch.r) * amount + dustLift;
     scratch.g = scratch.g + (target[1] - scratch.g) * amount + dustLift * 0.82;
     scratch.b = scratch.b + (target[2] - scratch.b) * amount + dustLift * 0.42;
@@ -332,6 +365,7 @@ export function World() {
     moonPosition,
     moonIntensity,
     shadowRadius,
+    shadowIntensity,
   } = useMemo(
     () => computeDayLighting({ timeOfDay, worldSeed, waterPaletteId }),
     [timeOfDay, waterPaletteId, worldSeed],
@@ -1888,6 +1922,7 @@ export function World() {
         shadow-bias={-0.0000}
         shadow-normalBias={0.0}
         shadow-radius={shadowRadius}
+        shadow-intensity={shadowIntensity}
       >
         <orthographicCamera attach="shadow-camera" args={[-120, 120, 120, -120, 1, 400]} />
       </directionalLight>

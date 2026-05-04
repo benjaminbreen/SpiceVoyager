@@ -20,33 +20,34 @@ export function renderEars(
 ): React.ReactNode {
   const earTop = earY - earSize * 0.4;
   const earBot = earY + earSize * 0.6;
+  const protrude = Math.max(6, earSize * 0.62);
   return (
     <g key="ears">
       <path
-        d={`M ${cx - hw} ${earTop} C ${cx - hw - 6} ${earTop + 2}, ${cx - hw - 7} ${earBot - 2}, ${cx - hw} ${earBot}
-            C ${cx - hw - 2} ${earBot - earSize * 0.15}, ${cx - hw - 2} ${earTop + earSize * 0.15}, ${cx - hw} ${earTop} Z`}
+        d={`M ${cx - hw + 1} ${earTop} C ${cx - hw - protrude} ${earTop + 2}, ${cx - hw - protrude} ${earBot - 2}, ${cx - hw + 1} ${earBot}
+            C ${cx - hw - 1.5} ${earBot - earSize * 0.15}, ${cx - hw - 1.5} ${earTop + earSize * 0.15}, ${cx - hw + 1} ${earTop} Z`}
         fill={`url(#skin-${uid})`}
       />
       <path
-        d={`M ${cx - hw - 1} ${earTop + 1} C ${cx - hw - 5.5} ${earTop + 3}, ${cx - hw - 6.5} ${earBot - 3}, ${cx - hw - 1} ${earBot - 1}`}
-        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
+        d={`M ${cx - hw - 1.5} ${earTop + 1} C ${cx - hw - protrude + 1} ${earTop + 3}, ${cx - hw - protrude} ${earBot - 3}, ${cx - hw - 1.5} ${earBot - 1}`}
+        stroke={skin.blush} strokeWidth="2" fill="none" opacity={0.36} strokeLinecap="round"
       />
       <path
-        d={`M ${cx - hw - 1} ${earTop + 3} C ${cx - hw - 4} ${earTop + 5}, ${cx - hw - 4} ${earBot - 4}, ${cx - hw - 1} ${earBot - 3}`}
-        stroke="rgba(0,0,0,0.12)" strokeWidth="0.8" fill="none"
+        d={`M ${cx - hw - 1.5} ${earTop + 3} C ${cx - hw - 5} ${earTop + 5}, ${cx - hw - 5} ${earBot - 4}, ${cx - hw - 1.5} ${earBot - 3}`}
+        stroke="rgba(0,0,0,0.14)" strokeWidth="0.85" fill="none"
       />
       <path
-        d={`M ${cx + hw} ${earTop} C ${cx + hw + 6} ${earTop + 2}, ${cx + hw + 7} ${earBot - 2}, ${cx + hw} ${earBot}
-            C ${cx + hw + 2} ${earBot - earSize * 0.15}, ${cx + hw + 2} ${earTop + earSize * 0.15}, ${cx + hw} ${earTop} Z`}
+        d={`M ${cx + hw - 1} ${earTop} C ${cx + hw + protrude} ${earTop + 2}, ${cx + hw + protrude} ${earBot - 2}, ${cx + hw - 1} ${earBot}
+            C ${cx + hw + 1.5} ${earBot - earSize * 0.15}, ${cx + hw + 1.5} ${earTop + earSize * 0.15}, ${cx + hw - 1} ${earTop} Z`}
         fill={`url(#skin-${uid})`}
       />
       <path
-        d={`M ${cx + hw + 1} ${earTop + 1} C ${cx + hw + 5.5} ${earTop + 3}, ${cx + hw + 6.5} ${earBot - 3}, ${cx + hw + 1} ${earBot - 1}`}
-        stroke={skin.blush} strokeWidth="2.2" fill="none" opacity={0.35} strokeLinecap="round"
+        d={`M ${cx + hw + 1.5} ${earTop + 1} C ${cx + hw + protrude - 1} ${earTop + 3}, ${cx + hw + protrude} ${earBot - 3}, ${cx + hw + 1.5} ${earBot - 1}`}
+        stroke={skin.blush} strokeWidth="2" fill="none" opacity={0.36} strokeLinecap="round"
       />
       <path
-        d={`M ${cx + hw + 1} ${earTop + 3} C ${cx + hw + 4} ${earTop + 5}, ${cx + hw + 4} ${earBot - 4}, ${cx + hw + 1} ${earBot - 3}`}
-        stroke="rgba(0,0,0,0.12)" strokeWidth="0.8" fill="none"
+        d={`M ${cx + hw + 1.5} ${earTop + 3} C ${cx + hw + 5} ${earTop + 5}, ${cx + hw + 5} ${earBot - 4}, ${cx + hw + 1.5} ${earBot - 3}`}
+        stroke="rgba(0,0,0,0.14)" strokeWidth="0.85" fill="none"
       />
     </g>
   );

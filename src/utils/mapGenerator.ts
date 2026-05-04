@@ -106,6 +106,16 @@ function findPortDef(id: string): PortDefinition | undefined {
   return CORE_PORTS.find(p => p.id === id);
 }
 
+function inverseRotateFromOpen(wrx: number, wrz: number, openDir: PortDefinition['openDirection']): [number, number] {
+  const angle = resolveDirRadians(openDir);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return [
+    wrx * cos - wrz * sin,
+    wrx * sin + wrz * cos,
+  ];
+}
+
 /**
  * Distribute port positions across the world using a relaxed grid approach.
  * For ports with archetypes, we place them first at spread-out positions,
@@ -229,6 +239,16 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
       }
     }
 
+    if (pos.def?.geography === 'lagoon') {
+      // Venice is not a generic coastline port: the playable city sits on the
+      // authored island core inside the lagoon, while the best "coastal" cell
+      // heuristic tends to snap to the Lido or mainland marsh. Center city
+      // generation on the island core used by the lagoon terrain shape.
+      const [lx, lz] = inverseRotateFromOpen(-0.04, 0.24, pos.def.openDirection);
+      portX = pos.x + lx * 450;
+      portZ = pos.z + lz * 450;
+    }
+
     // Search for a good coastal position near the distributed position.
     // For archetype ports, start within the shaped area; if nothing usable is
     // found, retry with a wider radius so wide-channel estuaries / harbors don't
@@ -241,11 +261,16 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
     // spot. Without this, a hilly port (Lisbon's seven hills) gets dragged
     // back to the flat Atlantic mouth because the inland coast is penalized
     // for being ringed by steep ground.
-    const hasPositionHint = !!(pos.def && pos.def.riverPortPosition && pos.def.riverPortPosition > 0);
+    const hasPositionHint = !!(pos.def && (
+      (pos.def.riverPortPosition && pos.def.riverPortPosition > 0) ||
+      pos.def.geography === 'lagoon'
+    ));
     const baseRadius = pos.def && pos.def.geography !== 'archipelago'
       ? (hasPositionHint ? 70 : ARCHETYPE_RADIUS * 0.6)
       : 200;
-    const searchRadii = pos.def && pos.def.geography !== 'archipelago'
+    const searchRadii = pos.def?.geography === 'lagoon'
+      ? [0]
+      : pos.def && pos.def.geography !== 'archipelago'
       ? (hasPositionHint
           ? [baseRadius, baseRadius * 2]
           : [baseRadius, ARCHETYPE_RADIUS * 1.5, ARCHETYPE_RADIUS * 3.0])
@@ -366,13 +391,15 @@ export function generateMap(config: MapConfig = DEFAULT_MAP_CONFIG) {
           getPOIsForPort(override.id),
           override.id,
         );
-        const hinterland = generateHinterland(
-          portX, portZ,
-          override.scale,
-          config.seed + portIdx,
-          city.buildings,
-          city.roads,
-        );
+        const hinterland = override.id === 'venice'
+          ? { buildings: [], roads: [] }
+          : generateHinterland(
+              portX, portZ,
+              override.scale,
+              config.seed + portIdx,
+              city.buildings,
+              city.roads,
+            );
         // Procedural shrines (Phase 2 of the POI system). One archetype
         // produces variable-scale spiritual buildings out in the hinterland,
         // each paired with a POI so the marker/modal pipeline picks them up.

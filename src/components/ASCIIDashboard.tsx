@@ -37,6 +37,7 @@ const TABS: { id: DashTab; label: string; accent: string }[] = [
 const MONO = '"SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace';
 const SERIF = '"Fraunces", serif';
 const SANS = '"DM Sans", sans-serif';
+const CREW_ROW_GRID = 'md:[grid-template-columns:96px_minmax(210px,1.5fr)_112px_104px_86px_110px_18px]';
 
 // ── Health flag styling ──────────────────────────────────────────────────
 
@@ -1529,7 +1530,7 @@ function CrewRoster({ crew, onSelect }: { crew: CrewMember[]; onSelect: (id: str
         className="mt-4 hidden md:block w-full max-w-4xl px-2 md:px-4"
       >
         <div
-          className="grid items-center gap-4 px-4 pb-2 md:[grid-template-columns:72px_minmax(210px,1.5fr)_128px_120px_86px_126px_18px]"
+          className={`grid items-center gap-4 px-4 pb-2 ${CREW_ROW_GRID}`}
           style={{
             borderBottom: `1px solid ${CLR.rule}30`,
           }}
@@ -2423,7 +2424,7 @@ function CrewRosterRow({ member, status, index, dayCount, onClick, onRoleChange,
   const isOdd = index % 2 === 1;
   const stripeBg = isOdd && !isCaptain ? CLR.bright + '03' : 'transparent';
   const daysServed = Math.max(1, dayCount - member.hireDay);
-  const portraitSize = isCaptain ? 72 : 64;
+  const portraitSize = isCaptain ? 88 : 80;
   const statusColor = status?.tone === 'tension'
     ? CLR.yellow
     : status?.tone === 'secret'
@@ -2440,7 +2441,7 @@ function CrewRosterRow({ member, status, index, dayCount, onClick, onRoleChange,
     >
       {/* Separator after captain */}
       <div
-        className="w-full rounded-md transition-all duration-150 cursor-pointer group px-3 md:px-4 py-2.5"
+        className="w-full rounded-md transition-all duration-150 cursor-pointer group px-3 md:px-4 py-3"
         style={{
           backgroundColor: isCaptain ? CLR.gold + '0a' : stripeBg,
           border: `1px solid ${isCaptain ? CLR.gold + '28' : CLR.rule + '10'}`,
@@ -2455,7 +2456,7 @@ function CrewRosterRow({ member, status, index, dayCount, onClick, onRoleChange,
       >
         {/* Main row */}
         <div
-          className="grid grid-cols-[72px_minmax(0,1fr)_18px] md:[grid-template-columns:72px_minmax(0,1.5fr)_128px_120px_86px_126px_18px] items-center gap-4"
+          className={`grid grid-cols-[96px_minmax(0,1fr)_18px] ${CREW_ROW_GRID} items-center gap-4`}
         >
           {/* Portrait */}
           <div

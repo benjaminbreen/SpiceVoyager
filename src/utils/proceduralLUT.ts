@@ -34,6 +34,8 @@ export interface LUTParams {
 
 export type LUTPresetId = 'tropical' | 'temperate' | 'monsoon';
 
+const DEFAULT_SATURATION_BOOST = 1.1;
+
 export const LUT_PRESETS: Record<LUTPresetId, LUTParams> = {
   // Coastal Indian Ocean — Surat, Calicut, Aceh. Sun-bleached but still
   // saturated; warm shadows from atmospheric scatter, cream-cyan highlights.
@@ -52,7 +54,7 @@ export const LUT_PRESETS: Record<LUTPresetId, LUTParams> = {
   temperate: {
     temperature: -0.15,
     tint: 0.02,
-    saturation: 0.92,
+    saturation: 0.92 * DEFAULT_SATURATION_BOOST,
     contrast: 1.02,
     shadowWarmth: -0.18,
     highlightWarmth: 0.12,
@@ -64,7 +66,7 @@ export const LUT_PRESETS: Record<LUTPresetId, LUTParams> = {
   monsoon: {
     temperature: -0.05,
     tint: 0.12,
-    saturation: 0.74,
+    saturation: 0.74 * DEFAULT_SATURATION_BOOST,
     contrast: 0.94,
     shadowWarmth: 0.18,
     highlightWarmth: -0.08,
@@ -82,6 +84,11 @@ export const LUT_NEUTRAL: LUTParams = {
   highlightWarmth: 0,
   shadowLift: 0,
   highlightRoll: 0,
+};
+
+export const LUT_DEFAULT_BASE: LUTParams = {
+  ...LUT_NEUTRAL,
+  saturation: DEFAULT_SATURATION_BOOST,
 };
 
 const LUT_SIZE = 16;

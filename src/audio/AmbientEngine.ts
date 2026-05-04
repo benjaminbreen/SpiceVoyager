@@ -2,27 +2,82 @@
 // All synthesis runs on the Web Audio thread; the main thread only sets
 // gain targets every ~500ms via exponentialRampToValueAtTime.
 
+import type { Building, Culture } from '../store/gameStore';
+import { SEA_LEVEL } from '../constants/world';
+import { getTerrainData } from '../utils/terrain';
+import { placeHinterlandScenes, type SceneInstance } from '../utils/hinterlandScenes';
+
 interface AmbientState {
   playerMode: 'ship' | 'walking';
   playerPos: [number, number, number];
   walkingPos: [number, number, number];
-  ports: { position: [number, number, number] }[];
+  ports: {
+    id?: string;
+    culture?: Culture;
+    position: [number, number, number];
+    buildings?: Building[];
+  }[];
+  worldSeed: number;
   speed: number;
   playerRot: number;
   timeOfDay: number;
   paused: boolean;
 }
 
+interface AmbientPortProfile {
+  shore: number;
+  nearOcean: number;
+  port: number;
+}
+
+const DEFAULT_AMBIENT_PROFILE: AmbientPortProfile = {
+  shore: 0.028,
+  nearOcean: 0.45,
+  port: 0.032,
+};
+
+const PORT_AMBIENT_PROFILES: Record<string, Partial<AmbientPortProfile>> = {
+  seville: { shore: 0.004, nearOcean: 0.12, port: 0.042 },
+  london: { shore: 0.004, nearOcean: 0.12, port: 0.04 },
+  amsterdam: { shore: 0.006, nearOcean: 0.14, port: 0.04 },
+  venice: { shore: 0.008, nearOcean: 0.16, port: 0.038 },
+  surat: { shore: 0.007, nearOcean: 0.16, port: 0.038 },
+  masulipatnam: { shore: 0.008, nearOcean: 0.18, port: 0.036 },
+  lisbon: { shore: 0.012, nearOcean: 0.24, port: 0.036 },
+  goa: { shore: 0.014, nearOcean: 0.28, port: 0.036 },
+  malacca: { shore: 0.012, nearOcean: 0.26, port: 0.038 },
+  havana: { shore: 0.012, nearOcean: 0.24, port: 0.036 },
+  cartagena: { shore: 0.012, nearOcean: 0.24, port: 0.036 },
+  muscat: { shore: 0.016, nearOcean: 0.32, port: 0.034 },
+  mombasa: { shore: 0.018, nearOcean: 0.34, port: 0.034 },
+  calicut: { shore: 0.034, nearOcean: 0.6, port: 0.03 },
+  cape: { shore: 0.036, nearOcean: 0.62, port: 0.028 },
+  socotra: { shore: 0.032, nearOcean: 0.56, port: 0.028 },
+};
+
+function getAmbientProfile(portId: string | undefined): AmbientPortProfile {
+  return { ...DEFAULT_AMBIENT_PROFILE, ...(portId ? PORT_AMBIENT_PROFILES[portId] : undefined) };
+}
+
+function isFireScene(kind: SceneInstance['kind']) {
+  return kind === 'shepherds-fire'
+    || kind === 'charcoal-mound'
+    || kind === 'coffee-mat'
+    || kind === 'roadside-shrine';
+}
+
 class AmbientEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private volume = 0.3;
+  private volume = 0.22;
   private started = false;
 
   // Layer gains
   private oceanGain: GainNode | null = null;
   private shoreGain: GainNode | null = null;
   private portGain: GainNode | null = null;
+  private vegetationGain: GainNode | null = null;
+  private fireGain: GainNode | null = null;
 
   // Sailing layer — three sub-components
   private hullWashGain: GainNode | null = null;
@@ -35,12 +90,15 @@ class AmbientEngine {
   private oceanSources: { noise: AudioBufferSourceNode; lfo: OscillatorNode } | null = null;
   private shoreSources: { noise: AudioBufferSourceNode; lfoGain: GainNode } | null = null;
   private portSources: { osc1: OscillatorNode; osc2: OscillatorNode; osc3: OscillatorNode } | null = null;
+  private vegetationSources: { noise: AudioBufferSourceNode; filter: BiquadFilterNode; lfo: OscillatorNode } | null = null;
+  private fireSources: { noise: AudioBufferSourceNode; lfo: OscillatorNode } | null = null;
   private riggingWindSources: { osc1: OscillatorNode; osc2: OscillatorNode } | null = null;
 
   // Rotation tracking for turn-based effects
   private lastRot = 0;
 
   private userHasInteracted = false;
+  private sceneCache = new Map<string, SceneInstance[]>();
 
   // Splash-screen lock: while true, update() is a no-op so the position-driven
   // gain logic can't override the levels we set in playSplashAmbient(). The
@@ -66,6 +124,8 @@ class AmbientEngine {
     this.buildOcean();
     this.buildShore();
     this.buildPort();
+    this.buildVegetation();
+    this.buildFire();
     this.buildSailingLayer();
     this.started = true;
   }
@@ -198,6 +258,91 @@ class AmbientEngine {
     this.portSources = { osc1, osc2, osc3 };
   }
 
+  // ── Inland vegetation: filtered noise, slow gust modulation ───────
+
+  private buildVegetation() {
+    const ac = this.ctx!;
+    const len = ac.sampleRate * 3;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 750;
+    hp.Q.value = 0.6;
+
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2400;
+    lp.Q.value = 0.4;
+
+    const lfo = ac.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.08;
+    const lfoGain = ac.createGain();
+    lfoGain.gain.value = 0.45;
+    const modGain = ac.createGain();
+    modGain.gain.value = 0.45;
+    lfo.connect(lfoGain).connect(modGain.gain);
+
+    this.vegetationGain = ac.createGain();
+    this.vegetationGain.gain.value = 0.0001;
+
+    src.connect(hp).connect(lp).connect(modGain).connect(this.vegetationGain).connect(this.master!);
+    src.start();
+    lfo.start();
+
+    this.vegetationSources = { noise: src, filter: lp, lfo };
+  }
+
+  // ── Fire/embers: close-range filtered crackle for hinterland fires ──
+
+  private buildFire() {
+    const ac = this.ctx!;
+    const len = ac.sampleRate * 2;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const spark = Math.random() > 0.985 ? (Math.random() * 2 - 1) * 1.6 : 0;
+      const hiss = (Math.random() * 2 - 1) * 0.18;
+      last = last * 0.88 + spark + hiss;
+      data[i] = last;
+    }
+
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    const bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1500;
+    bp.Q.value = 0.9;
+
+    const lfo = ac.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 3.5;
+    const lfoGain = ac.createGain();
+    lfoGain.gain.value = 0.18;
+    const modGain = ac.createGain();
+    modGain.gain.value = 0.35;
+    lfo.connect(lfoGain).connect(modGain.gain);
+
+    this.fireGain = ac.createGain();
+    this.fireGain.gain.value = 0.0001;
+
+    src.connect(bp).connect(modGain).connect(this.fireGain).connect(this.master!);
+    src.start();
+    lfo.start();
+
+    this.fireSources = { noise: src, lfo };
+  }
+
   // ── Sailing layer: hull wash + rigging wind + sail tension ──────────
   // Three subtle sub-components that together create the feeling of
   // a ship under sail, without the harsh white-noise hiss of the old wake.
@@ -325,6 +470,22 @@ class AmbientEngine {
     gain.gain.exponentialRampToValueAtTime(safeTarget, t + duration);
   }
 
+  private getScenesForPort(port: AmbientState['ports'][number], worldSeed: number) {
+    if (!port.id || !port.culture || !port.buildings) return [];
+    const key = `${port.id}:${worldSeed}:${port.buildings.length}`;
+    const cached = this.sceneCache.get(key);
+    if (cached) return cached;
+    const scenes = placeHinterlandScenes(
+      port.position[0],
+      port.position[2],
+      port.culture,
+      port.buildings,
+      worldSeed,
+    );
+    this.sceneCache.set(key, scenes);
+    return scenes;
+  }
+
   // ── Public API ────────────────────────────────────────────────────
 
   /** Boot the engine and lock ocean + shore layers to splash levels. Called
@@ -339,9 +500,11 @@ class AmbientEngine {
     this.splashMode = true;
     // Light "at sea" wash: gentle ocean rumble + rhythmic surf pulses, with
     // the boat / port / sailing layers held silent.
-    this.ramp(this.oceanGain, 0.05);
-    this.ramp(this.shoreGain, 0.045);
+    this.ramp(this.oceanGain, 0.03);
+    this.ramp(this.shoreGain, 0.025);
     this.ramp(this.portGain, 0.0001);
+    this.ramp(this.vegetationGain, 0.0001);
+    this.ramp(this.fireGain, 0.0001);
     this.ramp(this.hullWashGain, 0.0001);
     this.ramp(this.riggingWindGain, 0.0001);
     this.ramp(this.sailTensionGain, 0.0001);
@@ -367,21 +530,31 @@ class AmbientEngine {
 
     // Distance to nearest port
     let minPortDist = Infinity;
+    let nearestPort: AmbientState['ports'][number] | undefined;
     for (const port of state.ports) {
       const dx = pos[0] - port.position[0];
       const dz = pos[2] - port.position[2];
-      minPortDist = Math.min(minPortDist, Math.sqrt(dx * dx + dz * dz));
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minPortDist) {
+        minPortDist = dist;
+        nearestPort = port;
+      }
     }
+    const nearestPortId = nearestPort?.id;
+    const profile = getAmbientProfile(nearestPortId);
 
     const isWalking = state.playerMode === 'walking';
     const nearShore = minPortDist < 60;
+    const terrain = getTerrainData(pos[0], pos[2]);
+    const onLand = terrain.height > SEA_LEVEL + 0.25;
+    const inlandFactor = Math.max(0, Math.min(1, (minPortDist - 45) / 90));
 
     // ── Ocean layer: loud at sea, fades near shore, silent when walking
     const oceanTarget = isWalking
       ? 0.0001
       : nearShore
-        ? 0.03 * Math.max(0.1, minPortDist / 60)
-        : 0.06 + Math.min(0.04, state.speed * 0.008);
+        ? 0.02 * profile.nearOcean * Math.max(0.1, minPortDist / 60)
+        : 0.04 + Math.min(0.025, state.speed * 0.006);
     this.ramp(this.oceanGain, oceanTarget);
 
     // Shift ocean LFO speed subtly with time of day (calmer at dawn/dusk)
@@ -393,15 +566,50 @@ class AmbientEngine {
 
     // ── Shore layer: audible when approaching land, both modes
     const shoreTarget = minPortDist < 80
-      ? 0.05 * (1 - minPortDist / 80)
+      ? profile.shore * (1 - minPortDist / 80) * (isWalking ? (1 - inlandFactor) : 1)
       : 0.0001;
     this.ramp(this.shoreGain, shoreTarget);
 
     // ── Port hum: only when walking in a port
     const portTarget = isWalking && minPortDist < 30
-      ? 0.04 * (1 - minPortDist / 30)
+      ? profile.port * (1 - minPortDist / 30)
       : 0.0001;
     this.ramp(this.portGain, portTarget);
+
+    // ── Inland vegetation: replaces water as the player walks away from quays
+    const vegetationBiomeFactor =
+      terrain.biome === 'forest' || terrain.biome === 'jungle' ? 1 :
+      terrain.biome === 'grassland' || terrain.biome === 'scrubland' || terrain.biome === 'paddy' ? 0.75 :
+      terrain.biome === 'desert' ? 0.3 :
+      0.45;
+    const vegetationTarget = isWalking && onLand
+      ? 0.026 * inlandFactor * vegetationBiomeFactor
+      : 0.0001;
+    this.ramp(this.vegetationGain, vegetationTarget, 2.5);
+
+    if (this.vegetationSources && this.ctx) {
+      const filterTarget =
+        terrain.biome === 'forest' || terrain.biome === 'jungle' ? 1900 :
+        terrain.biome === 'grassland' || terrain.biome === 'paddy' ? 2600 :
+        1600;
+      this.vegetationSources.filter.frequency.setTargetAtTime(filterTarget, this.ctx.currentTime, 1.5);
+    }
+
+    // ── Local scene detail: fire/ember crackle near relevant hinterland props
+    let nearestFireDist = Infinity;
+    if (isWalking && nearestPort) {
+      const scenes = this.getScenesForPort(nearestPort, state.worldSeed);
+      for (const scene of scenes) {
+        if (!isFireScene(scene.kind)) continue;
+        const dx = scene.x - pos[0];
+        const dz = scene.z - pos[2];
+        nearestFireDist = Math.min(nearestFireDist, Math.sqrt(dx * dx + dz * dz));
+      }
+    }
+    const fireTarget = nearestFireDist < 22
+      ? 0.032 * (1 - nearestFireDist / 22)
+      : 0.0001;
+    this.ramp(this.fireGain, fireTarget, 0.9);
 
     // ── Sailing layer: hull wash + rigging wind + sail tension
     // All three scale with speed ratio (0 at rest, 1 at full speed)

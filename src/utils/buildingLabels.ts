@@ -1,4 +1,4 @@
-import { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold } from '../store/gameStore';
+import { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold, BuildingInstitution } from '../store/gameStore';
 import { authorityForPort } from './portAuthorities';
 
 type EuropeanNationality = 'English' | 'Dutch' | 'Spanish' | 'Portuguese';
@@ -1442,7 +1442,7 @@ export function generateBuildingLabel(
   seed: number,
   nationality?: Nationality,
   region?: CulturalRegion,
-  opts?: { faith?: string; landmarkId?: string; palaceStyle?: string; portId?: string },
+  opts?: { faith?: string; landmarkId?: string; palaceStyle?: string; portId?: string; institution?: BuildingInstitution },
 ): BuildingLabelResult {
   const rng = mulberry32(seed);
   // Consume a few values to decorrelate from other uses of same seed
@@ -1472,6 +1472,31 @@ export function generateBuildingLabel(
   if (type === 'palace') {
     const style = opts?.palaceStyle ?? 'iberian-colonial';
     return palaceLabel(style, portName, nationality, opts?.portId);
+  }
+
+  if (opts?.institution) {
+    const authority = opts.portId ? authorityForPort(opts.portId) : null;
+    switch (opts.institution) {
+      case 'authority':
+        if (authority) return { label: authority.buildingLabel, sub: authority.buildingSub };
+        break;
+      case 'captaincy':
+        if (authority?.authorityKind === 'fort-captain') {
+          return { label: authority.buildingLabel, sub: authority.buildingSub };
+        }
+        return { label: `${portName} Captaincy`, sub: 'captaincy office' };
+      case 'customs':
+        if (authority?.authorityKind === 'customs' || authority?.commissionStyle === 'customs') {
+          return { label: authority.buildingLabel, sub: authority.buildingSub };
+        }
+        return { label: `${portName} Custom House`, sub: 'customs office' };
+      case 'factory':
+        return { label: `${portName} Factory`, sub: 'merchant factory' };
+      case 'company-house':
+        return { label: `${portName} Company House`, sub: 'company office' };
+      case 'treasury':
+        return { label: `${portName} Treasury`, sub: 'royal accounts' };
+    }
   }
 
   const euro = asEuropean(nationality);

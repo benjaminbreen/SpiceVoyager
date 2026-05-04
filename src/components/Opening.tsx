@@ -3,9 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { useIsMobile } from '../utils/useIsMobile';
-import { SettingsModal } from './SettingsModal';
 import { SettingsModalV2 } from './SettingsModalV2';
-import { useGameStore } from '../store/gameStore';
 import { Info, Settings as SettingsIcon } from 'lucide-react';
 
 // Responsive opening splash. Keeps the ASCII charm of the original — title
@@ -387,7 +385,6 @@ export function Opening({
   onStart,
 }: OpeningOverlayProps) {
   const { isMobile } = useIsMobile();
-  const settingsV2 = useGameStore((state) => state.renderDebug.settingsV2);
 
   // Wide viewport → dual side panels; narrow → single ambient background.
   // Independent of isMobile so narrow desktop windows also get the background.
@@ -1010,10 +1007,7 @@ export function Opening({
         </div>
       </motion.div>
 
-      {settingsV2
-        ? <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
-        : <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
-      }
+      <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
     </motion.div>
   );
 }

@@ -111,7 +111,6 @@ export const MARKET_TRUST: Record<string, number> = {
   calicut:   0.60,
   muscat:    0.60,
   bantam:    0.60,
-  cochin:    0.60,
   havana:    0.65,
   cartagena: 0.60,
   mombasa:   0.55,
@@ -122,10 +121,7 @@ export const MARKET_TRUST: Record<string, number> = {
 
   // Remote / shady — high fraud, high chance of unrecognized treasures
   aden:      0.40,
-  aceh:      0.40,
   socotra:   0.30,
-  mogadishu: 0.30,
-  kilwa:     0.30,
   luanda:    0.35,
   elmina:    0.40,
   jamestown: 0.45,  // colonial frontier; honest but inexpert
@@ -510,6 +506,38 @@ const PORT_GATEWAYS: Record<string, string[]> = {
   masulipatnam: ['coromandel'],
 };
 
+const PASSAGE_FEATURE_LABELS: Record<string, string> = {
+  'channel-w': 'the English Channel',
+  'biscay': 'the Bay of Biscay',
+  'gibraltar': 'the Strait of Gibraltar',
+  'adriatic-n': 'the Adriatic',
+  canaries: 'the Canaries',
+  'cape-verde': 'the Cape Verde passage',
+  'atl-narrows': 'the Atlantic narrows',
+  'brazil-ne': 'the Brazil current',
+  windward: 'the Windward passage',
+  bermuda: 'the Bermuda approach',
+  guinea: 'the Gulf of Guinea',
+  'cape-gh': 'the Cape passage',
+  mozambique: 'the Mozambique Channel',
+  'horn-africa': 'the Gulf of Aden',
+  'bab-mandeb': 'Bab el-Mandeb',
+  'arabian-sea': 'the Arabian Sea',
+  'hormuz-mouth': 'the Strait of Hormuz',
+  gujarat: 'the Gujarat coast',
+  malabar: 'the Malabar coast',
+  'ceylon-s': 'the Ceylon passage',
+  'bengal-bay': 'the Bay of Bengal',
+  'malacca-n': 'the Strait of Malacca',
+  'java-sea': 'the Java Sea',
+  sunda: 'the Sunda Strait',
+  'scs-s': 'the South China Sea',
+  'luzon-n': 'the Luzon passage',
+  ryukyu: 'the Ryukyu Islands',
+  'kyushu-sw': 'the Kyushu approach',
+  coromandel: 'the Coromandel coast',
+};
+
 /** Build adjacency list with great-circle-distance weights. Computed once. */
 const GATEWAY_ADJ: Map<string, { to: string; dist: number }[]> = (() => {
   const adj = new Map<string, { to: string; dist: number }[]>();
@@ -550,13 +578,7 @@ function dijkstraFrom(start: string): { dist: Map<string, number>; prev: Map<str
   return { dist, prev };
 }
 
-/**
- * Build a sea route from one port to another, returning gateway coords in
- * travel order (excluding the port coordinates themselves — callers prepend
- * the source port and append the destination port). Returns `[]` if either
- * port has no assigned gateway.
- */
-export function buildSeaRoute(fromPortId: string, toPortId: string): [number, number][] {
+function buildSeaRouteGatewayIds(fromPortId: string, toPortId: string): string[] {
   const fromGateways = PORT_GATEWAYS[fromPortId];
   const toGateways = PORT_GATEWAYS[toPortId];
   if (!fromGateways || !toGateways) return [];
@@ -567,7 +589,7 @@ export function buildSeaRoute(fromPortId: string, toPortId: string): [number, nu
   // Same gateway — both ports enter/exit through the same choke point.
   // Emit that single gateway so the curve bends through it cleanly.
   const shared = fromGateways.find(g => toGateways.includes(g));
-  if (shared) return [GATEWAYS[shared].coords];
+  if (shared) return [shared];
 
   // Try every (fromGateway, toGateway) pair; pick the lowest total cost
   // including port → gateway and gateway → port legs.
@@ -593,8 +615,26 @@ export function buildSeaRoute(fromPortId: string, toPortId: string): [number, nu
       }
     }
   }
-  if (!bestPath) return [];
-  return bestPath.map(id => GATEWAYS[id].coords);
+  return bestPath ?? [];
+}
+
+export function getSeaRouteFeatureLabels(fromPortId: string, toPortId: string): string[] {
+  const labels: string[] = [];
+  for (const id of buildSeaRouteGatewayIds(fromPortId, toPortId)) {
+    const label = PASSAGE_FEATURE_LABELS[id] ?? GATEWAYS[id]?.label;
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+/**
+ * Build a sea route from one port to another, returning gateway coords in
+ * travel order (excluding the port coordinates themselves — callers prepend
+ * the source port and append the destination port). Returns `[]` if either
+ * port has no assigned gateway.
+ */
+export function buildSeaRoute(fromPortId: string, toPortId: string): [number, number][] {
+  return buildSeaRouteGatewayIds(fromPortId, toPortId).map(id => GATEWAYS[id].coords);
 }
 
 /**

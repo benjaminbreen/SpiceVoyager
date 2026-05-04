@@ -100,6 +100,7 @@ export function generateWorldData({
   // sempervirens; Sarv-e Abarkuh on the Iranian plateau is the canonical example).
   const persianCypressPort = new Set(['hormuz', 'muscat', 'aden']).has(portId);
   const cypressPort = mediterraneanPort || persianCypressPort;
+  const veniceCypressPort = portId === 'venice';
   // Date palm — every arid-palette port is plausible (oases + irrigated coast).
   const datePalmPort = waterPaletteId === 'arid';
   // Bamboo — native across all of monsoon/tropical Asia plus East Africa coast.
@@ -391,7 +392,7 @@ export function generateWorldData({
         treePlaced = true;
       }
       // Cypress in Mediterranean + Persian Gulf forest — sparse, on slopes
-      if (!treePlaced && cypressPort && rand > 0.992 && cypresses.length < 80) {
+      if (!treePlaced && cypressPort && rand > (veniceCypressPort ? 0.986 : 0.992) && cypresses.length < (veniceCypressPort ? 130 : 80)) {
         cypresses.push({ position: [x, height, worldZ], scale: 1.02 + Math.random() * 0.66 });
         treePlaced = true;
       }
@@ -456,7 +457,7 @@ export function generateWorldData({
         treePlaced = true;
       }
       // Cypress dotting Mediterranean + Persian scrubland
-      if (!treePlaced && cypressPort && rand > 0.994 && cypresses.length < 80) {
+      if (!treePlaced && cypressPort && rand > (veniceCypressPort ? 0.988 : 0.994) && cypresses.length < (veniceCypressPort ? 130 : 80)) {
         cypresses.push({ position: [x, height, worldZ], scale: 0.96 + Math.random() * 0.66 });
         treePlaced = true;
       }
@@ -621,10 +622,11 @@ export function generateWorldData({
         });
       }
     } else if (biome === 'beach') {
-      // Palm trees on tropical/monsoon beaches (never in temperate climates).
+      // Palm trees on tropical/monsoon beaches only.
       // Arid palm ports (Hormuz, Aden, etc.) get date palms instead of coconut palms.
       const stableSand = beachFactor > wetSandFactor && slope < 0.32;
-      if (stableSand && moisture > 0.35 && waterPaletteId !== 'temperate' && rand > 0.94) {
+      const palmBeachClimate = waterPaletteId === 'tropical' || waterPaletteId === 'monsoon' || waterPaletteId === 'arid';
+      if (stableSand && moisture > 0.35 && palmBeachClimate && rand > 0.94) {
         if (datePalmPort && datePalms.length < 200) {
           datePalms.push({
             position: [x, height, worldZ],

@@ -527,7 +527,7 @@ function PhosphorescentAlgae() {
   );
 }
 
-function WaterCaustics() {
+function WaterSurfaceShimmer() {
   const meshRef = useRef<THREE.Mesh>(null);
   useWaterOverlayLayer(meshRef);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
@@ -588,20 +588,32 @@ function WaterCaustics() {
 
         // Distance fade — only render near the player
         float dist = length(vWorldXZ - uPlayerPos.xz);
-        float distFade = 1.0 - smoothstep(95.0, 220.0, dist);
+        float distFade = 1.0 - smoothstep(130.0, 280.0, dist);
         if (distFade < 0.01) discard;
 
-        // Large drifting caustic pattern
+        // Broad surface shimmer: always present in daylight, with the reflected
+        // Water material still carrying the stronger camera/sun glint.
         float t = uTime;
+        vec2 swellA = vWorldXZ * 0.050 + vec2(t * 0.12, t * 0.08);
+        vec2 swellB = vWorldXZ * 0.072 + vec2(-t * 0.09, t * 0.11);
+        float swell = noise(swellA) * noise(swellB);
+        float crest = smoothstep(0.38, 0.72, swell);
+
+        vec2 rippleA = vWorldXZ * 0.18 + vec2(t * 0.18, -t * 0.14);
+        vec2 rippleB = vWorldXZ * 0.24 + vec2(-t * 0.16, -t * 0.10);
+        float ripple = noise(rippleA) * noise(rippleB);
+        float sparkle = smoothstep(0.42, 0.62, ripple);
+
+        float shimmer = crest * 0.55 + sparkle * 0.35;
+
+        // Subsurface dapple, kept softer than the surface crest term.
         vec2 uv1 = vWorldXZ * 0.06 + vec2(t * 0.20, t * 0.135);
         vec2 uv2 = vWorldXZ * 0.06 + vec2(-t * 0.15, t * 0.23);
         float n1 = noise(uv1);
         float n2 = noise(uv2);
-        // Intersect two noise fields — creates bright caustic lines where both are high
         float caustic = n1 * n2;
         caustic = smoothstep(0.83, 0.22, caustic);
 
-        // Smaller, faster detail layer
         vec2 uv3 = vWorldXZ * 0.135 + vec2(t * 0.29, -t * 0.22);
         vec2 uv4 = vWorldXZ * 0.135 + vec2(-t * 0.215, -t * 0.325);
         float n3 = noise(uv3);
@@ -609,15 +621,17 @@ function WaterCaustics() {
         float detail = n3 * n4;
         detail = smoothstep(0.3, 0.52, detail);
 
-        // Blend: large shapes dominate, detail adds sparkle
-        float combined = caustic * 0.70 + detail * 0.45;
+        float dapple = caustic * 0.42 + detail * 0.20;
+        float combined = shimmer + dapple;
 
-        vec3 causticColor = uCausticTint * (1.02 + combined * 0.18);
+        vec3 skyHighlight = vec3(0.78, 0.90, 0.96);
+        vec3 shimmerColor = mix(uCausticTint * 0.82, skyHighlight, 0.58);
+        shimmerColor *= 0.95 + combined * 0.22;
 
-        float alpha = combined * 0.036 * uDaylight * distFade;
+        float alpha = combined * 0.050 * uDaylight * distFade;
         if (alpha < 0.002) discard;
 
-        gl_FragColor = vec4(causticColor, alpha);
+        gl_FragColor = vec4(shimmerColor, alpha);
       }
     `,
     transparent: true,
@@ -712,7 +726,7 @@ export function Ocean() {
     // 3. Fade reflection toward waterColor at distance to keep horizon/coastline
     //    reflections from forming a hard stripe in default camera view.
     waterMaterial.fragmentShader = waterMaterial.fragmentShader
-      .replace('float rf0 = 0.3;', 'float rf0 = 0.27;')
+      .replace('float rf0 = 0.3;', 'float rf0 = 0.4;')
       .replace(
         'float reflectance = rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 1.0 );',
         `float reflectance = min(${reflectanceBase} + ${reflectanceBoost} * pow(1.0 - theta, 2.0), ${reflectanceCap});`
@@ -801,7 +815,7 @@ export function Ocean() {
           />
         </mesh>
       )}
-      {showAdvancedWater && <WaterCaustics />}
+      {showAdvancedWater && <WaterSurfaceShimmer />}
       {algaeEnabled && <PhosphorescentAlgae />}
       <ShipWaterInteraction />
     </>
