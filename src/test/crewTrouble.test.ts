@@ -40,7 +40,7 @@ describe('crewTrouble', () => {
 
   it('has a sliced medallion asset for every crew trouble medallion key', () => {
     for (const key of CREW_TROUBLE_MEDALLION_KEYS) {
-      expect(existsSync(resolve(process.cwd(), `public/crew-trouble-medallions/${key}.png`)), key).toBe(true);
+      expect(existsSync(resolve(process.cwd(), `public/crew-trouble-medallions/${key}.webp`)), key).toBe(true);
     }
   });
 

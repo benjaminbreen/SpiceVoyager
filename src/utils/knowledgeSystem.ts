@@ -330,10 +330,12 @@ const WINDFALL_POOLS: Record<string, Commodity[]> = {
   calicut:   ['Bezoar Stones'],
   // Coromandel — Golconda diamond dust / off-grade opium can surface as rarities
   masulipatnam: ['Bhang', 'Bezoar Stones'],
+  colombo: ['Cinnamon', 'Bezoar Stones'],
   // Kyushu — overstocked silver sometimes moves blind at favorable rates
   nagasaki: ['Japanese Silver'],
   // Atlantic / colonial frontier
   jamestown: ['Virginia Tobacco'],
+  veracruz: ['Cochineal', 'Cacao'],
   luanda:    ['Ivory'],
   elmina:    ['Ivory'],
 };

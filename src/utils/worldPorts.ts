@@ -20,6 +20,7 @@ export const WORLD_PORT_COORDS: Record<string, [number, number]> = {
   manila: [120.98, 14.60],
   nagasaki: [129.87, 32.75],
   masulipatnam: [81.14, 16.19],
+  colombo: [79.86, 6.93],
   // Europe
   lisbon: [-9.14, 38.71],
   amsterdam: [4.90, 52.37],
@@ -34,6 +35,7 @@ export const WORLD_PORT_COORDS: Record<string, [number, number]> = {
   havana: [-82.36, 23.14],
   cartagena: [-75.51, 10.39],
   jamestown: [-76.78, 37.21],
+  veracruz: [-96.13, 19.20],
   // Cape route
   cape: [18.42, -33.93],
 };
@@ -76,10 +78,12 @@ export const PORT_REGIONS: Record<string, WorldRegion> = {
   manila: 'eastIndies',
   nagasaki: 'eastIndies',
   masulipatnam: 'indianOcean',
+  colombo: 'indianOcean',
   salvador: 'atlantic',
   havana: 'atlantic',
   cartagena: 'atlantic',
   jamestown: 'atlantic',
+  veracruz: 'atlantic',
 };
 
 /**
@@ -104,6 +108,7 @@ export const MARKET_TRUST: Record<string, number> = {
   manila:    0.70,  // Spanish customs strict; Sangley Parián less so
   nagasaki:  0.75,  // Shogunate magistrates run a tight dock; Portuguese factors keep honest books
   masulipatnam: 0.60, // Busy but newer European factories — mid-tier market policing
+  colombo:   0.65,  // Portuguese cinnamon regime, regulated but dependent on local brokers
   hormuz:    0.70,
   seville:   0.75,
 
@@ -113,6 +118,7 @@ export const MARKET_TRUST: Record<string, number> = {
   bantam:    0.60,
   havana:    0.65,
   cartagena: 0.60,
+  veracruz:  0.65,
   mombasa:   0.55,
   diu:       0.55,
   zanzibar:  0.50,
@@ -166,12 +172,13 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   // Indian Ocean (existing)
   aden: ['mocha', 'mombasa', 'socotra'],
   bantam: ['calicut', 'macau', 'malacca', 'manila'],
-  calicut: ['bantam', 'diu', 'goa', 'malacca', 'masulipatnam', 'mocha', 'surat', 'zanzibar'],
+  calicut: ['bantam', 'colombo', 'diu', 'goa', 'malacca', 'masulipatnam', 'mocha', 'surat', 'zanzibar'],
+  colombo: ['calicut', 'goa', 'malacca', 'masulipatnam'],
   diu: ['calicut', 'hormuz', 'muscat', 'surat'],
-  goa: ['calicut', 'diu', 'hormuz', 'malacca', 'masulipatnam', 'surat', 'zanzibar'],
+  goa: ['calicut', 'colombo', 'diu', 'hormuz', 'malacca', 'masulipatnam', 'surat', 'zanzibar'],
   hormuz: ['diu', 'goa', 'muscat', 'surat'],
   macau: ['bantam', 'malacca', 'manila', 'nagasaki'],
-  malacca: ['bantam', 'calicut', 'goa', 'macau', 'manila', 'masulipatnam'],
+  malacca: ['bantam', 'calicut', 'colombo', 'goa', 'macau', 'manila', 'masulipatnam'],
   // Manila — Spanish capital of the Philippines. Reachable from Macau (the
   // Sangley junk trade), Bantam (Dutch competition), Malacca, and Nagasaki
   // (Red Seal junk trade up to Kyushu). The Acapulco-galleon link to Spanish
@@ -183,7 +190,7 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   nagasaki: ['macau', 'manila'],
   // Masulipatnam — Coromandel. Bay of Bengal traffic to Malacca; around Ceylon
   // to the Malabar ports (Calicut, Goa).
-  masulipatnam: ['malacca', 'calicut', 'goa'],
+  masulipatnam: ['malacca', 'calicut', 'colombo', 'goa'],
   mocha: ['aden', 'calicut', 'muscat', 'surat'],
   muscat: ['diu', 'hormuz', 'mombasa', 'mocha', 'socotra', 'surat'],
   socotra: ['aden', 'mombasa', 'muscat'],
@@ -199,7 +206,7 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   // Europe
   lisbon: ['elmina', 'seville', 'london', 'amsterdam', 'salvador', 'cape', 'venice'],
   amsterdam: ['elmina', 'lisbon', 'london'],
-  seville: ['lisbon', 'london', 'havana', 'cartagena', 'venice'],
+  seville: ['lisbon', 'london', 'havana', 'cartagena', 'veracruz', 'venice'],
   london: ['amsterdam', 'lisbon', 'seville', 'jamestown'],
   // Venice — Adriatic terminus. Reachable from any Iberian port via the long
   // Mediterranean passage (Gibraltar → Sicily → Otranto → Adriatic). Levantine
@@ -207,8 +214,9 @@ const SEA_LANE_GRAPH: Record<string, string[]> = {
   venice: ['lisbon', 'seville'],
   // Atlantic Americas
   salvador: ['luanda', 'elmina', 'lisbon', 'havana'],
-  havana: ['salvador', 'seville', 'cartagena'],
+  havana: ['salvador', 'seville', 'cartagena', 'veracruz'],
   cartagena: ['havana', 'seville'],
+  veracruz: ['havana', 'seville'],
   // Jamestown is deliberately reachable only from London — this models the
   // Virginia Company monopoly on English Virginia trade (chartered 1606).
   // No other port has 'jamestown' in its adjacency.
@@ -328,6 +336,7 @@ export const GATEWAYS: Record<string, Gateway> = {
   'florida-str':   { coords: [-80, 25] },
   'bermuda':       { coords: [-65, 32],    label: 'Bermuda', labelTier: 'detail' },
   'virginia-capes':{ coords: [-75, 37] },
+  'veracruz-app':  { coords: [-95, 21],     label: 'Gulf of Mexico', labelTier: 'secondary' },
 
   // ── West & South Africa ─────────────────────────────────────────
   'guinea':        { coords: [2, 2],       label: 'Gulf of Guinea', labelTier: 'secondary' },
@@ -415,6 +424,7 @@ const GATEWAY_EDGES: [string, string][] = [
   ['bahamas-e', 'florida-str'],
   ['bahamas-e', 'bermuda'],
   ['bermuda', 'virginia-capes'],
+  ['florida-str', 'veracruz-app'],
   // West / South Africa
   ['guinea', 'luanda-approach'],
   ['luanda-approach', 'south-atl-e'],
@@ -478,6 +488,7 @@ const PORT_GATEWAYS: Record<string, string[]> = {
   jamestown:  ['virginia-capes'],
   havana:     ['florida-str'],
   cartagena:  ['windward'],
+  veracruz:   ['veracruz-app'],
   salvador:   ['brazil-ne'],
   // West / South Africa
   elmina:     ['guinea'],
@@ -497,6 +508,7 @@ const PORT_GATEWAYS: Record<string, string[]> = {
   surat:      ['gujarat'],
   goa:        ['malabar'],
   calicut:    ['malabar'],
+  colombo:    ['ceylon-s'],
   // SE Asia
   bantam:     ['sunda'],
   malacca:    ['malacca-n'],
@@ -517,6 +529,7 @@ const PASSAGE_FEATURE_LABELS: Record<string, string> = {
   'brazil-ne': 'the Brazil current',
   windward: 'the Windward passage',
   bermuda: 'the Bermuda approach',
+  'veracruz-app': 'the Gulf of Mexico',
   guinea: 'the Gulf of Guinea',
   'cape-gh': 'the Cape passage',
   mozambique: 'the Mozambique Channel',

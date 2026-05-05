@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { UI } from './UI';
 import { AmbientText } from './AmbientText';
 import { TouchControls } from './TouchControls';
@@ -12,6 +12,10 @@ import { useIsMobile } from '../utils/useIsMobile';
 const GameScene = lazy(() => import('./GameScene').then((module) => ({
   default: module.GameScene,
 })));
+
+const ADAPTIVE_QUALITY_COOLDOWN_MS = 8000;
+const ADAPTIVE_QUALITY_BAD_SAMPLES = 8;
+const ADAPTIVE_QUALITY_MAX_LEVEL = 2;
 
 const MOBILE_RENDER_PRESET = {
   shadows: true,
@@ -48,8 +52,12 @@ export function Game() {
   const { isMobile } = useIsMobile();
   const [showPerformance, setShowPerformance] = useState(() => testMode.showPerformance);
   const [performanceStats, setPerformanceStats] = useState<PerformanceStats | null>(null);
+  const [adaptiveDprCap, setAdaptiveDprCap] = useState(() => isMobile ? 1.25 : 1.5);
   const showPerformanceRef = useRef(testMode.showPerformance);
   const mobilePresetAppliedRef = useRef(false);
+  const adaptiveLevelRef = useRef(isMobile ? 1 : 0);
+  const badPerfSamplesRef = useRef(0);
+  const lastAdaptiveChangeAtRef = useRef(0);
 
   useEffect(() => installVisualViewportHeight(), []);
 
@@ -57,6 +65,8 @@ export function Game() {
     if (!isMobile || mobilePresetAppliedRef.current) return;
     mobilePresetAppliedRef.current = true;
     useGameStore.getState().updateRenderDebug(MOBILE_RENDER_PRESET);
+    setAdaptiveDprCap(1.25);
+    adaptiveLevelRef.current = Math.max(adaptiveLevelRef.current, 1);
   }, [isMobile]);
 
   useEffect(() => {
@@ -64,9 +74,49 @@ export function Game() {
   }, [showPerformance]);
 
   useEffect(() => {
+    const applyAdaptiveStep = (level: number) => {
+      if (level === 1) {
+        setAdaptiveDprCap(1.35);
+        return;
+      }
+      if (level === 2) {
+        setAdaptiveDprCap(1.2);
+        return;
+      }
+    };
+
+    const maybeAdaptQuality = (stats: PerformanceStats) => {
+      if (!useGameStore.getState().voyageBegun) return;
+
+      const poorFramePacing =
+        stats.fps < 38 ||
+        stats.longFrames5s >= 18 ||
+        stats.peakFrameMs5s >= 95;
+
+      if (!poorFramePacing) {
+        badPerfSamplesRef.current = 0;
+        return;
+      }
+
+      badPerfSamplesRef.current++;
+      if (badPerfSamplesRef.current < ADAPTIVE_QUALITY_BAD_SAMPLES) return;
+
+      const now = performance.now();
+      if (now - lastAdaptiveChangeAtRef.current < ADAPTIVE_QUALITY_COOLDOWN_MS) return;
+
+      const nextLevel = Math.min(ADAPTIVE_QUALITY_MAX_LEVEL, adaptiveLevelRef.current + 1);
+      if (nextLevel === adaptiveLevelRef.current) return;
+
+      adaptiveLevelRef.current = nextLevel;
+      lastAdaptiveChangeAtRef.current = now;
+      badPerfSamplesRef.current = 0;
+      applyAdaptiveStep(nextLevel);
+    };
+
     const handleStats = (event: Event) => {
-      if (!showPerformanceRef.current) return;
-      setPerformanceStats((event as CustomEvent<PerformanceStats>).detail);
+      const stats = (event as CustomEvent<PerformanceStats>).detail;
+      maybeAdaptQuality(stats);
+      if (showPerformanceRef.current) setPerformanceStats(stats);
     };
     window.addEventListener(PERFORMANCE_STATS_EVENT, handleStats);
     return () => window.removeEventListener(PERFORMANCE_STATS_EVENT, handleStats);
@@ -92,6 +142,12 @@ export function Game() {
 
   const transitionsDisabled = useGameStore((s) => s.renderDebug.disableTransitions);
   const voyageBegun = useGameStore((s) => s.voyageBegun);
+  const [startupSceneReady, setStartupSceneReady] = useState(false);
+  const markStartupSceneReady = useCallback(() => setStartupSceneReady(true), []);
+
+  useEffect(() => {
+    if (!voyageBegun) setStartupSceneReady(false);
+  }, [voyageBegun]);
 
   return (
     <div
@@ -107,10 +163,10 @@ export function Game() {
       )}
       {voyageBegun && (
         <Suspense fallback={null}>
-          <GameScene />
+          <GameScene dprCap={adaptiveDprCap} onWorldReady={markStartupSceneReady} />
         </Suspense>
       )}
-      <UI />
+      <UI startupSceneReady={startupSceneReady} />
       {voyageBegun && <AmbientText />}
       <TouchControls />
       <CrewDeathModal />

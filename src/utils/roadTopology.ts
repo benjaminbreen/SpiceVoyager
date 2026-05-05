@@ -26,7 +26,7 @@
  * renderer, no runtime cost.
  */
 
-import { Road, RoadGraph, RoadGraphEdge, RoadGraphNode, RoadTier } from '../store/gameStore';
+import type { Road, RoadGraph, RoadGraphEdge, RoadGraphNode, RoadTier } from '../store/gameStore';
 import { getTerrainHeight } from './terrain';
 import { ROAD_TIER_STYLE } from './roadStyle';
 

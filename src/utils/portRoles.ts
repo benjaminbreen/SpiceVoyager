@@ -38,6 +38,8 @@ export const PORT_ROLE: Record<string, PortRole> = {
   masulipatnam: 'customs-entrepot',
   cartagena: 'customs-entrepot',
   havana: 'customs-entrepot',
+  veracruz: 'customs-entrepot',
+  colombo: 'customs-entrepot',
 
   amsterdam: 'company-factory',
   london: 'company-factory',

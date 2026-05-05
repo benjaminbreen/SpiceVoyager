@@ -85,6 +85,22 @@ export const COMMODITY_HISTORICAL_NOTES: Partial<Record<Commodity, HistoricalNot
       'Breen, The Age of Intoxication (2019)',
     ],
   },
+  'Cacao': {
+    text: 'Cacao was a Mesoamerican stimulant and medicine before it became a European luxury. In New Spain, cacao beans moved through tribute, market exchange, and Spanish Atlantic shipping, usually prepared as chocolate with local spices and later sugar. Veracruz was the Atlantic exit point for cacao entering the flota system, while Seville handled its redistribution in Iberia.',
+    sources: [
+      'Marcy Norton, Sacred Gifts, Profane Pleasures (2008)',
+      'Sophie D. Coe and Michael D. Coe, The True History of Chocolate (1996)',
+      'Breen, The Age of Intoxication (2019)',
+    ],
+  },
+  'Cochineal': {
+    text: 'Cochineal, made from dried scale insects raised on nopal cactus, was one of New Spain\'s most valuable exports after silver. Its brilliant crimson dye was compact, durable, and highly prized by European textile producers. By the early seventeenth century it moved from Oaxaca and Puebla through Veracruz to Seville under close royal scrutiny.',
+    sources: [
+      'Amy Butler Greenfield, A Perfect Red (2005)',
+      'Carlos Marichal, Mexican Cochineal and the European Demand for American Dyes',
+      'J. H. Elliott, Empires of the Atlantic World (2006)',
+    ],
+  },
   'Opium': {
     text: 'Indian opium, produced primarily in the Cambay (Gujarat) region, was carried eastward by Portuguese traders to markets in Malacca, China, and the Indonesian archipelago. It served as both medicine and recreational drug. In this period opium was not yet the object of moral panic it would become — it was simply one of many materia medica traded alongside rhubarb, camphor, and bezoar stones. Portuguese physicians in Goa used it routinely, following both Galenic and local Ayurvedic traditions.',
     sources: [
@@ -256,7 +272,7 @@ export const COMMODITY_HISTORICAL_NOTES: Partial<Record<Commodity, HistoricalNot
     ],
   },
   "Dragon's Blood": {
-    text: "Dragon's blood resin came from Dracaena cinnabari trees found almost exclusively on the island of Socotra, off the Horn of Africa. The deep crimson resin was used as a dye, varnish, and medicine — believed to stop bleeding and heal wounds. Socotra had been a waypoint for Indian Ocean traders since antiquity, and its dragon's blood was known to the ancient Greeks, Romans, and Chinese alike. By 1600, the island was nominally under Portuguese influence but remained difficult to control.",
+    text: "Dragon's blood resin came from Dracaena cinnabari trees found almost exclusively on the island of Socotra, off the Horn of Africa. The deep crimson resin was used as a dye, varnish, and medicine — believed to stop bleeding and heal wounds. Socotra had been a waypoint for Indian Ocean traders since antiquity, and its dragon's blood was known to the ancient Greeks, Romans, and Chinese alike. By 1612, the Portuguese occupation was long over; Mahri and regional brokers mattered more than European garrison power.",
     sources: [
       'Doe, Socotra: Island of Tranquility (1992)',
       'Dalby, Dangerous Tastes (2000)',

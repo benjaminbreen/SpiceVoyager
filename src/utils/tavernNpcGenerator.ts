@@ -194,11 +194,13 @@ const PORT_ROLE_WEIGHTS: Record<string, string[]> = {
   manila:   ['spice_merchant', 'drug_trader', 'soldier', 'sailor', 'textile_factor', 'naturalist'],
   nagasaki: ['spice_merchant', 'drug_trader', 'sailor', 'soldier', 'naturalist'],
   masulipatnam: ['drug_trader', 'drug_trader', 'textile_factor', 'spice_merchant', 'sailor'],
+  colombo:  ['spice_merchant', 'drug_trader', 'soldier', 'sailor'],
   elmina:   ['soldier', 'sailor', 'ivory_trader'],
   luanda:   ['soldier', 'sailor'],
   salvador: ['sailor', 'drug_trader', 'textile_factor'],
   havana:   ['soldier', 'soldier', 'sailor'],
   cartagena:['soldier', 'drug_trader', 'sailor'],
+  veracruz: ['soldier', 'drug_trader', 'sailor', 'textile_factor'],
   cape:     ['sailor', 'sailor'],
 };
 
@@ -236,19 +238,21 @@ const PORT_TAVERN_NATIONALITIES: Record<string, Nationality[]> = {
   // Persian merchants (strong Safavid-Golconda trade ties), Gujarati brokers,
   // and the new Dutch + English factors.
   masulipatnam: ['Mughal', 'Mughal', 'Persian', 'Gujarati', 'Dutch', 'English', 'Portuguese', 'Ottoman'],
+  colombo:  ['Portuguese', 'Gujarati', 'Mughal', 'Ottoman'],
   elmina:   ['Portuguese', 'Dutch', 'English'],
   luanda:   ['Portuguese', 'Spanish'],
   salvador: ['Portuguese', 'Spanish', 'Dutch'],
   havana:   ['Spanish', 'Portuguese', 'English'],
   cartagena:['Spanish', 'Portuguese', 'English'],
+  veracruz: ['Spanish', 'Portuguese', 'English', 'French'],
   jamestown:['English'],
-  cape:     ['Portuguese', 'Dutch', 'English'],
+  cape:     ['Khoikhoi', 'Portuguese', 'Dutch', 'English'],
 };
 
 function getNationalityGroup(nat: Nationality): string {
   if (['English', 'Portuguese', 'Dutch', 'Spanish', 'French', 'Danish'].includes(nat)) return 'european';
   if (['Mughal', 'Gujarati'].includes(nat)) return 'south_asian';
-  if (['Swahili'].includes(nat)) return 'east_african';
+  if (['Swahili', 'Khoikhoi'].includes(nat)) return 'east_african';
   if (['Malay', 'Acehnese', 'Javanese', 'Moluccan', 'Siamese'].includes(nat)) return 'southeast_asian';
   if (['Ottoman', 'Omani', 'Persian'].includes(nat)) return 'arab_persian';
   if (['Chinese', 'Japanese'].includes(nat)) return 'chinese_japanese';
@@ -270,6 +274,7 @@ const FIRST_NAMES: Partial<Record<Nationality, { male: string[]; female: string[
   Ottoman:    { male: ['Mehmed', 'Süleyman', 'Osman', 'Yusuf', 'Mustafa', 'Hasan'], female: ['Fatima', 'Ayşe'] },
   Omani:      { male: ['Salim', 'Rashid', 'Said', 'Hamad', 'Nasir', 'Abdullah'], female: ['Khadija', 'Maryam'] },
   Swahili:    { male: ['Bakari', 'Hamisi', 'Juma', 'Mwinyi', 'Rashidi', 'Selemani'], female: ['Mwana', 'Zainab', 'Khadija', 'Bi'] },
+  Khoikhoi:   { male: ['Autshumato', 'Doman', 'Oedasoa', 'Gogosoa', 'Sousoa'], female: ['Krotoa', 'Nomoa', 'Hao'] },
   Malay:      { male: ['Ahmad', 'Ibrahim', 'Iskandar', 'Tengku', 'Hang', 'Laksamana'], female: ['Siti', 'Aminah'] },
   Chinese:    { male: ['Lim', 'Chen', 'Wang', 'Zhang', 'Li', 'Huang'], female: ['Mei', 'Lan', 'Xiu'] },
   Japanese:   { male: ['Tanaka', 'Yamamoto', 'Nakamura', 'Takeda', 'Watanabe'], female: ['Yuki', 'Hana'] },
@@ -741,7 +746,7 @@ const PORT_COLOR: Record<string, string[]> = {
   ],
   zanzibar: [
     '"The ivory comes from deep in the interior. Months of travel."',
-    '"Clove trees are new here. Someone planted them. Could change everything."',
+    '"Ivory, ambergris, and mangrove poles. The clove stories belong to another age."',
     '"The monsoon will turn soon. Then the Arabs come."',
   ],
   mombasa: [
@@ -776,6 +781,16 @@ const PORT_COLOR: Record<string, string[]> = {
     '"Star anise from Fujian, betel from Mindanao, silk from Hangzhou — and none of it grown by a Spaniard."',
     '"Have you seen the new church? Stone, not bamboo. The friars say it will outlast us all."',
     '"They massacred eight thousand Sangleys nine years ago and still can\'t do business without them."',
+  ],
+  colombo: [
+    '"Cinnamon is not just bark. It is tax, labor, forest, and war."',
+    '"The Portuguese hold the fort. Inland is another matter."',
+    '"A good cinnamon peeler can judge a quill by touch before you smell it."',
+  ],
+  veracruz: [
+    '"The mule trains from Mexico City arrive powdered in dust and guarded like treasure."',
+    '"Cochineal looks like sweepings until it stains your fingers red."',
+    '"Every fleet captain wants water, repairs, and a fast departure for Havana."',
   ],
   cochin: [
     '"The pepper here is the best in the world and everyone knows it."',

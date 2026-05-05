@@ -947,6 +947,39 @@ export function sfxDiscovery() {
   noise(ac, 0.3, v * 0.08, 3000, 0.5);
 }
 
+/** Reputation danger alert — low horn plus clipped alarm taps. */
+export function sfxReputationThreat(kind: 'ship' | 'fort' = 'ship') {
+  const ac = getCtx();
+  const v = masterVolume * (kind === 'fort' ? 0.34 : 0.28);
+  const t = ac.currentTime;
+  const hornFreq = kind === 'fort' ? 82 : 98;
+
+  for (let i = 0; i < 2; i++) {
+    const start = t + i * 0.42;
+    const horn = ac.createOscillator();
+    horn.type = 'sawtooth';
+    horn.frequency.setValueAtTime(hornFreq * 1.08, start);
+    horn.frequency.exponentialRampToValueAtTime(hornFreq, start + 0.16);
+
+    const filter = ac.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = kind === 'fort' ? 420 : 520;
+    filter.Q.value = 0.8;
+
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.001, start);
+    gain.gain.linearRampToValueAtTime(v * 0.34, start + 0.035);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.34);
+
+    horn.connect(filter).connect(gain).connect(ac.destination);
+    horn.start(start);
+    horn.stop(start + 0.38);
+
+    ping(ac, kind === 'fort' ? 220 : 294, 0.16, v * 0.12, 'square');
+    noise(ac, 0.11, v * 0.06, kind === 'fort' ? 900 : 1300, 2.2);
+  }
+}
+
 /** Boots hitting sand/wood + rope creak — disembarking from ship. */
 export function sfxDisembark() {
   const ac = getCtx();

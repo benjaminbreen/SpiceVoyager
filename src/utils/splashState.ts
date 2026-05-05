@@ -25,6 +25,17 @@ export interface ImpactBurstEvent {
   intensity: number;
 }
 
+export interface RicochetBurstEvent {
+  x: number;
+  y: number;
+  z: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+  time: number;
+  intensity: number;
+}
+
 export interface MuzzleBurstEvent {
   x: number;
   y: number;
@@ -72,6 +83,9 @@ export const splinters: SplinterEvent[] = [];
 const MAX_IMPACT_BURSTS = 12;
 export const impactBursts: ImpactBurstEvent[] = [];
 
+const MAX_RICOCHET_BURSTS = 12;
+export const ricochetBursts: RicochetBurstEvent[] = [];
+
 const MAX_MUZZLE_BURSTS = 12;
 export const muzzleBursts: MuzzleBurstEvent[] = [];
 
@@ -110,6 +124,31 @@ export function spawnImpactBurst(x: number, y: number, z: number, intensity = 1)
     impactBursts.shift();
   }
   impactBursts.push(ev);
+}
+
+export function spawnRicochetBurst(
+  x: number,
+  y: number,
+  z: number,
+  dirX: number,
+  dirY: number,
+  dirZ: number,
+  intensity = 1,
+) {
+  const ev: RicochetBurstEvent = {
+    x,
+    y,
+    z,
+    dirX,
+    dirY,
+    dirZ,
+    time: _nextClock,
+    intensity: Math.min(2.4, Math.max(0.1, intensity)),
+  };
+  if (ricochetBursts.length >= MAX_RICOCHET_BURSTS) {
+    ricochetBursts.shift();
+  }
+  ricochetBursts.push(ev);
 }
 
 export function spawnRocketTrail(x: number, y: number, z: number, vx = 0, vy = 0, vz = 1) {

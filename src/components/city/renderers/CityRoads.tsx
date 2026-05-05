@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, PORT_FACTION, PORT_CULTURAL_REGION } from '../../../store/gameStore';
+import { getEffectiveRainIntensity } from '../../../store/weather';
 import { ROAD_POLYGON_OFFSET_UNITS, ROAD_TIER_STYLE, FARM_TRACK_OPACITY, FARM_TRACK_WIDTH, FARM_TRACK_Y_LIFT, BRIDGE_DECK_Y } from '../../../utils/roadStyle';
 import { getTerrainHeight } from '../../../utils/terrain';
 
@@ -28,6 +30,22 @@ type RoadVariantKey =
   | 'chinese'       // Macau (non-Portuguese blocks), generic Chinese
   | 'malay'         // Malacca, Aceh, Bantam — packed tropical earth
   | 'african';      // Elmina, Luanda — ochre/red earth
+
+function rememberDryRoadMaterial(mat: THREE.MeshStandardMaterial) {
+  mat.userData.dryColor = mat.color.clone();
+  mat.userData.dryRoughness = mat.roughness;
+  return mat;
+}
+
+function applyRoadWetness(mat: THREE.MeshStandardMaterial, wetness: number) {
+  const dryColor = mat.userData.dryColor as THREE.Color | undefined;
+  const dryRoughness = mat.userData.dryRoughness as number | undefined;
+  if (!dryColor || dryRoughness === undefined) return;
+  mat.color.copy(dryColor).lerp(_roadWetColor.copy(dryColor).multiplyScalar(0.58), wetness);
+  mat.roughness = THREE.MathUtils.lerp(dryRoughness, 0.58, wetness);
+}
+
+const _roadWetColor = new THREE.Color();
 
 // Per-variant colour + roughness per tier. Keeping tier widths in
 // ROAD_TIER_STYLE above; this table only modulates the material look.
@@ -681,7 +699,7 @@ export function CityRoads({ ports }: { ports: PortsProp }) {
     for (const t of tiers) {
       for (const v of variants) {
         const s = ROAD_VARIANT_STYLE[v][t];
-        m.set(`${t}|${v}`, addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
+        m.set(`${t}|${v}`, rememberDryRoadMaterial(addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
           color: s.color, roughness: s.roughness, metalness: 0,
           transparent: t !== 'avenue',
           opacity: t === 'path' ? 0.88 : t === 'road' ? 0.94 : 1,
@@ -689,7 +707,7 @@ export function CityRoads({ ports }: { ports: PortsProp }) {
           polygonOffset: true,
           polygonOffsetFactor: ROAD_TIER_STYLE[t].polygonOffsetFactor,
           polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-        }), t === 'avenue' ? 0.075 : 0.11, t === 'avenue' ? 0.82 : 1.0));
+        }), t === 'avenue' ? 0.075 : 0.11, t === 'avenue' ? 0.82 : 1.0)));
       }
     }
     return m;
@@ -704,13 +722,13 @@ export function CityRoads({ ports }: { ports: PortsProp }) {
     for (const v of variants) {
       const base = new THREE.Color(ROAD_VARIANT_STYLE[v].path.color);
       base.multiplyScalar(0.78); // slightly darker than the built path
-      m.set(v, addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
+      m.set(v, rememberDryRoadMaterial(addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
         color: base, roughness: 1.0, metalness: 0,
         transparent: true, opacity: FARM_TRACK_OPACITY, depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: ROAD_TIER_STYLE.path.polygonOffsetFactor,
         polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-      }), 0.14, 1.15));
+      }), 0.14, 1.15)));
     }
     return m;
   }, []);
@@ -720,12 +738,12 @@ export function CityRoads({ ports }: { ports: PortsProp }) {
     (['stone', 'timber', 'plank'] as const).forEach(k => {
       const s = BRIDGE_STYLE[k];
       m[k] = {
-        deck: addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
+        deck: rememberDryRoadMaterial(addRoadSurfaceGrain(new THREE.MeshStandardMaterial({
           color: s.deckColor, roughness: s.deckRoughness, metalness: 0,
           polygonOffset: true,
           polygonOffsetFactor: ROAD_TIER_STYLE.bridge.polygonOffsetFactor,
           polygonOffsetUnits: ROAD_POLYGON_OFFSET_UNITS,
-        }), 0.07, 0.72),
+        }), 0.07, 0.72)),
         parapet: new THREE.MeshStandardMaterial({
           color: s.parapet?.color ?? s.deckColor, roughness: 0.95, metalness: 0,
         }),
@@ -745,6 +763,17 @@ export function CityRoads({ ports }: { ports: PortsProp }) {
     });
     return g;
   }, []);
+
+  useFrame(() => {
+    const state = useGameStore.getState();
+    const wetness = getEffectiveRainIntensity(state.weather, state.renderDebug.rain);
+    const roadWetness = Math.min(1, wetness * 0.9);
+    materials.forEach((mat) => applyRoadWetness(mat, roadWetness));
+    farmTrackMaterials.forEach((mat) => applyRoadWetness(mat, Math.min(1, wetness * 1.1)));
+    (['stone', 'timber', 'plank'] as const).forEach((style) => {
+      applyRoadWetness(bridgeMaterials[style].deck, roadWetness * 0.65);
+    });
+  });
 
   return (
     <group>
@@ -827,4 +856,3 @@ function BridgePiers({
     <instancedMesh ref={ref} args={[geom, material, positions.length]} receiveShadow />
   );
 }
-

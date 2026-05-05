@@ -6,7 +6,7 @@ import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { getTerrainHeight } from '../utils/terrain';
 import { useGameStore } from '../store/gameStore';
 import { sfxPrimateChatter } from '../audio/SoundEffects';
-import type { SpeciesInfo } from './Grazers';
+import { PRIMATE_FOOT_OFFSET, type PrimateEntry, type SpeciesInfo } from '../utils/animalTypes';
 import { BODY_RADIUS, PLAYER_RADIUS, computeCirclePush, separateHerd } from '../utils/animalBump';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { PRIMATE_TERRAIN, resolveTerrainStep } from '../utils/animalTerrain';
@@ -17,16 +17,6 @@ import {
   setStaminaBarInstance,
   staminaColor,
 } from '../utils/animalStaminaBar';
-
-// ── Types ────────────────────────────────────────────────────────────────────
-export interface PrimateEntry {
-  position: [number, number, number];
-  rotation: number;
-  color: [number, number, number];
-  scale: number;
-  speedMult: number;
-  refuge: [number, number]; // x,z of nearest tree — flee target
-}
 
 interface PrimateOffset {
   dx: number; dz: number;          // flee offset
@@ -52,9 +42,6 @@ const RETURN_DECAY = 0.992;        // slower decay than grazers — primates lin
 const MAX_FLEE_DIST = 18;          // smaller — they hide at trees, don't bolt across the map
 const MAX_FLEE_SQ = MAX_FLEE_DIST * MAX_FLEE_DIST;
 const ANIM_RANGE_SQ = 100 * 100;
-// Foot-to-pivot distance in base geometry units. Legs sit at y=-0.2 with length 0.24,
-// so the lowest point is at y ≈ -0.32. Multiply by instance scale to plant feet on terrain.
-export const PRIMATE_FOOT_OFFSET = 0.32;
 // Wander: primates fidget more than grazers but over a smaller radius (stay near refuge)
 const WANDER_MAX = 2.5;
 const WANDER_MAX_SQ = WANDER_MAX * WANDER_MAX;

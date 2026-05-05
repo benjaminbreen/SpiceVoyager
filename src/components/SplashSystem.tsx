@@ -1,7 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { splashes, splinters, impactBursts, muzzleBursts, rocketTrails, rocketFireBursts, setSplashClock } from '../utils/splashState';
+import { splashes, splinters, impactBursts, ricochetBursts, muzzleBursts, rocketTrails, rocketFireBursts, setSplashClock } from '../utils/splashState';
 import { SEA_LEVEL } from '../constants/world';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
@@ -10,7 +10,9 @@ import { getLiveShipTransform } from '../utils/livePlayerTransform';
 const SPLASH_PARTICLE_COUNT = 60;
 const SPLINTER_PARTICLE_COUNT = 64;
 const IMPACT_PARTICLE_COUNT = 72;
-const MUZZLE_PARTICLE_COUNT = 48;
+const RICOCHET_PARTICLE_COUNT = 72;
+const MUZZLE_PARTICLE_COUNT = 96;
+const MUZZLE_FLASH_PARTICLE_COUNT = 64;
 // Rocket trails: each trail-spawn event produces 4 puffs that live ~0.8s.
 // Headroom for two simultaneous rockets drawing trails at 20 Hz.
 const ROCKET_TRAIL_PARTICLE_COUNT = 90;
@@ -47,7 +49,9 @@ export function SplashSystem() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const splinterMeshRef = useRef<THREE.InstancedMesh>(null);
   const impactMeshRef = useRef<THREE.InstancedMesh>(null);
+  const ricochetMeshRef = useRef<THREE.InstancedMesh>(null);
   const muzzleMeshRef = useRef<THREE.InstancedMesh>(null);
+  const muzzleFlashMeshRef = useRef<THREE.InstancedMesh>(null);
   const rocketTrailMeshRef = useRef<THREE.InstancedMesh>(null);
   const rocketFireBurstMeshRef = useRef<THREE.InstancedMesh>(null);
   const rocketSmokeBurstMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -55,7 +59,9 @@ export function SplashSystem() {
   const particles = useRef<Particle[]>([]);
   const splinterParticles = useRef<Particle[]>([]);
   const impactParticles = useRef<BurstParticle[]>([]);
+  const ricochetParticles = useRef<BurstParticle[]>([]);
   const muzzleParticles = useRef<BurstParticle[]>([]);
+  const muzzleFlashParticles = useRef<BurstParticle[]>([]);
   const rocketTrailParticles = useRef<BurstParticle[]>([]);
   const rocketFireBurstParticles = useRef<BurstParticle[]>([]);
   const rocketSmokeBurstParticles = useRef<BurstParticle[]>([]);
@@ -63,6 +69,7 @@ export function SplashSystem() {
   const lastSplashCount = useRef(0);
   const lastSplinterCount = useRef(0);
   const lastImpactCount = useRef(0);
+  const lastRicochetCount = useRef(0);
   const lastMuzzleCount = useRef(0);
   const lastRocketTrailCount = useRef(0);
   const lastRocketFireBurstCount = useRef(0);
@@ -91,8 +98,24 @@ export function SplashSystem() {
         maxLife: 0,
       });
     }
+    for (let i = 0; i < RICOCHET_PARTICLE_COUNT; i++) {
+      ricochetParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
     for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
       muzzleParticles.current.push({
+        pos: new THREE.Vector3(0, -1000, 0),
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+      });
+    }
+    for (let i = 0; i < MUZZLE_FLASH_PARTICLE_COUNT; i++) {
+      muzzleFlashParticles.current.push({
         pos: new THREE.Vector3(0, -1000, 0),
         vel: new THREE.Vector3(),
         life: 0,
@@ -126,7 +149,9 @@ export function SplashSystem() {
     hideInstancedMesh(meshRef.current, SPLASH_PARTICLE_COUNT);
     hideInstancedMesh(splinterMeshRef.current, SPLINTER_PARTICLE_COUNT);
     hideInstancedMesh(impactMeshRef.current, IMPACT_PARTICLE_COUNT);
+    hideInstancedMesh(ricochetMeshRef.current, RICOCHET_PARTICLE_COUNT);
     hideInstancedMesh(muzzleMeshRef.current, MUZZLE_PARTICLE_COUNT);
+    hideInstancedMesh(muzzleFlashMeshRef.current, MUZZLE_FLASH_PARTICLE_COUNT);
     hideInstancedMesh(rocketTrailMeshRef.current, ROCKET_TRAIL_PARTICLE_COUNT);
     hideInstancedMesh(rocketFireBurstMeshRef.current, ROCKET_FIRE_BURST_PARTICLE_COUNT);
     hideInstancedMesh(rocketSmokeBurstMeshRef.current, ROCKET_SMOKE_BURST_PARTICLE_COUNT);
@@ -232,30 +257,83 @@ export function SplashSystem() {
     }
     lastImpactCount.current = impactBursts.length;
 
+    // ── Spawn ricochet sparks + dust ──
+    if (ricochetBursts.length > lastRicochetCount.current) {
+      for (let si = lastRicochetCount.current; si < ricochetBursts.length; si++) {
+        const burst = ricochetBursts[si];
+        const count = Math.round(14 + burst.intensity * 20);
+        let spawned = 0;
+        for (let i = 0; i < RICOCHET_PARTICLE_COUNT && spawned < count; i++) {
+          const p = ricochetParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = (4 + Math.random() * 8) * burst.intensity;
+            p.pos.set(
+              burst.x + (Math.random() - 0.5) * 0.35,
+              burst.y + 0.08 + Math.random() * 0.25,
+              burst.z + (Math.random() - 0.5) * 0.35,
+            );
+            p.vel.set(
+              burst.dirX * speed * 0.75 + Math.cos(angle) * speed * 0.45,
+              Math.max(1.1, burst.dirY * speed) + Math.random() * 2.4,
+              burst.dirZ * speed * 0.75 + Math.sin(angle) * speed * 0.45,
+            );
+            p.maxLife = 0.18 + Math.random() * 0.26;
+            p.life = p.maxLife;
+            spawned++;
+          }
+        }
+      }
+    }
+    lastRicochetCount.current = ricochetBursts.length;
+
     // ── Spawn land muzzle smoke particles ──
     if (muzzleBursts.length > lastMuzzleCount.current) {
       for (let si = lastMuzzleCount.current; si < muzzleBursts.length; si++) {
         const burst = muzzleBursts[si];
-        const count = Math.round(10 + burst.intensity * 12);
+        const count = Math.round(18 + burst.intensity * 22);
         let spawned = 0;
         for (let i = 0; i < MUZZLE_PARTICLE_COUNT && spawned < count; i++) {
           const p = muzzleParticles.current[i];
           if (p.life <= 0) {
-            const forward = 1.1 + Math.random() * 1.2;
+            const forward = (1.2 + Math.random() * 1.8) * Math.max(0.8, burst.intensity);
             const sideAngle = Math.random() * Math.PI * 2;
             p.pos.set(
-              burst.x + (Math.random() - 0.5) * 0.12,
-              burst.y + (Math.random() - 0.5) * 0.12,
-              burst.z + (Math.random() - 0.5) * 0.12,
+              burst.x + (Math.random() - 0.5) * 0.2,
+              burst.y + (Math.random() - 0.5) * 0.2,
+              burst.z + (Math.random() - 0.5) * 0.2,
             );
             p.vel.set(
-              burst.dirX * forward + Math.cos(sideAngle) * 0.45,
-              Math.max(0.5, burst.dirY * 0.45) + 0.7 + Math.random() * 0.5,
-              burst.dirZ * forward + Math.sin(sideAngle) * 0.45,
+              burst.dirX * forward + Math.cos(sideAngle) * 0.75,
+              Math.max(0.5, burst.dirY * 0.6) + 0.9 + Math.random() * 0.9,
+              burst.dirZ * forward + Math.sin(sideAngle) * 0.75,
             );
-            p.maxLife = 0.45 + Math.random() * 0.45;
+            p.maxLife = 0.65 + Math.random() * 0.75;
             p.life = p.maxLife;
             spawned++;
+          }
+        }
+
+        const flashCount = Math.round(6 + burst.intensity * 9);
+        let flashSpawned = 0;
+        for (let i = 0; i < MUZZLE_FLASH_PARTICLE_COUNT && flashSpawned < flashCount; i++) {
+          const p = muzzleFlashParticles.current[i];
+          if (p.life <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = (5 + Math.random() * 8) * Math.max(0.7, burst.intensity);
+            p.pos.set(
+              burst.x + burst.dirX * 0.25 + (Math.random() - 0.5) * 0.18,
+              burst.y + burst.dirY * 0.25 + (Math.random() - 0.5) * 0.18,
+              burst.z + burst.dirZ * 0.25 + (Math.random() - 0.5) * 0.18,
+            );
+            p.vel.set(
+              burst.dirX * speed + Math.cos(angle) * 1.2,
+              burst.dirY * speed + 0.6 + Math.random() * 1.2,
+              burst.dirZ * speed + Math.sin(angle) * 1.2,
+            );
+            p.maxLife = 0.06 + Math.random() * 0.08;
+            p.life = p.maxLife;
+            flashSpawned++;
           }
         }
       }
@@ -394,6 +472,10 @@ export function SplashSystem() {
       impactBursts.shift();
       lastImpactCount.current = Math.max(0, lastImpactCount.current - 1);
     }
+    while (ricochetBursts.length > 0 && elapsed - ricochetBursts[0].time > 2) {
+      ricochetBursts.shift();
+      lastRicochetCount.current = Math.max(0, lastRicochetCount.current - 1);
+    }
     while (muzzleBursts.length > 0 && elapsed - muzzleBursts[0].time > 2) {
       muzzleBursts.shift();
       lastMuzzleCount.current = Math.max(0, lastMuzzleCount.current - 1);
@@ -503,6 +585,37 @@ export function SplashSystem() {
       if (needsUpdate) impactMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
+    // ── Update ricochet sparks ──
+    if (ricochetMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < RICOCHET_PARTICLE_COUNT; i++) {
+        const p = ricochetParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 10 * delta;
+          p.vel.x *= 1 - 3.4 * delta;
+          p.vel.z *= 1 - 3.4 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const s = 0.08 + lifeFrac * 0.24;
+          dummy.scale.set(s * 0.5, s * 0.5, s * 2.2);
+          dummy.rotation.set(p.vel.z * elapsed * 2, p.vel.y * elapsed * 3, p.vel.x * elapsed * 2);
+          dummy.updateMatrix();
+          ricochetMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          ricochetMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) ricochetMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
     // ── Update land muzzle smoke particles ──
     if (muzzleMeshRef.current) {
       let needsUpdate = false;
@@ -510,14 +623,14 @@ export function SplashSystem() {
         const p = muzzleParticles.current[i];
         if (p.life > 0) {
           p.life -= delta;
-          p.vel.x *= 1 - 1.5 * delta;
-          p.vel.z *= 1 - 1.5 * delta;
-          p.vel.y += 0.7 * delta;
+          p.vel.x *= 1 - 1.1 * delta;
+          p.vel.z *= 1 - 1.1 * delta;
+          p.vel.y += 0.9 * delta;
           p.pos.addScaledVector(p.vel, delta);
           dummy.position.copy(p.pos);
           const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
           const ageFrac = 1 - lifeFrac;
-          const s = (0.14 + ageFrac * 0.7) * (0.18 + lifeFrac * 0.82);
+          const s = (0.22 + ageFrac * 1.25) * (0.18 + lifeFrac * 0.82);
           dummy.scale.set(s, s, s);
           dummy.updateMatrix();
           muzzleMeshRef.current.setMatrixAt(i, dummy.matrix);
@@ -532,6 +645,36 @@ export function SplashSystem() {
         }
       }
       if (needsUpdate) muzzleMeshRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Update muzzle flame/sparks ──
+    if (muzzleFlashMeshRef.current) {
+      let needsUpdate = false;
+      for (let i = 0; i < MUZZLE_FLASH_PARTICLE_COUNT; i++) {
+        const p = muzzleFlashParticles.current[i];
+        if (p.life > 0) {
+          p.life -= delta;
+          p.vel.y -= 3.5 * delta;
+          p.vel.x *= 1 - 4 * delta;
+          p.vel.z *= 1 - 4 * delta;
+          p.pos.addScaledVector(p.vel, delta);
+          dummy.position.copy(p.pos);
+          const lifeFrac = p.maxLife > 0 ? Math.max(0, p.life / p.maxLife) : 0;
+          const s = lifeFrac * 0.85;
+          dummy.scale.set(s * 1.4, s, s * 1.4);
+          dummy.updateMatrix();
+          muzzleFlashMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        } else if (p.pos.y > -100) {
+          p.pos.set(0, -1000, 0);
+          dummy.position.copy(p.pos);
+          dummy.scale.set(0, 0, 0);
+          dummy.updateMatrix();
+          muzzleFlashMeshRef.current.setMatrixAt(i, dummy.matrix);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate) muzzleFlashMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     // ── Update rocket trail particles ──
@@ -806,6 +949,21 @@ export function SplashSystem() {
         />
       </instancedMesh>
 
+      {/* Ricochet sparks — short hot streaks from glancing cannonball impacts */}
+      <instancedMesh ref={ricochetMeshRef} args={[undefined, undefined, RICOCHET_PARTICLE_COUNT]} frustumCulled={false}>
+        <boxGeometry args={[0.45, 0.45, 0.45]} />
+        <meshStandardMaterial
+          color="#ffd36a"
+          emissive="#ff6a1a"
+          emissiveIntensity={2.2}
+          roughness={0.5}
+          transparent
+          opacity={0.82}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </instancedMesh>
+
       {/* Land muzzle smoke — short forward burst that loosens into drifting smoke */}
       <instancedMesh ref={muzzleMeshRef} args={[undefined, undefined, MUZZLE_PARTICLE_COUNT]} frustumCulled={false}>
         <sphereGeometry args={[0.3, 5, 5]} />
@@ -817,6 +975,21 @@ export function SplashSystem() {
           transparent
           opacity={0.42}
           depthWrite={false}
+        />
+      </instancedMesh>
+
+      {/* Muzzle flash — very short-lived flame core at cannon mouths */}
+      <instancedMesh ref={muzzleFlashMeshRef} args={[undefined, undefined, MUZZLE_FLASH_PARTICLE_COUNT]} frustumCulled={false}>
+        <sphereGeometry args={[0.42, 6, 6]} />
+        <meshStandardMaterial
+          color="#ffe08a"
+          emissive="#ff5a12"
+          emissiveIntensity={4.8}
+          roughness={0.35}
+          transparent
+          opacity={0.92}
+          depthWrite={false}
+          toneMapped={false}
         />
       </instancedMesh>
 

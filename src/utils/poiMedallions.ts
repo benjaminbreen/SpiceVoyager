@@ -96,8 +96,7 @@ export function poiMedallionAsset(poi: POIDefinition): POIMedallionAsset {
   const key = poiMedallionKey(poi);
   return {
     key,
-    path: `/poi-medallions/${key}.png`,
+    path: `/poi-medallions/${key}.webp`,
     label: key.replace(/-/g, ' '),
   };
 }
-

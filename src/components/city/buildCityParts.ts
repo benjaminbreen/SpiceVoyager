@@ -417,41 +417,88 @@ export function buildCityParts(ports: PortsProp) {
 
           else if (lm === 'english-factory-surat') {
             // Surat — walled English East India Company compound on the
-            // riverside. Rectangular fortified enclosure; two-story main
-            // factor's house at the rear; warehouses along the flanks;
-            // central yard with flagpole + English cross.
-            const brick = varyColor([0.72, 0.52, 0.38], rng, 0.05);
-            const whitewash = varyColor([0.92, 0.88, 0.78], rng, 0.04);
-            const tile: [number, number, number] = [0.60, 0.32, 0.24];
-            const wood = varyColor([0.36, 0.24, 0.16], rng, 0.04);
-            // Perimeter walls — four sides around a 8×8 yard
-            addPart('box', 'mud', 0, 1.5, 4.0, 9, 3, 0.5, brick);
-            addPart('box', 'mud', 0, 1.5, -4.0, 9, 3, 0.5, brick);
-            addPart('box', 'mud', 4.5, 1.5, 0, 0.5, 3, 8, brick);
-            addPart('box', 'mud', -4.5, 1.5, 0, 0.5, 3, 8, brick);
-            // Main factor's house, rear of compound — two stories
-            addPart('box', 'white', 0, 2.2, -2.6, 6, 4.4, 2.5, whitewash);
-            addPart('cone', 'terracotta', 0, 5.2, -2.6, 3.4, 1.3, 1.8, tile);
-            addPart('box', 'dark', 0, 1.6, -1.35, 1.0, 2.2, 0.12);
-            // Side warehouses — long and low along the inner walls
-            addPart('box', 'mud', -3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
-            addPart('cone', 'wood', -3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
-            addPart('box', 'mud', 3.4, 1.4, 1.2, 1.6, 2.6, 5, brick);
-            addPart('cone', 'wood', 3.4, 3.0, 1.2, 1.0, 0.8, 3.0, tile);
-            // Main gate — wider opening in front wall (sim'd with a darker
-            // panel + wooden posts flanking)
-            addPart('box', 'dark', 0, 1.3, 4.0, 2.0, 2.2, 0.12);
-            addPart('cylinder', 'wood', -1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
-            addPart('cylinder', 'wood',  1.1, 1.5, 4.0, 0.18, 3.0, 0.18, wood);
-            // Central flagpole in the yard + red-cross of St George
-            addPart('cylinder', 'wood', 0, 3.5, 0, 0.10, 7, 0.10, wood);
-            addPart('box', 'white', 0.85, 5.6, 0, 1.4, 0.9, 0.06, [0.96, 0.96, 0.96]);
-            addPart('box', 'stone', 0.85, 5.6, 0, 1.4, 0.18, 0.07, [0.78, 0.15, 0.15]);
-            addPart('box', 'stone', 0.85, 5.6, 0, 0.20, 0.9, 0.07, [0.78, 0.15, 0.15]);
-            // A few crates in the yard (trading goods)
-            addPart('box', 'wood', -1.8, 0.35, 1.6, 0.7, 0.7, 0.7, wood);
-            addPart('box', 'wood', -1.0, 0.30, 1.6, 0.6, 0.6, 0.6, wood);
-            addPart('box', 'wood',  1.7, 0.35, 1.8, 0.7, 0.7, 0.7, wood);
+            // Tapti. Low Gujarati courtyard compound: whitewashed rooms,
+            // flat parapets, shaded arcade, long godowns, cargo in the yard.
+            // The small English flag marks a tolerated trading house, not
+            // sovereign territory.
+            const lime = varyColor([0.90, 0.86, 0.74], rng, 0.04);
+            const limeShade = varyColor([0.78, 0.72, 0.58], rng, 0.04);
+            const brick = varyColor([0.66, 0.46, 0.31], rng, 0.05);
+            const packedEarth = varyColor([0.58, 0.45, 0.30], rng, 0.04);
+            const teak = varyColor([0.32, 0.20, 0.12], rng, 0.04);
+            const awning: [number, number, number] = [0.72, 0.52, 0.28];
+            const clothWhite: [number, number, number] = [0.94, 0.92, 0.84];
+            const crossRed: [number, number, number] = [0.72, 0.10, 0.10];
+            const W = 9.2;
+            const D = 8.2;
+            const wallH = 1.85;
+
+            // Courtyard floor, visible from top-down.
+            addPart('box', 'mud', 0, 0.02, 0, W - 0.7, 0.08, D - 0.7, packedEarth, true);
+
+            // Low perimeter walls with a broken front gate.
+            addPart('box', 'mud', 0, wallH * 0.5, -D * 0.5, W, wallH, 0.36, brick);
+            addPart('box', 'mud', -W * 0.34, wallH * 0.5, D * 0.5, W * 0.32, wallH, 0.36, brick);
+            addPart('box', 'mud', W * 0.34, wallH * 0.5, D * 0.5, W * 0.32, wallH, 0.36, brick);
+            addPart('box', 'mud', W * 0.5, wallH * 0.5, 0, 0.36, wallH, D, brick);
+            addPart('box', 'mud', -W * 0.5, wallH * 0.5, 0, 0.36, wallH, D, brick);
+            for (const sx of [-1, 1] as const) {
+              addPart('box', 'white', sx * 1.35, 1.05, D * 0.5 + 0.03, 0.42, 2.1, 0.42, limeShade);
+              addPart('box', 'wood', sx * 1.35, 2.25, D * 0.5 + 0.05, 0.56, 0.18, 0.50, teak);
+            }
+            addPart('box', 'wood', 0, 2.16, D * 0.5 + 0.06, 3.1, 0.18, 0.42, teak);
+
+            // Factor's house at the rear: two low storeys, flat roof, parapet.
+            addPart('box', 'white', 0, 1.25, -2.65, 5.9, 2.5, 2.35, lime);
+            addPart('box', 'white', 0, 3.1, -2.72, 5.35, 1.2, 2.05, varyColor(lime, rng, 0.025));
+            addPart('box', 'white', 0, 3.82, -2.72, 5.75, 0.28, 2.40, limeShade);
+            for (let i = 0; i < 5; i++) {
+              const tx = -2.2 + i * 1.1;
+              addPart('box', 'white', tx, 4.12, -1.55, 0.42, 0.34, 0.18, limeShade);
+            }
+            addPart('box', 'dark', 0, 1.05, -1.43, 0.95, 1.8, 0.10);
+            addPart('box', 'litWindow', -1.8, 2.65, -1.42, 0.46, 0.42, 0.08);
+            addPart('box', 'litWindow', 1.8, 2.65, -1.42, 0.46, 0.42, 0.08);
+
+            // Shaded veranda along the courtyard face.
+            addPart('box', 'wood', 0, 2.05, -1.15, 6.25, 0.16, 1.0, teak);
+            addPart('box', 'straw', 0, 2.22, -1.02, 6.45, 0.12, 1.35, awning);
+            for (let i = 0; i < 6; i++) {
+              const tx = -2.65 + i * 1.06;
+              addPart('cylinder', 'wood', tx, 1.05, -0.58, 0.08, 2.1, 0.08, teak);
+            }
+
+            // Long godowns along the side walls, flat-roofed so the plan reads
+            // cleanly from above.
+            for (const sx of [-1, 1] as const) {
+              addPart('box', 'mud', sx * 3.35, 1.05, 0.95, 1.55, 2.1, 5.0, brick);
+              addPart('box', 'white', sx * 3.35, 2.22, 0.95, 1.75, 0.26, 5.25, limeShade);
+              addPart('box', 'wood', sx * 3.35, 2.43, 0.95, 1.95, 0.14, 5.45, teak);
+              addPart('box', 'dark', sx * 3.35, 0.85, 3.25, 0.70, 1.25, 0.09);
+              addPart('box', 'litWindow', sx * 3.35, 1.55, -0.15, 0.42, 0.32, 0.08);
+            }
+
+            // Cargo stacks and textile bales in the open yard.
+            addCrateStack(-1.65, 1.45, 0.86);
+            addCrateStack(-0.85, 1.65, 0.70);
+            addCrateStack(1.65, 1.55, 0.82);
+            for (const [cx, cz, sx] of [[0.45, 1.55, 1], [1.1, 0.75, 0.86], [-1.05, 0.55, 0.78]] as [number, number, number][]) {
+              addPart('box', 'straw', cx, 0.18 * sx, cz, 0.90 * sx, 0.36 * sx, 0.58 * sx, varyColor([0.68, 0.58, 0.38], rng, 0.06));
+              addPart('box', 'wood', cx, 0.39 * sx, cz, 0.96 * sx, 0.08 * sx, 0.64 * sx, teak);
+            }
+
+            // Small yard mast with a modest St George flag.
+            addPart('cylinder', 'wood', -2.25, 2.15, -0.05, 0.07, 4.3, 0.07, teak);
+            addPart('box', 'white', -1.72, 3.65, -0.05, 0.95, 0.56, 0.05, clothWhite);
+            addPart('box', 'stone', -1.72, 3.65, -0.055, 0.95, 0.10, 0.055, crossRed);
+            addPart('box', 'stone', -1.72, 3.65, -0.055, 0.13, 0.56, 0.055, crossRed);
+
+            // Night readability: torches at gate and veranda, plus glowing
+            // windows above. CityTorches supplies the flicker animation.
+            addTorch(-1.25, 1.45, D * 0.5 + 0.14);
+            addTorch(1.25, 1.45, D * 0.5 + 0.14);
+            addTorch(-2.75, 1.35, -0.62);
+            addTorch(2.75, 1.35, -0.62);
           }
 
           else if (lm === 'apothecaries-hall') {
@@ -1106,7 +1153,9 @@ export function buildCityParts(ports: PortsProp) {
           addCrateStack(-w/4, -d/4, 0.75);
           addRopeCoil(w * 0.12, -d * 0.32, 0.32);
           addRopeCoil(-w * 0.32, d * 0.22, 0.28);
-          if (rng() < 0.65) addWorkRack(w * 0.38, -d * 0.08, 1.2);
+          if (PORT_CULTURAL_REGION[port.id] !== 'Swahili' && rng() < 0.65) {
+            addWorkRack(w * 0.38, -d * 0.08, 1.2);
+          }
           // Moored boat — small hull shape
           const boatSide = rng() > 0.5 ? 1 : -1;
           const boatColor = varyColor(BASE_COLORS.wood, rng, 0.15);
@@ -1650,7 +1699,9 @@ export function buildCityParts(ports: PortsProp) {
           addPart('box', 'straw', 0.1, 1.2, -0.3, 0.2, 0.18, 0.2, varyColor([0.35, 0.55, 0.25], rng, 0.12));
           addCrateStack(w * 0.36, d * 0.34, 0.62);
           addCrateStack(-w * 0.38, -d * 0.30, 0.58);
-          if (c === 'West African' || c === 'Indian Ocean') addWorkRack(0, -d * 0.55, 1.6);
+          if ((c === 'West African' || c === 'Indian Ocean') && PORT_CULTURAL_REGION[port.id] !== 'Swahili') {
+            addWorkRack(0, -d * 0.55, 1.6);
+          }
 
           // Torches at market corners
           addTorch(w/2 - 0.3, h + 0.5, d/2 - 0.3);
@@ -1879,6 +1930,35 @@ export function buildCityParts(ports: PortsProp) {
             }
           };
 
+          if (port.buildingStyle === 'swahili-coral' && b.type === 'warehouse') {
+            const coral = varyColor([0.76, 0.70, 0.58], rng, 0.055);
+            const lime = varyColor([0.90, 0.86, 0.75], rng, 0.035);
+            const shadow = varyColor([0.34, 0.30, 0.24], rng, 0.035);
+            const bodyW = sw * 1.18;
+            const bodyD = sd * 1.02;
+            const bodyH = sh * 0.78;
+            const warehouseFrontZ = bodyD / 2 + 0.055;
+            addGroundSkirt(bodyW + 1.2, bodyD + 1.1, varyColor([0.70, 0.64, 0.52], rng, 0.04), 'stone', 0.11);
+            addPart('box', 'stone', 0, bodyH / 2, 0, bodyW, bodyH, bodyD, coral);
+            addPart('box', 'white', 0, bodyH + 0.08, 0, bodyW * 1.04, 0.16, bodyD * 1.02, lime);
+            addPart('box', 'white', 0, bodyH + 0.30, bodyD * 0.50, bodyW * 1.04, 0.24, 0.16, lime);
+            addPart('box', 'white', 0, bodyH + 0.30, -bodyD * 0.50, bodyW * 1.04, 0.24, 0.16, lime);
+            addPart('box', 'white', bodyW * 0.50, bodyH + 0.30, 0, 0.16, 0.24, bodyD * 1.02, lime);
+            addPart('box', 'white', -bodyW * 0.50, bodyH + 0.30, 0, 0.16, 0.24, bodyD * 1.02, lime);
+            addPart('box', 'dark', 0, bodyH * 0.30, warehouseFrontZ, Math.min(1.35, bodyW * 0.26), bodyH * 0.48, 0.09);
+            addPart('box', 'stone', 0, bodyH * 0.56, warehouseFrontZ + 0.02, Math.min(1.65, bodyW * 0.34), 0.08, 0.08, shadow);
+            for (const sx of [-0.32, 0.32]) {
+              addPart('box', 'dark', sx * bodyW, bodyH * 0.62, warehouseFrontZ, 0.22, 0.28, 0.07);
+            }
+            if (b.district === 'waterside') {
+              const quay = varyColor([0.58, 0.53, 0.44], rng, 0.04);
+              addPart('box', 'stone', 0, 0.04, warehouseFrontZ + 0.52, bodyW + 0.75, 0.12, 0.70, quay, true);
+              addCrateStack(-bodyW * 0.30, warehouseFrontZ + 0.70, 0.66);
+              addRopeCoil(bodyW * 0.28, warehouseFrontZ + 0.72, 0.24);
+            }
+            return;
+          }
+
           if (port.buildingStyle === 'khoikhoi-minimal' && (b.type === 'house' || b.type === 'farmhouse')) {
             const matColor = varyColor([0.68, 0.58, 0.42], rng, 0.08);
             const hideColor = varyColor([0.52, 0.42, 0.30], rng, 0.06);
@@ -1973,27 +2053,64 @@ export function buildCityParts(ports: PortsProp) {
             return;
           }
 
-          if (port.buildingStyle === 'swahili-coral' && (b.type === 'house' || b.type === 'farmhouse')) {
-            const coral = varyColor([0.78, 0.72, 0.60], rng, 0.055);
-            const lime = varyColor([0.88, 0.84, 0.74], rng, 0.035);
-            const shadow = varyColor([0.38, 0.34, 0.28], rng, 0.035);
-            addPart('box', 'stone', 0, sh * 0.45, 0, sw * 1.05, sh * 0.90, sd * 1.0, coral);
-            addPart('box', 'white', 0, sh * 0.93, 0, sw * 1.12, 0.22, sd * 1.08, lime);
-            addPart('box', 'white', 0, sh * 0.98, sd * 0.52, sw * 1.12, 0.28, 0.16, lime);
-            addPart('box', 'white', sw * 0.52, sh * 0.98, 0, 0.16, 0.28, sd * 1.04, lime);
-            addPart('box', 'white', -sw * 0.52, sh * 0.98, 0, 0.16, 0.28, sd * 1.04, lime);
-            addPart('box', 'white', 0, sh * 0.70, sd * 0.52, sw * 0.86, 0.18, 0.12, lime);
-            addPart('box', 'dark', 0, sh * 0.32, sd * 0.53, Math.min(0.62, sw * 0.24), Math.min(0.92, sh * 0.48), 0.10);
-            addPart('box', 'stone', 0, sh * 0.55, sd * 0.535, Math.min(0.86, sw * 0.34), 0.08, 0.08, shadow);
-            for (const ax of [-0.30, 0.30]) {
-              addPart('box', 'dark', ax * sw, sh * 0.66, sd * 0.53, 0.26, 0.34, 0.08);
-              addPart('box', 'stone', ax * sw, sh * 0.46, sd * 0.535, 0.34, 0.05, 0.08, shadow);
+          if (port.buildingStyle === 'swahili-coral' && (b.type === 'house' || b.type === 'farmhouse' || b.type === 'estate')) {
+            const coral = varyColor([0.76, 0.70, 0.58], rng, 0.06);
+            const lime = varyColor([0.90, 0.86, 0.75], rng, 0.035);
+            const shadow = varyColor([0.34, 0.30, 0.24], rng, 0.035);
+            const wood = varyColor([0.30, 0.20, 0.13], rng, 0.045);
+            const bodyW = sw * (b.type === 'estate' ? 1.18 : 1.02);
+            const bodyD = sd * (b.type === 'estate' ? 1.08 : 0.96);
+            const bodyH = sh * (b.type === 'estate' ? 0.96 : 0.86);
+            const frontZ = bodyD / 2 + 0.055;
+
+            addGroundSkirt(bodyW + 1.0, bodyD + 1.0, varyColor([0.72, 0.66, 0.54], rng, 0.045), 'stone', 0.10);
+            addPart('box', 'stone', 0, bodyH / 2, 0, bodyW, bodyH, bodyD, coral);
+            addPart('box', 'white', 0, bodyH * 0.52, frontZ, bodyW * 0.92, bodyH * 0.94, 0.12, lime);
+
+            // Flat roof with a raised coral-lime parapet.
+            addPart('box', 'white', 0, bodyH + 0.10, 0, bodyW * 1.08, 0.20, bodyD * 1.06, lime);
+            addPart('box', 'white', 0, bodyH + 0.32, bodyD * 0.51, bodyW * 1.08, 0.28, 0.18, lime);
+            addPart('box', 'white', 0, bodyH + 0.32, -bodyD * 0.51, bodyW * 1.08, 0.28, 0.18, lime);
+            addPart('box', 'white', bodyW * 0.51, bodyH + 0.32, 0, 0.18, 0.28, bodyD * 1.06, lime);
+            addPart('box', 'white', -bodyW * 0.51, bodyH + 0.32, 0, 0.18, 0.28, bodyD * 1.06, lime);
+
+            // Recessed carved door panel: thick dark opening with pale surround
+            // and a few narrow wood strips to suggest Swahili carved doors.
+            const doorW = Math.min(0.78, bodyW * 0.22);
+            const doorH = Math.min(1.18, bodyH * 0.64);
+            addPart('box', 'stone', 0, doorH * 0.47, frontZ + 0.01, doorW + 0.24, doorH + 0.22, 0.08, lime);
+            addPart('box', 'dark', 0, doorH * 0.46, frontZ + 0.05, doorW, doorH, 0.08);
+            for (const sx of [-0.24, 0, 0.24]) {
+              addPart('box', 'wood', sx * doorW, doorH * 0.50, frontZ + 0.095, 0.035, doorH * 0.84, 0.035, wood);
             }
-            if (b.type === 'farmhouse') {
-              addPart('box', 'wood', 0, 0.60, sd * 0.82, sw * 0.90, 0.16, 0.75, varyColor([0.28, 0.18, 0.12], rng, 0.05));
-            } else if (rng() < 0.38) {
-              addPart('box', 'stone', sw * 0.66, 0.42, -sd * 0.18, 0.16, 0.84, sd * 0.70, coral);
-              addPart('box', 'stone', sw * 0.34, 0.42, -sd * 0.58, sw * 0.64, 0.84, 0.16, coral);
+            addPart('box', 'wood', 0, doorH * 0.77, frontZ + 0.10, doorW * 0.78, 0.035, 0.035, wood);
+
+            // Small, high, recessed windows.
+            const windowCount = bodyW > 4.1 || b.type === 'estate' ? 4 : 2;
+            const startX = -((windowCount - 1) * bodyW * 0.20) / 2;
+            for (let i = 0; i < windowCount; i++) {
+              const wx = startX + i * bodyW * 0.20;
+              if (Math.abs(wx) < doorW * 0.62) continue;
+              addPart('box', 'stone', wx, bodyH * 0.70, frontZ + 0.01, 0.36, 0.44, 0.08, lime);
+              addPart('box', 'dark', wx, bodyH * 0.70, frontZ + 0.055, 0.22, 0.28, 0.06);
+            }
+            for (const sx of [-1, 1]) {
+              addPart('box', 'dark', sx * bodyW * 0.51, bodyH * 0.64, 0, 0.06, 0.25, 0.20);
+            }
+
+            // Side annex or courtyard wall: common coral-house massing without
+            // turning every dwelling into a full compound.
+            if (b.type === 'estate' || rng() < 0.52) {
+              const side = rng() < 0.5 ? -1 : 1;
+              addPart('box', 'stone', side * bodyW * 0.58, bodyH * 0.28, -bodyD * 0.08, 0.42, bodyH * 0.56, bodyD * 0.62, varyColor(coral, rng, 0.04));
+              addPart('box', 'white', side * bodyW * 0.58, bodyH * 0.58, -bodyD * 0.08, 0.48, 0.16, bodyD * 0.66, lime);
+            }
+            if (b.type === 'farmhouse' || rng() < 0.45) {
+              addPart('box', 'stone', 0, 0.42, -bodyD * 0.68, bodyW * 0.78, 0.84, 0.14, varyColor(coral, rng, 0.05));
+              addPart('box', 'stone', -bodyW * 0.39, 0.42, -bodyD * 0.40, 0.14, 0.84, bodyD * 0.56, varyColor(coral, rng, 0.05));
+            }
+            if (b.type === 'estate') {
+              addPart('box', 'stone', bodyW * 0.18, bodyH + 0.50, -bodyD * 0.16, 0.28, 0.14, 0.28, shadow);
             }
             return;
           }

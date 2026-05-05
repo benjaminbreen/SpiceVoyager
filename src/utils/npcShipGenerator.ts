@@ -631,6 +631,7 @@ const PORT_TRADITIONS: Record<string, Weighted<ShipTraditionId>[]> = {
   // Masulipatnam — Gujarati merchant ships dominate, with growing Dutch and
   // English factor presence (factories founded 1606 and 1611 respectively).
   masulipatnam: [['gujarati_merchant', 32], ['dutch_voc', 16], ['english_eic', 14], ['portuguese_estado', 10], ['omani_dhow', 10], ['persian_gulf', 6], ['chinese_junk', 6], ['malay_prau', 6]],
+  colombo: [['portuguese_estado', 30], ['gujarati_merchant', 22], ['omani_dhow', 12], ['mughal_surati', 10], ['dutch_voc', 8], ['english_eic', 6], ['malay_prau', 6], ['swahili_coaster', 6]],
 
   // ── West Africa ──
   elmina: [['portuguese_atlantic', 30], ['dutch_atlantic', 18], ['english_atlantic', 12], ['spanish_atlantic', 8], ['french_atlantic', 6], ['local_caribbean', 16], ['swahili_coaster', 4], ['omani_dhow', 3], ['portuguese_estado', 3]],
@@ -643,6 +644,7 @@ const PORT_TRADITIONS: Record<string, Weighted<ShipTraditionId>[]> = {
   salvador: [['portuguese_atlantic', 40], ['local_caribbean', 22], ['dutch_atlantic', 8], ['spanish_atlantic', 8], ['english_atlantic', 6], ['french_atlantic', 6], ['portuguese_estado', 6], ['omani_dhow', 2], ['swahili_coaster', 2]],
   havana: [['spanish_atlantic', 42], ['local_caribbean', 20], ['english_atlantic', 10], ['french_atlantic', 8], ['dutch_atlantic', 6], ['portuguese_atlantic', 6], ['portuguese_estado', 4], ['omani_dhow', 2], ['dutch_voc', 2]],
   cartagena: [['spanish_atlantic', 38], ['local_caribbean', 22], ['english_atlantic', 10], ['french_atlantic', 10], ['dutch_atlantic', 6], ['portuguese_atlantic', 6], ['portuguese_estado', 4], ['omani_dhow', 2], ['dutch_voc', 2]],
+  veracruz: [['spanish_atlantic', 46], ['local_caribbean', 22], ['portuguese_atlantic', 8], ['english_atlantic', 8], ['french_atlantic', 6], ['dutch_atlantic', 4], ['portuguese_estado', 4], ['dutch_voc', 2]],
 };
 
 /**
@@ -663,6 +665,7 @@ const PORT_CONTROLLING_FACTION: Partial<Record<string, Nationality>> = {
   jamestown: 'English',
   havana: 'Spanish',
   cartagena: 'Spanish',
+  veracruz: 'Spanish',
   salvador: 'Portuguese',
   elmina: 'Portuguese',     // Dutch capture in 1637, not yet
   luanda: 'Portuguese',
@@ -671,6 +674,7 @@ const PORT_CONTROLLING_FACTION: Partial<Record<string, Nationality>> = {
   malacca: 'Portuguese',
   hormuz: 'Portuguese',     // lost to Anglo-Persian forces in 1622
   macau: 'Portuguese',
+  colombo: 'Portuguese',
   diu: 'Portuguese',
   mombasa: 'Portuguese',
   muscat: 'Portuguese',     // Omani recapture in 1650

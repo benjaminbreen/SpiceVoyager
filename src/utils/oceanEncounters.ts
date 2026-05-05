@@ -1,10 +1,12 @@
 import type { Commodity } from './commodities';
 
 export type EncounterType = 'whale' | 'turtle' | 'wreckage';
+export type WhaleSpecies = 'sperm' | 'right';
 
 export interface OceanEncounterDef {
   id: string;
   type: EncounterType;
+  whaleSpecies?: WhaleSpecies;
   position: [number, number, number];
   rotation: number;
   collected: boolean;
@@ -23,14 +25,14 @@ export interface EncounterLoot {
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
-const WHALE_LOOT: (() => EncounterLoot)[] = [
-  () => ({
-    gold: randInt(80, 200),
+const WHALE_LOOT: Record<WhaleSpecies, () => EncounterLoot> = {
+  sperm: () => ({
+    gold: randInt(20, 60),
     provisions: 0,
-    cargo: {},
+    cargo: { Ambergris: 1 },
     title: 'Sperm Whale',
     subtitle: 'Physeter macrocephalus',
-    description: 'A great sperm whale surfaces nearby, exhaling a plume of mist. Fragments of ambergris float in its wake.',
+    description: 'A great sperm whale sounded nearby. In its wake the crew found a small lump of ambergris, waxy and salt-stained.',
     ascii: [
       '               .--.',
       '           ___/    \\___',
@@ -39,13 +41,13 @@ const WHALE_LOOT: (() => EncounterLoot)[] = [
       '     ~~~   \\__/  \\__/   ~~~',
     ],
   }),
-  () => ({
-    gold: randInt(40, 100),
-    provisions: 5,
+  right: () => ({
+    gold: randInt(30, 90),
+    provisions: 0,
     cargo: {},
     title: 'Right Whale',
     subtitle: 'Eubalaena australis',
-    description: 'A barnacled right whale rolls lazily at the surface, its great eye regarding the ship without fear.',
+    description: 'A barnacled right whale rolled near the surface and then slipped away. Its wake left scraps of floating matter the crew sold in port.',
     ascii: [
       '            __.--.__',
       '       ____/   °    \\____',
@@ -54,7 +56,7 @@ const WHALE_LOOT: (() => EncounterLoot)[] = [
       '   ~~~  \\___/   \\___/  ~~~',
     ],
   }),
-];
+};
 
 const TURTLE_LOOT: (() => EncounterLoot)[] = [
   () => ({
@@ -142,9 +144,9 @@ const WRECKAGE_LOOT: (() => EncounterLoot)[] = [
   }),
 ];
 
-export function generateEncounterLoot(type: EncounterType): EncounterLoot {
+export function generateEncounterLoot(type: EncounterType, whaleSpecies: WhaleSpecies = 'sperm'): EncounterLoot {
   switch (type) {
-    case 'whale': return pick(WHALE_LOOT)();
+    case 'whale': return WHALE_LOOT[whaleSpecies]();
     case 'turtle': return pick(TURTLE_LOOT)();
     case 'wreckage': return pick(WRECKAGE_LOOT)();
   }
@@ -152,9 +154,11 @@ export function generateEncounterLoot(type: EncounterType): EncounterLoot {
 
 export function generateEncounter(position: [number, number, number]): OceanEncounterDef {
   const types: EncounterType[] = ['whale', 'whale', 'turtle', 'turtle', 'turtle', 'wreckage', 'wreckage', 'wreckage'];
+  const type = pick(types);
   return {
     id: Math.random().toString(36).substring(2, 9),
-    type: pick(types),
+    type,
+    whaleSpecies: type === 'whale' ? pick(['sperm', 'right'] as WhaleSpecies[]) : undefined,
     position,
     rotation: Math.random() * Math.PI * 2,
     collected: false,

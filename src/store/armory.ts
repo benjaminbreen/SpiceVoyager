@@ -66,7 +66,9 @@ export const PORT_ARMORY: Record<string, WeaponType[]> = {
   salvador: ['swivelGun', 'minion', 'saker'],
   havana: ['swivelGun', 'minion', 'saker', 'demiCulverin', 'demiCannon'],
   cartagena: ['swivelGun', 'minion', 'saker', 'demiCulverin'],
+  veracruz: ['swivelGun', 'minion', 'saker', 'demiCulverin'],
   jamestown: ['swivelGun', 'minion'],
+  colombo: ['swivelGun', 'minion', 'saker'],
   cape: [],
 };
 

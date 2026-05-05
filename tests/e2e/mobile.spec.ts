@@ -111,8 +111,8 @@ test.describe('mobile layout and performance', () => {
     const perf = await page.evaluate(() => window.__SPICE_VOYAGER_TEST__!.getPerformanceStats());
     expect(perf).toMatchObject({
       postprocessing: false,
-      shadows: false,
-      advancedWater: false,
+      shadows: true,
+      advancedWater: true,
     });
     expect(perf!.fps).toBeGreaterThan(0);
 

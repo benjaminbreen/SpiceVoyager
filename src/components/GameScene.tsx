@@ -16,7 +16,7 @@ import { sfxDisembark, sfxDisembarkBlocked, sfxEmbark, sfxBattleStations, sfxAnc
 import { audioManager } from '../audio/AudioManager';
 import * as THREE from 'three';
 import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
-import { useIsMobile } from '../utils/useIsMobile';
+import { getEffectiveRainIntensity } from '../store/weather';
 import { ShiftSelectOverlay } from './ShiftSelectOverlay';
 import { TouchSteerRaycaster } from './TouchControls';
 import { getTerrainHeight, getTerrainData, BiomeType } from '../utils/terrain';
@@ -29,7 +29,7 @@ import { SplashSystem } from './SplashSystem';
 import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
 import { FloatingCombatTextSystem, spawnFloatingCombatText } from './FloatingCombatText';
 import { WreckSalvageSystem } from './WreckSalvage';
-import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
+import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnRicochetBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
 import { spawnBuildingShake, spawnBuildingCollapse, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
   mouseWorldPos,
@@ -79,13 +79,53 @@ import { addCameraFovPulse, addCameraShake, sampleCameraShake, sampleCameraFovPu
 import { sampleIntroCinematic, skipIntroCinematic, isIntroCinematicActive } from '../utils/cinematicIntroState';
 import { sampleArrivalCinematic } from '../utils/arrivalCinematicState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
+import { setAutoWalkTarget } from '../utils/autoWalkState';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
+const DEFAULT_CAMERA_ZOOM = 50;
+const CAMERA_ZOOM_MIN = 10;
+const CAMERA_ZOOM_MAX = 300;
+const CINEMATIC_CLOSE_DISTANCE = 20;
+const FIRST_PERSON_MOUSE_SENSITIVITY = 0.003;
+const FIRST_PERSON_PITCH_LIMIT = Math.PI / 3;
+const CLICK_TO_WALK_MAX_DISTANCE = 420;
+const CLICK_TO_WALK_STEP = 2.5;
+
 function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function intersectTerrainAlongRay(ray: THREE.Ray, out: THREE.Vector3): boolean {
+  let prevT = 0;
+  let prevYDiff = ray.origin.y - getTerrainHeight(ray.origin.x, ray.origin.z);
+
+  for (let t = CLICK_TO_WALK_STEP; t <= CLICK_TO_WALK_MAX_DISTANCE; t += CLICK_TO_WALK_STEP) {
+    const x = ray.origin.x + ray.direction.x * t;
+    const y = ray.origin.y + ray.direction.y * t;
+    const z = ray.origin.z + ray.direction.z * t;
+    const yDiff = y - getTerrainHeight(x, z);
+    if (yDiff <= 0 && prevYDiff >= 0) {
+      let lo = prevT;
+      let hi = t;
+      for (let i = 0; i < 8; i++) {
+        const mid = (lo + hi) * 0.5;
+        const mx = ray.origin.x + ray.direction.x * mid;
+        const my = ray.origin.y + ray.direction.y * mid;
+        const mz = ray.origin.z + ray.direction.z * mid;
+        if (my - getTerrainHeight(mx, mz) > 0) lo = mid;
+        else hi = mid;
+      }
+      ray.at((lo + hi) * 0.5, out);
+      return true;
+    }
+    prevT = t;
+    prevYDiff = yDiff;
+  }
+
+  return false;
 }
 
 function treeDamageForWeapon(weaponType: WeaponType | LandWeaponType) {
@@ -373,10 +413,12 @@ function tryRicochetProjectile(
 
   if (material === 'water') {
     sfxShipGunImpact('water', p.weaponType);
-    spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType) * 0.72);
+    spawnSplash(p.pos.x, p.pos.z, shipWaterSplashScale(p.weaponType) * 1.05);
+    spawnRicochetBurst(p.pos.x, p.pos.y, p.pos.z, reflected.x, reflected.y, reflected.z, broadsideImpactScale(p.weaponType) * 0.55);
   } else {
     sfxShipGunImpact('ricochet', p.weaponType);
-    spawnLandSurfaceImpact(p.pos.x, p.pos.z, broadsideImpactScale(p.weaponType) * 0.42);
+    spawnRicochetBurst(p.pos.x, p.pos.y, p.pos.z, reflected.x, reflected.y, reflected.z, broadsideImpactScale(p.weaponType));
+    spawnLandSurfaceImpact(p.pos.x, p.pos.z, broadsideImpactScale(p.weaponType) * 0.7);
   }
   spawnFloatingCombatText(p.pos.x, p.pos.y + 0.25, p.pos.z, 'Ricochet', 'glance');
   return true;
@@ -387,6 +429,7 @@ function aimSurfaceHeight(x: number, z: number) {
 }
 
 type LandImpactKind = 'wildlife' | 'tree' | 'surface' | 'none';
+type NpcHullSphere = { x: number; y: number; z: number; radius: number };
 
 function estimateAimSurfaceNormal(x: number, z: number, out: THREE.Vector3) {
   if (aimSurfaceHeight(x, z) <= SEA_LEVEL + 0.01) {
@@ -430,6 +473,41 @@ function intersectSegmentSphere(
   return t;
 }
 
+function visitNpcHullSpheres(npc: { x: number; y: number; z: number; heading?: number; radius: number }, visitor: (sphere: NpcHullSphere) => void) {
+  const heading = npc.heading ?? 0;
+  const forwardX = Math.sin(heading);
+  const forwardZ = Math.cos(heading);
+  const endOffset = npc.radius * 0.9;
+  const endRadius = npc.radius * 0.72;
+
+  visitor({ x: npc.x, y: npc.y, z: npc.z, radius: npc.radius });
+  visitor({
+    x: npc.x + forwardX * endOffset,
+    y: npc.y,
+    z: npc.z + forwardZ * endOffset,
+    radius: endRadius,
+  });
+  visitor({
+    x: npc.x - forwardX * endOffset,
+    y: npc.y,
+    z: npc.z - forwardZ * endOffset,
+    radius: endRadius,
+  });
+}
+
+function pointHitsNpcHull(point: THREE.Vector3, npc: { x: number; y: number; z: number; heading?: number; radius: number }, radiusBuffer = 0) {
+  let hit = false;
+  visitNpcHullSpheres(npc, (sphere) => {
+    if (hit) return;
+    const dx = point.x - sphere.x;
+    const dy = point.y - sphere.y;
+    const dz = point.z - sphere.z;
+    const r = sphere.radius + radiusBuffer;
+    hit = dx * dx + dy * dy + dz * dz < r * r;
+  });
+  return hit;
+}
+
 function intersectWildlifeSegment(start: THREE.Vector3, end: THREE.Vector3, outPoint: THREE.Vector3, outNormal: THREE.Vector3) {
   let bestT = Infinity;
   for (const w of wildlifeLivePositions.values()) {
@@ -449,13 +527,15 @@ function intersectNpcShipSegment(start: THREE.Vector3, end: THREE.Vector3, outPo
   let bestT = Infinity;
   for (const npc of npcLivePositions.values()) {
     if (npc.sunk) continue;
-    _sphereCenter.set(npc.x, npc.y, npc.z);
-    const t = intersectSegmentSphere(start, end, _sphereCenter, npc.radius, _segmentHit, _aimObjectNormal);
-    if (t < bestT) {
-      bestT = t;
-      outPoint.copy(_segmentHit);
-      outNormal.copy(_aimObjectNormal);
-    }
+    visitNpcHullSpheres(npc, (sphere) => {
+      _sphereCenter.set(sphere.x, sphere.y, sphere.z);
+      const t = intersectSegmentSphere(start, end, _sphereCenter, sphere.radius, _segmentHit, _aimObjectNormal);
+      if (t < bestT) {
+        bestT = t;
+        outPoint.copy(_segmentHit);
+        outNormal.copy(_aimObjectNormal);
+      }
+    });
   }
   return bestT;
 }
@@ -568,16 +648,18 @@ function intersectNpcShipAimTarget(ray: THREE.Ray, maxDistance: number, out: THR
   let bestDistSq = Infinity;
   for (const npc of npcLivePositions.values()) {
     if (npc.sunk) continue;
-    _huntAimSphere.center.set(npc.x, npc.y, npc.z);
-    _huntAimSphere.radius = npc.radius;
-    const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
-    if (!hit) continue;
-    const distSq = _aimPlayerOrigin.distanceToSquared(hit);
-    if (distSq > maxDistanceSq) continue;
-    if (distSq < bestDistSq) {
-      bestDistSq = distSq;
-      out.copy(hit);
-    }
+    visitNpcHullSpheres(npc, (sphere) => {
+      _huntAimSphere.center.set(sphere.x, sphere.y, sphere.z);
+      _huntAimSphere.radius = sphere.radius;
+      const hit = ray.intersectSphere(_huntAimSphere, _huntAimHit);
+      if (!hit) return;
+      const distSq = _aimPlayerOrigin.distanceToSquared(hit);
+      if (distSq > maxDistanceSq) return;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        out.copy(hit);
+      }
+    });
   }
   return bestDistSq;
 }
@@ -784,10 +866,7 @@ function spawnLandSurfaceImpact(x: number, z: number, intensity: number) {
 function pointHitsNpcShip(point: THREE.Vector3) {
   for (const npc of npcLivePositions.values()) {
     if (npc.sunk) continue;
-    const dx = point.x - npc.x;
-    const dy = point.y - npc.y;
-    const dz = point.z - npc.z;
-    if (dx * dx + dy * dy + dz * dz < npc.radius * npc.radius) {
+    if (pointHitsNpcHull(point, npc)) {
       return npc;
     }
   }
@@ -812,8 +891,8 @@ function npcProjectileDamage(weaponType: WeaponType | LandWeaponType) {
 
 function projectileImpulseStrength(weaponType: WeaponType | LandWeaponType, damage: number) {
   const isBroadside = weaponType in WEAPON_DEFS && !WEAPON_DEFS[weaponType as WeaponType].aimable;
-  const base = isBroadside ? 1.2 : 0.45;
-  return THREE.MathUtils.clamp(base + damage * 0.055, 0.45, isBroadside ? 5.2 : 2.6);
+  const base = isBroadside ? 3.2 : 1.2;
+  return THREE.MathUtils.clamp(base + damage * 0.16, 1.2, isBroadside ? 13 : 5.5);
 }
 
 function applyNpcHitImpulse(
@@ -825,9 +904,9 @@ function applyNpcHitImpulse(
   const dz = vel.z;
   const len = Math.hypot(dx, dz);
   if (len < 0.001) return;
-  npc.impulseX = THREE.MathUtils.clamp((npc.impulseX ?? 0) + (dx / len) * strength, -6, 6);
-  npc.impulseZ = THREE.MathUtils.clamp((npc.impulseZ ?? 0) + (dz / len) * strength, -6, 6);
-  npc.impulseUntil = Date.now() + 650;
+  npc.impulseX = THREE.MathUtils.clamp((npc.impulseX ?? 0) + (dx / len) * strength, -16, 16);
+  npc.impulseZ = THREE.MathUtils.clamp((npc.impulseZ ?? 0) + (dz / len) * strength, -16, 16);
+  npc.impulseUntil = Date.now() + 1400;
 }
 
 function dispatchPlayerShipHitImpulse(vel: THREE.Vector3, strength: number) {
@@ -1135,6 +1214,7 @@ function CameraController() {
   const { camera, gl } = useThree();
   const currentPos = useRef(new THREE.Vector3());
   const targetPos = useRef(new THREE.Vector3());
+  const arrivalWasActive = useRef(false);
 
   // Pan state — all transient, no store needed
   const panOffset = useRef({ x: 0, z: 0 });
@@ -1147,6 +1227,7 @@ function CameraController() {
   // Camera orbit rotation — Z/X keys
   const rotationTarget = useRef(useGameStore.getState().cameraRotation);
   const rotationKeys = useRef({ z: false, x: false });
+  const firstPersonLook = useRef({ yaw: 0, pitch: 0 });
 
   // Raycaster for mouse→world projection (combat aiming)
   const raycaster = useRef(new THREE.Raycaster());
@@ -1155,6 +1236,7 @@ function CameraController() {
   // Walking-mode aim plane — y constant updated each frame to walker's foot height
   const walkPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
   const hitVec = useRef(new THREE.Vector3());
+  const clickToWalkHit = useRef(new THREE.Vector3());
 
   useEffect(() => {
     const el = gl.domElement;
@@ -1166,7 +1248,7 @@ function CameraController() {
       // DOM_DELTA_LINE (1) reports in lines, not pixels — normalize to ~16px.
       const deltaPx = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       const step = deltaPx * zoomTarget.current * 0.0018;
-      zoomTarget.current = Math.max(10, Math.min(300, zoomTarget.current + step));
+      zoomTarget.current = Math.max(CAMERA_ZOOM_MIN, Math.min(CAMERA_ZOOM_MAX, zoomTarget.current + step));
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -1186,6 +1268,7 @@ function CameraController() {
     let pinchPrevDist = 0;
     let pinchPrevMidX = 0;
     let pinchPrevMidY = 0;
+    let primaryDown: { x: number; y: number; moved: boolean } | null = null;
 
     const updateMouseNDC = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect();
@@ -1207,6 +1290,11 @@ function CameraController() {
       if (isTouchEvent(e) && activeTouches.has(e.pointerId)) {
         activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       }
+      if (primaryDown) {
+        const dx = e.clientX - primaryDown.x;
+        const dy = e.clientY - primaryDown.y;
+        if (dx * dx + dy * dy > 36) primaryDown.moved = true;
+      }
 
       // Two-finger gesture active → pinch-zoom + two-finger pan.
       if (pinchActive && activeTouches.size === 2) {
@@ -1221,7 +1309,7 @@ function CameraController() {
         // apart → zoom in (dist grows → ratio > 1 → zoom shrinks).
         if (pinchPrevDist > 0) {
           const ratio = pinchPrevDist / dist;
-          zoomTarget.current = Math.max(10, Math.min(300, zoomTarget.current * ratio));
+          zoomTarget.current = Math.max(CAMERA_ZOOM_MIN, Math.min(CAMERA_ZOOM_MAX, zoomTarget.current * ratio));
         }
 
         // Pan: midpoint delta in world units (same scale as desktop right-drag).
@@ -1240,10 +1328,25 @@ function CameraController() {
       // happens while a finger is dragging — which is the drag-to-aim flow.
       updateMouseNDC(e);
 
+      const state = useGameStore.getState();
+      if (
+        state.viewMode === 'firstperson' &&
+        !state.combatMode &&
+        !isTouchEvent(e) &&
+        (e.buttons & 1)
+      ) {
+        firstPersonLook.current.yaw -= e.movementX * FIRST_PERSON_MOUSE_SENSITIVITY;
+        firstPersonLook.current.pitch = THREE.MathUtils.clamp(
+          firstPersonLook.current.pitch - e.movementY * FIRST_PERSON_MOUSE_SENSITIVITY,
+          -FIRST_PERSON_PITCH_LIMIT,
+          FIRST_PERSON_PITCH_LIMIT
+        );
+        return;
+      }
+
       // Right-button drag (buttons bitmask: 2 = right) for desktop pan.
       if (!(e.buttons & 2)) return;
-      const { cameraZoom } = useGameStore.getState();
-      const scale = cameraZoom / el.clientHeight * 2;
+      const scale = state.cameraZoom / el.clientHeight * 2;
       panOffset.current.x -= e.movementX * scale;
       panOffset.current.z -= e.movementY * scale;
       snapBack.current = false;
@@ -1274,6 +1377,9 @@ function CameraController() {
       if (e.button === 0 && useGameStore.getState().combatMode) {
         setFireHeld(true);
       }
+      if (e.button === 0) {
+        primaryDown = { x: e.clientX, y: e.clientY, moved: false };
+      }
     };
 
     const handlePointerUp = (e: PointerEvent) => {
@@ -1294,7 +1400,24 @@ function CameraController() {
         }
         return;
       }
-      if (e.button === 0) setFireHeld(false);
+      if (e.button === 0) {
+        const state = useGameStore.getState();
+        const wasClick = primaryDown && !primaryDown.moved;
+        setFireHeld(false);
+        primaryDown = null;
+        if (
+          wasClick &&
+          state.playerMode === 'walking' &&
+          !state.combatMode &&
+          !state.activePort &&
+          !state.activePOI
+        ) {
+          raycaster.current.setFromCamera(mouseNDC.current, camera);
+          if (intersectTerrainAlongRay(raycaster.current.ray, clickToWalkHit.current)) {
+            setAutoWalkTarget(clickToWalkHit.current.x, clickToWalkHit.current.z);
+          }
+        }
+      }
     };
 
     const handlePointerCancel = (e: PointerEvent) => {
@@ -1350,20 +1473,29 @@ function CameraController() {
       window.removeEventListener('keydown', handleRotKeyDown);
       window.removeEventListener('keyup', handleRotKeyUp);
     };
-  }, [gl, setCameraZoom]);
+  }, [camera, gl, setCameraZoom]);
 
   useFrame((_, delta) => {
     const arrival = sampleArrivalCinematic(delta);
     if (arrival.active) {
       zoomTarget.current = arrival.zoom;
       rotationTarget.current = arrival.rotation;
+      arrivalWasActive.current = true;
+    } else if (arrivalWasActive.current) {
+      zoomTarget.current = arrival.zoom;
+      rotationTarget.current = arrival.rotation;
       setCameraZoom(arrival.zoom);
       setCameraRotation(arrival.rotation);
+      arrivalWasActive.current = false;
     }
 
     // Smooth zoom lerp — gentle ease-out
     const currentZoom = useGameStore.getState().cameraZoom;
-    if (Math.abs(zoomTarget.current - currentZoom) > 0.05) {
+    const intro = sampleIntroCinematic(delta);
+    if (intro.active) {
+      zoomTarget.current = currentZoom;
+    }
+    if (!arrival.active && !intro.active && Math.abs(zoomTarget.current - currentZoom) > 0.05) {
       const lerpSpeed = 1 - Math.exp(-delta * 4); // gentler convergence so trackpad flicks don't snap
       setCameraZoom(currentZoom + (zoomTarget.current - currentZoom) * lerpSpeed);
     }
@@ -1374,12 +1506,14 @@ function CameraController() {
     if (rotationKeys.current.x) rotationTarget.current -= rotSpeed * delta;
     // Smooth lerp toward target
     const currentRot = useGameStore.getState().cameraRotation;
-    if (Math.abs(rotationTarget.current - currentRot) > 0.001) {
+    if (!arrival.active && Math.abs(rotationTarget.current - currentRot) > 0.001) {
       const rotLerp = 1 - Math.pow(0.001, delta);
       setCameraRotation(currentRot + (rotationTarget.current - currentRot) * rotLerp);
     }
 
-    const { playerMode, cameraZoom, viewMode, cameraRotation } = useGameStore.getState();
+    const { playerMode, cameraZoom: storeCameraZoom, viewMode, cameraRotation: storeCameraRotation } = useGameStore.getState();
+    const cameraZoom = arrival.active ? arrival.zoom : storeCameraZoom;
+    const cameraRotation = arrival.active ? arrival.rotation : storeCameraRotation;
     const shipTransform = getLiveShipTransform();
     const walkingTransform = getLiveWalkingTransform();
     const activePos = playerMode === 'ship' ? shipTransform.pos : walkingTransform.pos;
@@ -1423,18 +1557,22 @@ function CameraController() {
     const cosR = Math.cos(cameraRotation);
 
     if (viewMode === 'firstperson') {
-      // First-person: camera at eye level, looking in heading direction (rotation not applied — you look where the ship faces)
+      // First-person: camera at eye level, with mouse-drag look layered over heading.
+      const lookRot = activeRot + firstPersonLook.current.yaw;
+      const lookDistance = 10;
+      const lookHorizontal = Math.cos(firstPersonLook.current.pitch) * lookDistance;
       camera.position.x = currentPos.current.x;
       camera.position.y = currentPos.current.y + (playerMode === 'ship' ? 4 : 2);
       camera.position.z = currentPos.current.z;
       camera.lookAt(
-        currentPos.current.x + Math.sin(activeRot) * 10,
-        currentPos.current.y + (playerMode === 'ship' ? 3 : 1.5),
-        currentPos.current.z + Math.cos(activeRot) * 10
+        currentPos.current.x + Math.sin(lookRot) * lookHorizontal,
+        camera.position.y + Math.sin(firstPersonLook.current.pitch) * lookDistance,
+        currentPos.current.z + Math.cos(lookRot) * lookHorizontal
       );
     } else if (viewMode === 'cinematic') {
-      // Cinematic: close behind-and-above follow, rotated by orbit angle
-      const dist = Math.min(cameraZoom, 20);
+      // Cinematic: close behind-and-above follow. The old fixed close view is
+      // the nearest zoom; wheel/pinch can only pull back from there.
+      const dist = Math.max(CINEMATIC_CLOSE_DISTANCE, cameraZoom / DEFAULT_CAMERA_ZOOM * CINEMATIC_CLOSE_DISTANCE);
       const behindX = -Math.sin(activeRot + cameraRotation) * dist * 0.8;
       const behindZ = -Math.cos(activeRot + cameraRotation) * dist * 0.8;
       camera.position.x = currentPos.current.x + behindX;
@@ -1454,8 +1592,8 @@ function CameraController() {
       camera.lookAt(currentPos.current);
     } else {
       // Default: 45-degree diagonal view, rotated around player by orbit angle
-      const offsetX = cameraZoom * 0.5;
-      const offsetZ = cameraZoom;
+      const offsetX = cameraZoom * 0.5 * arrival.orbitMultiplier;
+      const offsetZ = cameraZoom * arrival.orbitMultiplier;
       // Rotate the offset vector around Y axis
       const rotatedX = offsetX * cosR + offsetZ * sinR;
       const rotatedZ = -offsetX * sinR + offsetZ * cosR;
@@ -1468,8 +1606,7 @@ function CameraController() {
     // Intro cinematic — orbit + dolly-in onto the ship after the Commission
     // modal closes. Reshapes the gameplay pose so the cinematic ends *exactly*
     // at the gameplay pose (no snap on hand-off).
-    const intro = sampleIntroCinematic(delta);
-    if (intro.active && playerMode === 'ship' && viewMode !== 'firstperson') {
+    if (!arrival.active && intro.active && playerMode === 'ship' && viewMode !== 'firstperson') {
       const targetX = currentPos.current.x;
       const targetY = currentPos.current.y;
       const targetZ = currentPos.current.z;
@@ -2193,7 +2330,6 @@ function InteractionController() {
 }
 
 // ── Projectile renderer + hit detection ─────────────────────────────────────
-const NPC_HIT_RADIUS = 4;
 const PROJECTILE_COUNT = 30; // increased for broadsides
 const ROCKET_COUNT = 8;
 const ROCKET_NEAR_MISS_RADIUS = 6.5;
@@ -2478,14 +2614,11 @@ function ProjectileSystem() {
         let nearMissNpc: typeof npcLivePositions extends Map<any, infer V> ? V | null : null = null as any;
         for (const [, npc] of npcLivePositions) {
           if (npc.sunk) continue;
-          const dx = p.pos.x - npc.x;
-          const dz = p.pos.z - npc.z;
-          const distSq = dx * dx + dz * dz;
-          if (distSq < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
+          if (pointHitsNpcHull(p.pos, npc)) {
             directHitNpc = npc;
             break;
           }
-          if (distSq < ROCKET_NEAR_MISS_RADIUS * ROCKET_NEAR_MISS_RADIUS && !nearMissNpc) {
+          if (pointHitsNpcHull(p.pos, npc, ROCKET_NEAR_MISS_RADIUS) && !nearMissNpc) {
             nearMissNpc = npc;
           }
         }
@@ -2660,9 +2793,7 @@ function ProjectileSystem() {
 
       for (const [, npc] of npcLivePositions) {
         if (npc.sunk) continue;
-        const dx = p.pos.x - npc.x;
-        const dz = p.pos.z - npc.z;
-        if (dx * dx + dz * dz < NPC_HIT_RADIUS * NPC_HIT_RADIUS) {
+        if (pointHitsNpcHull(p.pos, npc)) {
           sfxCannonImpact(p.weaponType);
           const isAimable = WEAPON_DEFS[p.weaponType as WeaponType]?.aimable;
           spawnSplinters(p.pos.x, p.pos.y, p.pos.z, isAimable ? 0.5 : broadsideImpactScale(p.weaponType) * 0.9);
@@ -3212,10 +3343,10 @@ function AtmosphereSync() {
     // Weather pulls the fog/sky toward a desaturated cool gray-green and pulls
     // the far plane in so heavy rain feels enclosed. Reuses the existing eased
     // weather.intensity so transitions match the LUT and rain overlay.
-    const rainOn = state.renderDebug.rain;
-    const wIntensity = rainOn ? Math.max(state.weather.intensity, 1) : state.weather.intensity;
-    const fogTint = wIntensity * 0.32; // cap blend so rain softens without muddying whitewash
-    const fogPull = THREE.MathUtils.lerp(1.0, 0.84, wIntensity); // far plane shrink
+    const wIntensity = getEffectiveRainIntensity(state.weather, state.renderDebug.rain);
+    const fogTint = wIntensity * 0.42; // cap blend so rain softens without muddying whitewash
+    const fogNearPush = THREE.MathUtils.lerp(1.0, 0.82, wIntensity);
+    const fogPull = THREE.MathUtils.lerp(1.0, 0.68, wIntensity); // far plane shrink
     tmpFogColor.copy(fogColor).lerp(rainFog, fogTint);
     tmpSkyColor.copy(skyColor).lerp(rainFog, fogTint * 0.85);
 
@@ -3233,7 +3364,7 @@ function AtmosphereSync() {
       // Edge-fog floor scales with the current fog distance so it can't pull
       // fogFar in below ~60% of base — keeps night/zoomed-out from collapsing
       // into a wall near the world boundary while still cueing the edge.
-      const edgeNear = THREE.MathUtils.lerp(fogNear, Math.max(70, fogNear * 0.55), edgeFog);
+      const edgeNear = THREE.MathUtils.lerp(fogNear, Math.max(70, fogNear * 0.55), edgeFog) * fogNearPush;
       const edgeFar = THREE.MathUtils.lerp(fogFar, Math.max(260, fogFar * 0.6), edgeFog);
 
       scene.fog.color.copy(tmpFogColor);
@@ -3326,8 +3457,7 @@ function PerformanceSampler() {
   return null;
 }
 
-export function GameScene() {
-  const { isMobile } = useIsMobile();
+export function GameScene({ dprCap, onWorldReady }: { dprCap: number; onWorldReady?: () => void }) {
   const worldSeed = useGameStore((state) => state.worldSeed);
   const worldSize = useGameStore((state) => state.worldSize);
   const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
@@ -3338,14 +3468,12 @@ export function GameScene() {
   const aoEnabled = useGameStore((state) => state.renderDebug.ao);
   const brightnessContrastEnabled = useGameStore((state) => state.renderDebug.brightnessContrast);
   const hueSaturationEnabled = useGameStore((state) => state.renderDebug.hueSaturation);
-  const rainEnabled = useGameStore((state) => state.renderDebug.rain);
-  const weatherIntensity = useGameStore((state) => state.weather.intensity);
-  // Dev toggle forces full-strength rain regardless of weather state; otherwise
-  // intensity comes from the climate-driven roll (eased in advanceTime).
-  const effectiveRainIntensity = rainEnabled ? Math.max(weatherIntensity, 1) : weatherIntensity;
+  const weather = useGameStore((state) => state.weather);
+  const forceRain = useGameStore((state) => state.renderDebug.rain);
+  const effectiveRainIntensity = getEffectiveRainIntensity(weather, forceRain);
   const showRain = effectiveRainIntensity > 0.01;
   const [canvasReadyToMount, setCanvasReadyToMount] = useState(false);
-  const canvasDpr: [number, number] = isMobile ? [1.25, 1.5] : [1, 1.5];
+  const canvasDpr: [number, number] = [1, Math.max(1, Math.min(1.5, dprCap))];
 
   useEffect(() => {
     const frameId = requestAnimationFrame(() => setCanvasReadyToMount(true));
@@ -3365,7 +3493,7 @@ export function GameScene() {
             <color attach="background" args={['#87CEEB']} />
             <fog attach="fog" args={['#87CEEB', 200, 600]} />
 
-            <World key={`${worldSeed}:${worldSize}:${currentWorldPortId ?? 'world'}:${devSoloPort ?? 'all'}`} />
+            <World key={`${worldSeed}:${worldSize}:${currentWorldPortId ?? 'world'}:${devSoloPort ?? 'all'}`} onReady={onWorldReady} />
             <Ocean />
             <Ship />
             <Player />
@@ -3463,16 +3591,20 @@ function PostProcessing({
   const lutParams = lutAuto
     ? lerpLUTParams(addLUTParams(lutBase, moodDelta), LUT_PRESETS.monsoon, weatherIntensityForLut)
     : lutParamsManual;
-  const lutEffectiveOn = lutAuto
+  const lutGradeActive = lutAuto
     ? lutDiffersFromNeutral(lutParams)
     : lutEnabled;
+  // In auto mode, keep the LUT pass mounted even when the current grade is
+  // neutral. Otherwise dawn/dusk can cross the neutral threshold and remount
+  // the whole EffectComposer, which shows up as a visible hitch.
+  const lutPassMounted = lutAuto || lutEnabled;
 
-  const lutKey = lutParamsKey(lutParams);
+  const lutKey = lutParamsKey(lutGradeActive ? lutParams : LUT_NEUTRAL);
   const lutTex = useMemo(
-    () => (lutEffectiveOn ? buildLUT(lutParams) : null),
+    () => (lutPassMounted ? buildLUT(lutGradeActive ? lutParams : LUT_NEUTRAL) : null),
     // lutKey already covers the params; explicit dep keeps lint happy.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lutKey, lutEffectiveOn],
+    [lutKey, lutPassMounted, lutGradeActive],
   );
   useEffect(() => () => { lutTex?.dispose(); }, [lutTex]);
 
@@ -3486,7 +3618,7 @@ function PostProcessing({
     (brightnessContrastEnabled ? 'c' : '-') +
     (hueSaturationEnabled ? 'h' : '-') +
     (vignetteEnabled ? 'v' : '-') +
-    (lutEffectiveOn ? 'l' : '-');
+    (lutPassMounted ? 'l' : '-');
 
   return (
     <EffectComposer key={composerKey}>
@@ -3514,7 +3646,7 @@ function PostProcessing({
       {brightnessContrastEnabled ? <BrightnessContrast brightness={brightness} contrast={contrast} /> : <></>}
       {hueSaturationEnabled ? <HueSaturation hue={hue} saturation={saturation} /> : <></>}
       {vignetteEnabled ? <Vignette eskil={false} offset={vignetteOffset} darkness={vignetteDarkness} /> : <></>}
-      {lutEffectiveOn && lutTex ? <LUT lut={lutTex} tetrahedralInterpolation /> : <></>}
+      {lutPassMounted && lutTex ? <LUT lut={lutTex} tetrahedralInterpolation /> : <></>}
     </EffectComposer>
   );
 }

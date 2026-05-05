@@ -695,6 +695,9 @@ function DisplayTab({
       <CtrlRow label="City Ground Wear" desc="Packed earth and damp mud tint around roads, buildings, docks, and plazas." last>
         <Toggle value={renderDebug.cityGroundWear} onChange={v => onUpdate({ cityGroundWear: v })} />
       </CtrlRow>
+      <CtrlRow label="Shore Foam" desc="Animated white swash along coastlines and shallow beaches." last>
+        <Toggle value={renderDebug.shoreFoam} onChange={v => onUpdate({ shoreFoam: v })} />
+      </CtrlRow>
     </div>
   );
 }

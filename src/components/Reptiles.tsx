@@ -6,7 +6,7 @@ import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { getTerrainHeight } from '../utils/terrain';
 import { useGameStore } from '../store/gameStore';
 import { sfxReptileScrabble } from '../audio/SoundEffects';
-import type { SpeciesInfo } from './Grazers';
+import { REPTILE_FOOT_OFFSET, type ReptileEntry, type SpeciesInfo } from '../utils/animalTypes';
 import { BODY_RADIUS, PLAYER_RADIUS, computeCirclePush, separateHerd } from '../utils/animalBump';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { REPTILE_TERRAIN, resolveTerrainStep } from '../utils/animalTerrain';
@@ -17,16 +17,6 @@ import {
   setStaminaBarInstance,
   staminaColor,
 } from '../utils/animalStaminaBar';
-
-// ── Types ────────────────────────────────────────────────────────────────────
-export interface ReptileEntry {
-  position: [number, number, number];
-  rotation: number;
-  color: [number, number, number];
-  scale: number;
-  speedMult: number;
-  bodyLength: number; // stretch factor — crocodiles are long, iguanas are shorter
-}
 
 interface ReptileOffset {
   dx: number; dz: number;
@@ -53,9 +43,6 @@ const WANDER_SPEED = 0.15;
 const WANDER_WALK_PROB = 0.3;      // 30% crawl, 70% bask
 const MAX_FLEE_SQ = MAX_FLEE_DIST * MAX_FLEE_DIST;
 const ANIM_RANGE_SQ = 100 * 100;
-// Foot-to-pivot distance in base geometry units. Legs at y=-0.2, length 0.22 rotated ±0.35,
-// so vertical reach ≈ 0.30 below pivot. Multiply by instance scale.
-export const REPTILE_FOOT_OFFSET = 0.30;
 // Fatigue — reptiles burst fast but tire quickly
 const FATIGUE_RATE = 0.28;
 const RECOVERY_RATE = 0.1;

@@ -17,85 +17,85 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
   sunLift: number;
 }> = {
   white: {
-    grain: 0.015,
-    lowerShade: 0.003,
-    topLift: 0.26,
-    shadeLift: 0.18,
+    grain: 0.032,
+    lowerShade: 0.001,
+    topLift: 0.34,
+    shadeLift: 0.24,
     warmLift: [1.12, 1.08, 1.00],
     roughnessVariation: 0.02,
-    sunLift: 0.18,
+    sunLift: 0.30,
   },
   mud: {
-    grain: 0.090,
-    lowerShade: 0.045,
-    topLift: 0.025,
-    shadeLift: 0.0,
-    warmLift: [1.02, 0.99, 0.94],
+    grain: 0.075,
+    lowerShade: 0.018,
+    topLift: 0.055,
+    shadeLift: 0.03,
+    warmLift: [1.06, 1.02, 0.94],
     roughnessVariation: 0.07,
-    sunLift: 0.07,
+    sunLift: 0.13,
   },
   wood: {
-    grain: 0.120,
-    lowerShade: 0.040,
-    topLift: 0.015,
-    shadeLift: 0.0,
-    warmLift: [1.03, 0.98, 0.90],
+    grain: 0.090,
+    lowerShade: 0.018,
+    topLift: 0.035,
+    shadeLift: 0.02,
+    warmLift: [1.06, 1.00, 0.92],
     roughnessVariation: 0.08,
-    sunLift: 0.05,
+    sunLift: 0.10,
   },
   terracotta: {
-    grain: 0.105,
-    lowerShade: 0.025,
-    topLift: 0.070,
-    shadeLift: 0.0,
-    warmLift: [1.08, 0.98, 0.88],
+    grain: 0.080,
+    lowerShade: 0.010,
+    topLift: 0.100,
+    shadeLift: 0.02,
+    warmLift: [1.12, 1.00, 0.90],
     roughnessVariation: 0.06,
-    sunLift: 0.06,
+    sunLift: 0.13,
   },
   stone: {
-    grain: 0.070,
-    lowerShade: 0.035,
-    topLift: 0.025,
-    shadeLift: 0.0,
-    warmLift: [1.02, 1.00, 0.96],
+    grain: 0.060,
+    lowerShade: 0.015,
+    topLift: 0.055,
+    shadeLift: 0.04,
+    warmLift: [1.06, 1.04, 0.98],
     roughnessVariation: 0.05,
-    sunLift: 0.12,
+    sunLift: 0.20,
   },
   straw: {
-    grain: 0.095,
-    lowerShade: 0.030,
-    topLift: 0.050,
-    shadeLift: 0.0,
-    warmLift: [1.08, 1.03, 0.88],
+    grain: 0.075,
+    lowerShade: 0.012,
+    topLift: 0.080,
+    shadeLift: 0.02,
+    warmLift: [1.12, 1.07, 0.90],
     roughnessVariation: 0.08,
-    sunLift: 0.06,
+    sunLift: 0.11,
   },
   tileRoof: {
-    grain: 0.070,
-    lowerShade: 0.022,
-    topLift: 0.040,
-    shadeLift: 0.0,
-    warmLift: [1.08, 0.96, 0.90],
-    roughnessVariation: 0.055,
-    sunLift: 0.05,
+    grain: 0.085,
+    lowerShade: 0.008,
+    topLift: 0.145,
+    shadeLift: 0.012,
+    warmLift: [1.20, 1.03, 0.88],
+    roughnessVariation: 0.115,
+    sunLift: 0.22,
   },
   thatchRoof: {
-    grain: 0.085,
-    lowerShade: 0.050,
-    topLift: 0.020,
-    shadeLift: 0.0,
-    warmLift: [1.04, 1.01, 0.90],
+    grain: 0.065,
+    lowerShade: 0.018,
+    topLift: 0.050,
+    shadeLift: 0.02,
+    warmLift: [1.08, 1.04, 0.92],
     roughnessVariation: 0.075,
-    sunLift: 0.035,
+    sunLift: 0.085,
   },
   woodRoof: {
-    grain: 0.115,
-    lowerShade: 0.038,
-    topLift: 0.020,
-    shadeLift: 0.0,
-    warmLift: [1.02, 0.98, 0.92],
+    grain: 0.080,
+    lowerShade: 0.014,
+    topLift: 0.045,
+    shadeLift: 0.02,
+    warmLift: [1.06, 1.01, 0.94],
     roughnessVariation: 0.075,
-    sunLift: 0.04,
+    sunLift: 0.09,
   },
 };
 
@@ -110,34 +110,40 @@ function mulberryTextureRng(seed: number) {
 
 function createTileRoofTexture(): THREE.CanvasTexture {
   const rng = mulberryTextureRng(0x7a11e);
-  const size = 192;
+  const size = 224;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#d6b0a0';
+  ctx.fillStyle = '#b85a3d';
   ctx.fillRect(0, 0, size, size);
-  for (let y = 0; y < size; y += 20) {
-    const rowShift = (y / 20) % 2 === 0 ? 0 : 14;
-    ctx.fillStyle = 'rgba(42, 14, 10, 0.58)';
-    ctx.fillRect(0, y, size, 4);
-    ctx.fillStyle = 'rgba(255, 235, 210, 0.18)';
-    ctx.fillRect(0, y + 4, size, 2);
-    for (let x = -rowShift; x < size; x += 28) {
-      ctx.fillStyle = 'rgba(42, 13, 9, 0.42)';
-      ctx.fillRect(x, y + 4, 3, 16);
-      ctx.fillStyle = 'rgba(255, 225, 195, 0.14)';
-      ctx.fillRect(x + 3, y + 5, 2, 13);
+  for (let y = 0; y < size; y += 18) {
+    const rowShift = (y / 18) % 2 === 0 ? 0 : 13;
+    ctx.fillStyle = 'rgba(48, 13, 8, 0.72)';
+    ctx.fillRect(0, y, size, 3);
+    ctx.fillStyle = 'rgba(255, 196, 130, 0.30)';
+    ctx.fillRect(0, y + 3, size, 2);
+    for (let x = -rowShift; x < size; x += 26) {
+      const warm = 135 + Math.floor(rng() * 70);
+      ctx.fillStyle = `rgba(${warm}, ${Math.floor(warm * 0.38)}, ${Math.floor(warm * 0.23)}, ${0.18 + rng() * 0.12})`;
+      ctx.fillRect(x + 2, y + 5, 22, 12);
+      ctx.fillStyle = 'rgba(38, 10, 7, 0.48)';
+      ctx.fillRect(x, y + 4, 3, 14);
+      ctx.fillStyle = 'rgba(255, 230, 170, 0.18)';
+      ctx.fillRect(x + 3, y + 5, 2, 11);
     }
   }
-  for (let i = 0; i < 1100; i++) {
-    const v = 95 + Math.floor(rng() * 105);
-    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.76)}, ${Math.floor(v * 0.66)}, 0.11)`;
-    ctx.fillRect(rng() * size, rng() * size, 1, 1);
+  for (let i = 0; i < 1900; i++) {
+    const hot = rng() < 0.44;
+    const v = hot ? 145 + Math.floor(rng() * 100) : 45 + Math.floor(rng() * 90);
+    ctx.fillStyle = hot
+      ? `rgba(${v}, ${Math.floor(v * 0.48)}, ${Math.floor(v * 0.28)}, ${0.08 + rng() * 0.12})`
+      : `rgba(${v}, ${Math.floor(v * 0.30)}, ${Math.floor(v * 0.20)}, ${0.09 + rng() * 0.13})`;
+    ctx.fillRect(rng() * size, rng() * size, rng() < 0.8 ? 1 : 2, 1);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(1.35, 1.35);
+  tex.repeat.set(1.65, 1.65);
   tex.anisotropy = 4;
   return tex;
 }
@@ -340,19 +346,24 @@ export function addBuildingMaterialLighting(
   const t = BUILDING_MATERIAL_TUNING[kind];
   const roofDetailSnippet =
     kind === 'tileRoof' ? `
-        float roofCourse = 1.0 - smoothstep(0.018, 0.055, abs(fract((vBuildingLocalPos.y + 0.5) * 7.5) - 0.5));
-        float roofRunBreak = 1.0 - smoothstep(0.012, 0.040, abs(fract((vBuildingLocalPos.x + 0.5) * 5.5) - 0.5));
-        diffuseColor.rgb *= 1.0 - roofCourse * 0.040 - roofRunBreak * 0.020;
+        float roofCourse = 1.0 - smoothstep(0.014, 0.050, abs(fract((vBuildingLocalPos.y + 0.5) * 8.5) - 0.5));
+        float roofRunBreak = 1.0 - smoothstep(0.010, 0.036, abs(fract((vBuildingLocalPos.x + 0.5) * 6.3) - 0.5));
+        float tileMottle = buildingNoise(vBuildingWorldPos.xz * 1.6 + vBuildingLocalPos.xy * 5.4);
+        diffuseColor.rgb *= 1.0 - roofCourse * 0.030 - roofRunBreak * 0.018;
+        diffuseColor.rgb = min(diffuseColor.rgb + vec3(0.070, 0.030, 0.010) * (roofCourse + roofRunBreak * 0.35), vec3(1.0));
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.18, 0.84, 0.68), tileMottle * 0.22);
       `
     : kind === 'thatchRoof' ? `
         float thatchCourse = 1.0 - smoothstep(0.020, 0.075, abs(fract((vBuildingLocalPos.y + 0.5) * 4.2) - 0.5));
         float thatchFiber = buildingNoise(vec2(vBuildingLocalPos.x * 18.0, vBuildingLocalPos.y * 7.0)) * 2.0 - 1.0;
-        diffuseColor.rgb *= 1.0 - thatchCourse * 0.035 + thatchFiber * 0.025;
+        diffuseColor.rgb *= 1.0 - thatchCourse * 0.012 + thatchFiber * 0.014;
+        diffuseColor.rgb = min(diffuseColor.rgb + vec3(0.026, 0.024, 0.012) * thatchCourse, vec3(1.0));
       `
     : kind === 'woodRoof' ? `
         float shingleCourse = 1.0 - smoothstep(0.016, 0.050, abs(fract((vBuildingLocalPos.y + 0.5) * 6.2) - 0.5));
         float shingleBreak = 1.0 - smoothstep(0.012, 0.040, abs(fract((vBuildingLocalPos.x + 0.5) * 4.8) - 0.5));
-        diffuseColor.rgb *= 1.0 - shingleCourse * 0.045 - shingleBreak * 0.020;
+        diffuseColor.rgb *= 1.0 - shingleCourse * 0.016 - shingleBreak * 0.008;
+        diffuseColor.rgb = min(diffuseColor.rgb + vec3(0.020, 0.016, 0.012) * (shingleCourse + shingleBreak * 0.35), vec3(1.0));
       `
     : '';
   mat.onBeforeCompile = (shader) => {
@@ -405,7 +416,10 @@ export function addBuildingMaterialLighting(
         float broad = buildingNoise(wp * 0.19);
         float fine = buildingNoise(wp * 1.25 + vBuildingLocalPos.xz * 2.7);
         float grain = (broad * 0.65 + fine * 0.35) * 2.0 - 1.0;
-        diffuseColor.rgb *= 1.0 + grain * ${t.grain.toFixed(3)};
+        float lightGrain = grain * 0.5 + 0.5;
+        vec3 grainLift = min(diffuseColor.rgb * (1.0 + lightGrain * ${(t.grain * 1.55).toFixed(3)}), vec3(1.0));
+        diffuseColor.rgb = mix(diffuseColor.rgb, grainLift, 0.78);
+        diffuseColor.rgb += (grain - 0.15) * ${Math.min(t.grain * 0.18, 0.012).toFixed(3)};
 
         float lowerBand = 1.0 - smoothstep(-0.46, -0.16, vBuildingLocalPos.y);
         float topBand = smoothstep(0.12, 0.50, vBuildingLocalPos.y);
@@ -422,15 +436,16 @@ export function addBuildingMaterialLighting(
         float sunVisible = smoothstep(0.03, 0.25, buildingSunDir.y);
         float wrappedSun = clamp((dot(buildingNormal, buildingSunDir) + 0.34) / 1.34, 0.0, 1.0);
         float sunFacing = pow(wrappedSun, 0.85) * sunVisible;
-        diffuseColor.rgb *= 1.0 + sunFacing * ${t.sunLift.toFixed(3)};
+        diffuseColor.rgb = min(diffuseColor.rgb * (1.0 + sunFacing * ${t.sunLift.toFixed(3)}), vec3(1.0));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.96, 0.86), sunFacing * ${Math.min(t.sunLift * 0.22, 0.055).toFixed(3)});
         float skyFacing = smoothstep(-0.20, 0.70, buildingNormal.y);
         float sideFacing = 1.0 - abs(buildingNormal.y);
         vec2 wallNormal = normalize(buildingNormal.xz + vec2(0.0001));
         vec2 wallSun = normalize(buildingSunDir.xz + vec2(0.0001));
         float wallSunFacing = dot(wallNormal, wallSun) * 0.5 + 0.5;
         float verticalWall = smoothstep(0.45, 0.92, sideFacing);
-        float sideContrast = mix(0.92, 1.14, wallSunFacing) * sunVisible;
-        diffuseColor.rgb *= mix(1.0, sideContrast, verticalWall * 0.34);
+        float sideContrast = mix(0.98, 1.18, wallSunFacing) * sunVisible;
+        diffuseColor.rgb *= mix(1.0, sideContrast, verticalWall * 0.28);
         float skyFill = (skyFacing * 0.055 + sideFacing * 0.035) * sunVisible;
         diffuseColor.rgb = mix(
           diffuseColor.rgb,
@@ -445,7 +460,8 @@ export function addBuildingMaterialLighting(
       `#include <roughnessmap_fragment>
       {
         float surfaceVar = buildingNoise(vBuildingWorldPos.xz * 0.72 + vBuildingLocalPos.xz * 3.1) - 0.5;
-        roughnessFactor = clamp(roughnessFactor + surfaceVar * ${t.roughnessVariation.toFixed(3)}, 0.55, 1.0);
+        float roofGlint = ${kind === 'tileRoof' ? 'pow(max(dot(normalize(vBuildingWorldNormal), normalize(uBuildingSunDir)), 0.0), 1.8) * 0.16' : '0.0'};
+        roughnessFactor = clamp(roughnessFactor + surfaceVar * ${t.roughnessVariation.toFixed(3)} - roofGlint, ${kind === 'tileRoof' ? '0.38' : '0.55'}, 1.0);
       }`
     );
   };
@@ -475,7 +491,7 @@ export function applyGroundWeathering(base: [number, number, number], part: Part
       ? [0.34, 0.32, 0.29]
       : [0.40, 0.33, 0.24];
 
-  const strength = part.mat === 'straw' || part.mat === 'thatchRoof' ? 0.08 : 0.14;
+  const strength = part.mat === 'straw' || part.mat === 'thatchRoof' ? 0.035 : 0.065;
   return lerpColor(base, soilTone, groundFactor * strength);
 }
 
@@ -583,7 +599,7 @@ export function createBuildingMaterials(darkMat: THREE.MeshStandardMaterial, lit
     terracotta: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#c85a4c', roughness: 0.84, ...offset }), 'terracotta'),
     stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: stoneTexture, roughness: 0.84, ...offset }), 'stone'),
     straw: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, ...offset }), 'straw'),
-    tileRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: tileTexture, roughness: 0.62, ...offset }), 'tileRoof'),
+    tileRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: tileTexture, roughness: 0.50, metalness: 0.0, ...offset }), 'tileRoof'),
     thatchRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: thatchTexture, roughness: 1.0, ...offset }), 'thatchRoof'),
     woodRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: woodRoofTexture, roughness: 0.96, ...offset }), 'woodRoof'),
     dark: darkMat,

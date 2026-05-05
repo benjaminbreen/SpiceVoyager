@@ -13,7 +13,7 @@
  * change (typically once on port entry).
  */
 
-import { Road, RoadTier } from '../store/gameStore';
+import type { Road, RoadTier } from '../store/gameStore';
 import { getTerrainHeight } from './terrain';
 import { ROAD_TIER_STYLE, tierWalkHalfWidth } from './roadStyle';
 

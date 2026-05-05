@@ -18,6 +18,21 @@ import { useIsMobile } from '../utils/useIsMobile';
 import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
 import { calculateCargoWeight } from '../utils/cargoWeight';
 import { perfSignals, reportCollisionMs } from '../utils/performanceStats';
+import { getEffectiveRainIntensity } from '../store/weather';
+import { BaghlaHull } from './ship/BaghlaHull';
+import { BaghlaRigging } from './ship/BaghlaRigging';
+import { CaravelHull } from './ship/CaravelHull';
+import { CaravelRigging } from './ship/CaravelRigging';
+import { DhowHull } from './ship/DhowHull';
+import { DhowRigging } from './ship/DhowRigging';
+import { FluytHull } from './ship/FluytHull';
+import { FluytRigging } from './ship/FluytRigging';
+import { JunkHull } from './ship/JunkHull';
+import { JunkRigging } from './ship/JunkRigging';
+import { PattamarHull } from './ship/PattamarHull';
+import { PattamarRigging } from './ship/PattamarRigging';
+import { PinnaceHull } from './ship/PinnaceHull';
+import { PinnaceRigging } from './ship/PinnaceRigging';
 
 // Mobile tap-to-steer feels unmanageable at full desktop speed — scale down so
 // course corrections actually have time to register. Tuned by playtest.
@@ -47,9 +62,26 @@ function hideInstancedMesh(mesh: THREE.InstancedMesh | null, count: number) {
 }
 const STORE_ROT_EPSILON = 0.0001;
 const STORE_VEL_EPSILON = 0.0001;
+const WET_WOOD_TINT = new THREE.Color(0x5f7380);
 
 function angleDelta(a: number, b: number) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+
+function applyWetWoodMaterial(
+  material: THREE.MeshStandardMaterial,
+  baseColor: string,
+  wetness: number,
+  dryRoughness: number,
+  wetRoughness: number,
+  scratchColor: THREE.Color,
+) {
+  const wet = THREE.MathUtils.smoothstep(wetness, 0.08, 0.72);
+  material.roughness = THREE.MathUtils.lerp(dryRoughness, wetRoughness, wet);
+  material.metalness = 0;
+  scratchColor.set(baseColor).multiplyScalar(THREE.MathUtils.lerp(1, 0.68, wet));
+  scratchColor.lerp(WET_WOOD_TINT, wet * 0.14);
+  material.color.copy(scratchColor);
 }
 
 /**
@@ -137,6 +169,7 @@ export function Ship() {
   const group = useRef<THREE.Group>(null);
   const visualGroup = useRef<THREE.Group>(null);
   const hullMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const deckMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const torchLightRef = useRef<THREE.PointLight>(null);
   const torchMeshRef = useRef<THREE.MeshStandardMaterial>(null);
   const sailRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -148,6 +181,7 @@ export function Ship() {
   const paused = useGameStore((state) => state.paused);
   const shipType = useGameStore((state) => state.ship.type);
   const profile = useMemo(() => getShipProfile(shipType), [shipType]);
+  const wetMaterialScratch = useRef(new THREE.Color());
   // Cargo-based draft: heavier loads make the ship sit deeper in the water.
   // Empty = full lift (+0.22), fully loaded = no lift (hull rides at SHIP_ROOT_Y,
   // which is tuned so water laps the deck on the dhow).
@@ -180,7 +214,7 @@ export function Ship() {
   const shipForwardVector = useRef(new THREE.Vector2());
   const shipRightVector = useRef(new THREE.Vector2());
 
-  const applyShipImpulse = (x: number, z: number, max = 7) => {
+  const applyShipImpulse = (x: number, z: number, max = 14) => {
     recoilVelX.current = THREE.MathUtils.clamp(recoilVelX.current + x, -max, max);
     recoilVelZ.current = THREE.MathUtils.clamp(recoilVelZ.current + z, -max, max);
   };
@@ -762,18 +796,20 @@ export function Ship() {
       const dirY = sinP;
       const dirZ = Math.cos(aimAngle) * cosP;
       const eventDetail = (e as CustomEvent).detail as { weaponType?: string; dirX?: number; dirZ?: number } | undefined;
-      const recoilScale = eventDetail?.weaponType === 'fireRocket' ? 0.18 : eventDetail?.weaponType === 'falconet' ? 0.52 : 0.32;
+      const weaponType = eventDetail?.weaponType;
+      const smokeMul = weaponType === 'fireRocket' ? 1.15 : weaponType === 'falconet' ? 1.35 : weaponType === 'lantaka' || weaponType === 'cetbang' ? 1.2 : 1;
+      const recoilScale = eventDetail?.weaponType === 'fireRocket' ? 0.35 : eventDetail?.weaponType === 'falconet' ? 1.2 : 0.75;
       const recoilX = Number.isFinite(eventDetail?.dirX) ? eventDetail!.dirX! : dirX;
       const recoilZ = Number.isFinite(eventDetail?.dirZ) ? eventDetail!.dirZ! : dirZ;
-      applyShipImpulse(-recoilX * recoilScale, -recoilZ * recoilScale, 5);
-      heelVelocity.current += (Math.random() - 0.5) * recoilScale * 0.05;
+      applyShipImpulse(-recoilX * recoilScale, -recoilZ * recoilScale, 8);
+      heelVelocity.current += (Math.random() - 0.5) * recoilScale * 0.09;
 
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
         const p = muzzleParticles.current[i];
         // Mix of smoke (slow, rising) and sparks (fast, directional)
         const isSpark = i < 8;
         const spread = isSpark ? 0.3 : 0.8;
-        const speed = isSpark ? (8 + Math.random() * 12) : (1 + Math.random() * 3);
+        const speed = (isSpark ? (8 + Math.random() * 12) : (1 + Math.random() * 3)) * smokeMul;
         p.pos.set(
           muzzleX + (Math.random() - 0.5) * 0.3,
           muzzleY + (Math.random() - 0.5) * 0.3,
@@ -784,7 +820,7 @@ export function Ship() {
           dirY * speed + (isSpark ? 2 + Math.random() * 3 : 1 + Math.random() * 2),
           dirZ * speed + (Math.random() - 0.5) * spread * speed
         );
-        p.life = isSpark ? 0.2 + Math.random() * 0.3 : 0.5 + Math.random() * 0.6;
+        p.life = isSpark ? 0.2 + Math.random() * 0.3 : (0.55 + Math.random() * 0.75) * smokeMul;
       }
     };
     window.addEventListener('swivel-fired', handleFired);
@@ -804,13 +840,14 @@ export function Ship() {
       const sideX = Math.sin(sideAngle);
       const sideZ = Math.cos(sideAngle);
       const impulse = THREE.MathUtils.clamp(
-        0.75 + (detail?.gunCount ?? 1) * 0.18 + (detail?.totalWeight ?? 0) * 0.025,
-        0.85,
-        3.3,
+        1.8 + (detail?.gunCount ?? 1) * 0.4 + (detail?.totalWeight ?? 0) * 0.07,
+        2.2,
+        8.5,
       );
-      applyShipImpulse(-sideX * impulse, -sideZ * impulse, 7);
-      heelVelocity.current += (side === 'port' ? -1 : 1) * THREE.MathUtils.clamp(impulse * 0.07, 0.08, 0.24);
+      applyShipImpulse(-sideX * impulse, -sideZ * impulse, 12);
+      heelVelocity.current += (side === 'port' ? -1 : 1) * THREE.MathUtils.clamp(impulse * 0.12, 0.16, 0.55);
       addCameraImpulse(-sideX, -sideZ, 0.22 + impulse * 0.04, 0.02);
+      const smokeMul = THREE.MathUtils.clamp(1.1 + (detail?.gunCount ?? 1) * 0.08 + (detail?.totalWeight ?? 0) * 0.025, 1.15, 2.4);
 
       // Burst particles outward from the firing side
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
@@ -824,13 +861,13 @@ export function Ship() {
           1.2 + Math.random() * 0.5,
           startZ + (Math.random() - 0.5) * 0.5,
         );
-        const speed = 3 + Math.random() * 6;
+        const speed = (3 + Math.random() * 6) * smokeMul;
         p.vel.set(
           sideX * speed + (Math.random() - 0.5) * 2.6,
-          1.8 + Math.random() * 2.8,
+          1.8 + Math.random() * 2.8 + smokeMul * 0.45,
           sideZ * speed + (Math.random() - 0.5) * 2.6,
         );
-        p.life = 0.85 + Math.random() * 1.05;
+        p.life = (0.95 + Math.random() * 1.35) * smokeMul;
       }
     };
     window.addEventListener('broadside-fired', handleBroadside);
@@ -844,9 +881,9 @@ export function Ship() {
       const dz = detail?.dirZ ?? 0;
       const len = Math.hypot(dx, dz);
       if (len < 0.001) return;
-      const strength = THREE.MathUtils.clamp(detail?.strength ?? 2.2, 0.8, 5.5);
-      applyShipImpulse((dx / len) * strength, (dz / len) * strength, 8);
-      heelVelocity.current += (Math.random() > 0.5 ? 1 : -1) * Math.min(0.3, strength * 0.055);
+      const strength = THREE.MathUtils.clamp((detail?.strength ?? 2.2) * 1.35, 2.5, 12);
+      applyShipImpulse((dx / len) * strength, (dz / len) * strength, 16);
+      heelVelocity.current += (Math.random() > 0.5 ? 1 : -1) * Math.min(0.7, strength * 0.09);
     };
     window.addEventListener('player-ship-hit-impulse', handleHitImpulse);
     return () => window.removeEventListener('player-ship-hit-impulse', handleHitImpulse);
@@ -1129,7 +1166,7 @@ export function Ship() {
       if (perfSignals.enabled) reportCollisionMs(performance.now() - collisionT0);
 
       // Apply recoil drift from previous collisions (water-like slow push)
-      const recoilDamping = Math.exp(-delta * 1.8); // slow decay — feels like water drag
+      const recoilDamping = Math.exp(-delta * 0.9); // slow decay — makes cannon hits visibly shove the hull
       recoilVelX.current *= recoilDamping;
       recoilVelZ.current *= recoilDamping;
       // Kill tiny residual drift
@@ -1137,8 +1174,8 @@ export function Ship() {
       if (Math.abs(recoilVelZ.current) < 0.01) recoilVelZ.current = 0;
 
       if (!hitLand) {
-        group.current.position.x = nextX + recoilVelX.current * delta;
-        group.current.position.z = nextZ + recoilVelZ.current * delta;
+        group.current.position.x = nextX + recoilVelX.current * delta * 1.35;
+        group.current.position.z = nextZ + recoilVelZ.current * delta * 1.35;
       } else {
         const impactSpeed = Math.abs(velocity.current);
         if (impactSpeed > 2) {
@@ -1698,9 +1735,19 @@ export function Ship() {
     // Visual Effects Updates
     const now = Date.now();
     const timeSinceDamage = now - lastDamageTime.current;
+    const storeState = useGameStore.getState();
+    const rainWetness = getEffectiveRainIntensity(storeState.weather, storeState.renderDebug.rain);
     
     // Hull glowing red
     if (hullMaterialRef.current) {
+      applyWetWoodMaterial(
+        hullMaterialRef.current,
+        profile.hull.hullColor,
+        rainWetness,
+        0.9,
+        0.58,
+        wetMaterialScratch.current,
+      );
       if (timeSinceDamage < 500) {
         hullMaterialRef.current.emissive.setHex(0xff0000);
         hullMaterialRef.current.emissiveIntensity = 1 - (timeSinceDamage / 500);
@@ -1708,6 +1755,16 @@ export function Ship() {
         hullMaterialRef.current.emissive.setHex(0x000000);
         hullMaterialRef.current.emissiveIntensity = 0;
       }
+    }
+    if (deckMaterialRef.current) {
+      applyWetWoodMaterial(
+        deckMaterialRef.current,
+        profile.hull.deckColor,
+        rainWetness,
+        0.8,
+        0.42,
+        wetMaterialScratch.current,
+      );
     }
 
     // Update Particles
@@ -2219,16 +2276,61 @@ export function Ship() {
             </Billboard>
           )}
 
-          {/* Hull — box at waterline; bow/stern shapes vary per ship type */}
-          <mesh position={[0, profile.hull.height * 0.5, 0]} castShadow receiveShadow>
-            <boxGeometry args={[profile.hull.width, profile.hull.height, profile.hull.length]} />
-            <meshStandardMaterial ref={hullMaterialRef} color={profile.hull.hullColor} roughness={0.9} />
-          </mesh>
-          {/* Deck */}
-          <mesh position={[0, profile.hull.height + 0.01, 0]} castShadow receiveShadow>
-            <boxGeometry args={[profile.hull.width * 0.91, 0.1, profile.hull.length * 0.96]} />
-            <meshStandardMaterial color={profile.hull.deckColor} roughness={0.8} />
-          </mesh>
+          {shipType === 'Pinnace' ? (
+            <PinnaceHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Fluyt' ? (
+            <FluytHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Caravel' ? (
+            <CaravelHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Dhow' ? (
+            <DhowHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Baghla' ? (
+            <BaghlaHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Junk' ? (
+            <JunkHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+              oculusTexture={oculusTexture}
+            />
+          ) : shipType === 'Pattamar' ? (
+            <PattamarHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : (
+            <>
+              {/* Hull — box at waterline; bow/stern shapes vary per ship type */}
+              <mesh position={[0, profile.hull.height * 0.5, 0]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width, profile.hull.height, profile.hull.length]} />
+                <meshStandardMaterial ref={hullMaterialRef} color={profile.hull.hullColor} roughness={0.9} />
+              </mesh>
+              {/* Deck */}
+              <mesh position={[0, profile.hull.height + 0.01, 0]} castShadow receiveShadow>
+                <boxGeometry args={[profile.hull.width * 0.91, 0.1, profile.hull.length * 0.96]} />
+                <meshStandardMaterial ref={deckMaterialRef} color={profile.hull.deckColor} roughness={0.8} />
+              </mesh>
           {/* Bow — shape depends on bowStyle */}
           {profile.hull.bowStyle === 'angled' && (
             <>
@@ -2836,6 +2938,8 @@ export function Ship() {
               </group>
             );
           })()}
+            </>
+          )}
           {/* Masts — slight taper (narrower at top) so they don't read as
               cardboard tubes. 60% masthead radius is a natural rigger's taper. */}
           {profile.masts.map((mast, idx) => (
@@ -2849,6 +2953,13 @@ export function Ship() {
               <meshStandardMaterial color="#3e2723" />
             </mesh>
           ))}
+          {shipType === 'Pinnace' && <PinnaceRigging profile={profile} />}
+          {shipType === 'Fluyt' && <FluytRigging profile={profile} />}
+          {shipType === 'Caravel' && <CaravelRigging profile={profile} />}
+          {shipType === 'Dhow' && <DhowRigging profile={profile} />}
+          {shipType === 'Baghla' && <BaghlaRigging profile={profile} />}
+          {shipType === 'Junk' && <JunkRigging profile={profile} />}
+          {shipType === 'Pattamar' && <PattamarRigging profile={profile} />}
           {/* Round top — circular platform at ~78% up the main mast with a
               short perimeter rail. Iconic carrack / galleon masthead detail. */}
           {profile.hull.hasRoundTop && profile.masts[0] && (() => {

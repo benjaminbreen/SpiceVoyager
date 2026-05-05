@@ -478,6 +478,7 @@ const NATIONALITY_VISUAL_REGION: Record<Nationality, keyof typeof REGION_SKIN> =
   Ottoman: 'indian_ocean',
   Omani: 'indian_ocean',
   Swahili: 'african',
+  Khoikhoi: 'african',
   Malay: 'southeast_asian',
   Acehnese: 'southeast_asian',
   Javanese: 'southeast_asian',

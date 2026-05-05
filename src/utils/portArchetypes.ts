@@ -1,4 +1,4 @@
-import { PortScale, Culture } from '../store/gameStore';
+import type { PortScale, Culture } from '../store/gameStore';
 import { createNoise2D } from 'simplex-noise';
 import type { CanalLayoutDef } from './canalLayout';
 
@@ -376,7 +376,7 @@ export const CORE_PORTS: PortDefinition[] = [
     culture: 'Indian Ocean',
     buildingStyle: 'swahili-coral',
     scale: 'Small',
-    description: 'Lush tropical island off the East African coast. Center of the clove trade and Swahili culture.',
+    description: 'Lush tropical island off the East African coast, tied into Swahili, Arab, and Gujarati dhow networks through ivory, ambergris, coconuts, and mangrove timber. The later clove plantation economy has not yet remade the island in 1612.',
     openDirection: 'W',
     islandShape: 'elongated',
     islandCoverage: 0.22,        // medium island — ~22% of map
@@ -1110,6 +1110,27 @@ export const CORE_PORTS: PortDefinition[] = [
     landmark: 'palacio-inquisicion',
   },
   {
+    id: 'veracruz',
+    name: 'Veracruz',
+    geography: 'continental_coast',
+    climate: 'tropical',
+    culture: 'Atlantic',
+    buildingStyle: 'spanish-caribbean',
+    scale: 'Medium',
+    description: 'Spanish Gulf port on the low, hot coast of New Spain. Cargoes from Mexico City and Puebla arrive by mule train: cochineal, cacao, hides, tobacco, and silver accounts bound for Havana and Seville. San Juan de Ulúa guards the anchorage offshore, but the mainland settlement is exposed to nortes, disease, and privateers.',
+    openDirection: 'E',
+    enclosure: 0.12,
+    harborWidth: 0.55,
+    harborDepth: 0.10,
+    harborShape: 'semicircle',
+    coastRuggedness: 0.45,
+    satellites: [
+      // San Juan de Ulúa reef island / fortress anchorage just offshore.
+      { dx: 0.18, dz: -0.18, size: 0.055, aspectRatio: 1.8, orientation: 85, shape: 'ovoid', ruggedness: 0.6 },
+    ],
+    flagColor: [0.78, 0.10, 0.12],
+  },
+  {
     id: 'jamestown',
     name: 'Jamestown',
     geography: 'estuary',
@@ -1190,6 +1211,40 @@ export const CORE_PORTS: PortDefinition[] = [
       { dx: -0.08, dz: 0.09, size: 0.045, aspectRatio: 2.1, orientation: 95, shape: 'elongated', ruggedness: 0.6 },
     ],
     landmark: 'dutch-factory-masulipatnam',
+  },
+
+  // ── Colombo / Portuguese Ceylon ────────────────────────────────────────────
+  // Portuguese coastal stronghold in the Kingdom of Kotte's cinnamon country.
+  // By 1612 the Estado controls the fort and maritime export channel, while
+  // inland authority and cinnamon labor remain contested with Sinhala powers.
+  {
+    id: 'colombo',
+    name: 'Colombo',
+    geography: 'bay',
+    climate: 'monsoon',
+    culture: 'European',
+    buildingStyle: 'luso-colonial',
+    scale: 'Medium',
+    description: 'Portuguese-held harbor on Ceylon\'s western coast, ringed by coconut palms, lagoons, and cinnamon country. The fort controls the export channel for Ceylon bark, but the island is not simply Portuguese: Sinhala kings, Salagama peelers, Muslim brokers, and Catholic converts all shape the trade a captain encounters at the quay.',
+    openDirection: 'W',
+    coastCurvature: 0.55,
+    enclosure: 0.30,
+    harborWidth: 0.34,
+    harborDepth: 0.18,
+    harborShape: 'semicircle',
+    coastRuggedness: 0.75,
+    riverMouthWidth: 0.12,
+    riverInlandWidth: 0.05,
+    riverLength: 0.42,
+    riverSinuosity: 0.16,
+    headlands: [
+      { side: 'right', size: 0.28, width: 0.16, curl: 0.18, ruggedness: 0.75 },
+    ],
+    satellites: [
+      // Small lagoon bars and reef islets, enough to make the approach feel like Ceylon's west coast.
+      { dx: -0.12, dz: 0.20, size: 0.045, aspectRatio: 2.2, orientation: 20, shape: 'elongated', ruggedness: 0.5 },
+    ],
+    flagColor: [0.85, 0.15, 0.15],
   },
 
   // ── Cape Route Waypoint ──────────────────────────────────────────────────────

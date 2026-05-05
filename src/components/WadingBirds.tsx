@@ -6,7 +6,7 @@ import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { useGameStore } from '../store/gameStore';
 import { getTerrainHeight } from '../utils/terrain';
 import { sfxBirdFlap } from '../audio/SoundEffects';
-import type { SpeciesInfo } from './Grazers';
+import type { SpeciesInfo, WadingBirdEntry } from '../utils/animalTypes';
 import { BODY_RADIUS, PLAYER_RADIUS, computeCirclePush } from '../utils/animalBump';
 import { resolveObstaclePush } from '../utils/obstacleGrid';
 import { GRAZER_TERRAIN, resolveTerrainStep } from '../utils/animalTerrain';
@@ -17,19 +17,6 @@ import {
   setStaminaBarInstance,
   staminaColor,
 } from '../utils/animalStaminaBar';
-
-// ── Types ────────────────────────────────────────────────────────────────────
-export interface WadingBirdEntry {
-  position: [number, number, number];   // ground spawn
-  rotation: number;                      // grounded facing
-  color: [number, number, number];
-  scale: number;
-  speedMult: number;
-  circleCenter: [number, number];        // flock orbit center (x,z)
-  circleRadius: number;                  // this bird's orbit radius
-  circlePhase: number;                   // initial angle around orbit (radians)
-  maxAltitude: number;                   // flight apex height above spawn
-}
 
 interface FlightState {
   t: number;        // flight progress 0=grounded, 1=full altitude

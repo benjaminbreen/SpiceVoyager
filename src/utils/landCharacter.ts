@@ -10,7 +10,7 @@
 import { createNoise2D } from 'simplex-noise';
 import { getTerrainData, BiomeType } from './terrain';
 import { SEA_LEVEL } from '../constants/world';
-import { Building, BuildingType } from '../store/gameStore';
+import type { Building, BuildingType } from '../store/gameStore';
 
 // ── Seeded PRNG (same as terrain.ts) ────────────────────────────────────────
 function mulberry32(a: number) {

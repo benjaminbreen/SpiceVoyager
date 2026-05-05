@@ -5,7 +5,7 @@ import {
   fraudRevealTemplate, windfallRevealTemplate,
 } from '../utils/journalTemplates';
 import { generateStartingCrew, generateStartingCaptain } from '../utils/crewGenerator';
-import { sfxCrabCollect, sfxDiscovery } from '../audio/SoundEffects';
+import { sfxCrabCollect, sfxDiscovery, sfxReputationThreat } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import { rollLoot, playLootSfx, CRAB_LOOT } from '../utils/lootRoll';
 import { NPCShipIdentity, SHIP_NAMES } from '../utils/npcShipGenerator';
@@ -48,7 +48,7 @@ import type { CityFieldKey } from '../utils/cityFieldTypes';
 import type { LUTParams, LUTPresetId } from '../utils/proceduralLUT';
 import { PORT_CULTURAL_REGION, PORT_FACTION } from './registries';
 import { lodgingCost, lodgingLabel } from './lodging';
-import { rollWeatherForPortId, rollWindForPortId, type WeatherState } from './weather';
+import { getEffectiveRainIntensity, rollWeatherForPortId, rollWindForPortId, type WeatherState } from './weather';
 import {
   LAND_WEAPON_DEFS,
   WEAPON_DEFS,
@@ -341,13 +341,13 @@ export type Nationality =
   | 'Venetian'
   | 'Pirate'
   | 'Mughal' | 'Gujarati' | 'Persian' | 'Ottoman' | 'Omani'
-  | 'Swahili'
+  | 'Swahili' | 'Khoikhoi'
   | 'Malay' | 'Acehnese' | 'Javanese' | 'Moluccan'
   | 'Siamese' | 'Japanese' | 'Chinese';
 export type Language =
   | 'Arabic' | 'Persian' | 'Gujarati' | 'Hindustani'
   | 'Portuguese' | 'Dutch' | 'English' | 'Spanish' | 'French' | 'Italian'
-  | 'Turkish' | 'Malay' | 'Swahili' | 'Chinese' | 'Japanese';
+  | 'Turkish' | 'Malay' | 'Swahili' | 'Khoekhoe' | 'Chinese' | 'Japanese';
 export type CaptainTrait =
   | 'Silver Tongue'   // better prices at port
   | 'Iron Will'       // slower morale decay
@@ -550,6 +550,8 @@ export interface RenderDebugSettings {
    *  mouths where the silt overlay raises water-surface alpha and exposes the
    *  caustic that was previously masked by zero alpha. Toggle on for testing. */
   reefCaustics: boolean;
+  /** Animated white foam/swash along shorelines. Separate from shallow tint. */
+  shoreFoam: boolean;
   wildlifeMotion: boolean;
   cloudShadows: boolean;
   /** City-local packed earth / damp mud tint around roads and buildings. */
@@ -1232,6 +1234,7 @@ function patronForFaction(faction: Nationality, portId?: string): string {
   if (faction === 'Gujarati') return 'Surat merchant house';
   if (faction === 'Omani') return 'Muscat broker';
   if (faction === 'Chinese') return 'Macau comprador';
+  if (faction === 'Khoikhoi') return 'Table Bay cattle traders';
   return 'private backers';
 }
 
@@ -1608,17 +1611,26 @@ export const useGameStore = create<GameState>((set, get) => ({
     const clamped = Math.max(-100, Math.min(100, current + delta));
     const prev = current;
     set({ reputation: { ...state.reputation, [nationality]: clamped } });
+    const crossedShipAttack = prev > -60 && clamped <= -60;
+    const crossedFortAttack = prev > -70 && clamped <= -70;
+    if (crossedFortAttack) {
+      sfxReputationThreat('fort');
+      get().addNotification(`${nationality} forts and patrols may now fire on sight.`, 'warning', { subtitle: 'OPEN HOSTILITY' });
+    } else if (crossedShipAttack) {
+      sfxReputationThreat('ship');
+      get().addNotification(`${nationality} ships may now attack on sight.`, 'warning', { subtitle: 'OPEN HOSTILITY' });
+    }
     // Journal entries at reputation thresholds
-    if (prev >= -25 && clamped < -25) {
+    if (prev > -25 && clamped <= -25) {
       get().addJournalEntry('encounter',
         `Word has spread among the ${nationality} that we are not to be trusted. Their ships give us a wide berth.`);
-    } else if (prev >= -60 && clamped < -60) {
+    } else if (crossedShipAttack) {
       get().addJournalEntry('encounter',
         `The ${nationality} now regard us with open hostility. We must tread carefully in their waters.`);
-    } else if (prev <= 25 && clamped > 25) {
+    } else if (prev < 25 && clamped >= 25) {
       get().addJournalEntry('encounter',
         `We are gaining a reputation as fair dealers among the ${nationality}. Their captains greet us warmly.`);
-    } else if (prev <= 60 && clamped > 60) {
+    } else if (prev < 60 && clamped >= 60) {
       get().addJournalEntry('encounter',
         `The ${nationality} hold us in high esteem. Their harbors welcome us as trusted allies.`);
     }
@@ -2510,13 +2522,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const dirDrift = Math.sin(t * 0.7) * 0.3 + Math.sin(t * 1.9) * 0.15 + Math.sin(t * 4.3) * 0.05;
     const newWindDir = (state.windDirection + dirDrift * delta * 0.12) % (Math.PI * 2);
     const speedBase = 0.55 + Math.sin(t * 0.5) * 0.25 + Math.sin(t * 1.7) * 0.1 + Math.sin(t * 3.1) * 0.05;
+    const weather = state.weather;
     // Heavy rain bumps the wind so streaks slant harder and trees thrash.
-    const stormBoost = state.weather.intensity * 0.35;
+    const stormBoost = getEffectiveRainIntensity(weather, state.renderDebug.rain) * 0.35;
     const newWindSpeed = Math.max(0.1, Math.min(1, speedBase + stormBoost));
 
     // Ease weather intensity toward its target. Frame-rate-independent;
     // closes ~half the gap per game-hour, so visible fades take a few seconds.
-    const weather = state.weather;
     const k = 1 - Math.exp(-delta * 0.6);
     const newWeatherIntensity = weather.intensity + (weather.targetIntensity - weather.intensity) * k;
 

@@ -579,12 +579,12 @@ export function NPCShip({
     if (liveEntry?.impulseUntil && now < liveEntry.impulseUntil) {
       const impulseX = liveEntry.impulseX ?? 0;
       const impulseZ = liveEntry.impulseZ ?? 0;
-      nextX += impulseX * delta;
-      nextZ += impulseZ * delta;
-      const damping = Math.exp(-delta * 2.8);
-      liveEntry.impulseX = Math.abs(impulseX) < 0.02 ? 0 : impulseX * damping;
-      liveEntry.impulseZ = Math.abs(impulseZ) < 0.02 ? 0 : impulseZ * damping;
-      damageTilt.current += THREE.MathUtils.clamp((impulseX * Math.cos(group.current.rotation.y) - impulseZ * Math.sin(group.current.rotation.y)) * 0.004, -0.025, 0.025);
+      nextX += impulseX * delta * 1.6;
+      nextZ += impulseZ * delta * 1.6;
+      const damping = Math.exp(-delta * 1.25);
+      liveEntry.impulseX = Math.abs(impulseX) < 0.04 ? 0 : impulseX * damping;
+      liveEntry.impulseZ = Math.abs(impulseZ) < 0.04 ? 0 : impulseZ * damping;
+      damageTilt.current += THREE.MathUtils.clamp((impulseX * Math.cos(group.current.rotation.y) - impulseZ * Math.sin(group.current.rotation.y)) * 0.012, -0.08, 0.08);
     }
 
     // ── NPC-to-NPC collision/separation ──
@@ -702,6 +702,7 @@ export function NPCShip({
       x: currentPos.x,
       y: currentPos.y + 1.4,
       z: currentPos.z,
+      heading: group.current.rotation.y,
       radius: Math.max(3.2, identity.visual.scale * 4.0),
       flag: identity.flag,
       shipName: identity.shipName,

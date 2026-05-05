@@ -29,9 +29,9 @@ const ANIMATED_BANNER_PORTS: Record<
   { textureUrl: string; imageAspect: number; nightTextureUrl?: string; nightImageAspect?: number }
 > = {
   manila: {
-    textureUrl: '/ports/manila.png',
+    textureUrl: '/ports/manila.webp',
     imageAspect: 1536 / 672,
-    nightTextureUrl: '/sleep/manila.png',
+    nightTextureUrl: '/sleep/manila.webp',
     nightImageAspect: 1344 / 768,
   },
 };
@@ -68,7 +68,7 @@ const MOBILE_TAB_LABEL: Record<PlaceTab, string> = {
 };
 
 const PORT_MUSIC_TRACKS = {
-  mena: { src: '/music/portmusic/MENA%20tavern.mp3', gain: 0.32 },
+  mena: { src: '/music/portmusic/MENA%20tavern.ogg', gain: 0.32 },
 } as const;
 
 const PORT_MUSIC_REGION: Record<string, keyof typeof PORT_MUSIC_TRACKS> = {
@@ -166,13 +166,13 @@ const PORT_INFO: Record<string, PortInfo> = {
   },
   zanzibar: {
     localName: 'Unguja',
-    sovereign: 'Portuguese',
-    sovereignType: 'Nominal control',
+    sovereign: 'Mwinyi Mkuu',
+    sovereignType: 'Swahili local authority',
     population: '~20,000',
     languages: 'Swahili · Arabic',
     religions: 'Muslim',
     tabDescriptions: {
-      market: { title: 'Stone Town Market', text: 'The scent of cloves and copra drifts through narrow coral-stone alleys. Swahili and Arab traders deal in ivory, tortoiseshell, and ambergris.' },
+      market: { title: 'Stone Town Market', text: 'Coconuts, ambergris, ivory, tortoiseshell, and mangrove poles move through coral-stone lanes. Swahili and Arab brokers set terms before Portuguese agents hear the final price.' },
       shipyard: { title: 'Beach Yards', text: 'Dhows are hauled onto white sand beaches for repair. Local craftsmen build the swift mtepe, sewn-plank boats that need no nails.' },
       tavern: { title: 'The Coral House', text: 'A breezy establishment built of coral rag and lime, its veranda overlooking the turquoise shallows. Palm wine and Swahili poetry flow in equal measure.' },
       governor: { title: 'Sultan\'s Residence', text: 'Portuguese authority here is thin. The local Mwinyi Mkuu holds true power, governing through a network of clan elders and Omani trading families.' },
@@ -262,15 +262,29 @@ const PORT_INFO: Record<string, PortInfo> = {
   socotra: {
     localName: 'Suqutra',
     sovereign: 'Mahra Sultanate',
-    sovereignType: 'Portuguese garrison',
+    sovereignType: 'Local Mahri authority',
     population: '~5,000',
     languages: 'Socotri · Arabic',
     religions: 'Muslim · Christian (Nestorian remnant)',
     tabDescriptions: {
       market: { title: 'Dragon\'s Blood Market', text: 'A sparse market beneath the alien shapes of dragon\'s blood trees. Aloe, ambergris, and the precious red resin are the island\'s chief exports. Passing ships trade provisions for these rarities.' },
-      shipyard: { title: 'Careenage Beach', text: 'No proper shipyard exists here, only a sheltered beach where vessels can be careened for hull scraping. The Portuguese garrison maintains a small stores depot.' },
+      shipyard: { title: 'Careenage Beach', text: 'No proper shipyard exists here, only a sheltered beach where vessels can be careened for hull scraping. Island pilots and passing crews trade labor for provisions.' },
       tavern: { title: 'The Anchorage', text: 'A crude shelter of palm thatch and driftwood near the landing beach. Portuguese soldiers, Socotri fishermen, and the occasional Arab pilot share bitter coffee and stale news.' },
-      governor: { title: 'Portuguese Garrison', text: 'A crumbling stone fort overlooks the anchorage. The tiny Portuguese garrison clings to this remote outpost mainly to deny it to the Ottomans. The Mahra sultan\'s authority is nominal at best.' },
+      governor: { title: 'Mahra Sheikh\'s House', text: 'Portuguese occupation ended a century ago. In 1612 a captain negotiates through local Mahri authority, island brokers, and pilots who know which anchorages have water.' },
+    },
+  },
+  colombo: {
+    localName: 'Kolamba',
+    sovereign: 'Portuguese Crown',
+    sovereignType: 'Portuguese Ceylon fort',
+    population: '~15,000',
+    languages: 'Sinhala · Tamil · Portuguese',
+    religions: 'Buddhist · Catholic · Hindu',
+    tabDescriptions: {
+      market: { title: 'Cinnamon Quay', text: 'Cinnamon quills are sorted under guard, then bundled for Goa and Lisbon. Muslim brokers, Sinhala peelers, Portuguese factors, and Tamil merchants all know different parts of the trade.' },
+      shipyard: { title: 'Lagoon Yard', text: 'The harbor offers enough shelter for careening and refitting, with coconut timber, coir rope, and local pilots available when the southwest monsoon eases.' },
+      tavern: { title: 'The Cinnamon House', text: 'A low waterfront room where Estado soldiers, lascar crews, brokers, and pilots drink arrack and argue over the quality of bark brought down from the interior.' },
+      governor: { title: 'Colombo Captaincy', text: 'The Portuguese captain and cinnamon officials control the fort and export channel, but inland Ceylon remains contested. Permission to buy bark is only the first negotiation.' },
     },
   },
   diu: {
@@ -411,6 +425,20 @@ const PORT_INFO: Record<string, PortInfo> = {
       governor: { title: 'Governor\'s Palace', text: 'The Governor of Cartagena answers to the Viceroy of New Granada, but in practice runs the city as a military and commercial stronghold. The Inquisition established its tribunal here in 1610 and has already begun proceedings against accused heretics and crypto-Jews. The fortifications are constantly being expanded — the memory of Drake\'s sacking in 1586 drives every budget decision.' },
     },
   },
+  veracruz: {
+    localName: 'Villa Rica de la Vera Cruz',
+    sovereign: 'Philip III of Spain',
+    sovereignType: 'New Spain royal port',
+    population: '~7,000',
+    languages: 'Castilian · Nahuatl',
+    religions: 'Catholic',
+    tabDescriptions: {
+      market: { title: 'Casa de Aduana', text: 'Cochineal sacks, cacao, hides, tobacco, and mercury accounts are checked under royal eyes before the fleet sails. Muleteers from Mexico City crowd the yards with dust still on their boots.' },
+      shipyard: { title: 'Ulúa Roadstead', text: 'Repairs are practical rather than elegant: carpenters work from the beach and the offshore fortress of San Juan de Ulúa shelters the anchorage when the nortes are quiet.' },
+      tavern: { title: 'La Casa del Muelle', text: 'Fleet sailors, muleteers, royal guards, and factors drink in a hot room near the landing. Talk runs from cochineal prices to storms in the Gulf and delays on the road inland.' },
+      governor: { title: 'Casa Real', text: 'Veracruz answers to the Viceroy of New Spain through royal treasury, customs, and fleet officials. Trade here is paperwork as much as cargo: every bale must fit the flota system before it reaches Havana.' },
+    },
+  },
 
   // ── Cape Route Waypoint ──────────────────────────────────────────────────────
   cape: {
@@ -455,7 +483,7 @@ const PORT_OVERVIEWS: Record<string, PortOverview> = {
     sources: ['K. N. Chaudhuri, Trade and Civilisation in the Indian Ocean', 'R. J. Barendse, The Arabian Seas', 'Nancy Um, The Merchant Houses of Mocha'],
   },
   zanzibar: {
-    text: 'Zanzibar is a coral-stone harbor where Swahili, Arab, and Indian Ocean traders move cloves, copra, ivory, tortoiseshell, and ambergris through narrow lanes. Portuguese authority is thin here, more a shadow cast by forts elsewhere than a daily fact in every market. The island rewards captains who listen to local pilots and do not mistake nominal control for obedience.',
+    text: 'Zanzibar is a coral-stone harbor where Swahili, Arab, and Indian Ocean traders move coconuts, ivory, tortoiseshell, mangrove poles, and ambergris through narrow lanes. Portuguese authority is thin here, more a shadow cast by forts elsewhere than a daily fact in every market. The island rewards captains who listen to local pilots and do not mistake nominal control for obedience.',
     historicalNote: 'The Swahili coast was never simply a Portuguese possession, even where Portuguese influence was present. Coastal cities maintained older commercial and religious networks linking East Africa to Arabia, Gujarat, and the wider Indian Ocean.',
     sources: ['Abdul Sheriff, Dhow Cultures of the Indian Ocean', 'Edward A. Alpers, The Indian Ocean in World History', 'Randall Pouwels, Horn and Crescent'],
   },
@@ -494,10 +522,20 @@ const PORT_OVERVIEWS: Record<string, PortOverview> = {
     historicalNote: 'Socotra attracted outside attention because of its position near the Gulf of Aden and its distinctive island products. Portuguese ambitions there were limited by distance, supply problems, and the strength of surrounding regional networks.',
     sources: ['R. J. Barendse, The Arabian Seas', 'M. N. Pearson, The Indian Ocean', 'Edward A. Alpers, The Indian Ocean in World History'],
   },
+  colombo: {
+    text: 'Colombo is a fortified Portuguese harbor on Ceylon\'s cinnamon coast, where bark, pearls, rice, and coastal intelligence pass through a tense colonial gate. The fort controls the quay, but the trade depends on peelers, brokers, and inland rulers who do not answer simply to Lisbon. A captain can buy the best cinnamon in the world here, if he understands who actually made it available.',
+    historicalNote: 'Portuguese power in Ceylon rested on coastal forts and cinnamon extraction, not complete island control. In 1612 Colombo sat inside a contested political landscape involving the Kingdom of Kotte, the Kingdom of Kandy, local labor regimes, Muslim traders, and Estado officials.',
+    sources: ['C. R. Boxer, The Portuguese Seaborne Empire', 'Sanjay Subrahmanyam, The Portuguese Empire in Asia, 1500-1700', 'K. N. Chaudhuri, Trade and Civilisation in the Indian Ocean'],
+  },
   diu: {
     text: 'Diu is a fortified island of stone, cannon, customs, and Gujarati commerce. Portuguese walls protect carracks and intimidate rivals, but the bazaar depends on textiles, horses, ivory, and merchants who know the coast better than the garrison does. Every profitable passage between Gujarat and the Arabian Sea leaves a trace in Diu\'s accounts.',
     historicalNote: 'Diu became a crucial Portuguese fortress after the naval conflicts of the early sixteenth century. Its importance lay in controlling access to Gujarat\'s maritime trade while negotiating with powerful Indian merchant communities.',
     sources: ['M. N. Pearson, Merchants and Rulers in Gujarat', 'K. S. Mathew, Portuguese Trade with India', 'Sanjay Subrahmanyam, The Portuguese Empire in Asia, 1500-1700'],
+  },
+  veracruz: {
+    text: 'Veracruz is hot, exposed, bureaucratic, and indispensable: New Spain\'s Gulf gate for the fleet system. Cochineal, cacao, tobacco, hides, and silver accounts come down from the highlands by mule, then wait on weather, paperwork, and escort before moving to Havana. The offshore fort of San Juan de Ulúa gives the anchorage teeth, but not comfort.',
+    historicalNote: 'By 1612 Veracruz served as the principal Atlantic port of New Spain. Its importance came from the road to Mexico City, the flota connection to Havana and Seville, and high-value American goods such as cochineal and cacao entering Spanish imperial circuits.',
+    sources: ['J. H. Elliott, Empires of the Atlantic World', 'Peter Bakewell, Silver Mining and Society in Colonial Mexico', 'Ida Altman, The War for Mexico\'s West'],
   },
 };
 
@@ -563,7 +601,9 @@ function getSeasonalNews(portId: string, season: PortSeason): string {
     mocha: 'Coffee brokers are watching every lighter that leaves the shallows.',
     bantam: 'Pepper factors are bidding before the Sultan\'s agents close the day\'s accounts.',
     socotra: 'Passing pilots are trading news for water, aloe, and resin.',
+    colombo: 'Cinnamon factors are sorting quills under guard near the fort gate.',
     diu: 'The fortress customs house is busy with textiles and horse cargoes.',
+    veracruz: 'Mule trains from Mexico City have brought cochineal and cacao to the customs yard.',
   } satisfies Record<string, string>;
 
   return `${seasonal[season]} ${local[portId] ?? 'The harbor is full of small signals: delayed cargo, cautious pilots, and officials asking sharper questions than usual.'}`;

@@ -225,6 +225,7 @@ export interface NpcLiveEntry {
   x: number;
   y: number;
   z: number;
+  heading: number;
   radius: number;
   flag: string;
   shipName: string;

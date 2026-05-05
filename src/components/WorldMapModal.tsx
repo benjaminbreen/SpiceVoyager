@@ -27,6 +27,8 @@ import { resolveVoyage, type VoyageResolution } from '../utils/voyageResolution'
 import { modalBackdropMotion, modalContentMotion, modalPanelMotion } from '../utils/uiMotion';
 import { useIsMobile } from '../utils/useIsMobile';
 import { startArrivalCinematic } from '../utils/arrivalCinematicState';
+import { preloadGeneratedWorldData, loadGeneratedWorldData } from '../utils/worldGenerationClient';
+import { resolveWaterPaletteId } from '../utils/waterPalettes';
 
 interface WorldMapModalProps {
   onClose: () => void;
@@ -42,6 +44,7 @@ const COLORS = {
   landStroke:   'rgba(201,162,90,0.12)',
   graticule:    'rgba(201,162,90,0.05)',
   seaLane:      'rgba(255,255,255,0.06)',
+  seaLaneCharted: 'rgba(190,214,225,0.28)',
   seaLaneSel:   'rgba(226,200,122,0.55)',  // brass dashes
   portPlayer:   '#94a8c4',           // silvered teal — distinct from brass
   portSelected: '#e2c87a',           // brass
@@ -86,6 +89,12 @@ const REGION_NAV_LABELS: Record<string, string> = {
 
 const VOYAGE_INCIDENT_CHANCE = 0.25;
 
+function parseChartedRouteKey(routeKey: string): [string, string] | null {
+  const parts = routeKey.split(':');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return [parts[0], parts[1]];
+}
+
 type TravelModalState = {
   fromPort: string;
   toPort: string;
@@ -129,8 +138,10 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const windSpeed = useGameStore(s => s.windSpeed);
   const chartedRoutes = useGameStore(s => s.chartedRoutes);
   const worldSeed = useGameStore(s => s.worldSeed);
+  const worldSize = useGameStore(s => s.worldSize);
   const devSoloPort = useGameStore(s => s.devSoloPort);
   const currentWorldPortId = useGameStore(s => s.currentWorldPortId);
+  const waterPaletteSetting = useGameStore(s => s.waterPaletteSetting);
   const worldPorts = WORLD_PORTS;
   const nearestPortId = resolveCampaignPortId({ worldSeed, devSoloPort, currentWorldPortId });
   const playerRegion = getPortRegion(nearestPortId);
@@ -138,6 +149,23 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const seaLaneEdges = useMemo(() => getAllSeaLaneEdges(), []);
 
   const [passageModal, setPassageModal] = useState<PassageModalState | null>(null);
+
+  const worldGenerationArgsForPort = useCallback((portId: string) => {
+    const targetState = {
+      worldSeed,
+      worldSize,
+      devSoloPort,
+      currentWorldPortId: portId,
+      waterPaletteSetting,
+    };
+    return {
+      worldSeed,
+      worldSize,
+      devSoloPort,
+      currentWorldPortId: portId,
+      waterPaletteId: resolveWaterPaletteId(targetState),
+    };
+  }, [devSoloPort, waterPaletteSetting, worldSeed, worldSize]);
 
   const travelInfo = useMemo(() => {
     if (!selectedPort || selectedPort === nearestPortId) return null;
@@ -360,16 +388,51 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
         .text('N');
     }
 
-    // Sea lane — only the selected route is drawn. Waypoints come from the
-    // gateway-graph Dijkstra search (see `buildSeaRoute` in worldPorts.ts);
-    // each gateway is hand-placed in deep ocean, so segments between them
-    // never cross land by construction. Catmull-Rom alpha(1) is chordal,
-    // which hews tightly to the waypoints instead of overshooting.
+    // Sea lanes. Charted routes are route-memory ink; the selected route is
+    // drawn over them. Waypoints come from the gateway-graph Dijkstra search
+    // (see `buildSeaRoute` in worldPorts.ts); each gateway is hand-placed in
+    // deep ocean, so segments between them never cross land by construction.
+    // Catmull-Rom alpha(1) is chordal, which hews tightly to the waypoints
+    // instead of overshooting.
     const seaLaneGroup = g.append('g').attr('class', 'sea-lanes');
     const lineGen = d3.line<[number, number]>()
       .x(d => d[0])
       .y(d => d[1])
       .curve(d3.curveCatmullRom.alpha(1));
+    const buildProjectedSeaLane = (fromId: string, toId: string) => {
+      const fromCoords = WORLD_PORT_COORDS[fromId];
+      const toCoords = WORLD_PORT_COORDS[toId];
+      if (!fromCoords || !toCoords) return null;
+      const geoPath: [number, number][] = [
+        fromCoords,
+        ...getSeaLaneWaypoints(fromId, toId),
+        toCoords,
+      ];
+      const projectedPoints: [number, number][] = [];
+      for (const c of geoPath) {
+        const p = projection(c);
+        if (p) projectedPoints.push(p as [number, number]);
+      }
+      if (projectedPoints.length < 2) return null;
+      const pathD = lineGen(projectedPoints);
+      return pathD ? { pathD, projectedPoints } : null;
+    };
+
+    for (const routeKey of chartedRoutes) {
+      const route = parseChartedRouteKey(routeKey);
+      if (!route) continue;
+      const path = buildProjectedSeaLane(route[0], route[1]);
+      if (!path) continue;
+      seaLaneGroup.append('path')
+        .attr('class', 'route-charted sea-lane')
+        .attr('d', path.pathD)
+        .attr('fill', 'none')
+        .attr('stroke', COLORS.seaLaneCharted)
+        .attr('stroke-width', 1.05)
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-dasharray', '1,5')
+        .attr('pointer-events', 'none');
+    }
 
     const selectedEdge = (selectedPort && selectedPort !== nearestPortId)
       ? seaLaneEdges.find(([a, b]) =>
@@ -379,57 +442,41 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
 
     if (selectedEdge) {
       const [fromId, toId] = selectedEdge;
-      const fromCoords = WORLD_PORT_COORDS[fromId];
-      const toCoords = WORLD_PORT_COORDS[toId];
-      const from = fromCoords && projection(fromCoords);
-      const to = toCoords && projection(toCoords);
+      const selectedPath = buildProjectedSeaLane(fromId, toId);
+      if (selectedPath) {
+        seaLaneGroup.append('path')
+          .attr('class', 'route-selected sea-lane')
+          .attr('d', selectedPath.pathD)
+          .attr('fill', 'none')
+          .attr('stroke', COLORS.seaLaneSel)
+          .attr('stroke-width', 1.8)
+          .attr('stroke-dasharray', '6,4');
 
-      if (from && to && fromCoords && toCoords) {
-        const gatewayCoords = getSeaLaneWaypoints(fromId, toId);
-        const geoPath: [number, number][] = [fromCoords, ...gatewayCoords, toCoords];
-
-        const projectedPoints: [number, number][] = [];
-        for (const c of geoPath) {
-          const p = projection(c);
-          if (p) projectedPoints.push(p as [number, number]);
-        }
-
-        const pathD = lineGen(projectedPoints);
-        if (pathD) {
-          seaLaneGroup.append('path')
-            .attr('class', 'route-selected sea-lane')
-            .attr('d', pathD)
-            .attr('fill', 'none')
-            .attr('stroke', COLORS.seaLaneSel)
-            .attr('stroke-width', 1.8)
-            .attr('stroke-dasharray', '6,4');
-
-          const travel = estimateSeaTravel(fromId, toId);
-          if (travel) {
-            const midIdx = Math.floor(projectedPoints.length / 2);
-            const midPt = projectedPoints[midIdx];
-            const labelText = `${travel.days} days`;
-            // Halo: paint-order=stroke draws a wide dark stroke behind the
-            // glyphs, fill on top — auto-fits the text and counter-scales
-            // cleanly with the rest of the labels (no separate rect needed).
-            const renderDays = (cls: string, fill: string, strokeWidth: number) =>
-              seaLaneGroup.append('text')
-                .attr('class', cls)
-                .attr('x', midPt[0])
-                .attr('y', midPt[1] - 8)
-                .attr('text-anchor', 'middle')
-                .attr('fill', fill)
-                .attr('stroke', 'rgba(8, 14, 28, 0.95)')
-                .attr('stroke-width', strokeWidth)
-                .attr('stroke-linejoin', 'round')
-                .attr('paint-order', 'stroke')
-                .attr('font-size', '10px')
-                .attr('font-weight', '700')
-                .attr('font-family', '"Fraunces", serif')
-                .attr('letter-spacing', '0.04em')
-                .text(labelText);
-            renderDays('route-days-label', COLORS.routeDays, 4);
-          }
+        const travel = estimateSeaTravel(fromId, toId);
+        if (travel) {
+          const midIdx = Math.floor(selectedPath.projectedPoints.length / 2);
+          const midPt = selectedPath.projectedPoints[midIdx];
+          const labelText = `${travel.days} days`;
+          // Halo: paint-order=stroke draws a wide dark stroke behind the
+          // glyphs, fill on top — auto-fits the text and counter-scales
+          // cleanly with the rest of the labels (no separate rect needed).
+          const renderDays = (cls: string, fill: string, strokeWidth: number) =>
+            seaLaneGroup.append('text')
+              .attr('class', cls)
+              .attr('x', midPt[0])
+              .attr('y', midPt[1] - 8)
+              .attr('text-anchor', 'middle')
+              .attr('fill', fill)
+              .attr('stroke', 'rgba(8, 14, 28, 0.95)')
+              .attr('stroke-width', strokeWidth)
+              .attr('stroke-linejoin', 'round')
+              .attr('paint-order', 'stroke')
+              .attr('font-size', '10px')
+              .attr('font-weight', '700')
+              .attr('font-family', '"Fraunces", serif')
+              .attr('letter-spacing', '0.04em')
+              .text(labelText);
+          renderDays('route-days-label', COLORS.routeDays, 4);
         }
       }
     }
@@ -806,7 +853,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       .scale(regionTransform.k * initialZoomOut);
     svg.call(zoom.transform, initialTransform);
 
-  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, getBaseProjection, getRegionTransform, devMode, isMobile]);
+  }, [topoData, worldPorts, reachablePortIds, selectedPort, nearestPortId, playerRegion, seaLaneEdges, chartedRoutes, getBaseProjection, getRegionTransform, devMode, isMobile]);
 
   const handleSetSail = () => {
     if (!selectedPort) return;
@@ -836,6 +883,7 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
       windSpeed,
     });
     sfxSail();
+    void preloadGeneratedWorldData(worldGenerationArgsForPort(selectedPort));
     setPassageModal({
       ...modal,
       resolution,
@@ -847,8 +895,10 @@ export function WorldMapModal({ onClose }: WorldMapModalProps) {
   const handlePassageDone = async (resolution: VoyageResolution) => {
     if (!passageModal) return;
     const modal = passageModal;
+    const targetWorldArgs = worldGenerationArgsForPort(modal.targetPortId);
+    await preloadGeneratedWorldData(targetWorldArgs);
     fastTravel(modal.targetPortId, { force: modal.force, voyage: resolution });
-    await new Promise(r => setTimeout(r, 650));
+    await loadGeneratedWorldData(targetWorldArgs);
     useGameStore.getState().setViewMode('default');
     startArrivalCinematic();
     window.dispatchEvent(new Event('spice-voyager:arrival-cinematic'));

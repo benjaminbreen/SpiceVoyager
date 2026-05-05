@@ -360,7 +360,7 @@ function classifyShoreProfile(args: {
   if (climate === 'temperate' && sheltered && wetEdge && moisture > 0.52) {
     return 'marsh_reed_edge';
   }
-  if (sheltered && wetEdge) return 'tidal_mudflat';
+  if (sheltered && (wetEdge || flatShoreFactor > 0.34)) return 'tidal_mudflat';
 
   return 'open_sandy_beach';
 }
@@ -809,6 +809,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
   // were Nyquist-aliased and rendered invisibly while only the wider
   // central inlet survived. Bounding-circle pre-check keeps the per-vertex
   // cost negligible outside canal cities.
+  let urbanCanalBankFactor = 0;
   if (_activeCanals.length > 0 && finalHeight > SEA_LEVEL - 1.0) {
     const CANAL_TROUGH_Y = SEA_LEVEL - 1.6;
     for (const ac of _activeCanals) {
@@ -833,6 +834,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
         // Only lower (never raise) the natural height — a canal carve
         // should not push a riverbank up above what it would naturally be.
         if (carved < finalHeight) finalHeight = carved;
+        urbanCanalBankFactor = Math.max(urbanCanalBankFactor, 1 - blend);
         break;
       }
     }
@@ -1247,6 +1249,13 @@ export function getTerrainData(x: number, z: number): TerrainData {
       ROCKY_SHORE_COLOR,
       coastSteepness * 0.34,
     );
+    const brightBeachColor: TerrainColor =
+      nearbyClimate === 'tropical' ? [1.00, 0.98, 0.86] :
+      nearbyClimate === 'monsoon' ? [0.96, 0.90, 0.70] :
+      mediterraneanCoast ? [0.95, 0.89, 0.70] :
+      nearbyClimate === 'arid' ? [0.92, 0.80, 0.54] :
+      temperateCoast ? [0.78, 0.74, 0.58] :
+      drySandColor;
     const wetSandColor = mixColor(
       mixColor(
         mixColor(
@@ -1281,7 +1290,7 @@ export function getTerrainData(x: number, z: number): TerrainData {
       0.05;
     const wetEdgeStrength =
       shoreProfile === 'open_sandy_beach' ? 0.88 :
-      shoreProfile === 'tidal_mudflat' ? (temperateCoast ? 1.25 : 1.05) :
+      shoreProfile === 'tidal_mudflat' ? (temperateCoast ? 1.36 : 1.20) :
       shoreProfile === 'marsh_reed_edge' ? (temperateCoast ? 1.15 : 0.82) :
       shoreProfile === 'mangrove_edge' ? 0.62 :
       0.34;
@@ -1289,11 +1298,58 @@ export function getTerrainData(x: number, z: number): TerrainData {
       shoreProfile === 'rocky_bank' ? 0.34 :
       shoreProfile === 'mangrove_edge' || shoreProfile === 'marsh_reed_edge' ? 0.46 :
       0.72;
+    const whiteBeachEligibility =
+      shoreProfile === 'open_sandy_beach'
+      && (nearbyClimate === 'tropical' || nearbyClimate === 'monsoon' || mediterraneanCoast)
+      && coastSteepness < 0.58
+      ? 1
+      : 0;
+    const lowShoreShelf = coastFactor * smoothstep(SEA_LEVEL + 5.2, SEA_LEVEL + 0.35, finalHeight);
+    const exposedTidalFlat =
+      shelteredCoast
+      && lowCoast
+      && slope < 0.28
+      && coastSteepness < 0.58
+      && !(shoreProfile === 'open_sandy_beach' && whiteBeachEligibility > 0 && beachFactor > 0.48)
+      ? Math.max(wetSandFactor, surfFactor * 0.75, beachFactor * 0.50, lowShoreShelf * 0.72)
+      : 0;
+    const visibleBeachApron = Math.max(
+      beachFactor,
+      wetSandFactor * 0.72,
+      surfFactor * 0.36,
+      lowShoreShelf * (shoreProfile === 'rocky_bank' ? 0.32 : 0.58) * (1 - coastSteepness * 0.36),
+    );
+    const whiteBeachApron = whiteBeachEligibility * Math.max(
+      beachFactor,
+      wetSandFactor * 0.35,
+      lowShoreShelf * (nearbyClimate === 'tropical' ? 0.82 : mediterraneanCoast ? 0.62 : 0.48),
+    );
 
     color = inlandColor;
     color = mixColor(color, drySandColor, beachFactor * dryBeachStrength);
+    color = mixColor(color, drySandColor, visibleBeachApron * dryBeachStrength * 0.72);
+    color = mixColor(color, brightBeachColor, whiteBeachApron * dryBeachStrength * 0.70);
     color = mixColor(color, wetSandColor, wetSandFactor * wetEdgeStrength);
     color = mixColor(color, washColor, surfFactor * washStrength);
+
+    const contactLine = bandFactor(
+      coastalHeight,
+      SEA_LEVEL + 0.015,
+      SEA_LEVEL + 0.08,
+      SEA_LEVEL + 0.55,
+      SEA_LEVEL + 1.35,
+    ) * Math.max(wetSandFactor, surfFactor * 0.72, lowShoreShelf * 0.52) * (1 - coastSteepness * 0.24);
+    if (contactLine > 0.01) {
+      const contactColor: TerrainColor =
+        shoreProfile === 'rocky_bank'
+          ? [0.22, 0.22, 0.20]
+          : shoreProfile === 'mangrove_edge' || shoreProfile === 'marsh_reed_edge' || shoreProfile === 'tidal_mudflat'
+          ? [0.24, 0.29, 0.24]
+          : [0.48, 0.40, 0.27];
+      const brokenLine = 0.58 + smoothstep(-0.28, 0.42, patch2) * 0.42;
+      color = mixColor(color, contactColor, Math.min(0.62, contactLine * brokenLine));
+    }
+
     if (temperateCoast && (shoreProfile === 'tidal_mudflat' || shoreProfile === 'marsh_reed_edge')) {
       const wetSilt: TerrainColor = shoreProfile === 'marsh_reed_edge'
         ? [0.28, 0.34, 0.26]
@@ -1317,8 +1373,8 @@ export function getTerrainData(x: number, z: number): TerrainData {
         : [0.70, 0.64, 0.43];
       const bankShadow: TerrainColor = [0.34, 0.30, 0.22];
       const bankRimFactor = raisedBankFactor * smoothstep(SEA_LEVEL + 4.2, SEA_LEVEL + 0.7, finalHeight);
-      color = mixColor(color, bankDirt, bankRimFactor * (temperateCoast ? 0.78 : 0.64));
-      color = mixColor(color, bankShadow, smoothstep(-0.12, -0.42, patch1) * bankRimFactor * 0.22);
+      color = mixColor(color, bankDirt, bankRimFactor * (temperateCoast ? 0.84 : 0.76));
+      color = mixColor(color, bankShadow, smoothstep(-0.12, -0.42, patch1) * bankRimFactor * 0.30);
     }
 
     if (flatShoreFactor > 0.10 && finalHeight < SEA_LEVEL + dryBeachHeight + 0.58) {
@@ -1340,38 +1396,64 @@ export function getTerrainData(x: number, z: number): TerrainData {
         color = mixColor(color, wetSandColor, wetSandFactor * 0.35);
         color = mixColor(color, rootShadow, smoothstep(-0.18, -0.44, patch1) * 0.30);
         color = mixColor(color, reedFringe, smoothstep(0.24, 0.52, patch2) * 0.22);
+      } else if (urbanCanalBankFactor > 0.02) {
+        biome = 'beach';
+        const canalBankMud: TerrainColor = temperateCoast
+          ? [0.26, 0.28, 0.23]
+          : [0.32, 0.28, 0.22];
+        const dampBank: TerrainColor = temperateCoast
+          ? [0.36, 0.34, 0.27]
+          : [0.42, 0.36, 0.26];
+        const bankMix = Math.min(0.82, 0.46 + urbanCanalBankFactor * 0.42);
+        color = mixColor(color, dampBank, 0.36);
+        color = mixColor(color, canalBankMud, bankMix);
       } else if (
-        (shoreProfile === 'tidal_mudflat' || shoreProfile === 'marsh_reed_edge')
+        (shoreProfile === 'tidal_mudflat' || shoreProfile === 'marsh_reed_edge' || exposedTidalFlat > 0.18)
         && shelteredCoast
         && lowCoast
-        && wetSandFactor + surfFactor + tidalFlatBias > 0.24
-        && (temperateCoast || beachFactor < 0.45)
+        && wetSandFactor + surfFactor + beachFactor * 0.42 + lowShoreShelf * 0.52 + tidalFlatBias > 0.16
+        && (temperateCoast || beachFactor < 0.62 || exposedTidalFlat > 0.24)
       ) {
         biome = 'tidal_flat';
         const siltColor: TerrainColor = temperateCoast
-          ? [0.38, 0.42, 0.34]
+          ? [0.58, 0.60, 0.49]
           : mediterraneanCoast
-          ? [0.60, 0.55, 0.43]
-          : [0.54, 0.49, 0.39];
+          ? [0.76, 0.71, 0.56]
+          : nearbyClimate === 'monsoon'
+          ? [0.76, 0.72, 0.54]
+          : nearbyClimate === 'tropical'
+          ? [0.82, 0.78, 0.58]
+          : [0.70, 0.66, 0.50];
         const slickMud: TerrainColor = temperateCoast
-          ? [0.24, 0.31, 0.28]
+          ? [0.38, 0.44, 0.39]
           : mediterraneanCoast
-          ? [0.42, 0.42, 0.34]
-          : [0.38, 0.42, 0.38];
+          ? [0.54, 0.53, 0.42]
+          : nearbyClimate === 'monsoon'
+          ? [0.48, 0.50, 0.42]
+          : nearbyClimate === 'tropical'
+          ? [0.54, 0.56, 0.44]
+          : [0.50, 0.52, 0.43];
         const paleSilt: TerrainColor = temperateCoast
-          ? [0.50, 0.53, 0.42]
+          ? [0.74, 0.75, 0.62]
           : mediterraneanCoast
-          ? [0.72, 0.66, 0.50]
-          : [0.66, 0.61, 0.48];
+          ? [0.88, 0.82, 0.64]
+          : nearbyClimate === 'monsoon'
+          ? [0.90, 0.86, 0.66]
+          : nearbyClimate === 'tropical'
+          ? [0.94, 0.91, 0.70]
+          : [0.82, 0.78, 0.60];
         const waterStreak: TerrainColor = temperateCoast
-          ? [0.22, 0.36, 0.38]
+          ? [0.30, 0.42, 0.42]
           : mediterraneanCoast
-          ? [0.36, 0.48, 0.48]
-          : [0.30, 0.44, 0.46];
-        color = mixColor(siltColor, slickMud, smoothstep(0.35, 0.75, moisture));
+          ? [0.44, 0.54, 0.52]
+          : nearbyClimate === 'monsoon'
+          ? [0.40, 0.52, 0.48]
+          : [0.42, 0.56, 0.54];
+        const flatExposure = Math.max(wetSandFactor, surfFactor * 0.70, beachFactor * 0.35, exposedTidalFlat);
+        color = mixColor(siltColor, slickMud, smoothstep(0.38, 0.82, moisture) * 0.82);
         color = mixColor(color, washColor, surfFactor * (temperateCoast ? 0.26 : 0.45));
-        color = mixColor(color, paleSilt, smoothstep(0.22, 0.54, patch1) * (temperateCoast ? 0.18 : 0.26));
-        color = mixColor(color, waterStreak, smoothstep(-0.16, -0.42, patch2) * wetSandFactor * (temperateCoast ? 0.44 : 0.32));
+        color = mixColor(color, paleSilt, (0.34 + smoothstep(0.08, 0.52, patch1) * 0.42) * flatExposure);
+        color = mixColor(color, waterStreak, smoothstep(-0.10, -0.42, patch2) * flatExposure * (temperateCoast ? 0.66 : 0.54));
       } else {
         biome = 'beach';
         const wrackLine: TerrainColor = [0.44, 0.34, 0.20];

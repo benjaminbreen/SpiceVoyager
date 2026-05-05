@@ -16,7 +16,8 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 
 const WATER_SURFACE_OFFSET = -0.5;
-const SHALLOW_TINT_OFFSET = .32;
+const SHALLOW_TINT_OFFSET = 0.045;
+const SHORE_FOAM_SURFACE_OFFSET = 0.075;
 const ALGAE_SURFACE_OFFSET = 0.035;
 const CAUSTIC_SURFACE_OFFSET = 0.005;
 const WATER_SURFACE_ALPHA = 0.75;
@@ -311,8 +312,8 @@ function ShallowWaterTint() {
             vec3 shoreDay = vec3(0.12, 0.20, 0.24);
             vec3 shoreNight = vec3(0.04, 0.07, 0.10);
             vec3 shoreColor = mix(shoreNight, shoreDay, uDaylight);
-            col = mix(col, shoreColor, edgeStrength * 0.75);
-            alpha = max(alpha, edgeStrength * 0.70);
+            col = mix(col, shoreColor, edgeStrength * 0.52);
+            alpha = max(alpha, edgeStrength * 0.48);
           }
 
           // Darken shallow tint at night — both color and opacity
@@ -366,6 +367,133 @@ function ShallowWaterTint() {
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, SEA_LEVEL + SHALLOW_TINT_OFFSET, 0]}
       renderOrder={1}
+    />
+  );
+}
+
+function ShorelineFoam() {
+  const meshRef = useRef<THREE.Mesh>(null);
+  useWaterOverlayLayer(meshRef);
+  const worldSeed = useGameStore((state) => state.worldSeed);
+  const worldSize = useGameStore((state) => state.worldSize);
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+
+  const { geometry, material } = useMemo(() => {
+    const baseSize = devSoloPort ? 1000 : 900;
+    const size = baseSize + 250;
+    const segments = Math.min(128, Math.max(64, Math.round(size * 0.09)));
+    const geo = new THREE.PlaneGeometry(size, size, segments, segments);
+    const position = geo.attributes.position as THREE.BufferAttribute;
+    const foam = new Float32Array(position.count);
+
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i);
+      const worldZ = -position.getY(i);
+      const terrain = getTerrainData(x, worldZ);
+      const depthBelowSea = SEA_LEVEL - terrain.height;
+      if (depthBelowSea <= 0 || depthBelowSea > 3.0) {
+        foam[i] = 0;
+        continue;
+      }
+      const shoreLine = (1 - smoothstep(0.18, 1.85, depthBelowSea)) * smoothstep(0.025, 0.20, depthBelowSea);
+      const surf = smoothstep(0.06, 0.70, terrain.surfFactor);
+      const shallow = smoothstep(0.18, 0.82, terrain.shallowFactor);
+      const steepSuppress = 1 - terrain.coastSteepness * 0.18;
+      foam[i] = Math.min(1, (shoreLine * 0.92 + surf * 0.28 + shallow * shoreLine * 0.22) * steepSuppress);
+    }
+
+    geo.setAttribute('aFoam', new THREE.Float32BufferAttribute(foam, 1));
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uDaylight: { value: 1 },
+      },
+      vertexShader: /* glsl */ `
+        attribute float aFoam;
+        varying float vFoam;
+        varying vec2 vWorldXZ;
+
+        void main() {
+          vFoam = aFoam;
+          vWorldXZ = position.xy;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform float uDaylight;
+        varying float vFoam;
+        varying vec2 vWorldXZ;
+
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+            f.y
+          );
+        }
+
+        void main() {
+          if (vFoam < 0.015) discard;
+
+          float t = uTime;
+          float wave = sin(t * 1.05 + vWorldXZ.x * 0.22 + vWorldXZ.y * 0.16);
+          float secondary = sin(t * 0.72 - vWorldXZ.x * 0.10 + vWorldXZ.y * 0.20);
+          float rim = 0.54 + 0.18 * wave + 0.08 * secondary;
+
+          float broken = noise(vWorldXZ * 0.92 + vec2(t * 0.28, -t * 0.18));
+          float gaps = mix(0.70, 1.0, smoothstep(0.18, 0.56, broken));
+          float fineEdge = smoothstep(0.16, 0.42, vFoam);
+          float alpha = vFoam * fineEdge * rim * gaps * (0.10 + 0.20 * uDaylight);
+          if (alpha < 0.015) discard;
+
+          vec3 foamColor = mix(vec3(0.42, 0.48, 0.48), vec3(0.72, 0.78, 0.76), uDaylight);
+          gl_FragColor = vec4(foamColor, alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.2,
+      polygonOffsetUnits: -3,
+      side: THREE.DoubleSide,
+    });
+
+    return { geometry: geo, material: mat };
+  }, [currentWorldPortId, devSoloPort, worldSeed, worldSize]);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    const mat = meshRef.current.material as THREE.ShaderMaterial;
+    mat.uniforms.uTime.value = state.clock.elapsedTime;
+    const time = useGameStore.getState().timeOfDay;
+    const theta = ((time - 6) / 24) * Math.PI * 2;
+    mat.uniforms.uDaylight.value = smoothstep(-0.15, 0.25, Math.sin(theta));
+  });
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+    };
+  }, [geometry, material]);
+
+  return (
+    <mesh
+      ref={meshRef}
+      geometry={geometry}
+      material={material}
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, SEA_LEVEL + SHORE_FOAM_SURFACE_OFFSET, 0]}
+      renderOrder={3}
     />
   );
 }
@@ -680,6 +808,7 @@ export function Ocean() {
   const waterRef = useRef<Water | null>(null);
   const advancedWaterEnabled = useGameStore((state) => state.renderDebug.advancedWater);
   const algaeEnabled = useGameStore((state) => state.renderDebug.algae);
+  const shoreFoamEnabled = useGameStore((state) => state.renderDebug.shoreFoam);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
   const waterPalette = useMemo(() => getWaterPalette(waterPaletteId), [waterPaletteId]);
   const reflectionTuning = useMemo(() => getReflectionTuning(waterPaletteId), [waterPaletteId]);
@@ -799,6 +928,7 @@ export function Ocean() {
     <>
       <WaterOverlayCameraLayer />
       <ShallowWaterTint />
+      {shoreFoamEnabled && <ShorelineFoam />}
       {showAdvancedWater ? (
         <primitive object={water} position={[0, SEA_LEVEL + WATER_SURFACE_OFFSET, 0]} raycast={() => null} />
       ) : (

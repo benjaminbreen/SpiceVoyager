@@ -550,6 +550,9 @@ const HEAD_TURN_MAX_YAW = Math.PI / 3; // ±60°, anything more reads as inhuman
 const CLUSTER_RADIUS = 2.5;
 const CLUSTER_RADIUS_SQ = CLUSTER_RADIUS * CLUSTER_RADIUS;
 const SAILING_ACTIVE_PEDESTRIAN_CAP = 14;
+const PEDESTRIAN_FULL_RATE_RANGE_SQ = 85 * 85;
+const PEDESTRIAN_NEAR_UPDATE_HZ = 20;
+const PEDESTRIAN_FAR_UPDATE_HZ = 10;
 
 export function Pedestrians() {
   const ports = useGameStore(s => s.ports);
@@ -855,16 +858,24 @@ export function Pedestrians() {
       return;
     }
 
-    // ── Throttle main update to ~20fps (arm swing reads fine at this rate) ─
+    const storeState = useGameStore.getState();
+    const playerMode = storeState.playerMode;
+    const playerPosForRate = getActivePlayerPos();
+    const port = ports[0];
+    const nearTown = !port
+      || playerMode === 'walking'
+      || ((playerPosForRate[0] - port.position[0]) ** 2 + (playerPosForRate[2] - port.position[2]) ** 2 <= PEDESTRIAN_FULL_RATE_RANGE_SQ);
+    const targetHz = nearTown ? PEDESTRIAN_NEAR_UPDATE_HZ : PEDESTRIAN_FAR_UPDATE_HZ;
+
+    // ── Throttle main update. Close walking scenes stay smooth; background
+    // towns tick lower while sailing to avoid rebuilding crowd matrices so often.
     animAccumRef.current += delta;
-    if (animAccumRef.current < 1 / 20) return;
+    if (animAccumRef.current < 1 / targetHz) return;
     const dt = Math.min(0.1, animAccumRef.current);
     animAccumRef.current = 0;
 
     const time = state.clock.elapsedTime;
-    const storeState = useGameStore.getState();
     const hour = storeState.timeOfDay;
-    const playerMode = storeState.playerMode;
     const activeCap = playerMode === 'ship' ? SAILING_ACTIVE_PEDESTRIAN_CAP : undefined;
     const clusterFacingEnabled = playerMode === 'walking';
 

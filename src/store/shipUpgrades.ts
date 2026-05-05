@@ -114,7 +114,9 @@ export const PORT_UPGRADE_POOLS: Record<string, ShipUpgradeType[]> = {
   salvador: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
   havana: ['copperSheathing', 'reinforcedPlanking', 'newCanvas', 'expandedHold', 'ironKnees', 'betterProvisions'],
   cartagena: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
+  veracruz: ['reinforcedPlanking', 'newCanvas', 'expandedHold', 'betterProvisions'],
   jamestown: ['newCanvas', 'betterProvisions'],
+  colombo: ['newCanvas', 'lateenRigging', 'expandedHold', 'betterProvisions'],
   cape: ['betterProvisions'],
 };
 

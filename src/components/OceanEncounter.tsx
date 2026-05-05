@@ -3,19 +3,20 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { useGameStore } from '../store/gameStore';
-import { generateEncounterLoot, type OceanEncounterDef } from '../utils/oceanEncounters';
+import { generateEncounterLoot, type OceanEncounterDef, type WhaleSpecies } from '../utils/oceanEncounters';
 import { SEA_LEVEL } from '../constants/world';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
 
 // ── Whale model ──────────────────────────────────────────────────────────────
-function WhaleGeometry() {
+function WhaleGeometry({ species }: { species: WhaleSpecies }) {
   return useMemo(() => {
     // Body — elongated ellipsoid
     const body = new THREE.SphereGeometry(1, 10, 8);
-    body.scale(2.5, 0.8, 1.0);
+    body.scale(species === 'right' ? 2.8 : 2.5, species === 'right' ? 0.95 : 0.8, species === 'right' ? 1.25 : 1.0);
     // Head bump
-    const head = new THREE.SphereGeometry(0.6, 8, 6);
-    head.translate(-2.2, 0.1, 0);
+    const head = new THREE.SphereGeometry(species === 'right' ? 0.78 : 0.6, 8, 6);
+    head.scale(species === 'sperm' ? 1.45 : 1.0, 1.0, species === 'sperm' ? 1.1 : 1.25);
+    head.translate(species === 'right' ? -2.45 : -2.35, 0.1, 0);
     // Tail stock — tapered
     const tail = new THREE.CylinderGeometry(0.15, 0.5, 1.5, 6);
     tail.rotateZ(Math.PI / 2);
@@ -31,11 +32,13 @@ function WhaleGeometry() {
     flukeR.translate(3.5, 0.1, -0.4);
     // Dorsal fin
     const dorsal = new THREE.ConeGeometry(0.2, 0.5, 4);
-    dorsal.translate(0.5, 0.9, 0);
-    const merged = mergeGeometries([body, head, tail, flukeL, flukeR, dorsal]);
+    dorsal.scale(species === 'right' ? 0.25 : 1, species === 'right' ? 0.25 : 1, species === 'right' ? 0.25 : 1);
+    dorsal.translate(0.5, species === 'right' ? 0.7 : 0.9, 0);
+    const parts = species === 'right' ? [body, head, tail, flukeL, flukeR] : [body, head, tail, flukeL, flukeR, dorsal];
+    const merged = mergeGeometries(parts);
     [body, head, tail, flukeL, flukeR, dorsal].forEach(g => g.dispose());
     return merged ?? new THREE.SphereGeometry(1);
-  }, []);
+  }, [species]);
 }
 
 // ── Sea turtle model ─────────────────────────────────────────────────────────
@@ -98,15 +101,24 @@ const WHALE_NOTICE_DIST = 35;
 const WHALE_AVOID_DIST = 75;
 const WHALE_WARNING_DIST = 30;
 const WHALE_DIVE_DIST = 18;
-const WHALE_DIVE_SECONDS = 8;
 const WHALE_SPOUT_PARTICLES = 18;
+const WHALE_SUBMERGE_FADE_START = 0.6;
+const WHALE_SUBMERGE_FADE_END = 2.8;
+const WHALE_SURFACE_SECONDS = 5.5;
+const WHALE_SOUND_SECONDS = 1.6;
+const WHALE_DEEP_SECONDS = 6.5;
+const WHALE_RESURFACE_SECONDS = 2.2;
+
+type WhaleMode = 'cruise' | 'surface' | 'sound' | 'deep' | 'resurface';
 
 type WhaleAiState = {
   x: number;
   z: number;
   heading: number;
   speed: number;
-  diveUntil: number;
+  mode: WhaleMode;
+  modeStarted: number;
+  modeUntil: number;
   spoutUntil: number;
   spoutCooldownUntil: number;
 };
@@ -132,17 +144,23 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
   const group = useRef<THREE.Group>(null);
   const spoutRef = useRef<THREE.InstancedMesh>(null);
   const [collected, setCollected] = useState(false);
+  const [pickupVisible, setPickupVisible] = useState(false);
+  const [pickupPosition, setPickupPosition] = useState<[number, number, number]>([encounter.position[0], SEA_LEVEL - 0.05, encounter.position[2]]);
   const whaleAi = useRef<WhaleAiState>({
     x: encounter.position[0],
     z: encounter.position[2],
     heading: encounter.rotation,
     speed: 0.025,
-    diveUntil: 0,
+    mode: 'surface',
+    modeStarted: 0,
+    modeUntil: WHALE_SURFACE_SECONDS,
     spoutUntil: 0,
     spoutCooldownUntil: 0,
   });
+  const pickupVisibleRef = useRef(false);
 
-  const geometry = encounter.type === 'whale' ? WhaleGeometry()
+  const whaleSpecies = encounter.whaleSpecies ?? 'sperm';
+  const geometry = encounter.type === 'whale' ? WhaleGeometry({ species: whaleSpecies })
     : encounter.type === 'turtle' ? TurtleGeometry()
     : WreckageGeometry();
 
@@ -154,6 +172,8 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
       color,
       roughness: 0.85,
       side: THREE.DoubleSide,
+      transparent: encounter.type === 'whale',
+      depthWrite: encounter.type !== 'whale',
     });
   }, [encounter.type]);
 
@@ -168,13 +188,26 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
   }), []);
 
   const hiddenSpoutMatrix = useMemo(() => new THREE.Matrix4().makeScale(0, 0, 0), []);
+  const pickupMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#d8c28a',
+    emissive: '#6b4b1e',
+    emissiveIntensity: 0.2,
+    roughness: 0.72,
+  }), []);
+  const pickupFoamMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: '#e8fbff',
+    transparent: true,
+    opacity: 0.38,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  }), []);
 
   // Approach notification (once)
   const notifiedRef = useRef(false);
   const spoutDummy = useMemo(() => new THREE.Object3D(), []);
 
   useFrame((state, delta) => {
-    if (!group.current || collected) return;
+    if (!group.current || (encounter.type !== 'whale' && collected)) return;
     const time = state.clock.elapsedTime;
     const dt = Math.min(delta, 0.05);
     const pos = encounter.position;
@@ -198,23 +231,64 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         ai.spoutUntil = time + 1.35;
         ai.spoutCooldownUntil = time + 6.5;
       }
-      if (dist < WHALE_DIVE_DIST && ai.diveUntil < time) {
-        ai.diveUntil = time + WHALE_DIVE_SECONDS;
+      const canSound = ai.mode !== 'sound' && ai.mode !== 'deep' && ai.mode !== 'resurface';
+      if ((dist < WHALE_DIVE_DIST || threatened) && canSound) {
+        ai.mode = 'sound';
+        ai.modeStarted = time;
+        ai.modeUntil = time + WHALE_SOUND_SECONDS;
+        if (!pickupVisibleRef.current) {
+          pickupVisibleRef.current = true;
+          setPickupPosition([ai.x - Math.sin(ai.heading) * 2.8, SEA_LEVEL - 0.05, ai.z - Math.cos(ai.heading) * 2.8]);
+          setPickupVisible(true);
+        }
+      } else if (ai.mode === 'surface' && time > ai.modeUntil) {
+        ai.mode = 'cruise';
+        ai.modeStarted = time;
+        ai.modeUntil = time + 8 + Math.sin(encounter.rotation) * 3;
+      } else if (ai.mode === 'cruise' && time > ai.modeUntil) {
+        ai.mode = 'surface';
+        ai.modeStarted = time;
+        ai.modeUntil = time + WHALE_SURFACE_SECONDS;
+        ai.spoutUntil = time + 1.35;
+        ai.spoutCooldownUntil = time + 6.5;
+      } else if (ai.mode === 'sound' && time > ai.modeUntil) {
+        ai.mode = 'deep';
+        ai.modeStarted = time;
+        ai.modeUntil = time + WHALE_DEEP_SECONDS;
+      } else if (ai.mode === 'deep' && time > ai.modeUntil) {
+        ai.mode = 'resurface';
+        ai.modeStarted = time;
+        ai.modeUntil = time + WHALE_RESURFACE_SECONDS;
+      } else if (ai.mode === 'resurface' && time > ai.modeUntil) {
+        ai.mode = 'surface';
+        ai.modeStarted = time;
+        ai.modeUntil = time + WHALE_SURFACE_SECONDS;
+        ai.spoutUntil = time + 1.35;
+        ai.spoutCooldownUntil = time + 6.5;
       }
 
-      const targetHeading = threatened
+      const submerged = ai.mode === 'sound' || ai.mode === 'deep' || ai.mode === 'resurface';
+      const targetHeading = threatened || submerged
         ? Math.atan2(awayX, awayZ)
         : encounter.rotation + Math.sin(time * 0.08 + encounter.rotation) * 0.65;
       const turn = Math.atan2(Math.sin(targetHeading - ai.heading), Math.cos(targetHeading - ai.heading));
       ai.heading += THREE.MathUtils.clamp(turn, -dt * 0.85, dt * 0.85);
-      const targetSpeed = threatened ? 0.18 : 0.035;
+      const targetSpeed = ai.mode === 'deep' ? 0.22 : threatened ? 0.18 : ai.mode === 'surface' ? 0.025 : 0.04;
       ai.speed += (targetSpeed - ai.speed) * (threatened ? 0.06 : 0.025);
       ai.x += Math.sin(ai.heading) * ai.speed;
       ai.z += Math.cos(ai.heading) * ai.speed;
 
-      const diveProgress = THREE.MathUtils.clamp((ai.diveUntil - time) / WHALE_DIVE_SECONDS, 0, 1);
-      const diving = diveProgress > 0;
-      const diveDepth = diving ? Math.sin(diveProgress * Math.PI) * 5.8 + (dist < WHALE_DIVE_DIST ? 1.4 : 0) : 0;
+      const modeProgress = THREE.MathUtils.clamp((time - ai.modeStarted) / Math.max(0.001, ai.modeUntil - ai.modeStarted), 0, 1);
+      const diveDepth = ai.mode === 'sound'
+        ? THREE.MathUtils.smoothstep(modeProgress, 0, 1) * 4.5
+        : ai.mode === 'deep'
+          ? 5.8
+          : ai.mode === 'resurface'
+            ? (1 - THREE.MathUtils.smoothstep(modeProgress, 0, 1)) * 4.5
+            : 0;
+      material.opacity = submerged
+        ? 1 - THREE.MathUtils.smoothstep(diveDepth, WHALE_SUBMERGE_FADE_START, WHALE_SUBMERGE_FADE_END)
+        : 1;
       const surfaceRoll = Math.sin(time * 0.45 + encounter.rotation) * 0.08;
       group.current.position.set(
         ai.x,
@@ -222,13 +296,13 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
         ai.z,
       );
       group.current.rotation.set(
-        diving ? -0.18 : surfaceRoll,
+        ai.mode === 'sound' ? -0.32 : ai.mode === 'resurface' ? 0.18 : surfaceRoll,
         ai.heading,
         threatened ? THREE.MathUtils.clamp(turn, -0.22, 0.22) : Math.sin(time * 0.28) * 0.05,
       );
 
       if (spoutRef.current) {
-        const active = time < ai.spoutUntil && !diving;
+        const active = time < ai.spoutUntil && !submerged;
         for (let i = 0; i < WHALE_SPOUT_PARTICLES; i++) {
           if (!active) {
             spoutRef.current.setMatrixAt(i, hiddenSpoutMatrix);
@@ -304,7 +378,7 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
     setCollected(true);
 
     const state = useGameStore.getState();
-    const loot = generateEncounterLoot(encounter.type);
+    const loot = generateEncounterLoot(encounter.type, whaleSpecies);
 
     // Apply loot
     if (loot.gold > 0) {
@@ -341,18 +415,44 @@ export function OceanEncounter({ encounter }: { encounter: OceanEncounterDef }) 
     state.addJournalEntry('encounter', loot.description);
   };
 
-  if (collected) return null;
+  const handleWhaleClick = () => {
+    const state = useGameStore.getState();
+    state.addNotification(whaleSpecies === 'right' ? 'Right whale' : 'Sperm whale', 'info', {
+      size: 'grand',
+      subtitle: pickupVisibleRef.current ? 'Wake fragments nearby' : 'Keep a respectful distance and watch its wake.',
+    });
+  };
+
+  if (encounter.type !== 'whale' && collected) return null;
 
   return (
-    <group ref={group} position={encounter.position}>
-      <mesh
-        geometry={geometry}
-        material={material}
-        onClick={(e) => { e.stopPropagation(); handleClick(); }}
-        onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
-        onPointerOut={() => { document.body.style.cursor = ''; }}
-      />
-      {encounter.type === 'whale' && <SpoutParticles meshRef={spoutRef} material={spoutMaterial} />}
-    </group>
+    <>
+      <group ref={group} position={encounter.position}>
+        <mesh
+          geometry={geometry}
+          material={material}
+          onClick={(e) => { e.stopPropagation(); encounter.type === 'whale' ? handleWhaleClick() : handleClick(); }}
+          onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+          onPointerOut={() => { document.body.style.cursor = ''; }}
+        />
+        {encounter.type === 'whale' && <SpoutParticles meshRef={spoutRef} material={spoutMaterial} />}
+      </group>
+      {encounter.type === 'whale' && pickupVisible && !collected && (
+        <group position={pickupPosition}>
+          <mesh
+            onClick={(e) => { e.stopPropagation(); handleClick(); }}
+            onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+            onPointerOut={() => { document.body.style.cursor = ''; }}
+          >
+            <sphereGeometry args={[0.28, 8, 5]} />
+            <primitive object={pickupMaterial} attach="material" />
+          </mesh>
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.65, 1.15, 18]} />
+            <primitive object={pickupFoamMaterial} attach="material" />
+          </mesh>
+        </group>
+      )}
+    </>
   );
 }

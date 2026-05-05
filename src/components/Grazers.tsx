@@ -17,22 +17,9 @@ import {
   setStaminaBarInstance,
   staminaColor,
 } from '../utils/animalStaminaBar';
+import { grazerFootOffset, type GrazerEntry, type GrazerKind, type SpeciesInfo } from '../utils/animalTypes';
 
 // ── Types ────────────────────────────────────────────────────────────────────
-export interface GrazerEntry {
-  position: [number, number, number];
-  rotation: number;
-  color: [number, number, number];
-  scale: number;
-  speedMult: number;
-}
-
-export interface SpeciesInfo {
-  name: string;
-  latin: string;
-  info: string;
-}
-
 interface GrazerOffset {
   dx: number; dz: number;          // flee offset (pushed by player)
   wDx: number; wDz: number;        // wander offset (slow ambient walking)
@@ -69,8 +56,6 @@ const HIT_RADIUS_MULT = 1.1;
 let grazerInstanceCounter = 0;
 
 // ── Constants ────────────────────────────────────────────────────────────────
-export type GrazerKind = 'antelope' | 'deer' | 'goat' | 'camel' | 'sheep' | 'bovine' | 'pig' | 'capybara';
-
 const SCATTER_SQ = 14 * 14;      // spook radius — player must get fairly close before they bolt
 const SCATTER_EXIT_SQ = 20 * 20;  // hysteresis: must move further away before calming down
 // Player walks at 10 u/s; flee base = 0.07 * 60 = 4.2 u/s, with speedMult 0.7–1.3 → ~2.9–5.5 u/s.
@@ -85,19 +70,6 @@ const ANIM_RANGE_SQ = 100 * 100;
 // Foot-to-pivot distance per kind, in base geometry units (scale=1). Mesh pivot is at the
 // body center; the lowest point is the hoof bottom at y = -(legLen + 0.045). When placing a
 // grazer on the terrain, add this * instanceScale to terrainHeight so feet meet the ground.
-const FOOT_OFFSET: Record<GrazerKind, number> = {
-  antelope: 0.49,
-  deer:     0.55,
-  goat:     0.41,
-  camel:    0.73,
-  sheep:    0.37,
-  bovine:   0.49,
-  pig:      0.33,
-  capybara: 0.27,
-};
-export function grazerFootOffset(kind: GrazerKind): number {
-  return FOOT_OFFSET[kind];
-}
 // Wander tuning — bounded ambient motion so herds don't drift off their patch
 const WANDER_MAX = 5;
 const WANDER_MAX_SQ = WANDER_MAX * WANDER_MAX;
@@ -525,7 +497,7 @@ export function Grazers({ data, shadowsActive, species, kind }: { data: GrazerEn
   }, [data, kind]);
 
   // Scatter + wander animation
-  const footOffset = FOOT_OFFSET[kind ?? 'antelope'];
+  const footOffset = grazerFootOffset(kind ?? 'antelope');
   useFrame(({ clock }, delta) => {
     if (!meshRef.current || offsetsRef.current.length !== data.length) return;
     animAccumRef.current += delta;

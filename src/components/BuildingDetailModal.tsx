@@ -278,7 +278,7 @@ function buildingMedallionAsset(building: Building): BuildingMedallionAsset {
   const key = buildingMedallionKey(building);
   return {
     key,
-    path: `/building-medallions/${key}.png`,
+    path: `/building-medallions/${key}.webp`,
     label: key.replace(/-/g, ' '),
   };
 }

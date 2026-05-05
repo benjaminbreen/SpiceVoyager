@@ -7,7 +7,7 @@ export type Commodity =
   // Tier 1: Spices & Stimulants (shown first)
   | 'Black Pepper' | 'Cinnamon' | 'Cardamom' | 'Coffee' | 'Tea'
   | 'Ginger' | 'Cloves' | 'Nutmeg' | 'Saffron' | 'Tobacco'
-  | 'Star Anise'
+  | 'Star Anise' | 'Cacao'
   // Tier 2: Exotic Drugs & Medicines
   | 'Opium' | 'Camphor' | 'Benzoin' | 'Frankincense' | 'Myrrh'
   | 'Rhubarb' | 'China Root' | 'Cassia Fistula' | 'Aloes' | 'Sassafras'
@@ -20,7 +20,7 @@ export type Commodity =
   | 'Hides' | 'Wool' | 'Horn'
   // Tier 4: Precious Rarities
   | 'Ambergris' | 'Bezoar Stones' | 'Bhang' | "Dragon's Blood" | 'Virginia Tobacco'
-  | 'Murano Glass' | 'Japanese Silver'
+  | 'Murano Glass' | 'Japanese Silver' | 'Cochineal'
   // Tier 5: Extraordinary
   | 'Mumia' | 'Lapis de Goa' | 'Theriac'
   // Venetian export staples
@@ -64,7 +64,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'The king of spices. Malabar Coast monopoly.',
     physicalDescription: 'Small, hard, wrinkled black drupes with a sharp bite',
     color: '#4a4a4a', icon: '✦',
-    iconImage: '/wares/black_pepper_icon.png',
+    iconImage: '/wares/black_pepper_icon.webp',
   },
   'Cinnamon': {
     id: 'Cinnamon', tier: 1,
@@ -73,7 +73,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Ceylon bark. Often adulterated with cassia.',
     physicalDescription: 'Rolled quills of fragrant reddish bark',
     color: '#c47a3a', icon: '⌇',
-    iconImage: '/wares/cinnamon_icon.png',
+    iconImage: '/wares/cinnamon_icon.webp',
     commonSubstitute: 'Cassia Fistula',
   },
   'Cardamom': {
@@ -83,7 +83,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'From the hills of Malabar. Traded alongside pepper.',
     physicalDescription: 'Small green pods containing aromatic seeds',
     color: '#7cb342', icon: '❧',
-    iconImage: '/wares/cardamom_icon.png',
+    iconImage: '/wares/cardamom_icon.webp',
   },
   'Coffee': {
     id: 'Coffee', tier: 1,
@@ -92,7 +92,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Mocha monopoly. Demand rising rapidly across the Indian Ocean world.',
     physicalDescription: 'Dark roasted berries with a bitter, stimulating smell',
     color: '#5d4037', icon: '♨',
-    iconImage: '/wares/coffee_icon.png',
+    iconImage: '/wares/coffee_icon.webp',
   },
   'Tea': {
     id: 'Tea', tier: 1,
@@ -101,7 +101,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Chinese leaf, funneled through Macau.',
     physicalDescription: 'Dried, tightly rolled leaves with a grassy scent',
     color: '#66bb6a', icon: '♣',
-    iconImage: '/wares/tea_icon.png',
+    iconImage: '/wares/tea_icon.webp',
   },
   'Ginger': {
     id: 'Ginger', tier: 1,
@@ -110,7 +110,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Malabar and Southeast Asian rhizome. Ubiquitous in the spice trade.',
     physicalDescription: 'Knobby pale rhizomes with a fiery, warming taste',
     color: '#e6a830', icon: '⌁',
-    iconImage: '/wares/ginger_icon.png',
+    iconImage: '/wares/ginger_icon.webp',
   },
   'Cloves': {
     id: 'Cloves', tier: 1,
@@ -119,7 +119,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'From the Maluku Islands. Available only through Bantam and Malacca.',
     physicalDescription: 'Tiny dried flower buds, dark brown, intensely aromatic',
     color: '#8b4513', icon: '✿',
-    iconImage: '/wares/clove_icon.png',
+    iconImage: '/wares/clove_icon.webp',
   },
   'Nutmeg': {
     id: 'Nutmeg', tier: 1,
@@ -128,7 +128,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Banda Islands product. Astronomical markup far from source.',
     physicalDescription: 'Hard brown ovoid seeds with a warm, sweet fragrance',
     color: '#d4a574', icon: '◉',
-    iconImage: '/wares/nutmeg_icon.png',
+    iconImage: '/wares/nutmeg_icon.webp',
   },
   'Saffron': {
     id: 'Saffron', tier: 1,
@@ -137,7 +137,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Persian and Kashmiri crocus stamens. Worth more than gold by weight. Often adulterated.',
     physicalDescription: 'Tiny crimson threads that stain water brilliant yellow',
     color: '#ff8f00', icon: '❈',
-    iconImage: '/wares/saffron_icon.png',
+    iconImage: '/wares/saffron_icon.webp',
   },
   'Tobacco': {
     id: 'Tobacco', tier: 1,
@@ -146,7 +146,16 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'New World plant just arriving in the Indian Ocean. Demand spreading fast.',
     physicalDescription: 'Bundles of large dried leaves with an acrid smell',
     color: '#7c6b4f', icon: '⌘',
-    iconImage: '/wares/tobacco_icon.png',
+    iconImage: '/wares/tobacco_icon.webp',
+  },
+  'Cacao': {
+    id: 'Cacao', tier: 1,
+    basePrice: [20, 52], weight: 1,
+    spoilable: true, breakable: false, fraudRisk: 0.02,
+    description: 'Mesoamerican cacao beans, consumed as chocolate and increasingly prized in Spanish Atlantic markets.',
+    physicalDescription: 'Flat reddish-brown beans with a bitter, oily scent',
+    color: '#6b3f2a', icon: '◈',
+    iconImage: '/wares/cacao_icon.webp',
   },
   // Chinese spice and stomachic medicine, distinct from European aniseed.
   // 1612 is the period when Star Anise begins flowing east on the Manila
@@ -169,7 +178,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Cambay product. Portuguese carry it eastward. Some factions disapprove.',
     physicalDescription: 'Dark, sticky paste scraped from seed pods, with a heavy smell',
     color: '#880e4f', icon: '❀',
-    iconImage: '/wares/opium_icon.png',
+    iconImage: '/wares/opium_icon.webp',
   },
   'Camphor': {
     id: 'Camphor', tier: 2,
@@ -178,7 +187,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Bornean camphor, far superior to the Chinese variety. Medicine and ritual.',
     physicalDescription: 'Waxy white crystals with a sharp, penetrating smell',
     color: '#b0c4de', icon: '◇',
-    iconImage: '/wares/camphor_icon.png',
+    iconImage: '/wares/camphor_icon.webp',
     commonSubstitute: 'Benzoin',
   },
   'Benzoin': {
@@ -188,7 +197,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Sumatran aromatic resin. Burned as incense and used in medicine.',
     physicalDescription: 'Brittle chunks of amber-colored resin with a vanilla scent',
     color: '#9e7c5c', icon: '◐',
-    iconImage: '/wares/benzoin_icon.png',
+    iconImage: '/wares/benzoin_icon.webp',
   },
   'Frankincense': {
     id: 'Frankincense', tier: 2,
@@ -197,7 +206,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Arabian olibanum. Sacred incense burned from Lisbon to Kyoto.',
     physicalDescription: 'Pale, translucent tears of hardened tree resin',
     color: '#c9b87a', icon: '△',
-    iconImage: '/wares/frankincense_icon.png',
+    iconImage: '/wares/frankincense_icon.webp',
     commonSubstitute: 'Myrrh',
   },
   'Myrrh': {
@@ -207,7 +216,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Resinous gum from Arabia and the Horn of Africa. Medicine and incense.',
     physicalDescription: 'Rough, reddish-brown nuggets of bitter aromatic gum',
     color: '#a07040', icon: '▽',
-    iconImage: '/wares/myrrh_icon.png',
+    iconImage: '/wares/myrrh_icon.webp',
   },
   'Rhubarb': {
     id: 'Rhubarb', tier: 2,
@@ -216,7 +225,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: '"China rhubarb" — one of the most valued materia medica in European pharmacies.',
     physicalDescription: 'Thick dried root slices, yellow inside, with a bitter purgative taste',
     color: '#c62828', icon: '⌠',
-    iconImage: '/wares/rhubarb_root_icon.png',
+    iconImage: '/wares/rhubarb_root_icon.webp',
     commonSubstitute: 'China Root',
   },
   'China Root': {
@@ -226,7 +235,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Smilax china. Prized as a cure for the French disease. Major Chinese export.',
     physicalDescription: 'Knotty tubers with reddish skin, sold as a medicinal cure',
     color: '#8d6e63', icon: '⌡',
-    iconImage: '/wares/china_root_icon.png',
+    iconImage: '/wares/china_root_icon.webp',
   },
   'Cassia Fistula': {
     id: 'Cassia Fistula', tier: 2,
@@ -235,7 +244,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Indian purgative. Black pods prized in European and Islamic medicine.',
     physicalDescription: 'Long, dark, cylindrical pods with a sweet-smelling pulp',
     color: '#6d5c3a', icon: '⌐',
-    iconImage: '/wares/cassia_fistula_icon.png',
+    iconImage: '/wares/cassia_fistula_icon.webp',
   },
   'Aloes': {
     id: 'Aloes', tier: 2,
@@ -244,7 +253,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Aloeswood and agarwood. Precious aromatic resin.',
     physicalDescription: 'Dark, dense, resinous wood that smells sweet when heated',
     color: '#795548', icon: '❦',
-    iconImage: '/wares/aloes_icon.png',
+    iconImage: '/wares/aloes_icon.webp',
   },
   'Musk': {
     id: 'Musk', tier: 2,
@@ -253,7 +262,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Tibetan musk deer pods. Perfumery and medicine. Often faked.',
     physicalDescription: 'Leathery dried pods containing a dark, powerfully scented paste',
     color: '#9c27b0', icon: '❋',
-    iconImage: '/wares/musk_icon.png',
+    iconImage: '/wares/musk_icon.webp',
   },
   'Quicksilver': {
     id: 'Quicksilver', tier: 2,
@@ -262,7 +271,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Mercury. Essential for amalgamation, medicine, and alchemy. Heavy and dangerous.',
     physicalDescription: 'A heavy sealed flask of shimmering liquid metal',
     color: '#b0bec5', icon: '☿',
-    iconImage: '/wares/quicksilver_icon.png',
+    iconImage: '/wares/quicksilver_icon.webp',
   },
   'Sassafras': {
     id: 'Sassafras', tier: 2,
@@ -271,7 +280,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Aromatic root bark from Virginia. Sold in European apothecaries as a treatment for syphilis and a general tonic. The main export of early Jamestown.',
     physicalDescription: 'Reddish-brown dried root bark with a sweet, rooty smell',
     color: '#9a5b3a', icon: '⚶',
-    iconImage: '/wares/sassafras_icon.png',
+    iconImage: '/wares/sassafras_icon.webp',
   },
   'Tamarind': {
     id: 'Tamarind', tier: 2,
@@ -280,7 +289,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Sour fruit used as food preservative and medicine across the Indian Ocean.',
     physicalDescription: 'Sticky brown pulp in brittle pods, powerfully sour',
     color: '#8d6e4c', icon: '⌓',
-    iconImage: '/wares/tamarind_icon.png',
+    iconImage: '/wares/tamarind_icon.webp',
   },
   // The great Asian chewing-quid — chewed with slaked lime and betel leaf
   // from the Philippines through India to East Africa. Mild stimulant,
@@ -302,7 +311,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Gujarat dye. Insatiable European demand.',
     physicalDescription: 'Dense cakes of deep blue dye that stain the fingers',
     color: '#3f51b5', icon: '◆',
-    iconImage: '/wares/indigo_icon.png',
+    iconImage: '/wares/indigo_icon.webp',
   },
   'Iron': {
     id: 'Iron', tier: 3,
@@ -311,7 +320,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Bar iron and steel. High demand in East Africa and Southeast Asia.',
     physicalDescription: 'Rough bars of grey metal',
     color: '#7a8a9a', icon: '⚒',
-    iconImage: '/wares/iron_icon.png',
+    iconImage: '/wares/iron_icon.webp',
   },
   'Timber': {
     id: 'Timber', tier: 3,
@@ -320,7 +329,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Teak and hardwoods from Malabar. Essential for ship repair.',
     physicalDescription: 'Heavy planks of dark, close-grained wood',
     color: '#8B6914', icon: '≡',
-    iconImage: '/wares/timber_icon.png',
+    iconImage: '/wares/timber_icon.webp',
   },
   'Sugar': {
     id: 'Sugar', tier: 3,
@@ -329,7 +338,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Increasingly important commodity. Bengal and Southeast Asian production.',
     physicalDescription: 'Coarse brown crystals with an intensely sweet taste',
     color: '#f5f0e0', icon: '⬡',
-    iconImage: '/wares/sugar_icon.png',
+    iconImage: '/wares/sugar_icon.webp',
   },
   'Ivory': {
     id: 'Ivory', tier: 3,
@@ -338,7 +347,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'East African elephant tusks. Heavy but always in demand.',
     physicalDescription: 'Heavy curved tusks of creamy white bone-like material',
     color: '#faf0e6', icon: '⌒',
-    iconImage: '/wares/ivory_icon.png',
+    iconImage: '/wares/ivory_icon.webp',
   },
   'Chinese Porcelain': {
     id: 'Chinese Porcelain', tier: 3,
@@ -347,7 +356,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Blue-and-white kraak ware from Jingdezhen. Fragile cargo.',
     physicalDescription: 'Delicate vessels of thin white ceramic painted in blue',
     color: '#4fc3f7', icon: '⚱',
-    iconImage: '/wares/chinese_porcelain_icon.png',
+    iconImage: '/wares/chinese_porcelain_icon.webp',
   },
   'Pearls': {
     id: 'Pearls', tier: 3,
@@ -356,7 +365,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Persian Gulf pearls. Hormuz and Muscat specialties.',
     physicalDescription: 'Lustrous white spheres harvested from oyster shells',
     color: '#e0d6cc', icon: '○',
-    iconImage: '/wares/pearls_icon.png',
+    iconImage: '/wares/pearls_icon.webp',
   },
   'Red Coral': {
     id: 'Red Coral', tier: 3,
@@ -365,7 +374,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Mediterranean coral, traded into India for jewelry and medicine. Fragile.',
     physicalDescription: 'Branching formations of vivid red marine growth',
     color: '#e53935', icon: '⌗',
-    iconImage: '/wares/red_coral_icon.png',
+    iconImage: '/wares/red_coral_icon.webp',
   },
   'Rose Water': {
     id: 'Rose Water', tier: 3,
@@ -374,7 +383,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Persian distillation. Perfumery, cooking, and medicine. Bottles break easily.',
     physicalDescription: 'Stoppered glass bottles of clear, floral-scented liquid',
     color: '#f48fb1', icon: '✾',
-    iconImage: '/wares/rose_water_icon.png',
+    iconImage: '/wares/rose_water_icon.webp',
   },
 
   // ── Tier 4: Precious Rarities ──
@@ -385,7 +394,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Whale secretion. Perfume fixative and medicine. Often counterfeited.',
     physicalDescription: 'A waxy grey-black lump with a strange, sweet marine odor',
     color: '#b8860b', icon: '◈',
-    iconImage: '/wares/amber_icon.png',
+    iconImage: '/wares/amber_icon.webp',
     commonSubstitute: 'Benzoin',
   },
   'Bezoar Stones': {
@@ -395,7 +404,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Calcified stomach stones. Believed to be universal antidote. Frequently faked.',
     physicalDescription: 'Smooth, layered stones found inside animal stomachs',
     color: '#a1887f', icon: '◎',
-    iconImage: '/wares/bezoar_stone_icon.png',
+    iconImage: '/wares/bezoar_stone_icon.webp',
     commonSubstitute: 'Horn',
   },
   'Bhang': {
@@ -405,7 +414,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Cannabis preparation. Appears unpredictably at market.',
     physicalDescription: 'A pungent green paste made from crushed leaves and flowers',
     color: '#558b2f', icon: '✽',
-    iconImage: '/wares/bhang_icon.png',
+    iconImage: '/wares/bhang_icon.webp',
   },
   "Dragon's Blood": {
     id: "Dragon's Blood", tier: 4,
@@ -414,7 +423,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: "Deep red resin from Socotra's dragon trees. Dye, varnish, and medicine.",
     physicalDescription: 'Deep crimson resin that shatters like glass when struck',
     color: '#b71c1c', icon: '⬥',
-    iconImage: '/wares/dragons_blood_icon.png',
+    iconImage: '/wares/dragons_blood_icon.webp',
     commonSubstitute: 'Myrrh',
   },
   'Virginia Tobacco': {
@@ -424,7 +433,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Rolfe\'s experimental Spanish-seed crop, first planted at Jamestown in 1612. Milder and sweeter than Caribbean leaf; a curiosity in London apothecaries.',
     physicalDescription: 'Small bundles of cured leaves, paler and finer than common tobacco',
     color: '#a78a5c', icon: '⌘',
-    iconImage: '/wares/virginia_tobacco_icon.png',
+    iconImage: '/wares/virginia_tobacco_icon.webp',
   },
 
   // ── Tier 5: Extraordinary ──
@@ -435,7 +444,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: '"Egyptian mummy" — prized drug in European and Islamic medicine. Most is fake bitumen.',
     physicalDescription: 'Dark, tarry substance sold as ancient embalming material',
     color: '#4e342e', icon: '☥',
-    iconImage: '/wares/mumia_icon.png',
+    iconImage: '/wares/mumia_icon.webp',
   },
   'Lapis de Goa': {
     id: 'Lapis de Goa', tier: 5,
@@ -444,7 +453,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Artificial bezoar made by Jesuits. Gold leaf, gemstone dust, and secret ingredients.',
     physicalDescription: 'A gilded ball stamped with a cross, said to cure any poison',
     color: '#ffd700', icon: '✧',
-    iconImage: '/wares/lapis_de_goa_icon.png',
+    iconImage: '/wares/lapis_de_goa_icon.webp',
   },
   // Venetian state-monopoly polypharmacy. ~64 ingredients including opium,
   // viper flesh, and rare resins, compounded publicly once a year on the
@@ -473,6 +482,15 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
     description: 'Ingots of refined silver from the Iwami and Ikuno mines. Japan produces roughly a third of the world\'s silver in this period — the engine behind the Macau–Nagasaki trade.',
     physicalDescription: 'Heavy stamped bars of bright, cold-to-the-touch metal',
     color: '#c0c8d0', icon: '❖',
+  },
+  'Cochineal': {
+    id: 'Cochineal', tier: 4,
+    basePrice: [120, 300], weight: 1,
+    spoilable: false, breakable: false, fraudRisk: 0.08,
+    description: 'New Spanish dyestuff made from dried scale insects; a brilliant crimson shipped through Veracruz and Seville.',
+    physicalDescription: 'Small grey-red dried grains that crush into intense crimson powder',
+    color: '#b21f35', icon: '✹',
+    iconImage: '/wares/cochineal_icon.webp',
   },
   'Venetian Soap': {
     id: 'Venetian Soap', tier: 3,
@@ -554,7 +572,7 @@ export const COMMODITY_DEFS: Record<Commodity, CommodityDef> = {
 export const ALL_COMMODITIES: Commodity[] = [
   // Tier 1: Spices & Stimulants
   'Black Pepper', 'Cinnamon', 'Cardamom', 'Ginger', 'Coffee', 'Tea',
-  'Cloves', 'Nutmeg', 'Saffron', 'Star Anise', 'Tobacco',
+  'Cloves', 'Nutmeg', 'Saffron', 'Star Anise', 'Tobacco', 'Cacao',
   // Tier 2: Exotic Drugs & Medicines
   'Opium', 'Camphor', 'Benzoin', 'Frankincense', 'Myrrh',
   'Rhubarb', 'China Root', 'Cassia Fistula', 'Aloes', 'Sassafras',
@@ -566,7 +584,7 @@ export const ALL_COMMODITIES: Commodity[] = [
   'Hides', 'Wool', 'Horn', 'Small Shot', 'Cannon Shot', 'War Rockets',
   // Tier 4: Precious Rarities
   'Ambergris', 'Bezoar Stones', 'Bhang', "Dragon's Blood", 'Virginia Tobacco',
-  'Murano Glass', 'Japanese Silver',
+  'Murano Glass', 'Japanese Silver', 'Cochineal',
   // Tier 5: Extraordinary
   'Mumia', 'Lapis de Goa', 'Theriac',
 ];
@@ -604,17 +622,17 @@ const SMALL_SHOT_PORTS = new Set([
   'zanzibar', 'mombasa', 'socotra', 'malacca', 'bantam', 'macau',
   'london', 'jamestown', 'lisbon', 'amsterdam', 'seville', 'venice',
   'elmina', 'luanda', 'salvador', 'havana', 'cartagena',
-  'manila', 'nagasaki', 'masulipatnam',
+  'manila', 'nagasaki', 'masulipatnam', 'veracruz', 'colombo',
 ]);
 
 const CANNON_SHOT_PRODUCERS = new Set([
-  'goa', 'diu', 'macau', 'lisbon', 'amsterdam', 'seville', 'london', 'havana',
+  'goa', 'diu', 'macau', 'lisbon', 'amsterdam', 'seville', 'london', 'havana', 'veracruz',
 ]);
 
 const CANNON_SHOT_TRADERS = new Set([
   'calicut', 'surat', 'hormuz', 'muscat', 'malacca',
   'mombasa', 'elmina', 'luanda', 'salvador', 'cartagena',
-  'manila', 'nagasaki', 'masulipatnam', 'venice',
+  'manila', 'nagasaki', 'masulipatnam', 'venice', 'colombo',
 ]);
 
 export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
@@ -872,6 +890,13 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
                'Chinese Porcelain', 'Red Coral', 'Rose Water', 'Cloves',
                'Cassia Fistula', 'Indigo'],
   },
+  veracruz: {
+    produces: ['Cochineal', 'Cacao', 'Tobacco', 'Hides'],
+    trades:   ['Quicksilver', 'Sugar', 'Timber', 'Small Shot', 'Cannon Shot'],
+    demands:  ['Iron', 'Wool', 'Black Pepper', 'Cinnamon', 'Cloves',
+               'Chinese Porcelain', 'Red Coral', 'Rose Water', 'Saffron',
+               'Indigo', 'Star Anise'],
+  },
 
   // Nagasaki — the Portuguese Nao do Trato terminus. Japan produces ~1/3 of
   // world silver in this period; the whole port economy in 1612 is built
@@ -901,6 +926,13 @@ export const PORT_TRADE_PROFILES: Record<string, PortTradeProfile> = {
     demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Tea', 'Musk',
                'Saffron', 'Rose Water', 'Red Coral', 'Quicksilver',
                'Frankincense', 'Camphor', 'Wool'],
+  },
+  colombo: {
+    produces: ['Cinnamon', 'Pearls', 'Rice', 'Aloes'],
+    trades:   ['Black Pepper', 'Cardamom', 'Ginger', 'Tamarind', 'Small Shot',
+               'Cannon Shot', 'Sugar'],
+    demands:  ['Chinese Porcelain', 'Cloves', 'Nutmeg', 'Opium', 'Iron',
+               'Red Coral', 'Rose Water', 'Saffron', 'Quicksilver', 'Musk'],
   },
 };
 

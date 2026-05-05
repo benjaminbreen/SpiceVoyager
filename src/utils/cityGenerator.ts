@@ -1,4 +1,4 @@
-import { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion, Road, RoadTier } from '../store/gameStore';
+import type { PortScale, Culture, Building, BuildingType, Nationality, CulturalRegion, Road, RoadTier } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData, getTerrainHeight } from './terrain';
 import { BRIDGE_DECK_Y, CANAL_BRIDGE_DECK_Y } from './roadStyle';

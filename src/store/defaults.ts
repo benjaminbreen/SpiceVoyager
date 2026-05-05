@@ -21,6 +21,7 @@ export const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   algae: true,
   coralReefs: false,
   reefCaustics: false,
+  shoreFoam: true,
   wildlifeMotion: true,
   cloudShadows: true,
   cityGroundWear: true,

@@ -95,6 +95,7 @@ const SKIN_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Gujarati:   [[3, 15], [4, 28], [12, 15], [5, 22], [6, 12], [2, 5], [7, 3]],
   // East African: wide range for coastal Swahili port populations.
   Swahili:    [[4, 5], [5, 12], [13, 15], [6, 25], [7, 28], [8, 15]],
+  Khoikhoi:   [[13, 35], [4, 25], [5, 20], [12, 12], [6, 8]],
   // Southeast Asian: warm tones with more range
   Malay:      [[10, 30], [4, 25], [5, 25], [12, 10], [6, 7], [3, 3]],
   Acehnese:   [[10, 28], [4, 25], [5, 25], [12, 12], [3, 5], [6, 5]],
@@ -136,6 +137,7 @@ const EYE_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Gujarati:   [[0, 38], [1, 30], [2, 15], [8, 8], [3, 5], [4, 4]],
   // Swahili: mostly dark, but amber eyes occur in East Africa
   Swahili:    [[0, 48], [1, 25], [2, 10], [8, 12], [3, 5]],
+  Khoikhoi:   [[0, 45], [1, 30], [2, 12], [8, 10], [3, 3]],
   // SE Asian: dark dominant but amber/warm brown more common than previously modeled
   Malay:      [[0, 40], [1, 30], [2, 15], [8, 10], [3, 5]],
   Acehnese:   [[0, 40], [1, 30], [2, 15], [8, 10], [3, 5]],
@@ -186,6 +188,7 @@ const HAIR_DISTRIBUTION: Record<Nationality, [number, number][]> = {
   Gujarati:   [[0, 52], [1, 28], [2, 12], [3, 5], [5, 3]],
   // Swahili: mostly black, but dark reddish-brown exists
   Swahili:    [[0, 65], [1, 20], [2, 8], [5, 4], [3, 3]],
+  Khoikhoi:   [[0, 62], [1, 22], [2, 10], [5, 4], [3, 2]],
   // SE Asian: black-dominant with dark brown
   Malay:      [[0, 60], [1, 25], [2, 10], [3, 5]],
   Acehnese:   [[0, 60], [1, 25], [2, 10], [3, 5]],
@@ -389,6 +392,7 @@ const CULTURAL_GROUP_MAP: Record<Nationality, CulturalGroup> = {
   Mughal: 'Indian',
   Gujarati: 'Indian',
   Swahili: 'Swahili',
+  Khoikhoi: 'Swahili',
   Malay: 'SoutheastAsian',
   Acehnese: 'SoutheastAsian',
   Javanese: 'SoutheastAsian',

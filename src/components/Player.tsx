@@ -20,6 +20,7 @@ import { LAND_WEAPON_DEFS } from '../store/gameStore';
 import { derivePlayerAppearance } from '../utils/playerAppearance';
 import { Hat } from './playerParts/Hat';
 import { applyRimLightToTree, updateRimFromFog } from '../utils/rimLight';
+import { clearAutoWalkTarget, getAutoWalkTarget } from '../utils/autoWalkState';
 
 // Max upward step the player's visual Y will take per frame when the
 // ground-height query jumps (e.g. stepping from grass onto a road ribbon
@@ -42,6 +43,7 @@ const WALK_STRIDE = 0.5;
 const RUN_STRIDE = 0.72;
 const TORCH_NIGHT_START = 19;
 const TORCH_NIGHT_END = 5.5;
+const AUTO_WALK_STOP_RADIUS = 1.2;
 
 // ── Rig measurements (single source of truth — change here to scale the figure) ──
 const RIG = {
@@ -93,7 +95,7 @@ export function Player() {
   const playerMode = useGameStore((state) => state.playerMode);
   const paused = useGameStore((state) => state.paused);
   const viewMode = useGameStore((state) => state.viewMode);
-  const timeOfDay = useGameStore((state) => state.timeOfDay);
+  const timeOfDay = useGameStore((state) => Math.round(state.timeOfDay * 10) / 10);
 
   // Build a spatial index of the current port's roads once per port load.
   // The useFrame loop hits this for every ground-height query; bucketing by
@@ -170,6 +172,7 @@ export function Player() {
       const movementKey = movementKeyFor(e);
       if (movementKey) {
         keys.current[movementKey] = true;
+        clearAutoWalkTarget();
         e.preventDefault();
       }
       if (e.key === ' ' && playerMode === 'walking' && !isJumping.current && !paused) {
@@ -265,6 +268,8 @@ export function Player() {
     let moveZ = 0;
     let firstPersonYawedRot = walkingRot;
     let firstPersonYawInput = 0;
+    let manualInputActive = false;
+    let autoWalkActive = false;
 
     if (isFirstPerson) {
       const YAW_SPEED = 2.0; // rad/s — ~115°/s, tunable feel
@@ -278,6 +283,7 @@ export function Player() {
       if (Math.abs(touchWalkInput.y) > Math.abs(fwdInput)) fwdInput = touchWalkInput.y;
       // Touch joystick X still strafes (mobile has no separate yaw stick here).
       const strafeInput = touchWalkInput.x;
+      manualInputActive = firstPersonYawInput !== 0 || fwdInput !== 0 || Math.abs(strafeInput) > 0.01;
 
       moveX = (Math.sin(firstPersonYawedRot) * fwdInput + Math.cos(firstPersonYawedRot) * strafeInput) * speed;
       moveZ = (Math.cos(firstPersonYawedRot) * fwdInput - Math.sin(firstPersonYawedRot) * strafeInput) * speed;
@@ -290,6 +296,7 @@ export function Player() {
       if (keys.current.a) inputX -= 1;
       if (Math.abs(touchWalkInput.x) > Math.abs(inputX)) inputX = touchWalkInput.x;
       if (Math.abs(touchWalkInput.y) > Math.abs(inputZ)) inputZ = touchWalkInput.y;
+      manualInputActive = Math.abs(inputX) > 0.01 || Math.abs(inputZ) > 0.01;
 
       const inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
       if (inputLen > 0) {
@@ -298,6 +305,27 @@ export function Player() {
         moveX = (camRight.x * nx + camForward.x * nz) * speed;
         moveZ = (camRight.z * nx + camForward.z * nz) * speed;
       }
+    }
+
+    if (manualInputActive) {
+      clearAutoWalkTarget();
+    } else if (!store.combatMode && !isJumping.current) {
+      const target = getAutoWalkTarget();
+      if (target) {
+        const dx = target.x - walkingPos[0];
+        const dz = target.z - walkingPos[2];
+        const dist = Math.hypot(dx, dz);
+        if (dist <= AUTO_WALK_STOP_RADIUS) {
+          clearAutoWalkTarget();
+        } else {
+          const step = Math.min(speed, dist);
+          moveX = dx / dist * step;
+          moveZ = dz / dist * step;
+          autoWalkActive = true;
+        }
+      }
+    } else {
+      clearAutoWalkTarget();
     }
 
     isMoving.current = moveX !== 0 || moveZ !== 0;
@@ -344,7 +372,7 @@ export function Player() {
 
     if (isMoving.current) {
       let newRot: number;
-      if (isFirstPerson) {
+      if (isFirstPerson && !autoWalkActive) {
         // Tank controls: facing is whatever yaw input set this frame.
         newRot = firstPersonYawedRot;
       } else {

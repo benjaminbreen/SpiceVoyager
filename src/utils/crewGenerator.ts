@@ -83,6 +83,11 @@ const NAME_POOLS: Record<Nationality, NamePool> = {
     last: ['Asante', 'bin Ali', 'Mkuu', 'wa Kilwa', 'bin Bakari', 'al-Mazrui', 'bin Yusuf', 'wa Mombasa', 'Shirazi', 'bin Hassan', 'wa Pate', 'bin Salim', 'wa Lamu', 'wa Malindi', 'bin Hamad'],
     birthplaces: ['Kilwa', 'Mombasa', 'Zanzibar', 'Malindi', 'Pate', 'Lamu', 'Sofala', 'Mogadishu', 'Mozambique', 'Comoros'],
   },
+  Khoikhoi: {
+    first: ['Autshumato', 'Krotoa', 'Doman', 'Oedasoa', 'Gogosoa', 'Sousoa', 'Herry', 'Nomoa', 'Khamab', 'Hao'],
+    last: ['of Table Bay', 'of the Goringhaicona', 'of the Gorachoqua', 'of the Cochoqua', 'of the Cape Flats'],
+    birthplaces: ['Table Bay', 'Saldanha Bay', 'Cape Flats', 'Hottentots Holland', 'False Bay'],
+  },
   Malay: {
     first: ['Tun', 'Hang', 'Laksamana', 'Abdul', 'Raja', 'Megat', 'Ahmad', 'Ismail', 'Mahmud', 'Alauddin', 'Muzaffar', 'Mansur', 'Hamzah', 'Zainal', 'Syed'],
     last: ['Perak', 'Tuah', 'Jebat', 'Kasturi', 'Shah', 'Riayat', 'Ibrahim', 'Muda', 'Lela', 'Setia', 'Pahlawan', 'Wira'],
@@ -309,6 +314,7 @@ const NATIVE_LANGUAGE: Record<Nationality, Language> = {
   Ottoman: 'Turkish',
   Omani: 'Arabic',
   Swahili: 'Swahili',
+  Khoikhoi: 'Khoekhoe',
   Malay: 'Malay',
   Acehnese: 'Malay',
   Javanese: 'Malay',
@@ -335,6 +341,7 @@ const CONTACT_LANGUAGES: Record<Nationality, Language[]> = {
   Ottoman: ['Arabic', 'Persian', 'Portuguese'],
   Omani: ['Persian', 'Swahili', 'Gujarati', 'Portuguese'],
   Swahili: ['Arabic', 'Portuguese', 'Persian'],
+  Khoikhoi: ['Portuguese', 'English', 'Dutch'],
   Malay: ['Portuguese', 'Chinese', 'Arabic', 'Japanese'],
   Acehnese: ['Arabic', 'Portuguese', 'Gujarati'],
   Javanese: ['Portuguese', 'Chinese', 'Arabic'],
@@ -731,7 +738,7 @@ type RegionKey = 'european' | 'indian' | 'southeast_asian' | 'east_asian' | 'afr
 const NAT_REGION: Record<Nationality, RegionKey> = {
   English: 'european', Portuguese: 'european', Dutch: 'european', Spanish: 'european', French: 'european', Danish: 'european', Venetian: 'european', Pirate: 'european',
   Mughal: 'indian', Gujarati: 'indian', Persian: 'indian', Ottoman: 'indian', Omani: 'indian',
-  Swahili: 'african',
+  Swahili: 'african', Khoikhoi: 'african',
   Malay: 'southeast_asian', Acehnese: 'southeast_asian', Javanese: 'southeast_asian', Moluccan: 'southeast_asian', Siamese: 'southeast_asian',
   Japanese: 'east_asian', Chinese: 'east_asian',
 };

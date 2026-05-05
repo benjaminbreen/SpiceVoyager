@@ -13,6 +13,7 @@ export const PORT_INTEL: Record<string, string> = {
   calicut: "The Samutiri's capital on Malabar, a roadstead with no true harbor — ships ride open sea off Kappad. Pepper, sandalwood, and a long memory of Portuguese violence.",
   cape: "The Cape's fresh-water stop. No European fort yet; Khoikhoi herders trade sheep for iron and beads on the strand below Table Mountain.",
   cartagena: "Spain's Caribbean treasure-port behind stone bastions. Galleons refit here before the Atlantic crossing; slave ships unload on the Getsemaní side.",
+  colombo: "Portuguese Colombo is the fortified mouth of Ceylon's cinnamon trade. The fort controls export, but peelers, brokers, and inland Sinhala politics decide what reaches the quay.",
   diu: "A Portuguese island-fortress off Kathiawar, guarding the Gulf of Cambay. The cartaz passes that bleed Gujarati shipping are issued from its customs house.",
   elmina: "The Portuguese São Jorge da Mina on the Gold Coast — a stone castle on a sea-pounded headland, the oldest European fort south of the Sahara. Gold dust and captives move through its courtyards.",
   goa: "Capital of the Estado da Índia on the Mandovi estuary. Tropical, viceregal, riddled with fevers; the bar must be taken at high tide, and the cathedral bells rule the working day.",
@@ -35,7 +36,8 @@ export const PORT_INTEL: Record<string, string> = {
   socotra: "A bare island at the mouth of the gulf of Aden — frankincense, aloes, and little else. The Mahra sultan is nominal; water and shelter are the real trade.",
   surat: "The Mughal empire's chief port on the Tapti. Gujarati and Banian houses dominate; the English and Dutch factories are new, watched from the shahbandar's office.",
   venice: "The Rialto is no longer the world's clearing-house, but the Stato da Màr still reaches to Cyprus and the Morea. Spice prices are watched with an eye to Lisbon.",
-  zanzibar: "A Swahili clove island off the east African coast. The sultan pays the Portuguese and trades with the Omanis; mangrove channels and a lee anchorage.",
+  veracruz: "New Spain's Gulf gate. Cochineal, cacao, hides, and silver accounts come down from Mexico City before the flota gathers for Havana and Seville.",
+  zanzibar: "A Swahili island off the east African coast. Local rulers and brokers manage ivory, ambergris, coconuts, and mangrove timber under thin Portuguese pressure.",
 };
 
 // Each tradition's plausible travel circuit — weighted by how commonly
@@ -45,11 +47,11 @@ export const TRADITION_VISITED_PORTS: Record<ShipTraditionId, Weighted<string>[]
   portuguese_estado: [
     ['goa', 30], ['malacca', 18], ['hormuz', 16], ['macau', 14], ['nagasaki', 10],
     ['mombasa', 12], ['diu', 14], ['muscat', 10], ['mocha', 8], ['calicut', 10],
-    ['lisbon', 12], ['zanzibar', 8], ['cape', 8], ['socotra', 6], ['surat', 4],
+    ['lisbon', 12], ['zanzibar', 8], ['cape', 8], ['socotra', 6], ['surat', 4], ['colombo', 8],
   ],
   dutch_voc: [
     ['bantam', 26], ['amsterdam', 20], ['masulipatnam', 14], ['malacca', 10],
-    ['surat', 10], ['nagasaki', 10], ['cape', 14], ['mocha', 6], ['calicut', 6],
+    ['surat', 10], ['nagasaki', 10], ['cape', 14], ['mocha', 6], ['calicut', 6], ['colombo', 6],
   ],
   english_eic: [
     ['london', 22], ['surat', 20], ['bantam', 16], ['masulipatnam', 14],
@@ -95,11 +97,11 @@ export const TRADITION_VISITED_PORTS: Record<ShipTraditionId, Weighted<string>[]
     ['nagasaki', 30], ['manila', 16], ['macau', 14], ['malacca', 10], ['bantam', 8],
   ],
   spanish_atlantic: [
-    ['seville', 24], ['havana', 22], ['cartagena', 20], ['manila', 8],
+    ['seville', 24], ['havana', 22], ['cartagena', 20], ['veracruz', 18], ['manila', 8],
     ['cape', 4], ['salvador', 6], ['lisbon', 8],
   ],
   french_atlantic: [
-    ['lisbon', 14], ['london', 10], ['seville', 14], ['cartagena', 12],
+    ['lisbon', 14], ['london', 10], ['seville', 14], ['cartagena', 12], ['veracruz', 8],
     ['havana', 12], ['elmina', 8],
   ],
   english_atlantic: [
@@ -115,6 +117,6 @@ export const TRADITION_VISITED_PORTS: Record<ShipTraditionId, Weighted<string>[]
     ['salvador', 8], ['cape', 12], ['cartagena', 6],
   ],
   local_caribbean: [
-    ['havana', 26], ['cartagena', 24], ['salvador', 12], ['jamestown', 8],
+    ['havana', 26], ['cartagena', 24], ['veracruz', 20], ['salvador', 12], ['jamestown', 8],
   ],
 };

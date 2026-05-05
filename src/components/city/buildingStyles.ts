@@ -205,25 +205,27 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
   },
   'english-tudor': {
     // Pre-1666 London: wattle-and-daub infill between exposed dark oak frames,
-    // sooted by sea-coal smoke. Whitewash was uncommon outside wealthy parishes.
+    // sooted by sea-coal smoke, with brick/ochre infill mixed into denser
+    // riverside wards so the city does not wash out to uniform cream.
     wallPalette: [
-      [0.74, 0.66, 0.52],   // sooty cream daub (dominant)
-      [0.74, 0.66, 0.52],
-      [0.68, 0.60, 0.46],   // grimier daub
-      [0.62, 0.54, 0.40],   // smoke-darkened daub
-      [0.82, 0.74, 0.58],   // freshly limewashed (rare, wealthier houses)
-      [0.34, 0.24, 0.16],   // exposed dark oak frame
+      [0.66, 0.58, 0.44],   // sooty daub (dominant)
+      [0.66, 0.58, 0.44],
+      [0.58, 0.50, 0.38],   // grimier daub
+      [0.48, 0.40, 0.30],   // smoke-darkened daub
+      [0.72, 0.62, 0.46],   // ochre limewash
+      [0.54, 0.32, 0.24],   // weathered brick infill
+      [0.30, 0.21, 0.14],   // exposed dark oak frame
     ],
-    // Pre-1666 London: thatch and wood shingle dominate. Tile was a luxury,
-    // not yet mandated. Soot from sea-coal hearths darkened most roofs.
+    // Pre-1666 London: steep roofs in clay tile, dark shingle/slate, and some
+    // thatch on poorer/outlying houses. Sea-coal smoke dulls the whole range.
     roofPalette: [
-      { color: [0.42, 0.35, 0.24], geo: 'cone', h: 1.85, mat: 'straw' }, // weathered thatch (dominant)
-      { color: [0.42, 0.35, 0.24], geo: 'cone', h: 1.85, mat: 'straw' },
-      { color: [0.34, 0.29, 0.21], geo: 'cone', h: 1.95, mat: 'straw' }, // soot-darkened thatch
-      { color: [0.50, 0.42, 0.29], geo: 'cone', h: 1.8, mat: 'straw' },  // newer dry thatch (occasional)
-      { color: [0.30, 0.25, 0.20], geo: 'cone', h: 1.62, mat: 'wood' },  // dark wood shingle
-      { color: [0.36, 0.37, 0.31], geo: 'cone', h: 1.62, mat: 'wood' },  // moss-greened shingle
-      { color: [0.50, 0.29, 0.22], geo: 'cone', h: 1.5 },                // clay tile (the wealthy minority)
+      { color: [0.58, 0.24, 0.16], geo: 'cone', h: 1.50 },               // dark red clay tile
+      { color: [0.72, 0.34, 0.19], geo: 'cone', h: 1.44 },               // warmer terracotta tile
+      { color: [0.42, 0.30, 0.22], geo: 'cone', h: 1.62, mat: 'wood' },  // dark wood shingle
+      { color: [0.22, 0.22, 0.21], geo: 'cone', h: 1.55, mat: 'wood' },  // soot-blackened shingle/slate
+      { color: [0.42, 0.46, 0.35], geo: 'cone', h: 1.58, mat: 'wood' },  // moss-greened shingle
+      { color: [0.54, 0.45, 0.27], geo: 'cone', h: 1.82, mat: 'straw' }, // weathered thatch
+      { color: [0.76, 0.62, 0.34], geo: 'cone', h: 1.78, mat: 'straw' }, // newer dry thatch
     ],
     // Variety matters at Huge scale: cramped tall City rowhouses, standard
     // two-bay cottages, and squat outer-parish dwellings.
@@ -267,14 +269,17 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
       [0.94, 0.92, 0.86], [0.94, 0.92, 0.86],
       [0.82, 0.76, 0.70],
       [0.88, 0.82, 0.72],
+      [0.76, 0.70, 0.60],
+      [0.90, 0.86, 0.76],
     ],
     roofPalette: [
       { color: [0.86, 0.82, 0.72], geo: 'box', h: 0.32 },
       { color: [0.74, 0.70, 0.62], geo: 'box', h: 0.34 },
     ],
     houseVariants: [
-      { weight: 0.7, scaleMul: [1.15, 0.85, 1.15], roofScaleMul: [1.08, 1.0, 1.08], features: { flatRoofParapet: true } },
-      { weight: 0.3, roofScaleMul: [0.98, 1.0, 0.98], features: { flatRoofParapet: true } },
+      { weight: 0.42, scaleMul: [1.18, 0.86, 1.14], roofScaleMul: [1.08, 1.0, 1.08], features: { flatRoofParapet: true } },
+      { weight: 0.32, scaleMul: [1.00, 1.00, 1.04], roofScaleMul: [1.00, 1.0, 1.04], features: { flatRoofParapet: true } },
+      { weight: 0.26, scaleMul: [1.36, 0.78, 1.22], roofScaleMul: [1.12, 1.0, 1.08], features: { flatRoofParapet: true } },
     ],
     facadeKit: 'swahili-coral',
     wallMatHint: 'white',

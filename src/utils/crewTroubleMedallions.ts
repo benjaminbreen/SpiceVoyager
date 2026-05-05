@@ -30,7 +30,7 @@ export function crewTroubleMedallionAsset(key: string): CrewTroubleMedallionAsse
   const safeKey = key as CrewTroubleMedallionKey;
   return {
     key: safeKey,
-    path: `/crew-trouble-medallions/${safeKey}.png`,
+    path: `/crew-trouble-medallions/${safeKey}.webp`,
     label: safeKey.replace(/-/g, ' '),
   };
 }

@@ -1,4 +1,4 @@
-const IMAGE_EXTENSIONS = ['png', 'jpg'] as const;
+const IMAGE_EXTENSIONS = ['webp', 'png', 'jpg'] as const;
 
 export function getPortBannerCandidates(portId: string, tab?: string): string[] {
   if (!tab || tab === 'overview') {

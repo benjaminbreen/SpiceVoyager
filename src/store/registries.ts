@@ -8,7 +8,7 @@ export const PORT_FACTION: Record<string, Nationality> = {
   malacca: 'Portuguese',
   aden: 'Ottoman',
   mocha: 'Ottoman',
-  zanzibar: 'Portuguese',
+  zanzibar: 'Swahili',
   macau: 'Portuguese',
   mombasa: 'Portuguese',
   surat: 'Mughal',
@@ -17,7 +17,7 @@ export const PORT_FACTION: Record<string, Nationality> = {
   manila: 'Spanish',
   nagasaki: 'Japanese',
   masulipatnam: 'Mughal',
-  socotra: 'Portuguese',
+  socotra: 'Omani',
   diu: 'Portuguese',
   lisbon: 'Portuguese',
   amsterdam: 'Dutch',
@@ -29,8 +29,10 @@ export const PORT_FACTION: Record<string, Nationality> = {
   salvador: 'Portuguese',
   havana: 'Spanish',
   cartagena: 'Spanish',
+  veracruz: 'Spanish',
   jamestown: 'English',
-  cape: 'Portuguese',
+  colombo: 'Portuguese',
+  cape: 'Khoikhoi',
 };
 
 // Cultural region of the built environment, separate from controlling nationality.
@@ -44,6 +46,7 @@ export const PORT_CULTURAL_REGION: Record<string, CulturalRegion> = {
   surat: 'Gujarati',
   diu: 'Gujarati',
   masulipatnam: 'Gujarati',
+  colombo: 'Malabari',
   calicut: 'Malabari',
   goa: 'Malabari',
   malacca: 'Malay',

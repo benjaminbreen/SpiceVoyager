@@ -3,7 +3,7 @@ import { getPOIsForPort } from './poiDefinitions';
 import { generateCity } from './cityGenerator';
 import { generateHinterland } from './hinterland';
 import { generatePortPrices, generatePortInventory, supplyDemandModifier, type Commodity } from './commodities';
-import { PORT_FACTION, PORT_CULTURAL_REGION } from '../store/gameStore';
+import { PORT_FACTION, PORT_CULTURAL_REGION } from '../store/registries';
 import {
   PortDefinition, CORE_PORTS, ARCHETYPE_RADIUS,
   WorldSize, WORLD_SIZE_VALUES, GeographicArchetype, ClimateProfile,

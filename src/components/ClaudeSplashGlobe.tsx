@@ -5,12 +5,19 @@ import { motion } from 'framer-motion';
 import * as THREE from 'three';
 import { Info, Settings as SettingsIcon } from 'lucide-react';
 import { type DayState, makeDayState, sampleDayPalette } from '../utils/dayPhase';
-import { FACTION_SPAWN_WEIGHTS, useGameStore, type Nationality } from '../store/gameStore';
 import { useIsMobile } from '../utils/useIsMobile';
 import { sfxClick, sfxHover } from '../audio/SoundEffects';
 import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { AudioMuteButton } from './AudioMuteButton';
+import {
+  PORT_DESCRIPTIONS,
+  PORT_LABELS,
+  STARTUP_FACTIONS,
+  portIconUrl,
+  portsForFaction,
+  type FactionKey,
+} from '../utils/startupOptions';
 import {
   DistantBirds,
   NightStars,
@@ -34,6 +41,10 @@ interface Props {
   crewCount: number;
   portCount: number;
   gold: number;
+  selectedFactionKey: FactionKey;
+  selectedStartPortId: string;
+  onCycleFaction: () => void;
+  onCycleStartPort: () => void;
   onStart: () => void;
 }
 
@@ -3125,30 +3136,6 @@ function GlobeDriver({
 
 // ─── overlay UI ──────────────────────────────────────────────────────────────
 
-// Faction icons — extracted from /icons/faction icons.png into transparent
-// PNGs in /icons/factions/. Cycle order is curated (not array order) so
-// clicks advance through nationalities geographically, with the Random and
-// Pirate "wildcard" picks anchoring the end of the rotation.
-type FactionKey =
-  | 'english' | 'dutch' | 'portuguese' | 'spanish' | 'venetian'
-  | 'omani' | 'gujarati' | 'chinese'
-  | 'random' | 'pirate';
-
-// Faction key 'omani' is kept (matches the game's Nationality 'Omani' and the
-// existing icon file omani.png), but surfaces as "Arab" to the player.
-const FACTIONS: { key: FactionKey; label: string }[] = [
-  { key: 'english',    label: 'English' },
-  { key: 'dutch',      label: 'Dutch' },
-  { key: 'portuguese', label: 'Portuguese' },
-  { key: 'spanish',    label: 'Spanish' },
-  { key: 'venetian',   label: 'Venetian' },
-  { key: 'omani',      label: 'Arab' },
-  { key: 'gujarati',   label: 'Gujarati' },
-  { key: 'chinese',    label: 'Chinese' },
-  { key: 'random',     label: 'Random' },
-  { key: 'pirate',     label: 'Pirate' },
-];
-
 // Faction keys whose icon PNG lives in /icons/factions/. Drop the new icon in
 // and add the key here to swap it from the random.png placeholder.
 const FACTION_ICON_AVAILABLE = new Set<FactionKey>([
@@ -3188,121 +3175,6 @@ const DIFFICULTIES: { key: DifficultyKey; label: string }[] = [
 
 function difficultyIconUrl(key: DifficultyKey) {
   return `/icons/gameplay/${key}.png`;
-}
-
-// Start-port catalogue. Labels + period-flavor descriptions exist for every
-// port any playable faction can spawn at. Icons are drop-in: save a
-// transparent PNG to /icons/ports/{id}.png and add the id to
-// PORT_ICON_AVAILABLE; the splash falls back to random.png for ports without
-// a custom icon yet, so the cycle is always faithful to the spawn data.
-const PORT_ICON_AVAILABLE = new Set<string>([
-  'london', 'amsterdam', 'lisbon',
-  'seville', 'havana', 'aden',
-  'mocha', 'goa', 'macau',
-  'surat',
-]);
-
-const PORT_LABELS: Record<string, string> = {
-  london:    'London',
-  amsterdam: 'Amsterdam',
-  lisbon:    'Lisbon',
-  seville:   'Seville',
-  venice:    'Venice',
-  havana:    'Havana',
-  cartagena: 'Cartagena',
-  jamestown: 'Jamestown',
-  salvador:  'Salvador',
-  luanda:    'Luanda',
-  cape:      'Cape',
-  mombasa:   'Mombasa',
-  zanzibar:  'Zanzibar',
-  socotra:   'Socotra',
-  aden:      'Aden',
-  mocha:     'Mocha',
-  hormuz:    'Hormuz',
-  muscat:    'Muscat',
-  surat:     'Surat',
-  goa:       'Goa',
-  calicut:   'Calicut',
-  malacca:   'Malacca',
-  bantam:    'Bantam',
-  manila:    'Manila',
-  macau:     'Macau',
-};
-
-// One-sentence period-flavor blurb per port. Surfaced as a hover tooltip
-// over the Start Port card — keeps the splash faithful to the historical
-// frame without burying the player in detail.
-const PORT_DESCRIPTIONS: Record<string, string> = {
-  london:    'Metropole of Tudor England. The Royal Exchange and the East India Company on Leadenhall Street.',
-  amsterdam: 'Heart of the Dutch Republic and the VOC, founded 1602 — the world\'s first stock exchange.',
-  lisbon:    'Capital of the Portuguese Estado da Índia. The Casa da Índia oversees the Carreira spice fleets.',
-  seville:   'Spanish metropole. The Casa de Contratación monopolises trade with the Indies.',
-  venice:    'Most Serene Republic. Levantine pepper still arrives by caravan even as the Cape route reroutes Asia.',
-  havana:    'Caribbean treasure-fleet base. Galleons rendezvous here for the Atlantic crossing each summer.',
-  cartagena: 'Spanish fortified port on the Tierra Firme coast — silver from Potosí passes through.',
-  jamestown: 'Virginia Company colony, ~300 settlers in 1612. Tobacco cultivation begins this year.',
-  salvador:  'Capital of Portuguese Brazil — sugar engenhos and the Atlantic slave trade.',
-  luanda:    'São Paulo de Luanda — Portuguese slaving entrepôt to Brazil and the Caribbean.',
-  cape:      'Cape of Good Hope. No permanent settlement; ships water and salt cured meat here.',
-  mombasa:   'Portuguese Fort Jesus (completed 1596) on the Swahili coast. Disputed with Omani Arabs.',
-  zanzibar:  'Swahili port within the Omani-Portuguese dhow network.',
-  socotra:   'Yemeni island in the western Indian Ocean — frankincense, myrrh, and dragon\'s-blood resin.',
-  aden:      'Ottoman port at the mouth of the Red Sea — coffee and pepper traffic toward Cairo.',
-  mocha:     'Yemeni port through which all Red Sea coffee passes. Arab and Indian merchants dominate.',
-  hormuz:    'Portuguese-held island at the Persian Gulf gateway — silks, pearls, and Persian horses.',
-  muscat:    'Omani port on the Arabian Sea — base of the Indian Ocean dhow trade.',
-  surat:     'Mughal port on the Gujarat coast. The English open their first Indian factory here in 1612.',
-  goa:       'Portuguese viceregal capital of the Estado da Índia. Cathedrals and the Inquisition.',
-  calicut:   'Malabar coast port. The Zamorin kingdom; trade run by Gujarati and Mappila merchants.',
-  malacca:   'Portuguese fortress on the Strait — chokepoint of the Spice Route since 1511.',
-  bantam:    'Pepper port on Java; VOC headquarters in Asia, 1610–1619.',
-  manila:    'Spanish capital of the Philippines. The Acapulco galleon and ~30,000 Chinese in the Sangley Parián.',
-  macau:     'Luso-Chinese trade hub on the South China coast — the Macau-Nagasaki silver run.',
-};
-
-function portIconUrl(id: string) {
-  return PORT_ICON_AVAILABLE.has(id)
-    ? `/icons/ports/${id}.png`
-    : '/icons/factions/random.png';
-}
-
-// Map splash faction keys → game's Nationality (or null = "any").
-const FACTION_KEY_TO_NATIONALITY: Record<FactionKey, Nationality | null> = {
-  english: 'English',
-  dutch: 'Dutch',
-  portuguese: 'Portuguese',
-  spanish: 'Spanish',
-  venetian: 'Venetian',
-  omani: 'Omani',          // surfaced as "Arab" in the UI
-  gujarati: 'Gujarati',
-  chinese: 'Chinese',
-  random: null,            // any port
-  pirate: 'Pirate',
-};
-
-/** Ordered list of port IDs available to a faction, weight-descending. We
- *  return ALL spawn ports (icon or no icon) so the cycle is faithful to the
- *  spawn data — ports without icons fall back to random.png visually until
- *  their /icons/ports/{id}.png is added. */
-function portsForFaction(factionKey: FactionKey): string[] {
-  const nationality = FACTION_KEY_TO_NATIONALITY[factionKey];
-  if (nationality) {
-    const weights = FACTION_SPAWN_WEIGHTS[nationality];
-    if (weights && weights.length) {
-      return [...weights]
-        .sort((a, b) => b.weight - a.weight)
-        .map((w) => w.portId);
-    }
-  }
-  // Fallback for factions without spawn weights (Random / Pirate / Gujarati
-  // until added): the union of every port mentioned anywhere in the table.
-  const union = new Set<string>();
-  for (const list of Object.values(FACTION_SPAWN_WEIGHTS)) {
-    if (!list) continue;
-    for (const row of list) union.add(row.portId);
-  }
-  return Array.from(union);
 }
 
 const TICKER_LINES = [
@@ -3571,7 +3443,16 @@ function ChoiceCard({
 // ─── main exported component ─────────────────────────────────────────────────
 
 export function ClaudeSplashGlobe(props: Props) {
-  const { ready, loadingMessage, loadingProgress, onStart } = props;
+  const {
+    ready,
+    loadingMessage,
+    loadingProgress,
+    selectedFactionKey,
+    selectedStartPortId,
+    onCycleFaction,
+    onCycleStartPort,
+    onStart,
+  } = props;
   const { isMobile } = useIsMobile();
 
   useEffect(() => { injectFonts(); }, []);
@@ -3601,30 +3482,18 @@ export function ClaudeSplashGlobe(props: Props) {
     };
   }, []);
 
-  // Faction starts at a random slot; clicks march through the curated cycle.
-  const [factionIdx, setFactionIdx] = useState<number>(
-    () => Math.floor(Math.random() * FACTIONS.length)
-  );
   const [diffIdx, setDiffIdx] = useState(0);     // 0 = "Easy"
-  const cycleFaction = () => setFactionIdx((i) => (i + 1) % FACTIONS.length);
   const cycleDiff    = () => setDiffIdx((i) => (i + 1) % DIFFICULTIES.length);
-  const faction = FACTIONS[factionIdx];
+  const faction = STARTUP_FACTIONS.find((entry) => entry.key === selectedFactionKey) ?? STARTUP_FACTIONS[0];
   const difficulty = DIFFICULTIES[diffIdx];
 
-  // Start port is gated by current faction. The cycle is ['random', ...gated].
-  // When the faction changes, reset the port slot back to Random so we never
-  // display a port the new faction can't actually spawn at.
-  // No "Random" option — the cycle is real ports in weight-descending order
-  // (English starts on London, Venetian on Venice, etc.). Click to advance.
   const portOptions = useMemo(() => portsForFaction(faction.key), [faction.key]);
-  const [portIdx, setPortIdx] = useState(0);
-  useEffect(() => { setPortIdx(0); }, [faction.key]);
-  const cyclePort = () => setPortIdx((i) => (i + 1) % Math.max(1, portOptions.length));
-  const startPortId = portOptions[Math.min(portIdx, portOptions.length - 1)] ?? '';
+  const startPortId = portOptions.includes(selectedStartPortId)
+    ? selectedStartPortId
+    : portOptions[0] ?? '';
   const startPortLabel = PORT_LABELS[startPortId] ?? startPortId;
   const startPortIconUrl = portIconUrl(startPortId);
   const startPortDescription = PORT_DESCRIPTIONS[startPortId];
-  const startNewGame = useGameStore((state) => state.startNewGame);
   const rotationRef = useRef(new THREE.Quaternion());
   const heelRef = useRef(0);
   const speedRef = useRef(0);
@@ -3636,10 +3505,6 @@ export function ClaudeSplashGlobe(props: Props) {
 
   const handleEnter = () => {
     if (!ready) return;
-    const selectedFaction = FACTION_KEY_TO_NATIONALITY[faction.key];
-    if (selectedFaction && startPortId) {
-      startNewGame({ faction: selectedFaction, portId: startPortId });
-    }
     // Intro music kicks in on commit, layering over the existing waves bed.
     // transitionToOverworld() (called later from UI.tsx after the commission
     // modal closes) will fade both tracks out and start the overworld rotation.
@@ -3909,7 +3774,7 @@ export function ClaudeSplashGlobe(props: Props) {
               iconUrl={factionIconUrl(faction.key)}
               hint="Click to cycle"
               compact={isMobile}
-              onClick={cycleFaction}
+              onClick={onCycleFaction}
             />
             <ChoiceCard
               caption="Start Port"
@@ -3918,7 +3783,7 @@ export function ClaudeSplashGlobe(props: Props) {
               description={startPortDescription}
               hint={portOptions.length <= 1 ? undefined : 'Click to cycle'}
               compact={isMobile}
-              onClick={cyclePort}
+              onClick={onCycleStartPort}
             />
             <ChoiceCard
               caption="Difficulty"
@@ -3938,6 +3803,7 @@ export function ClaudeSplashGlobe(props: Props) {
             ready={ready}
             loadingMessage={loadingMessage}
             loadingProgress={loadingProgress}
+            startPortLabel={startPortLabel}
             compact={isMobile}
             onClick={handleEnter}
           />
@@ -4021,17 +3887,19 @@ function BeginButton({
   ready,
   loadingMessage,
   loadingProgress,
+  startPortLabel,
   compact,
   onClick,
 }: {
   ready: boolean;
   loadingMessage: string;
   loadingProgress: number;
+  startPortLabel: string;
   compact?: boolean;
   onClick: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const pct = Math.max(0, Math.min(1, loadingProgress));
+  const pct = Math.max(0, Math.min(1, loadingProgress > 1 ? loadingProgress / 100 : loadingProgress));
 
   // Pulsing dots for the loading message ("·" → "··" → "···")
   const [dot, setDot] = useState(0);
@@ -4153,7 +4021,7 @@ function BeginButton({
                 : `0 0 7px ${BTN_GOLD}3d, 0 1px 2px rgba(0,0,0,0.7)`,
             }}
           >
-            Set&nbsp;Sail
+            {compact ? 'Set Sail' : `Set Sail from ${startPortLabel}`}
           </motion.span>
           {!compact && (
             <motion.span
@@ -4187,7 +4055,7 @@ function BeginButton({
           >
             ◆
           </span>
-          <span style={{ paddingTop: 1 }}>Charting{dots}</span>
+          <span style={{ paddingTop: 1 }}>{loadingMessage || `Charting ${startPortLabel}`}{dots}</span>
         </>
       )}
 

@@ -7,11 +7,11 @@
 // At eased=1 the camera sits in its normal gameplay pose. skipIntroCinematic()
 // snaps to the end (Enter key).
 
-const DURATION = 5.5;     // seconds; the long dolly-in
-const SWEEP_RAD = 1.0;    // ~57° azimuth orbit toward gameplay pose
-const HEIGHT_BOOST = 72;  // start this much higher (world units)
-const DIST_BOOST = 220;   // start this much further out — distant aerial shot, then dolly in
-const FOV_BOOST = 12;     // start this many degrees wider; eases back to gameplay FOV
+const DURATION = 5;     // seconds; the long dolly-in
+const SWEEP_RAD = 0.2;    // ~57° azimuth orbit toward gameplay pose
+const HEIGHT_BOOST = 102;  // start this much higher (world units)
+const DIST_BOOST = 300;   // start this much further out — distant aerial shot, then dolly in
+const FOV_BOOST = 1;     // start this many degrees wider; eases back to gameplay FOV
 
 const state = {
   active: false,

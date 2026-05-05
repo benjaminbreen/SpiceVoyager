@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { audioManager } from '../audio/AudioManager';
 import { ambientEngine } from '../audio/AmbientEngine';
 import { useIsMobile } from '../utils/useIsMobile';
-import { SettingsModalV2 } from './SettingsModalV2';
 import { Info, Settings as SettingsIcon } from 'lucide-react';
+
+const SettingsModalV2 = lazy(() =>
+  import('./SettingsModalV2').then((module) => ({ default: module.SettingsModalV2 }))
+);
 
 // Responsive opening splash. Keeps the ASCII charm of the original — title
 // block letters, the ship, animated waves, pennants, twinkles, SET SAIL
@@ -1007,7 +1010,11 @@ export function Opening({
         </div>
       </motion.div>
 
-      <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsModalV2 open={showSettings} onClose={() => setShowSettings(false)} initialTab={settingsTab} />
+        </Suspense>
+      )}
     </motion.div>
   );
 }

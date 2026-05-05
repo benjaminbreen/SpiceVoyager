@@ -810,7 +810,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         style={{ boxShadow: '0 8px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)' }}
       >
         {/* ── HEADER BAR ─────────────────────────────────── */}
-        <div className="flex items-center justify-between gap-4 px-5 pt-4 pb-3 border-b border-[#2a2d3a]/40">
+        <div className="flex items-center justify-between gap-4 px-5 pt-3 pb-2.5 border-b border-[#2a2d3a]/40">
           <div className="flex items-center gap-2.5 min-w-0">
             <FactionFlag nationality={npc.flag} size={13} />
             <span
@@ -873,19 +873,19 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         {/* ── BODY ──
              Desktop: two columns (portrait/impression | dialogue/actions).
              Mobile:  single stacked column, as before. */}
-        <div className={isMobile ? '' : 'grid grid-cols-[232px_1fr]'}>
+        <div className={isMobile ? '' : 'grid grid-cols-[246px_1fr]'}>
 
         {/* ── LEFT COL: portrait + impression ─────────────── */}
         <div className={isMobile
-          ? 'flex items-start gap-4 px-5 pt-4'
-          : 'flex flex-col items-center gap-3 px-5 pt-5 pb-4 border-r border-[#2a2d3a]/40'}>
+          ? 'flex items-start gap-4 px-5 pt-3'
+          : 'flex flex-col items-center gap-2.5 px-5 pt-4 pb-3 border-r border-[#2a2d3a]/40'}>
           <motion.div
             className="shrink-0 rounded-lg overflow-hidden bg-[#0a0e18] cursor-default"
             style={{
               border: '1px solid rgba(226,200,122,0.22)',
               boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.4), 0 2px 10px rgba(0,0,0,0.4)',
-              width: isMobile ? 72 : 96,
-              height: isMobile ? 72 : 96,
+              width: isMobile ? 80 : 112,
+              height: isMobile ? 80 : 112,
               transformOrigin: 'center',
             }}
             initial={{ opacity: 0, scale: 0.92 }}
@@ -897,7 +897,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
               transition: { type: 'spring', stiffness: 260, damping: 18 },
             }}
           >
-            <ConfigPortrait config={displayCaptainPortrait} size={isMobile ? 72 : 96} square showBackground />
+            <ConfigPortrait config={displayCaptainPortrait} size={isMobile ? 80 : 112} square showBackground />
           </motion.div>
           <motion.div
             className={isMobile
@@ -918,7 +918,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
 
         {/* ── SPEECH ─────────────────────────────────────── */}
         <motion.div
-          className={isMobile ? 'px-5 pt-4' : 'px-5 pt-5'}
+          className={isMobile ? 'px-5 pt-3' : 'px-5 pt-4'}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.32 }}
@@ -987,7 +987,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
 
         {/* ── TRANSLATOR / STATUS LINE ───────────────────── */}
         <motion.div
-          className="relative px-5 pt-4"
+          className="relative px-5 pt-3"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, delay: 0.55 }}
@@ -1104,7 +1104,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
             onCancel={cancelBarter}
           />
         ) : portPicker ? (
-          <div className="px-5 pt-4 pb-1 flex flex-col gap-1.5">
+          <div className="px-5 pt-3 pb-0.5 flex flex-col gap-1">
             <div
               className="px-3 -mx-3 mb-1 text-[11px] uppercase tracking-[0.16em] text-slate-500"
               style={{ fontFamily: '"DM Sans", sans-serif' }}
@@ -1149,7 +1149,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
             </button>
           </div>
         ) : availableActions.length > 0 && (
-          <div className="px-5 pt-4 pb-1 flex flex-col gap-1.5">
+          <div className="px-5 pt-3 pb-0.5 flex flex-col gap-1">
             {availableActions.map((action, index) => (
               <motion.button
                 key={action.id}
@@ -1185,7 +1185,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         </div>{/* end body grid */}
 
         {/* ── FOOTER ─────────────────────────────────────── */}
-        <div className="px-5 pt-3 pb-4 flex justify-end border-t border-[#2a2d3a]/40">
+        <div className="px-5 pt-2.5 pb-3 flex justify-end border-t border-[#2a2d3a]/40">
           <button
             onClick={closePanel}
             className="group font-bold font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 hover:text-amber-300 transition-colors"

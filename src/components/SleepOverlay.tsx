@@ -14,7 +14,7 @@ interface SleepOverlayProps {
 
 export function SleepOverlay({ active, portId, portName, lodgingName, dayCount }: SleepOverlayProps) {
   const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
-  const imageSrc = `/sleep/${portId}.png`;
+  const imageSrc = `/sleep/${portId}.webp`;
 
   // Probe the image when the overlay activates
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import { useGameStore, type Building, type Port, type Road } from '../store/gameStore';
 import { IS_SAFARI } from '../utils/platform';
 import * as THREE from 'three';
@@ -6,15 +6,18 @@ import { NPCShip } from './NPCShip';
 import { useFrame } from '@react-three/fiber';
 import { findSafeSpawn } from '../utils/mapGenerator';
 import { SEA_LEVEL } from '../constants/world';
+import { getTerrainData } from '../utils/terrain';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { computeDayLighting } from '../utils/dayLighting';
 import { ClearSkyDome } from './ClearSkyDome';
 import { addObstacle, clearObstacleGrid } from '../utils/obstacleGrid';
 import { treeShakes, type TreeImpactKind, getPalmDamage, getFelledTreeState } from '../utils/impactShakeState';
 import { updateWindUniforms } from '../utils/windSway';
+import { getEffectiveRainIntensity } from '../store/weather';
 import { type PalmEntry } from '../utils/flora';
-import { generateWorldData } from '../utils/worldGeneration';
+import { type GenerateWorldDataArgs, type GeneratedWorldData } from '../utils/worldGeneration';
 import { useFloraAssets } from './useFloraAssets';
+import { loadGeneratedWorldData } from '../utils/worldGenerationClient';
 
 import { ProceduralCity } from './ProceduralCity';
 import { FarmsteadFields } from './FarmsteadFields';
@@ -40,6 +43,9 @@ import {
 
 const TREE_SHAKE_DURATION = 0.34;
 const NPC_PLAYER_START_CLEARANCE_SQ = 70 * 70;
+const SHOAL_SCATTER_INNER = 10;
+const SHOAL_SCATTER_OUTER = 38;
+const UNDERWATER_TINT: [number, number, number] = [0.42, 0.76, 0.9];
 
 type WearFeature = {
   x: number;
@@ -83,6 +89,20 @@ function addWearFeature(
       else grid.set(key, [feature]);
     }
   }
+}
+
+function setUnderwaterAnimalColor(
+  color: THREE.Color,
+  base: [number, number, number],
+  depth: number,
+  shimmer = 1,
+) {
+  const depthTint = THREE.MathUtils.clamp(depth / 5, 0.18, 0.68);
+  color.setRGB(
+    THREE.MathUtils.lerp(base[0] * shimmer, UNDERWATER_TINT[0], depthTint),
+    THREE.MathUtils.lerp(base[1] * shimmer, UNDERWATER_TINT[1], depthTint),
+    THREE.MathUtils.lerp(base[2] * shimmer, UNDERWATER_TINT[2], depthTint),
+  );
 }
 
 function addRoadWearFeatures(grid: Map<string, WearFeature[]>, cellSize: number, roads: Road[], urbanProfile?: WearFeature['urbanProfile']) {
@@ -203,7 +223,10 @@ function applyCityGroundWear(
     if (wear <= 0.01) continue;
     const heightFade = 1 - Math.min(1, Math.max(0, (height - 9) / 12));
     const veniceWear = Math.max(veniceRoadWear, veniceBuildingWear);
-    const amount = Math.min(0.96, wear * heightFade * (veniceWear > 0 ? 1.65 : 1.25));
+    const terrain = getTerrainData(x, z);
+    const shorePreserve = Math.max(terrain.wetSandFactor, terrain.beachFactor, terrain.surfFactor * 0.72);
+    const shoreWearFactor = 1 - Math.min(0.72, shorePreserve * 0.62);
+    const amount = Math.min(0.96, wear * heightFade * (veniceWear > 0 ? 1.65 : 1.25) * shoreWearFactor);
     const mixTotal = roadWear + buildingWear;
     const roadMix = mixTotal > 0 ? roadWear / mixTotal : 0.5;
     const veniceMixTotal = veniceRoadWear + veniceBuildingWear;
@@ -237,7 +260,35 @@ function applyCityGroundWear(
   return geometry;
 }
 
-export function World() {
+export function World({ onReady }: { onReady?: () => void }) {
+  const worldSeed = useGameStore((state) => state.worldSeed);
+  const worldSize = useGameStore((state) => state.worldSize);
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
+  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
+  const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const [worldData, setWorldData] = useState<GeneratedWorldData | null>(null);
+
+  useEffect(() => {
+    const args: GenerateWorldDataArgs = { worldSeed, worldSize, devSoloPort, currentWorldPortId, waterPaletteId };
+    let cancelled = false;
+    setWorldData(null);
+
+    loadGeneratedWorldData(args).then((data) => {
+      if (!cancelled) setWorldData(data);
+    }).catch((err) => {
+      console.error('[world-load] failed to generate world data', err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorldPortId, devSoloPort, waterPaletteId, worldSeed, worldSize]);
+
+  if (!worldData) return null;
+  return <WorldContent worldData={worldData} onReady={onReady} />;
+}
+
+function WorldContent({ worldData, onReady }: { worldData: GeneratedWorldData; onReady?: () => void }) {
   const initWorld = useGameStore((state) => state.initWorld);
   // Quantize timeOfDay to 0.05 game-hour steps (~3 game-min ≈ 0.5s real time
   // at the current tick rate). The raw value updates every 200ms; quantizing
@@ -251,11 +302,8 @@ export function World() {
   const tickFishRespawn = useGameStore((state) => state.tickFishRespawn);
   const npcShips = useGameStore((state) => state.npcShips);
   const oceanEncounters = useGameStore((state) => state.oceanEncounters);
-  const worldSeed = useGameStore((state) => state.worldSeed);
-  const worldSize = useGameStore((state) => state.worldSize);
-  const devSoloPort = useGameStore((state) => state.devSoloPort);
-  const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const setPlayerPos = useGameStore((state) => state.setPlayerPos);
+  const worldSeed = useGameStore((state) => state.worldSeed);
   const shadowsEnabled = useGameStore((state) => state.renderDebug.shadows);
   // Only cast shadows during solid daytime (~1h after sunrise to ~1h before sunset)
   // sunH > 0.13 ≈ hour 7 to hour 17
@@ -263,6 +311,7 @@ export function World() {
     const angle = ((timeOfDay - 6) / 24) * Math.PI * 2;
     return Math.sin(angle) > 0.13;
   })();
+  const shadowMeshesEnabled = shadowsEnabled;
   const wildlifeMotionEnabled = useGameStore((state) => state.renderDebug.wildlifeMotion);
   const coralReefEnabled = useGameStore((state) => state.renderDebug.coralReefs);
   const cityGroundWearEnabled = useGameStore((state) => state.renderDebug.cityGroundWear);
@@ -270,12 +319,9 @@ export function World() {
 
   // Generate world data once
   const {
-    landTerrainGeometry, backgroundRingTerrainGeometry, generatedPorts, generatedNpcs,
+    landTerrainGeometry, cliffFaceGeometry, backgroundRingTerrainGeometry, generatedPorts, generatedNpcs,
     treeData, deadTreeData, broadleafData, baobabData, acaciaData, cactusData, crabData, palmData, mangroveData, cypressData, datePalmData, bambooData, willowData, cherryData, orangeData, oakData, reedBedData, siltPatchData, saltStainData, thornbushData, riceShootData, driftwoodData, beachRockData, coralData, fishData, turtleData, fishShoalData, gullData, grazerData, primateData, reptileData, wadingBirdData, grazerSpecies, grazerKind, primateSpecies, reptileSpecies, wadingSpecies, encounterData,
-  } = useMemo(
-    () => generateWorldData({ worldSeed, worldSize, devSoloPort, currentWorldPortId, waterPaletteId }),
-    [currentWorldPortId, waterPaletteId, worldSeed, worldSize, devSoloPort],
-  );
+  } = worldData;
 
   const visibleLandTerrainGeometry = useMemo(
     () => cityGroundWearEnabled
@@ -352,7 +398,8 @@ export function World() {
     setNpcShips(ships);
     setOceanEncounters(encounterData);
     setFishShoals(fishShoalData);
-  }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos]);
+    onReady?.();
+  }, [generatedPorts, generatedNpcs, encounterData, fishShoalData, initWorld, onReady, setNpcPositions, setNpcShips, setOceanEncounters, setFishShoals, setPlayerPos]);
 
   // Calculate sun position and all time-of-day lighting parameters
   const {
@@ -493,17 +540,32 @@ export function World() {
           float ridgeLift = highShoulder * aboveWater * (0.04 + terrainNoise(wp * 0.09 - 23.5) * 0.055);
           diffuseColor.rgb += ridgeLift * noiseMask;
 
-          // Wet ground — darken albedo and pull a touch of saturation up so
-          // soaked dirt/grass reads correctly. Single uniform, no extra textures.
-          // 0.78 multiplier at full rain matches the look of damp earth without
-          // crushing color into mud.
+          // Tide-wet contact line. This is deliberately fragment-level rather
+          // than extra shoreline geometry, so it cannot expose the terrain grid.
+          float tideBand = (1.0 - smoothstep(0.36, 1.10, vWorldPos.y)) * smoothstep(0.015, 0.11, vWorldPos.y);
+          if (tideBand > 0.001) {
+            float brokenTide = 0.72 + terrainNoise(wp * 0.55 + vec2(19.0, 7.0)) * 0.28;
+            float flatFacing = smoothstep(0.18, 0.92, terrainN.y);
+            vec3 dampSand = vec3(0.34, 0.29, 0.21);
+            vec3 dampRock = vec3(0.20, 0.21, 0.20);
+            vec3 dampColor = mix(dampRock, dampSand, flatFacing);
+            diffuseColor.rgb = mix(diffuseColor.rgb, dampColor, tideBand * brokenTide * 0.58);
+          }
+
+          // Wet ground — darken albedo where water would actually read:
+          // beaches, low ground, and slope-foot dirt. Single uniform, no
+          // extra textures.
           if (uWetness > 0.001) {
             float wet = uWetness;
-            // Wetness lingers in low spots (dark luminance) more than highlights.
-            float wetMask = mix(0.6, 1.0, smoothstep(0.05, 0.4, lum));
-            diffuseColor.rgb *= mix(1.0, 0.78, wet * wetMask);
+            float lowWet = (1.0 - smoothstep(2.5, 13.0, vWorldPos.y)) * aboveWater;
+            float beachWet = tideBand + (1.0 - smoothstep(0.7, 2.2, vWorldPos.y)) * aboveWater;
+            float dirtWet = max(footShade * 5.0, earthExpose * 1.6);
+            float wetMask = clamp(max(beachWet, max(lowWet * 0.55, dirtWet)), 0.0, 1.0);
+            float grassGuard = 1.0 - smoothstep(0.30, 0.56, lum) * 0.25;
+            wetMask *= grassGuard;
+            diffuseColor.rgb *= mix(1.0, 0.70, wet * wetMask);
             // Slight cool tint on wet surfaces — water absorbs warm wavelengths.
-            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.94, 0.98, 1.04), wet * 0.5);
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.90, 0.97, 1.05), wet * wetMask * 0.55);
           }
         }
         `
@@ -558,6 +620,20 @@ export function World() {
     return mat;
   }, []);
 
+  const cliffFaceMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.96,
+    metalness: 0,
+    polygonOffset: true,
+    polygonOffsetFactor: -0.6,
+    polygonOffsetUnits: -2,
+    side: THREE.DoubleSide,
+  }), []);
+
+  useEffect(() => () => {
+    cliffFaceMaterial.dispose();
+  }, [cliffFaceMaterial]);
+
   // Flora & fauna geometries + materials (~75 assets) — extracted into a hook
   // so that climate-tinted materials get properly disposed when the palette
   // changes (Three.js materials hold WebGL state outside JS GC).
@@ -565,7 +641,7 @@ export function World() {
     treeTrunkGeometry, treeLeavesGeometry,
     treeTrunkMaterial, treeLeavesMaterial,
     deadTreeMaterial,
-    palmTrunkGeometry, palmFrondGeometry,
+    palmTrunkGeometry, palmFrondGeometry, coconutClusterGeometry,
     palmTrunkMaterial, palmFrondMaterial,
     broadleafTrunkGeometry, broadleafCanopyGeometry,
     broadleafTrunkMaterial, broadleafCanopyMaterial,
@@ -587,7 +663,7 @@ export function World() {
     cypressTrunkMaterial, cypressCanopyMaterial,
     orangeTrunkGeometry, orangeCanopyGeometry,
     orangeTrunkMaterial, orangeCanopyMaterial,
-    datePalmTrunkGeometry, datePalmFrondGeometry,
+    datePalmTrunkGeometry, datePalmFrondGeometry, dateClusterGeometry,
     datePalmTrunkMaterial, datePalmFrondMaterial,
     bambooGeometry, bambooMaterial,
     willowTrunkGeometry, willowCanopyGeometry,
@@ -596,7 +672,7 @@ export function World() {
     cherryTrunkMaterial, cherryCanopyMaterial,
     oakTrunkGeometry, oakCanopyGeometry,
     oakTrunkMaterial, oakCanopyMaterial,
-    crabGeometry, crabMaterial,
+    crabGeometry, crabMaterial, coconutMaterial, dateClusterMaterial,
     fishGeometry, fishMaterial,
     turtleGeometry, turtleMaterial,
     brainCoralGeo, brainCoralMat,
@@ -612,6 +688,7 @@ export function World() {
   const deadTreeMeshRef = useRef<THREE.InstancedMesh>(null);
   const palmTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const palmFrondMeshRef = useRef<THREE.InstancedMesh>(null);
+  const coconutMeshRef = useRef<THREE.InstancedMesh>(null);
   const broadleafTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const broadleafCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
   const baobabTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -624,6 +701,7 @@ export function World() {
   const cypressCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
   const datePalmTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const datePalmFrondMeshRef = useRef<THREE.InstancedMesh>(null);
+  const dateClusterMeshRef = useRef<THREE.InstancedMesh>(null);
   const bambooMeshRef = useRef<THREE.InstancedMesh>(null);
   const willowTrunkMeshRef = useRef<THREE.InstancedMesh>(null);
   const willowCanopyMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -654,6 +732,7 @@ export function World() {
   const palmTopLocalRef = useRef(new THREE.Vector3());
   const palmEulerRef = useRef(new THREE.Euler());
   const palmWindVectorRef = useRef(new THREE.Vector2());
+  const palmFruitOffsetRef = useRef(new THREE.Vector3());
   const fallDirRef = useRef(new THREE.Vector3());
   const fallAxisRef = useRef(new THREE.Vector3());
   const fallQuatRef = useRef(new THREE.Quaternion());
@@ -662,6 +741,12 @@ export function World() {
   const nextTreeShakeRef = useRef(new Set<string>());
   const palmSwayAccum = useRef(0);
   const respawnCheckAccum = useRef(0);
+  const nearbyIndexRefreshAccum = useRef(Number.POSITIVE_INFINITY);
+  const nearbyPalmIndicesRef = useRef<number[]>([]);
+  const nearbyFishIndicesRef = useRef<number[]>([]);
+  const nearbyTurtleIndicesRef = useRef<number[]>([]);
+  const nearbyCrabIndicesRef = useRef<number[]>([]);
+  const nearbyGullIndicesRef = useRef<number[]>([]);
 
   function setFelledVerticalMesh(
     mesh: THREE.InstancedMesh,
@@ -807,6 +892,15 @@ export function World() {
     cypressCanopyMeshRef.current.setMatrixAt(index, dummy.matrix);
   }
 
+  function setHiddenInstance(mesh: THREE.InstancedMesh, index: number) {
+    const dummy = dummyRef.current;
+    dummy.position.set(0, -100, 0);
+    dummy.scale.set(0, 0, 0);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  }
+
   function setOrangeMatricesAt(tree: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
     if (!orangeTrunkMeshRef.current || !orangeCanopyMeshRef.current) return;
     const felled = getFelledTreeState('orange', index);
@@ -834,6 +928,7 @@ export function World() {
     if (felled) {
       setFelledVerticalMesh(datePalmTrunkMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 2.5, 0.22);
       setFelledVerticalMesh(datePalmFrondMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 5.0, 0.55);
+      if (dateClusterMeshRef.current) setHiddenInstance(dateClusterMeshRef.current, index);
       return;
     }
     const dummy = dummyRef.current;
@@ -849,6 +944,23 @@ export function World() {
     dummy.rotation.set(palm.lean * 0.4 + frondPitchOffset, palm.rotation, frondRollOffset);
     dummy.updateMatrix();
     datePalmFrondMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    if (dateClusterMeshRef.current) {
+      if ((index * 17 + Math.floor(palm.position[0] * 0.1) + Math.floor(palm.position[2] * 0.1)) % 5 === 0) {
+        const side = index % 2 === 0 ? -1 : 1;
+        dummy.position.set(
+          palm.position[0] + Math.sin(palm.rotation + side * 0.55) * 0.32 * s,
+          palm.position[1] + 4.55 * s,
+          palm.position[2] + Math.cos(palm.rotation + side * 0.55) * 0.32 * s,
+        );
+        dummy.scale.set(s * 0.92, s * 0.92, s * 0.92);
+        dummy.rotation.set(palm.lean * 0.35 + frondPitchOffset * 0.7, palm.rotation + side * 0.18, frondRollOffset * 0.8);
+        dummy.updateMatrix();
+        dateClusterMeshRef.current.setMatrixAt(index, dummy.matrix);
+      } else {
+        setHiddenInstance(dateClusterMeshRef.current, index);
+      }
+    }
   }
 
   function setBambooMatrixAt(b: { position: [number, number, number], scale: number, rotation: number }, index: number, xOffset = 0, zOffset = 0) {
@@ -941,6 +1053,7 @@ export function World() {
     if (felled) {
       setFelledVerticalMesh(palmTrunkMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 2.0, 0.2);
       setFelledVerticalMesh(palmFrondMeshRef.current, index, palm.position[0], palm.position[1], palm.position[2], palm.scale, felled.fallAngle, 4.0, 0.48);
+      if (coconutMeshRef.current) setHiddenInstance(coconutMeshRef.current, index);
       return;
     }
     const dummy = dummyRef.current;
@@ -981,6 +1094,24 @@ export function World() {
     );
     dummy.updateMatrix();
     palmFrondMeshRef.current.setMatrixAt(index, dummy.matrix);
+
+    if (coconutMeshRef.current) {
+      const hasCoconuts = (index * 31 + Math.floor(bx * 0.13) + Math.floor(bz * 0.17)) % 4 === 0;
+      if (hasCoconuts && damage < 0.65) {
+        const fruitOffset = palmFruitOffsetRef.current.set(0.30 * s, -0.12 * s, 0.18 * s);
+        fruitOffset.applyEuler(dummy.rotation);
+        dummy.position.set(
+          bx + topLocal.x + fruitOffset.x,
+          by + topLocal.y + fruitOffset.y - damage * s * 0.38,
+          bz + topLocal.z + fruitOffset.z,
+        );
+        dummy.scale.set(s * (0.92 - damage * 0.24), s * (0.92 - damage * 0.24), s * (0.92 - damage * 0.24));
+        dummy.updateMatrix();
+        coconutMeshRef.current.setMatrixAt(index, dummy.matrix);
+      } else {
+        setHiddenInstance(coconutMeshRef.current, index);
+      }
+    }
   }
 
   useEffect(() => {
@@ -1067,6 +1198,7 @@ export function World() {
       });
       palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      if (coconutMeshRef.current) coconutMeshRef.current.instanceMatrix.needsUpdate = true;
       applyFoliageJitter(palmFrondMeshRef.current, palmData.length, 0.16, 0.07);
     }
 
@@ -1090,6 +1222,7 @@ export function World() {
       datePalmData.forEach((palm, i) => setDatePalmMatrixAt(palm, i));
       datePalmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       datePalmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      if (dateClusterMeshRef.current) dateClusterMeshRef.current.instanceMatrix.needsUpdate = true;
       applyFoliageJitter(datePalmFrondMeshRef.current, datePalmData.length, 0.16, 0.06);
     }
 
@@ -1260,7 +1393,7 @@ export function World() {
         dummy.rotation.set(0, fish.rotation, 0);
         dummy.updateMatrix();
         fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        col.setRGB(fish.color[0], fish.color[1], fish.color[2]);
+        setUnderwaterAnimalColor(col, fish.color, SEA_LEVEL - fish.position[1]);
         fishMeshRef.current!.setColorAt(i, col);
       });
       fishMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -1276,7 +1409,7 @@ export function World() {
         dummy.rotation.set(0, t.rotation, 0);
         dummy.updateMatrix();
         turtleMeshRef.current!.setMatrixAt(i, dummy.matrix);
-        col.setRGB(t.color[0], t.color[1], t.color[2]);
+        setUnderwaterAnimalColor(col, t.color, SEA_LEVEL - t.position[1]);
         turtleMeshRef.current!.setColorAt(i, col);
       });
       turtleMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -1313,12 +1446,8 @@ export function World() {
       u.uPlayerPos.value.set(playerPos[0], playerPos[1], playerPos[2]);
       const storeState = useGameStore.getState();
       const cloudsOn = storeState.renderDebug.cloudShadows;
-      const rainOn = storeState.renderDebug.rain;
       const { windDirection, windSpeed } = storeState;
-      const weatherIntensity = storeState.weather.intensity;
-      // Dev rain toggle (forces full strength) overrides the eased value so the
-      // wet-ground look matches what the streak overlay does.
-      const effectiveWetness = rainOn ? Math.max(weatherIntensity, 1) : weatherIntensity;
+      const effectiveWetness = getEffectiveRainIntensity(storeState.weather, storeState.renderDebug.rain);
       u.uCloudTime.value = state.clock.elapsedTime;
       u.uCloudWindDir.value.set(Math.sin(windDirection), Math.cos(windDirection));
       // Strength scales with wind speed so calm days have weaker, slower shadows.
@@ -1327,6 +1456,12 @@ export function World() {
       const cloudBase = cloudsOn ? 0.35 + 0.20 * THREE.MathUtils.clamp(windSpeed, 0, 1) : 0;
       u.uCloudStrength.value = Math.min(0.85, cloudBase + effectiveWetness * 0.25);
       u.uWetness.value = effectiveWetness;
+      cliffFaceMaterial.roughness = THREE.MathUtils.lerp(0.96, 0.58, effectiveWetness);
+      cliffFaceMaterial.color.setRGB(
+        THREE.MathUtils.lerp(1, 0.78, effectiveWetness),
+        THREE.MathUtils.lerp(1, 0.84, effectiveWetness),
+        THREE.MathUtils.lerp(1, 0.93, effectiveWetness),
+      );
     }
 
     // Dim the scene lights with weather. The LUT lerps hue/saturation; this
@@ -1334,9 +1469,7 @@ export function World() {
     // "sunny day with a green filter." Sun takes a bigger hit than ambient.
     {
       const storeState = useGameStore.getState();
-      const rainOn = storeState.renderDebug.rain;
-      const wi = storeState.weather.intensity;
-      const w = rainOn ? Math.max(wi, 1) : wi;
+      const w = getEffectiveRainIntensity(storeState.weather, storeState.renderDebug.rain);
       const sun = sunLightRef.current;
       const hemi = hemiLightRef.current;
       if (sun) sun.intensity = sunIntensity * (1.0 - 0.38 * w);
@@ -1362,6 +1495,7 @@ export function World() {
   // Only animate wildlife within this range of the camera (squared, to skip sqrt)
   const ANIM_RANGE_SQ = 100 * 100;
   const PALM_SWAY_RANGE_SQ = 100 * 100;
+  const NEARBY_INDEX_REFRESH_SECONDS = 0.45;
 
   useFrame((state, delta) => {
     updateWindUniforms(state.clock.elapsedTime);
@@ -1372,9 +1506,68 @@ export function World() {
     }
     const time = state.clock.elapsedTime;
     const dummy = dummyRef.current;
-    const playerPos = getLiveShipTransform().pos;
+    const shipTransform = getLiveShipTransform();
+    const playerPos = shipTransform.pos;
+    const shipSpeed = shipTransform.vel;
     const px = playerPos[0];
     const pz = playerPos[2];
+    nearbyIndexRefreshAccum.current += delta;
+    if (nearbyIndexRefreshAccum.current >= NEARBY_INDEX_REFRESH_SECONDS) {
+      nearbyIndexRefreshAccum.current = 0;
+      const nearbyPalms = nearbyPalmIndicesRef.current;
+      const nearbyFish = nearbyFishIndicesRef.current;
+      const nearbyTurtles = nearbyTurtleIndicesRef.current;
+      const nearbyCrabs = nearbyCrabIndicesRef.current;
+      const nearbyGulls = nearbyGullIndicesRef.current;
+      nearbyPalms.length = 0;
+      nearbyFish.length = 0;
+      nearbyTurtles.length = 0;
+      nearbyCrabs.length = 0;
+      nearbyGulls.length = 0;
+
+      palmData.forEach((palm, i) => {
+        const dx = palm.position[0] - px;
+        const dz = palm.position[2] - pz;
+        if (dx * dx + dz * dz <= PALM_SWAY_RANGE_SQ) nearbyPalms.push(i);
+      });
+      fishData.forEach((fish, i) => {
+        const dx = fish.position[0] - px;
+        const dz = fish.position[2] - pz;
+        if (dx * dx + dz * dz <= ANIM_RANGE_SQ) nearbyFish.push(i);
+      });
+      turtleData.forEach((turtle, i) => {
+        const dx = turtle.position[0] - px;
+        const dz = turtle.position[2] - pz;
+        if (dx * dx + dz * dz <= ANIM_RANGE_SQ) nearbyTurtles.push(i);
+      });
+      crabData.forEach((crab, i) => {
+        const dx = crab.position[0] - px;
+        const dz = crab.position[2] - pz;
+        if (dx * dx + dz * dz <= ANIM_RANGE_SQ) nearbyCrabs.push(i);
+      });
+      gullData.forEach((gull, i) => {
+        const dx = gull.position[0] - px;
+        const dz = gull.position[2] - pz;
+        if (dx * dx + dz * dz <= ANIM_RANGE_SQ) nearbyGulls.push(i);
+      });
+
+      const activePalms = palmAnimatedIndicesRef.current;
+      if (activePalms.size > 0 && palmTrunkMeshRef.current && palmFrondMeshRef.current) {
+        const nearbySet = new Set(nearbyPalms);
+        let anyReset = false;
+        activePalms.forEach((i) => {
+          if (nearbySet.has(i)) return;
+          setPalmMatrixAt(palmData[i], i);
+          activePalms.delete(i);
+          anyReset = true;
+        });
+        if (anyReset) {
+          palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
+          palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+          if (coconutMeshRef.current) coconutMeshRef.current.instanceMatrix.needsUpdate = true;
+        }
+      }
+    }
 
     if (!wildlifeMotionEnabled) {
       const activePalms = palmAnimatedIndicesRef.current;
@@ -1383,6 +1576,7 @@ export function World() {
         activePalms.clear();
         palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
         palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+        if (coconutMeshRef.current) coconutMeshRef.current.instanceMatrix.needsUpdate = true;
       }
       return;
     }
@@ -1399,19 +1593,8 @@ export function World() {
         const activePalms = palmAnimatedIndicesRef.current;
         let anyUpdated = false;
 
-        palmData.forEach((palm, i) => {
-          const pdx = palm.position[0] - px;
-          const pdz = palm.position[2] - pz;
-          const inRange = pdx * pdx + pdz * pdz <= PALM_SWAY_RANGE_SQ;
-          if (!inRange) {
-            if (activePalms.has(i)) {
-              setPalmMatrixAt(palm, i);
-              activePalms.delete(i);
-              anyUpdated = true;
-            }
-            return;
-          }
-
+        for (const i of nearbyPalmIndicesRef.current) {
+          const palm = palmData[i];
           activePalms.add(i);
           anyUpdated = true;
           const phase = i * 1.618 + palm.rotation * 2.7 + palm.position[0] * 0.013 + palm.position[2] * 0.017;
@@ -1431,11 +1614,12 @@ export function World() {
             localWindZ * frondLean + flutter,
             -localWindX * frondLean + flutter * 0.7
           );
-        });
+        }
 
         if (anyUpdated) {
           palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
           palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+          if (coconutMeshRef.current) coconutMeshRef.current.instanceMatrix.needsUpdate = true;
         }
       }
     }
@@ -1444,7 +1628,8 @@ export function World() {
       const storeShoals = useGameStore.getState().fishShoals;
       const col = fishShimmerCol.current;
       let anyUpdated = false;
-      fishData.forEach((fish, i) => {
+      for (const i of nearbyFishIndicesRef.current) {
+        const fish = fishData[i];
         // Hide fish from scattered/depleted shoals
         const shoal = storeShoals[fish.shoalIdx];
         if (shoal?.scattered) {
@@ -1453,14 +1638,10 @@ export function World() {
           dummy.updateMatrix();
           fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
           anyUpdated = true;
-          return;
+          continue;
         }
-        // Skip animation for distant fish
-        const fdx = fish.position[0] - px;
-        const fdz = fish.position[2] - pz;
-        if (fdx * fdx + fdz * fdz > ANIM_RANGE_SQ) return;
         anyUpdated = true;
-        // Shoal-coherent figure-8 swim with per-fish offset
+        // Shoal-coherent figure-8 swim with per-fish offset; scatter away from a close hull.
         const shoalBase = fish.shoalIdx * 1.7; // shared phase per shoal
         const fishOffset = (i - (shoal?.startIdx ?? 0)) * 0.35; // small stagger within shoal
         const speed = 0.3 + (i % 5) * 0.05;
@@ -1468,28 +1649,35 @@ export function World() {
         const radius = 1.0 + (i % 3) * 0.4;
         const wobble = Math.sin(angle * 2 + fish.rotation) * 0.3; // figure-8 cross-term
         const baseY = fish.position[1];
+        const baseX = fish.position[0] + Math.cos(angle) * radius + Math.sin(angle * 2) * wobble;
+        const baseZ = fish.position[2] + Math.sin(angle) * radius * 0.7;
+        const shipDx = baseX - px;
+        const shipDz = baseZ - pz;
+        const shipDist = Math.sqrt(shipDx * shipDx + shipDz * shipDz) || 1;
+        const scatter = (1 - THREE.MathUtils.smoothstep(shipDist, SHOAL_SCATTER_INNER, SHOAL_SCATTER_OUTER))
+          * THREE.MathUtils.clamp(0.55 + shipSpeed * 8, 0, 1.35);
+        const awayX = shipDx / shipDist;
+        const awayZ = shipDz / shipDist;
+        const scatterSpread = scatter * (4.5 + (i % 5) * 0.9);
         dummy.position.set(
-          fish.position[0] + Math.cos(angle) * radius + Math.sin(angle * 2) * wobble,
-          baseY + Math.sin(time * 1.5 + i) * 0.05,
-          fish.position[2] + Math.sin(angle) * radius * 0.7
+          baseX + awayX * scatterSpread,
+          baseY - scatter * 0.35 + Math.sin(time * (1.5 + scatter * 2.0) + i) * 0.05,
+          baseZ + awayZ * scatterSpread
         );
         const s = fish.scale;
         // Heading follows path tangent; gentle body shimmy
-        const shimmy = Math.sin(time * 2.5 + i * 0.9) * 0.12;
-        dummy.rotation.set(shimmy * 0.35, -angle + wobble * 0.5, shimmy);
+        const shimmy = Math.sin(time * (2.5 + scatter * 5) + i * 0.9) * (0.12 + scatter * 0.1);
+        const scatterHeading = Math.atan2(awayX, awayZ);
+        dummy.rotation.set(shimmy * 0.35, THREE.MathUtils.lerp(-angle + wobble * 0.5, scatterHeading, THREE.MathUtils.clamp(scatter, 0, 1)), shimmy);
         dummy.scale.set(s, s, s);
         dummy.updateMatrix();
         fishMeshRef.current!.setMatrixAt(i, dummy.matrix);
         // Shimmer — small fish flash brightly, sharks barely glint
         const shimmerAmp = s < 1.2 ? 0.14 : s > 2.5 ? 0.03 : 0.08;
-        const shimmerFactor = 1.0 + Math.sin(time * 3.0 + i * 1.7 + fish.rotation) * shimmerAmp;
-        col.setRGB(
-          fish.color[0] * shimmerFactor,
-          fish.color[1] * shimmerFactor,
-          fish.color[2] * shimmerFactor,
-        );
+        const shimmerFactor = 1.0 + Math.sin(time * (3.0 + scatter * 4) + i * 1.7 + fish.rotation) * (shimmerAmp + scatter * 0.08);
+        setUnderwaterAnimalColor(col, fish.color, SEA_LEVEL - baseY + scatter * 0.5, shimmerFactor);
         fishMeshRef.current!.setColorAt(i, col);
-      });
+      }
       if (anyUpdated) {
         fishMeshRef.current.instanceMatrix.needsUpdate = true;
         if (fishMeshRef.current.instanceColor) fishMeshRef.current.instanceColor.needsUpdate = true;
@@ -1501,7 +1689,8 @@ export function World() {
       const storeShoals = useGameStore.getState().fishShoals;
       const tCol = turtleShimmerCol.current;
       let anyUpdated = false;
-      turtleData.forEach((turtle, i) => {
+      for (const i of nearbyTurtleIndicesRef.current) {
+        const turtle = turtleData[i];
         const shoal = storeShoals[turtle.shoalIdx];
         if (shoal?.scattered) {
           dummy.position.set(0, -100, 0);
@@ -1509,39 +1698,41 @@ export function World() {
           dummy.updateMatrix();
           turtleMeshRef.current!.setMatrixAt(i, dummy.matrix);
           anyUpdated = true;
-          return;
+          continue;
         }
-        // Skip animation for distant turtles
-        const tdx = turtle.position[0] - px;
-        const tdz = turtle.position[2] - pz;
-        if (tdx * tdx + tdz * tdz > ANIM_RANGE_SQ) return;
         anyUpdated = true;
-        // Slow lazy drift — wide gentle arcs
+        // Slow lazy drift — wide gentle arcs, with a mild avoidance turn near the hull.
         const speed = 0.08 + (i % 3) * 0.02;
         const angle = turtle.rotation + time * speed;
         const radius = 2.0 + (i % 3) * 0.8;
         const baseY = turtle.position[1];
+        const baseX = turtle.position[0] + Math.cos(angle) * radius;
+        const baseZ = turtle.position[2] + Math.sin(angle) * radius;
+        const shipDx = baseX - px;
+        const shipDz = baseZ - pz;
+        const shipDist = Math.sqrt(shipDx * shipDx + shipDz * shipDz) || 1;
+        const scatter = (1 - THREE.MathUtils.smoothstep(shipDist, SHOAL_SCATTER_INNER, SHOAL_SCATTER_OUTER * 0.9))
+          * THREE.MathUtils.clamp(0.45 + shipSpeed * 5, 0, 1);
+        const awayX = shipDx / shipDist;
+        const awayZ = shipDz / shipDist;
         dummy.position.set(
-          turtle.position[0] + Math.cos(angle) * radius,
-          baseY + Math.sin(time * 0.4 + i) * 0.04,
-          turtle.position[2] + Math.sin(angle) * radius
+          baseX + awayX * scatter * 3,
+          baseY - scatter * 0.18 + Math.sin(time * 0.4 + i) * 0.04,
+          baseZ + awayZ * scatter * 3
         );
         const s = turtle.scale;
         // Flipper stroke — periodic roll oscillation
         const flipperStroke = Math.sin(time * 0.8 + i * 2.3) * 0.1;
-        dummy.rotation.set(flipperStroke, -angle, Math.sin(time * 0.3 + i) * 0.04);
+        const scatterHeading = Math.atan2(awayX, awayZ);
+        dummy.rotation.set(flipperStroke, THREE.MathUtils.lerp(-angle, scatterHeading, scatter), Math.sin(time * 0.3 + i) * 0.04);
         dummy.scale.set(s, s, s);
         dummy.updateMatrix();
         turtleMeshRef.current!.setMatrixAt(i, dummy.matrix);
         // Gentle shimmer — wet shell catching light
         const tShimmer = 1.0 + Math.sin(time * 1.5 + i * 2.1) * 0.04;
-        tCol.setRGB(
-          turtle.color[0] * tShimmer,
-          turtle.color[1] * tShimmer,
-          turtle.color[2] * tShimmer,
-        );
+        setUnderwaterAnimalColor(tCol, turtle.color, SEA_LEVEL - baseY + scatter * 0.25, tShimmer);
         turtleMeshRef.current!.setColorAt(i, tCol);
-      });
+      }
       if (anyUpdated) {
         turtleMeshRef.current.instanceMatrix.needsUpdate = true;
         if (turtleMeshRef.current.instanceColor) turtleMeshRef.current.instanceColor.needsUpdate = true;
@@ -1551,19 +1742,16 @@ export function World() {
     if (crabMeshRef.current) {
       let anyUpdated = false;
       const collected = getCollectedCrabs();
-      crabData.forEach((crab, i) => {
+      for (const i of nearbyCrabIndicesRef.current) {
+        const crab = crabData[i];
         if (collected.has(i)) {
           dummy.position.set(0, -100, 0);
           dummy.scale.set(0, 0, 0);
           dummy.updateMatrix();
           crabMeshRef.current!.setMatrixAt(i, dummy.matrix);
           anyUpdated = true;
-          return;
+          continue;
         }
-        // Skip animation for distant crabs
-        const cdx = crab.position[0] - px;
-        const cdz = crab.position[2] - pz;
-        if (cdx * cdx + cdz * cdz > ANIM_RANGE_SQ) return;
         anyUpdated = true;
         dummy.scale.set(1, 1, 1);
         const offset = Math.sin(time + i) * 0.2;
@@ -1575,18 +1763,15 @@ export function World() {
         dummy.rotation.set(0, crab.rotation, 0);
         dummy.updateMatrix();
         crabMeshRef.current!.setMatrixAt(i, dummy.matrix);
-      });
+      }
       if (anyUpdated) crabMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
     // Seagulls — lazy circling with altitude bobbing
     if (gullMeshRef.current) {
       let anyUpdated = false;
-      gullData.forEach((gull, i) => {
-        // Skip animation for distant gulls
-        const gdx = gull.position[0] - px;
-        const gdz = gull.position[2] - pz;
-        if (gdx * gdx + gdz * gdz > ANIM_RANGE_SQ) return;
+      for (const i of nearbyGullIndicesRef.current) {
+        const gull = gullData[i];
         anyUpdated = true;
         const t = time * (0.3 + (i % 5) * 0.06) + gull.phase; // varied speed per bird
         const cx = gull.position[0]; // orbit center
@@ -1606,7 +1791,7 @@ export function World() {
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
         gullMeshRef.current!.setMatrixAt(i, dummy.matrix);
-      });
+      }
       if (anyUpdated) gullMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
@@ -1865,6 +2050,7 @@ export function World() {
     if (palmDirty && palmTrunkMeshRef.current && palmFrondMeshRef.current) {
       palmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       palmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      if (coconutMeshRef.current) coconutMeshRef.current.instanceMatrix.needsUpdate = true;
     }
     if (baobabDirty && baobabTrunkMeshRef.current && baobabCanopyMeshRef.current) {
       baobabTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -1885,6 +2071,7 @@ export function World() {
     if (datePalmDirty && datePalmTrunkMeshRef.current && datePalmFrondMeshRef.current) {
       datePalmTrunkMeshRef.current.instanceMatrix.needsUpdate = true;
       datePalmFrondMeshRef.current.instanceMatrix.needsUpdate = true;
+      if (dateClusterMeshRef.current) dateClusterMeshRef.current.instanceMatrix.needsUpdate = true;
     }
     if (bambooDirty && bambooMeshRef.current) {
       bambooMeshRef.current.instanceMatrix.needsUpdate = true;
@@ -1938,10 +2125,19 @@ export function World() {
       <mesh
         geometry={visibleLandTerrainGeometry}
         rotation={[-Math.PI / 2, 0, 0]}
-        receiveShadow={shadowsActive}
-        castShadow={shadowsActive}
+        receiveShadow={shadowMeshesEnabled}
+        castShadow={shadowMeshesEnabled}
         raycast={() => null}
         material={terrainMaterial}
+      />
+
+      <mesh
+        geometry={cliffFaceGeometry}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow={shadowMeshesEnabled}
+        castShadow={shadowMeshesEnabled}
+        raycast={() => null}
+        material={cliffFaceMaterial}
       />
 
       {/* Background terrain ring — distant land visible through atmospheric
@@ -1958,85 +2154,87 @@ export function World() {
       {/* Instanced Flora & Fauna */}
       {treeData.length > 0 && (
         <>
-          <instancedMesh ref={trunkMeshRef} args={[treeTrunkGeometry, treeTrunkMaterial, treeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={leavesMeshRef} args={[treeLeavesGeometry, treeLeavesMaterial, treeData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={trunkMeshRef} args={[treeTrunkGeometry, treeTrunkMaterial, treeData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={leavesMeshRef} args={[treeLeavesGeometry, treeLeavesMaterial, treeData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {deadTreeData.length > 0 && (
-        <instancedMesh ref={deadTreeMeshRef} args={[treeTrunkGeometry, deadTreeMaterial, deadTreeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={deadTreeMeshRef} args={[treeTrunkGeometry, deadTreeMaterial, deadTreeData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {broadleafData.length > 0 && (
         <>
-          <instancedMesh ref={broadleafTrunkMeshRef} args={[broadleafTrunkGeometry, broadleafTrunkMaterial, broadleafData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={broadleafCanopyMeshRef} args={[broadleafCanopyGeometry, broadleafCanopyMaterial, broadleafData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={broadleafTrunkMeshRef} args={[broadleafTrunkGeometry, broadleafTrunkMaterial, broadleafData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={broadleafCanopyMeshRef} args={[broadleafCanopyGeometry, broadleafCanopyMaterial, broadleafData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {baobabData.length > 0 && (
         <>
-          <instancedMesh ref={baobabTrunkMeshRef} args={[baobabTrunkGeometry, baobabTrunkMaterial, baobabData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={baobabCanopyMeshRef} args={[baobabCanopyGeometry, baobabCanopyMaterial, baobabData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={baobabTrunkMeshRef} args={[baobabTrunkGeometry, baobabTrunkMaterial, baobabData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={baobabCanopyMeshRef} args={[baobabCanopyGeometry, baobabCanopyMaterial, baobabData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {acaciaData.length > 0 && (
         <>
-          <instancedMesh ref={acaciaTrunkMeshRef} args={[acaciaTrunkGeometry, acaciaTrunkMaterial, acaciaData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={acaciaCanopyMeshRef} args={[acaciaCanopyGeometry, acaciaCanopyMaterial, acaciaData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={acaciaTrunkMeshRef} args={[acaciaTrunkGeometry, acaciaTrunkMaterial, acaciaData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={acaciaCanopyMeshRef} args={[acaciaCanopyGeometry, acaciaCanopyMaterial, acaciaData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {palmData.length > 0 && (
         <>
-          <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={palmTrunkMeshRef} args={[palmTrunkGeometry, palmTrunkMaterial, palmData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
           {/* Fronds are thin planes — skip cast to avoid cost and spiderweb artifacts */}
-          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={palmFrondMeshRef} args={[palmFrondGeometry, palmFrondMaterial, palmData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={coconutMeshRef} args={[coconutClusterGeometry, coconutMaterial, palmData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {mangroveData.length > 0 && (
         <>
-          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={mangroveRootMeshRef} args={[mangroveRootGeometry, mangroveRootMaterial, mangroveData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={mangroveCanopyMeshRef} args={[mangroveCanopyGeometry, mangroveCanopyMaterial, mangroveData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {cypressData.length > 0 && (
         <>
-          <instancedMesh ref={cypressTrunkMeshRef} args={[cypressTrunkGeometry, cypressTrunkMaterial, cypressData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={cypressCanopyMeshRef} args={[cypressCanopyGeometry, cypressCanopyMaterial, cypressData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={cypressTrunkMeshRef} args={[cypressTrunkGeometry, cypressTrunkMaterial, cypressData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={cypressCanopyMeshRef} args={[cypressCanopyGeometry, cypressCanopyMaterial, cypressData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {datePalmData.length > 0 && (
         <>
-          <instancedMesh ref={datePalmTrunkMeshRef} args={[datePalmTrunkGeometry, datePalmTrunkMaterial, datePalmData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={datePalmFrondMeshRef} args={[datePalmFrondGeometry, datePalmFrondMaterial, datePalmData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={datePalmTrunkMeshRef} args={[datePalmTrunkGeometry, datePalmTrunkMaterial, datePalmData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={datePalmFrondMeshRef} args={[datePalmFrondGeometry, datePalmFrondMaterial, datePalmData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={dateClusterMeshRef} args={[dateClusterGeometry, dateClusterMaterial, datePalmData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {bambooData.length > 0 && (
-        <instancedMesh ref={bambooMeshRef} args={[bambooGeometry, bambooMaterial, bambooData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={bambooMeshRef} args={[bambooGeometry, bambooMaterial, bambooData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {willowData.length > 0 && (
         <>
-          <instancedMesh ref={willowTrunkMeshRef} args={[willowTrunkGeometry, willowTrunkMaterial, willowData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={willowCanopyMeshRef} args={[willowCanopyGeometry, willowCanopyMaterial, willowData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={willowTrunkMeshRef} args={[willowTrunkGeometry, willowTrunkMaterial, willowData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={willowCanopyMeshRef} args={[willowCanopyGeometry, willowCanopyMaterial, willowData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {cherryData.length > 0 && (
         <>
-          <instancedMesh ref={cherryTrunkMeshRef} args={[cherryTrunkGeometry, cherryTrunkMaterial, cherryData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={cherryCanopyMeshRef} args={[cherryCanopyGeometry, cherryCanopyMaterial, cherryData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={cherryTrunkMeshRef} args={[cherryTrunkGeometry, cherryTrunkMaterial, cherryData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={cherryCanopyMeshRef} args={[cherryCanopyGeometry, cherryCanopyMaterial, cherryData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {oakData.length > 0 && (
         <>
-          <instancedMesh ref={oakTrunkMeshRef} args={[oakTrunkGeometry, oakTrunkMaterial, oakData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={oakCanopyMeshRef} args={[oakCanopyGeometry, oakCanopyMaterial, oakData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={oakTrunkMeshRef} args={[oakTrunkGeometry, oakTrunkMaterial, oakData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={oakCanopyMeshRef} args={[oakCanopyGeometry, oakCanopyMaterial, oakData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {orangeData.length > 0 && (
         <>
-          <instancedMesh ref={orangeTrunkMeshRef} args={[orangeTrunkGeometry, orangeTrunkMaterial, orangeData.length]} castShadow={shadowsActive} receiveShadow={shadowsActive} frustumCulled={false} />
-          <instancedMesh ref={orangeCanopyMeshRef} args={[orangeCanopyGeometry, orangeCanopyMaterial, orangeData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+          <instancedMesh ref={orangeTrunkMeshRef} args={[orangeTrunkGeometry, orangeTrunkMaterial, orangeData.length]} castShadow={shadowMeshesEnabled} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
+          <instancedMesh ref={orangeCanopyMeshRef} args={[orangeCanopyGeometry, orangeCanopyMaterial, orangeData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
         </>
       )}
       {reedBedData.length > 0 && (
-        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={reedBedMeshRef} args={[reedBedGeometry, reedBedMaterial, reedBedData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {siltPatchData.length > 0 && (
         <instancedMesh ref={siltPatchMeshRef} args={[siltPatchGeometry, siltPatchMaterial, siltPatchData.length]} renderOrder={2} frustumCulled={false} />
@@ -2045,26 +2243,26 @@ export function World() {
         <instancedMesh ref={saltStainMeshRef} args={[saltStainGeometry, saltStainMaterial, saltStainData.length]} renderOrder={2} frustumCulled={false} />
       )}
       {cactusData.length > 0 && (
-        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={cactusMeshRef} args={[cactusGeometry, cactusMaterial, cactusData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {thornbushData.length > 0 && (
-        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={thornbushMeshRef} args={[thornbushGeometry, thornbushMaterial, thornbushData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {riceShootData.length > 0 && (
         <instancedMesh ref={riceShootMeshRef} args={[riceShootGeometry, riceShootMaterial, riceShootData.length]} frustumCulled={false} />
       )}
       {driftwoodData.length > 0 && (
-        <instancedMesh ref={driftwoodMeshRef} args={[driftwoodGeometry, driftwoodMaterial, driftwoodData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={driftwoodMeshRef} args={[driftwoodGeometry, driftwoodMaterial, driftwoodData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
       {beachRockData.length > 0 && (
-        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} receiveShadow={shadowsActive} frustumCulled={false} />
+        <instancedMesh ref={beachRockMeshRef} args={[beachRockGeometry, beachRockMaterial, beachRockData.length]} receiveShadow={shadowMeshesEnabled} frustumCulled={false} />
       )}
 
       {crabData.length > 0 && (
         <instancedMesh
           ref={crabMeshRef}
           args={[crabGeometry, crabMaterial, crabData.length]}
-          receiveShadow={shadowsActive}
+          receiveShadow={shadowMeshesEnabled}
           frustumCulled={false}
           onPointerDown={(e) => {
             e.stopPropagation();
@@ -2131,10 +2329,10 @@ export function World() {
       {gullData.length > 0 && (
         <instancedMesh ref={gullMeshRef} args={[gullGeometry, gullMaterial, gullData.length]} frustumCulled={false} />
       )}
-      <Grazers data={grazerData} shadowsActive={shadowsActive} species={grazerSpecies} kind={grazerKind} />
-      <Primates data={primateData} shadowsActive={shadowsActive} species={primateSpecies} />
-      <Reptiles data={reptileData} shadowsActive={shadowsActive} species={reptileSpecies} />
-      <WadingBirds data={wadingBirdData} shadowsActive={shadowsActive} species={wadingSpecies} />
+      <Grazers data={grazerData} shadowsActive={shadowMeshesEnabled} species={grazerSpecies} kind={grazerKind} />
+      <Primates data={primateData} shadowsActive={shadowMeshesEnabled} species={primateSpecies} />
+      <Reptiles data={reptileData} shadowsActive={shadowMeshesEnabled} species={reptileSpecies} />
+      <WadingBirds data={wadingBirdData} shadowsActive={shadowMeshesEnabled} species={wadingSpecies} />
       <AnimalMarkers
         grazerData={grazerData}
         grazerKind={grazerKind}

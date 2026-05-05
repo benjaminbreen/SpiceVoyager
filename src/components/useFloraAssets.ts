@@ -31,24 +31,47 @@ function buildGeometries() {
 
   const palmFrondGeometry = (() => {
     const fronds: THREE.BufferGeometry[] = [];
-    for (let f = 0; f < 6; f++) {
-      const angle = (f / 6) * Math.PI * 2 + (f % 2) * 0.15;
-      const frond = new THREE.PlaneGeometry(0.35, 2.2, 1, 4);
+    for (let f = 0; f < 10; f++) {
+      const angle = (f / 10) * Math.PI * 2 + (f % 2) * 0.10;
+      const longFrond = f % 3 !== 0;
+      const frondLen = longFrond ? 2.65 : 2.05;
+      const frondWidth = longFrond ? 0.28 : 0.34;
+      const frond = new THREE.PlaneGeometry(frondWidth, frondLen, 1, 5);
       const fPos = frond.attributes.position;
       for (let i = 0; i < fPos.count; i++) {
         const fy = fPos.getY(i);
-        const t = (fy + 1.1) / 2.2;
-        fPos.setZ(i, -t * t * 1.0);
+        const t = (fy + frondLen / 2) / frondLen;
+        fPos.setX(i, fPos.getX(i) * (1.0 - t * 0.62));
+        fPos.setZ(i, -t * t * (longFrond ? 1.20 : 0.82));
       }
       fPos.needsUpdate = true;
-      frond.rotateX(-0.3);
+      frond.rotateX(longFrond ? -0.42 : -0.25);
       frond.rotateY(angle);
-      frond.translate(Math.sin(angle) * 0.4, 0, Math.cos(angle) * 0.4);
+      frond.translate(Math.sin(angle) * 0.34, f % 2 === 0 ? 0.03 : -0.03, Math.cos(angle) * 0.34);
       fronds.push(frond);
     }
     const merged = mergeCompatibleGeometries(fronds);
     fronds.forEach((f) => f.dispose());
     return merged ?? new THREE.SphereGeometry(1, 4, 4);
+  })();
+
+  const coconutClusterGeometry = (() => {
+    const nuts: THREE.BufferGeometry[] = [];
+    const specs: Array<[number, number, number, number]> = [
+      [0.00, -0.18, 0.08, 0.16],
+      [0.16, -0.28, -0.02, 0.14],
+      [-0.14, -0.25, -0.04, 0.13],
+      [0.04, -0.38, 0.16, 0.12],
+    ];
+    for (const [x, y, z, r] of specs) {
+      const nut = new THREE.SphereGeometry(r, 6, 4);
+      nut.scale(1.0, 0.86, 0.95);
+      nut.translate(x, y, z);
+      nuts.push(nut);
+    }
+    const merged = mergeCompatibleGeometries(nuts);
+    nuts.forEach((g) => g.dispose());
+    return merged ?? new THREE.SphereGeometry(0.16, 6, 4);
   })();
 
   const broadleafTrunkGeometry = new THREE.CylinderGeometry(0.25, 0.35, 2.5, 5);
@@ -158,15 +181,15 @@ function buildGeometries() {
   })();
 
   const siltPatchGeometry = (() => {
-    const geo = new THREE.CircleGeometry(0.55, 9);
-    geo.scale(1.35, 0.62, 1);
+    const geo = new THREE.CircleGeometry(0.78, 18);
+    geo.scale(1.95, 0.72, 1);
     geo.rotateX(-Math.PI / 2);
     return geo;
   })();
 
   const saltStainGeometry = (() => {
-    const geo = new THREE.CircleGeometry(0.45, 8);
-    geo.scale(1.45, 0.5, 1);
+    const geo = new THREE.CircleGeometry(0.62, 16);
+    geo.scale(1.85, 0.58, 1);
     geo.rotateX(-Math.PI / 2);
     return geo;
   })();
@@ -342,17 +365,18 @@ function buildGeometries() {
   })();
   const datePalmFrondGeometry = (() => {
     const fronds: THREE.BufferGeometry[] = [];
-    for (let f = 0; f < 9; f++) {
-      const angle = (f / 9) * Math.PI * 2 + (f % 2) * 0.12;
-      const frond = new THREE.PlaneGeometry(0.30, 1.9, 1, 4);
+    for (let f = 0; f < 12; f++) {
+      const angle = (f / 12) * Math.PI * 2 + (f % 2) * 0.08;
+      const frond = new THREE.PlaneGeometry(0.24, 2.05, 1, 5);
       const fPos = frond.attributes.position;
       for (let i = 0; i < fPos.count; i++) {
         const fy = fPos.getY(i);
-        const t = (fy + 0.95) / 1.9;
-        fPos.setZ(i, -t * t * 0.55);
+        const t = (fy + 1.025) / 2.05;
+        fPos.setX(i, fPos.getX(i) * (1.0 - t * 0.50));
+        fPos.setZ(i, -t * t * 0.72);
       }
       fPos.needsUpdate = true;
-      frond.rotateX(-0.55);
+      frond.rotateX(-0.62);
       frond.rotateY(angle);
       frond.translate(Math.sin(angle) * 0.30, 0, Math.cos(angle) * 0.30);
       fronds.push(frond);
@@ -360,6 +384,25 @@ function buildGeometries() {
     const merged = mergeCompatibleGeometries(fronds);
     fronds.forEach((f) => f.dispose());
     return merged ?? new THREE.SphereGeometry(1, 4, 4);
+  })();
+
+  const dateClusterGeometry = (() => {
+    const parts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < 9; i++) {
+      const berry = new THREE.SphereGeometry(0.075, 5, 3);
+      const row = Math.floor(i / 3);
+      const col = i % 3;
+      berry.scale(0.82, 1.15, 0.82);
+      berry.translate((col - 1) * 0.10, -0.12 - row * 0.13, (row % 2 - 0.5) * 0.06);
+      parts.push(berry);
+    }
+    const stem = new THREE.CylinderGeometry(0.018, 0.026, 0.48, 4);
+    stem.rotateZ(0.18);
+    stem.translate(0, -0.20, 0);
+    parts.push(stem);
+    const merged = mergeCompatibleGeometries(parts);
+    parts.forEach((g) => g.dispose());
+    return merged ?? new THREE.SphereGeometry(0.08, 5, 3);
   })();
 
   const bambooGeometry = (() => {
@@ -547,7 +590,7 @@ function buildGeometries() {
 
   return {
     treeTrunkGeometry, treeLeavesGeometry,
-    palmTrunkGeometry, palmFrondGeometry,
+    palmTrunkGeometry, palmFrondGeometry, coconutClusterGeometry,
     broadleafTrunkGeometry, broadleafCanopyGeometry,
     baobabTrunkGeometry, baobabCanopyGeometry,
     acaciaTrunkGeometry, acaciaCanopyGeometry,
@@ -559,7 +602,7 @@ function buildGeometries() {
     riceShootGeometry,
     cypressTrunkGeometry, cypressCanopyGeometry,
     orangeTrunkGeometry, orangeCanopyGeometry,
-    datePalmTrunkGeometry, datePalmFrondGeometry,
+    datePalmTrunkGeometry, datePalmFrondGeometry, dateClusterGeometry,
     bambooGeometry,
     willowTrunkGeometry, willowCanopyGeometry,
     cherryTrunkGeometry, cherryCanopyGeometry,
@@ -585,10 +628,15 @@ function buildTintedMaterials(waterPaletteId: WaterPaletteId) {
   })();
   const deadTreeMaterial = new THREE.MeshStandardMaterial({ color: tintVegetation('#3a3a3a', waterPaletteId) });
   const palmTrunkMaterial = new THREE.MeshStandardMaterial({ color: tintVegetation('#6b5a3e', waterPaletteId) });
-  const palmFrondMaterial = new THREE.MeshStandardMaterial({
-    color: tintVegetation('#2a6e1e', waterPaletteId),
-    side: THREE.DoubleSide,
-  });
+  const palmFrondMaterial = (() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: tintVegetation('#2d761f', waterPaletteId),
+      side: THREE.DoubleSide,
+      roughness: 0.86,
+    });
+    applyWindSway(m, { anchorY: -0.45, spanY: 2.7, amplitude: 0.22, flutter: 0.08 });
+    return m;
+  })();
   const broadleafTrunkMaterial = new THREE.MeshStandardMaterial({ color: tintVegetation('#5a4530', waterPaletteId) });
   const broadleafCanopyMaterial = (() => {
     const m = new THREE.MeshStandardMaterial({ color: tintVegetation('#2a5e1a', waterPaletteId) });
@@ -656,7 +704,7 @@ function buildTintedMaterials(waterPaletteId: WaterPaletteId) {
       color: tintVegetation('#3a5a2a', waterPaletteId),
       side: THREE.DoubleSide,
     });
-    applyWindSway(m, { anchorY: -0.5, spanY: 1.8, amplitude: 0.14, flutter: 0.04 });
+    applyWindSway(m, { anchorY: -0.5, spanY: 2.0, amplitude: 0.18, flutter: 0.055 });
     return m;
   })();
   const bambooMaterial = (() => {
@@ -721,18 +769,24 @@ function buildTintedMaterials(waterPaletteId: WaterPaletteId) {
 
 function buildStaticMaterials() {
   const siltPatchMaterial = new THREE.MeshStandardMaterial({
-    color: '#7a725a',
+    color: '#d8cfaa',
     roughness: 1,
     transparent: true,
-    opacity: 0.58,
+    opacity: 0.48,
     depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -0.3,
+    polygonOffsetUnits: -1,
   });
   const saltStainMaterial = new THREE.MeshStandardMaterial({
-    color: '#b7b0a0',
+    color: '#eee6c8',
     roughness: 1,
     transparent: true,
-    opacity: 0.42,
+    opacity: 0.52,
     depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -0.35,
+    polygonOffsetUnits: -1,
   });
   const orangeCanopyMaterial = (() => {
     const m = new THREE.MeshStandardMaterial({
@@ -750,6 +804,14 @@ function buildStaticMaterials() {
     return m;
   })();
   const crabMaterial = new THREE.MeshStandardMaterial({ color: '#ff4444' });
+  const coconutMaterial = new THREE.MeshStandardMaterial({
+    color: '#5b4427',
+    roughness: 0.95,
+  });
+  const dateClusterMaterial = new THREE.MeshStandardMaterial({
+    color: '#9a5a24',
+    roughness: 0.88,
+  });
   const fishMaterial = new THREE.MeshStandardMaterial({
     color: '#ffffff',
     metalness: 0.4,
@@ -785,6 +847,7 @@ function buildStaticMaterials() {
     orangeCanopyMaterial,
     cherryCanopyMaterial,
     crabMaterial,
+    coconutMaterial, dateClusterMaterial,
     fishMaterial, turtleMaterial,
     brainCoralMat, stagCoralMat, fanCoralMat,
     gullMaterial,

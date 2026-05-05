@@ -85,7 +85,7 @@ function FactionSeal({ factionId }: { factionId?: Nationality }) {
 
 function passageDurationMs(days: number): number {
   const t = Math.max(0, Math.min(1, (days - 3) / 24));
-  return Math.round(5000 + t * 5000);
+  return Math.round(3000 + t * 4000);
 }
 
 function PassageLine({ durationMs }: { durationMs: number }) {
@@ -352,7 +352,7 @@ export default function PassageInterstitial({
       <motion.img
         src={candidates[0]}
         alt=""
-        initial={{ scale: 1.08 }}
+        initial={{ scale: 1.04 }}
         animate={{ scale: 1.035 }}
         onError={(event) => { event.currentTarget.style.display = 'none'; }}
         transition={{ duration: 1.4, ease: EASE }}

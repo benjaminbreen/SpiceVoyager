@@ -438,6 +438,7 @@ export const UNTRANSLATED_HAIL: Record<Language, string> = {
   Turkish: 'Sizi anlamıyorum. Yoluma devam edeceğim.',
   Malay: 'Aku tidak faham. Aku akan meneruskan pelayaran.',
   Swahili: 'Sikuelewi. Nitaendelea na safari yangu.',
+  Khoekhoe: 'I do not know your words. I go on.',
   Chinese: '我听不懂你。我继续走我的航路。',
   Japanese: '何を言っているかわからぬ。このまま進む。',
 };
@@ -508,6 +509,11 @@ export const ROMANIZED_COLLISION_HAIL: Record<Language, string[]> = {
     'KWA MUNGU, HILO NI NINI?! UMEPAGAWA?! UMEPASUA UBAVU WA CHOMBO CHETU! SEMA ILIKUWA AJALI AU UTAJUTA!!',
     'MPUMBAVU WEWE!! HUNA MACHO?! LIPA UHARIBIFU AU MIZINGA ITAJIBU!!',
   ],
+  Khoekhoe: [
+    'HAO!! WATCH THE WATER!',
+    'HAO!! YOU STRUCK US! SAY IT WAS MISTAKE OR PAY FOR THE DAMAGE!!',
+    'KEEP OFF OUR SIDE!! CATTLE TRADERS STEER BETTER THAN THAT!!',
+  ],
   Chinese: [
     'TIAN NA!! NI ZAI GAN SHENME, BEN DAN?!',
     'TIAN NA!! NI FENG LE MA?! NI ZHUANG HUAI LE WO MEN DE CHUANBANG! SHUO SHI SHIGU, FOUZE JIU KAI PAO!!',
@@ -548,6 +554,7 @@ export const LANGUAGE_COLOR: Record<Language, string> = {
   Japanese:   '#9fc7b1',
   Malay:      '#7ec0b4',
   Swahili:    '#7ec0b4',
+  Khoekhoe:   '#c8a060',
 };
 
 export type SensoryKind = 'smell' | 'sight' | 'sound';

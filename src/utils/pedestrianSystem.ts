@@ -6,7 +6,7 @@
  * movement patterns driven by building layout and time of day.
  */
 
-import { Building, BuildingType, Culture, CulturalRegion, Nationality, Road } from '../store/gameStore';
+import type { Building, BuildingType, Culture, CulturalRegion, Nationality, Road } from '../store/gameStore';
 import { getLandCharacter } from './landCharacter';
 import { getTerrainHeight } from './terrain';
 import { buildRoadSurfaceIndex, getGroundHeight, RoadSurfaceIndex } from './roadSurface';

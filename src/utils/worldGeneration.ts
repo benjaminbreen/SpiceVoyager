@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainData, reseedTerrain, refreshTerrainPaletteCache, setMeshHalf } from './terrain';
+import { getTerrainData, reseedTerrain, refreshTerrainPaletteCache, setActiveCanals, setMeshHalf, setNaturalIslands, setPlacedArchetypes } from './terrain';
 import { generateMap, focusedPortConfig, devModeConfig } from './mapGenerator';
 import { setLandCharacterBuildings } from './landCharacter';
 import { SEA_LEVEL } from '../constants/world';
@@ -12,16 +12,105 @@ import { buildBackgroundRingGeometry } from './backgroundRingGeometry';
 import { type PalmEntry, palmCanopyCenter } from './flora';
 import { generateNpcSpawnPositions } from './npcSpawn';
 import { setTreeImpactTargets } from '../state/worldRegistries';
-import type { SpeciesInfo } from '../components/Grazers';
-import { grazerFootOffset } from '../components/Grazers';
-import { type PrimateEntry, PRIMATE_FOOT_OFFSET } from '../components/Primates';
-import { type ReptileEntry, REPTILE_FOOT_OFFSET } from '../components/Reptiles';
-import type { WadingBirdEntry } from '../components/WadingBirds';
+import { CORE_PORTS } from './portArchetypes';
+import { generateCanalLayout } from './canalLayout';
+import { getPOIsForPort } from './poiDefinitions';
+import { nowMs, reportWorldLoadTiming, type WorldLoadTimingSink } from './worldLoadTimings';
+import {
+  grazerFootOffset,
+  PRIMATE_FOOT_OFFSET,
+  REPTILE_FOOT_OFFSET,
+  type GrazerKind,
+  type PrimateEntry,
+  type ReptileEntry,
+  type SpeciesInfo,
+  type WadingBirdEntry,
+} from './animalTypes';
 import { pickFishType, randomShoalSize, type FishType } from './fishTypes';
 import { generateEncounter, type OceanEncounterDef } from './oceanEncounters';
 
 const FISH_SWIM_DEPTH = 0.85;
 const TURTLE_SWIM_DEPTH = 0.65;
+
+function appendCliffVertex(
+  positions: number[],
+  colors: number[],
+  x: number,
+  y: number,
+  z: number,
+  shade: number,
+) {
+  positions.push(x, y, z);
+  colors.push(0.50 * shade, 0.36 * shade, 0.24 * shade);
+}
+
+function buildShoreCliffGeometry(
+  posAttribute: THREE.BufferAttribute,
+  stride: number,
+  step: number,
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+
+  for (let iz = 1; iz < stride - 1; iz++) {
+    for (let ix = 1; ix < stride - 1; ix++) {
+      const idx = iz * stride + ix;
+      const height = posAttribute.getZ(idx);
+      if (height < SEA_LEVEL + 0.85) continue;
+
+      const x = posAttribute.getX(idx);
+      const y = posAttribute.getY(idx);
+      const worldZ = -y;
+      const terrain = getTerrainData(x, worldZ);
+      const steepBank = terrain.coastSteepness > 0.62 || terrain.slope > 0.34;
+      const sandyOrFlatEdge = terrain.beachFactor > 0.25 || terrain.wetSandFactor > 0.42 || terrain.coastSteepness < 0.48;
+      if (!steepBank || sandyOrFlatEdge || terrain.coastFactor < 0.16 || height < SEA_LEVEL + 1.65) continue;
+
+      const neighbors = [
+        { dx: 1, dz: 0, tangentX: 0, tangentY: 1 },
+        { dx: -1, dz: 0, tangentX: 0, tangentY: 1 },
+        { dx: 0, dz: 1, tangentX: 1, tangentY: 0 },
+        { dx: 0, dz: -1, tangentX: 1, tangentY: 0 },
+      ];
+
+      for (const n of neighbors) {
+        const ni = (iz + n.dz) * stride + ix + n.dx;
+        const neighborHeight = posAttribute.getZ(ni);
+        if (neighborHeight > SEA_LEVEL + 0.15) continue;
+
+        const drop = height - Math.max(neighborHeight, SEA_LEVEL - 0.25);
+        if (drop < 1.8) continue;
+
+        const half = step * 0.44;
+        const topY = Math.max(height - 0.06, SEA_LEVEL + 0.75);
+        const bottomY = Math.max(SEA_LEVEL - 0.18, Math.min(height - 0.65, neighborHeight + 0.12));
+        const waterPush = step * 0.18;
+        const ax = x - n.tangentX * half;
+        const ay = y - n.tangentY * half;
+        const bx = x + n.tangentX * half;
+        const by = y + n.tangentY * half;
+        const cx = bx + n.dx * waterPush;
+        const cy = by + n.dz * waterPush;
+        const dx = ax + n.dx * waterPush;
+        const dy = ay + n.dz * waterPush;
+        const shade = 0.78 + Math.min(0.26, drop * 0.035) + terrain.coastSteepness * 0.12;
+
+        appendCliffVertex(positions, colors, ax, ay, topY, shade);
+        appendCliffVertex(positions, colors, dx, dy, bottomY, shade * 0.70);
+        appendCliffVertex(positions, colors, cx, cy, bottomY, shade * 0.66);
+        appendCliffVertex(positions, colors, ax, ay, topY, shade);
+        appendCliffVertex(positions, colors, cx, cy, bottomY, shade * 0.66);
+        appendCliffVertex(positions, colors, bx, by, topY, shade * 0.92);
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
 
 export interface GenerateWorldDataArgs {
   worldSeed: number;
@@ -29,6 +118,7 @@ export interface GenerateWorldDataArgs {
   devSoloPort: string | null;
   currentWorldPortId: string | null;
   waterPaletteId: WaterPaletteId;
+  onTiming?: WorldLoadTimingSink;
 }
 
 export function generateWorldData({
@@ -37,10 +127,15 @@ export function generateWorldData({
   devSoloPort,
   currentWorldPortId,
   waterPaletteId,
+  onTiming,
 }: GenerateWorldDataArgs) {
+  const totalStart = nowMs();
+  let phaseStart = totalStart;
   // Reseed terrain noise before generating
   reseedTerrain(worldSeed);
   refreshTerrainPaletteCache();
+  reportWorldLoadTiming(onTiming, 'terrain-reseed', phaseStart);
+  phaseStart = nowMs();
   // Generate ports — use dev mode config if a solo port is selected
   const mapConfig = devSoloPort
     ? devModeConfig(devSoloPort, worldSeed)
@@ -50,6 +145,8 @@ export function generateWorldData({
         worldSize
       );
   const portsData = generateMap(mapConfig);
+  reportWorldLoadTiming(onTiming, 'map-and-city', phaseStart);
+  phaseStart = nowMs();
 
   // Register all buildings for the land character overlay
   const allBuildings = portsData.flatMap(p => p.buildings);
@@ -108,7 +205,7 @@ export function generateWorldData({
   // the silhouette would read as anachronistic in 1612).
   const bambooPort = new Set([
     'nagasaki', 'macau',                      // East Asia
-    'goa', 'calicut', 'surat', 'masulipatnam', 'diu', // Indian coast
+    'goa', 'calicut', 'surat', 'masulipatnam', 'colombo', 'diu', // Indian coast / Ceylon
     'malacca', 'manila', 'bantam',            // Southeast Asia
     'mombasa', 'zanzibar',                    // East African coast (Bambusa vulgaris)
   ]).has(portId);
@@ -117,14 +214,13 @@ export function generateWorldData({
   // orange) was already centuries-naturalized in Andalusia and Portugal by
   // 1612; sweet oranges (C. sinensis) had reached Iberia from Goa c.1500
   // and were planted in Cuba/Caribbean orchards within decades of contact.
-  const orangePort = new Set(['seville', 'lisbon', 'havana', 'cartagena']).has(portId);
+  const orangePort = new Set(['seville', 'lisbon', 'havana', 'cartagena', 'veracruz']).has(portId);
   // Oak — temperate hardwood ports. Quercus robur (English oak) covered most
   // of southern England in 1612; Q. alba (white oak) and Q. rubra (red oak)
   // dominated Tidewater Virginia woodland that Jamestown was carved out of.
   // Amsterdam fits geographically too, but its riparian/willow signature is
   // already doing the marquee work, so keep oak to England + Virginia for now.
   const oakPort = new Set(['london', 'jamestown']).has(portId);
-  type GrazerKind = 'antelope' | 'deer' | 'goat' | 'camel' | 'sheep' | 'bovine' | 'pig' | 'capybara';
   type GrazerVariant = { color: [number, number, number]; scale: number; herdMin: number; herdMax: number; spawnChance: number; biomes: Set<string>; species: SpeciesInfo; kind: GrazerKind };
   const GRAZER_VARIANTS: GrazerVariant[] = (() => {
     const col = (hex: string): [number, number, number] => {
@@ -159,7 +255,7 @@ export function generateWorldData({
       case 'lisbon': case 'seville':
         return [{ color: col('#d8c8a8'), scale: 0.65, herdMin: 3, herdMax: 6, spawnChance: 0.002, biomes: grass, kind: 'sheep',
           species: sp('Merino sheep', 'Ovis aries', 'Iberian fine-wool breed, tightly controlled by the Mesta.') }];
-      case 'goa': case 'calicut': case 'surat':
+      case 'goa': case 'calicut': case 'surat': case 'colombo':
         return [{ color: col('#4a4a4a'), scale: 1.2, herdMin: 2, herdMax: 3, spawnChance: 0.0015, biomes: wet, kind: 'bovine',
           species: sp('Water buffalo', 'Bubalus bubalis', 'Yoked for paddy plowing; ghee from its milk is a trade staple.') }];
       case 'malacca': case 'bantam':
@@ -168,7 +264,7 @@ export function generateWorldData({
       case 'macau':
         return [{ color: col('#2a2a28'), scale: 0.75, herdMin: 3, herdMax: 5, spawnChance: 0.0025, biomes: wet, kind: 'pig',
           species: sp('Chinese pig', 'Sus scrofa domesticus', 'Black-bristled domestic pig, kept by every Cantonese household; main fresh meat for ships at Macau.') }];
-      case 'salvador': case 'cartagena':
+      case 'salvador': case 'cartagena': case 'veracruz':
         return [{ color: col('#8a6848'), scale: 0.8, herdMin: 3, herdMax: 5, spawnChance: 0.002, biomes: wet, kind: 'capybara',
           species: sp('Capybara', 'Hydrochoerus hydrochaeris', 'Largest rodent in the world; Portuguese Jesuits classed it as fish for Lent.') }];
       case 'elmina': case 'luanda':
@@ -305,19 +401,22 @@ export function generateWorldData({
   const posAttribute = geometry.attributes.position;
 
   const isLand = new Uint8Array(posAttribute.count);
+  const shoreColorPreserve = new Float32Array(posAttribute.count);
   for (let i = 0; i < posAttribute.count; i++) {
     const x = posAttribute.getX(i);
     const y_orig = posAttribute.getY(i); // Plane is created in XY
     const worldZ = -y_orig; // We rotate it -90 degrees on X later
 
     const terrain = getTerrainData(x, worldZ);
-    const { height, biome, color, moisture, reefFactor, paddyFlooded, coastSteepness, shallowFactor, surfFactor, wetSandFactor, beachFactor, slope } = terrain;
+    const { height, biome, color, moisture, coastFactor, reefFactor, paddyFlooded, coastSteepness, shallowFactor, surfFactor, wetSandFactor, beachFactor, slope } = terrain;
     posAttribute.setZ(i, height);
     if (height > SEA_LEVEL - 2) isLand[i] = 1;
 
     colors[i * 3] = color[0];
     colors[i * 3 + 1] = color[1];
     colors[i * 3 + 2] = color[2];
+    const lowShoreShelf = coastFactor * Math.max(0, 1 - Math.min(1, (height - (SEA_LEVEL + 0.35)) / 4.85));
+    shoreColorPreserve[i] = Math.max(wetSandFactor, beachFactor, surfFactor * 0.72, lowShoreShelf * 0.58);
 
     // Flora & Fauna placement
     const rand = Math.random();
@@ -479,7 +578,7 @@ export function generateWorldData({
       if (!treePlaced && datePalmPort && rand > 0.996 && datePalms.length < 200 && moisture > 0.25) {
         datePalms.push({
           position: [x, height, worldZ],
-          scale: 1.08 + Math.random() * 0.864,
+          scale: 1.18 + Math.random() * 0.94,
           lean: (Math.random() - 0.5) * 0.04, // nearly upright
           rotation: Math.random() * Math.PI * 2,
         });
@@ -570,17 +669,17 @@ export function generateWorldData({
     } else if (biome === 'tidal_flat') {
       const flatness = Math.max(0, 1 - slope * 4);
       const reedEdge = Math.max(wetSandFactor, moisture * 0.45);
-      if (rand > 0.91 && reedEdge > 0.22 && reedBeds.length < 500) {
+      if (rand > 0.88 && reedEdge > 0.20 && reedBeds.length < 560) {
         reedBeds.push({
           position: [x, height + 0.03, worldZ],
           scale: 0.45 + Math.random() * 0.55,
           rotation: Math.random() * Math.PI * 2,
         });
       }
-      if (rand < 0.16 * flatness && siltPatches.length < 320) {
+      if (rand < 0.24 * flatness && siltPatches.length < 420) {
         siltPatches.push({
           position: [x, height + 0.035, worldZ],
-          scale: 0.45 + Math.random() * 0.8,
+          scale: 0.62 + Math.random() * 0.95,
           rotation: Math.random() * Math.PI * 2,
         });
       }
@@ -630,7 +729,7 @@ export function generateWorldData({
         if (datePalmPort && datePalms.length < 200) {
           datePalms.push({
             position: [x, height, worldZ],
-            scale: 1.152 + Math.random() * 1.008,
+            scale: 1.24 + Math.random() * 1.08,
             lean: (Math.random() - 0.5) * 0.06,
             rotation: Math.random() * Math.PI * 2,
           });
@@ -682,6 +781,33 @@ export function generateWorldData({
         });
       }
     } // end beach biome
+
+    const broadTidalFlat =
+      biome !== 'tidal_flat'
+      && biome !== 'mangrove'
+      && height > SEA_LEVEL - 0.05
+      && height < SEA_LEVEL + 4.8
+      && slope < 0.24
+      && coastSteepness < 0.52
+      && coastFactor > 0.16
+      && wetSandFactor + surfFactor + beachFactor * 0.45 > 0.14;
+    if (broadTidalFlat) {
+      const flatness = Math.max(0, 1 - slope * 4);
+      if (rand < 0.18 * flatness && siltPatches.length < 520) {
+        siltPatches.push({
+          position: [x, height + 0.04, worldZ],
+          scale: 0.75 + Math.random() * 1.05,
+          rotation: Math.random() * Math.PI * 2,
+        });
+      }
+      if (rand > 0.92 && moisture > 0.44 && reedBeds.length < 620) {
+        reedBeds.push({
+          position: [x, height + 0.03, worldZ],
+          scale: 0.4 + Math.random() * 0.5,
+          rotation: Math.random() * Math.PI * 2,
+        });
+      }
+    }
 
     // ── Reptile spawn (solitary; water-edge gate — stay low by the shore)
     if (REPTILE_VARIANTS.length > 0 && reptiles.length < MAX_REPTILES && height > SEA_LEVEL + 0.05) {
@@ -821,6 +947,8 @@ export function generateWorldData({
       encounters.push(generateEncounter([x, SEA_LEVEL, worldZ]));
     }
   }
+  reportWorldLoadTiming(onTiming, 'terrain-vertices-and-spawns', phaseStart);
+  phaseStart = nowMs();
 
   npcs.push(...generateNpcSpawnPositions(portsData, size / 2));
 
@@ -862,6 +990,8 @@ export function generateWorldData({
       }
     }
   }
+  reportWorldLoadTiming(onTiming, 'animal-postpasses', phaseStart);
+  phaseStart = nowMs();
 
   // Height smoothing pass — average each land vertex with its neighbors for rounder hills
   const stride = segments + 1;
@@ -885,6 +1015,8 @@ export function generateWorldData({
       posAttribute.setZ(idx, origHeights[idx] * 0.6 + (sum / cnt) * 0.4);
     }
   }
+  reportWorldLoadTiming(onTiming, 'height-smoothing', phaseStart);
+  phaseStart = nowMs();
 
   // Smooth biome color transitions — only for land-adjacent vertices
   const smoothed = new Float32Array(colors.length);
@@ -909,15 +1041,29 @@ export function generateWorldData({
           }
         }
       }
-      smoothed[idx * 3] = r / count;
-      smoothed[idx * 3 + 1] = g / count;
-      smoothed[idx * 3 + 2] = b / count;
+      const preserve = shoreColorPreserve[idx];
+      const originalIndex = idx * 3;
+      if (preserve > 0.08) {
+        const originalKeep = Math.min(0.82, preserve * 0.72);
+        smoothed[originalIndex] = r / count * (1 - originalKeep) + colors[originalIndex] * originalKeep;
+        smoothed[originalIndex + 1] = g / count * (1 - originalKeep) + colors[originalIndex + 1] * originalKeep;
+        smoothed[originalIndex + 2] = b / count * (1 - originalKeep) + colors[originalIndex + 2] * originalKeep;
+      } else {
+        smoothed[originalIndex] = r / count;
+        smoothed[originalIndex + 1] = g / count;
+        smoothed[originalIndex + 2] = b / count;
+      }
     }
   }
+  reportWorldLoadTiming(onTiming, 'color-smoothing', phaseStart);
+  phaseStart = nowMs();
 
   geometry.setAttribute('color', new THREE.BufferAttribute(smoothed, 3));
+  const cliffFaceGeometry = buildShoreCliffGeometry(posAttribute as THREE.BufferAttribute, stride, size / segments);
   const landGeometry = buildTerrainSurfaceGeometry(geometry, true, COASTLINE_CLIP_LEVEL);
   geometry.dispose();
+  reportWorldLoadTiming(onTiming, 'terrain-geometry-build', phaseStart);
+  phaseStart = nowMs();
 
   // Background ring: distant terrain beyond the playable mesh. Sized so its
   // outer edge sits at or past the day-fog far plane (~1000 units), so the
@@ -930,6 +1076,8 @@ export function generateWorldData({
   const ringRawGeometry = buildBackgroundRingGeometry(ringOuterHalf, ringInnerHalf, ringStep);
   const backgroundRingGeometry = buildTerrainSurfaceGeometry(ringRawGeometry, true, COASTLINE_CLIP_LEVEL);
   ringRawGeometry.dispose();
+  reportWorldLoadTiming(onTiming, 'background-ring', phaseStart);
+  phaseStart = nowMs();
   resetVegetationDamage();
   const palmCenter = new THREE.Vector3();
 
@@ -1039,9 +1187,12 @@ export function generateWorldData({
       radius: Math.max(0.8, tree.scale * 1.1),
     })),
   ]);
+  reportWorldLoadTiming(onTiming, 'impact-targets', phaseStart);
+  reportWorldLoadTiming(onTiming, 'total', totalStart);
 
   return {
     landTerrainGeometry: landGeometry,
+    cliffFaceGeometry,
     backgroundRingTerrainGeometry: backgroundRingGeometry,
     generatedPorts: portsData,
     generatedNpcs: npcs,
@@ -1084,4 +1235,153 @@ export function generateWorldData({
     wadingSpecies: WADING_SPECIES,
     encounterData: encounters,
   };
+}
+
+export type GeneratedWorldData = ReturnType<typeof generateWorldData>;
+
+export function registerGeneratedWorldRuntime(args: GenerateWorldDataArgs, data: GeneratedWorldData) {
+  reseedTerrain(args.worldSeed);
+  refreshTerrainPaletteCache();
+  const size = args.devSoloPort ? 1000 : 900;
+  setMeshHalf(size / 2);
+
+  const portId = resolveCampaignPortId(args);
+  const portDef = CORE_PORTS.find((p) => p.id === portId);
+  setPlacedArchetypes(portDef && portDef.geography !== 'archipelago'
+    ? [{ def: portDef, cx: 0, cz: 0 }]
+    : []);
+
+  setActiveCanals(data.generatedPorts.flatMap((port) => {
+    const def = CORE_PORTS.find((p) => p.id === port.id);
+    return def?.canalLayout
+      ? [{ layout: generateCanalLayout(port.position[0], port.position[2], def.canalLayout), cx: port.position[0], cz: port.position[2] }]
+      : [];
+  }));
+
+  setNaturalIslands(data.generatedPorts.flatMap((port) =>
+    getPOIsForPort(port)
+      .filter((poi) => poi.kind === 'natural'
+        && !poi.generated
+        && (poi.location.kind === 'hinterland' || poi.location.kind === 'coords'))
+      .map((poi) => {
+        const [lx, lz] = (poi.location as { position: [number, number] }).position;
+        return {
+          cx: port.position[0] + lx,
+          cz: port.position[2] + lz,
+          innerRadius: 30,
+          outerRadius: 60,
+          peakHeight: 2.5,
+        };
+      })
+  ));
+
+  setLandCharacterBuildings(data.generatedPorts.flatMap((p) => p.buildings));
+
+  const palmCenter = new THREE.Vector3();
+  setTreeImpactTargets([
+    ...data.treeData.map((tree, index) => ({
+      kind: 'tree' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.2,
+      z: tree.position[2],
+      radius: Math.max(0.85, tree.scale * 1.35),
+    })),
+    ...data.broadleafData.map((tree, index) => ({
+      kind: 'broadleaf' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.3,
+      z: tree.position[2],
+      radius: Math.max(1.0, tree.scale * 1.45),
+    })),
+    ...data.palmData.map((tree, index) => ({
+      kind: 'palm' as const,
+      index,
+      x: palmCanopyCenter(tree, palmCenter).x,
+      y: palmCenter.y,
+      z: palmCenter.z,
+      radius: Math.max(1.05, tree.scale * 1.65),
+    })),
+    ...data.baobabData.map((tree, index) => ({
+      kind: 'baobab' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.4,
+      z: tree.position[2],
+      radius: Math.max(1.1, tree.scale * 1.6),
+    })),
+    ...data.acaciaData.map((tree, index) => ({
+      kind: 'acacia' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.5,
+      z: tree.position[2],
+      radius: Math.max(1.0, tree.scale * 1.65),
+    })),
+    ...data.mangroveData.map((tree, index) => ({
+      kind: 'mangrove' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 1.1,
+      z: tree.position[2],
+      radius: Math.max(0.8, tree.scale * 1.1),
+    })),
+    ...data.cypressData.map((tree, index) => ({
+      kind: 'cypress' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.6,
+      z: tree.position[2],
+      radius: Math.max(0.8, tree.scale * 1.1),
+    })),
+    ...data.datePalmData.map((tree, index) => ({
+      kind: 'datePalm' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 4.5,
+      z: tree.position[2],
+      radius: Math.max(1.0, tree.scale * 1.4),
+    })),
+    ...data.bambooData.map((tree, index) => ({
+      kind: 'bamboo' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.0,
+      z: tree.position[2],
+      radius: Math.max(0.7, tree.scale * 1.0),
+    })),
+    ...data.willowData.map((tree, index) => ({
+      kind: 'willow' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.0,
+      z: tree.position[2],
+      radius: Math.max(1.0, tree.scale * 1.5),
+    })),
+    ...data.cherryData.map((tree, index) => ({
+      kind: 'cherry' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 2.3,
+      z: tree.position[2],
+      radius: Math.max(0.95, tree.scale * 1.4),
+    })),
+    ...data.orangeData.map((tree, index) => ({
+      kind: 'orange' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 1.7,
+      z: tree.position[2],
+      radius: Math.max(0.85, tree.scale * 1.2),
+    })),
+    ...data.oakData.map((tree, index) => ({
+      kind: 'oak' as const,
+      index,
+      x: tree.position[0],
+      y: tree.position[1] + tree.scale * 3.0,
+      z: tree.position[2],
+      radius: Math.max(1.2, tree.scale * 1.7),
+    })),
+  ]);
 }

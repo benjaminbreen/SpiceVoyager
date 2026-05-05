@@ -141,7 +141,14 @@ export const FACTIONS: Record<Nationality, FactionInfo> = {
     colors: ['#006847', '#FCD116', '#000000'],   // green, gold, black
     flagPattern: 'bicolor-h',
   },
-
+  Khoikhoi: {
+    id: 'Khoikhoi',
+    displayName: 'Khoikhoi Trading Intermediaries',
+    shortName: 'Khoikhoi',
+    description: 'Pastoral communities around Table Bay; no European fort or governor exists at the Cape in 1612.',
+    colors: ['#7A5A36', '#F0D28A', '#2F5D45'],
+    flagPattern: 'plain',
+  },
   // ── Southeast Asia ───────────────────────────────────
   Malay: {
     id: 'Malay',

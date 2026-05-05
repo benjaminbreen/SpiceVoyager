@@ -14,6 +14,7 @@ export const FACTION_NATIVE_LANGUAGE: Partial<Record<Nationality, Language>> = {
   Ottoman: 'Turkish',
   Omani: 'Arabic',
   Swahili: 'Swahili',
+  Khoikhoi: 'Khoekhoe',
   Malay: 'Malay',
   Acehnese: 'Malay',
   Javanese: 'Malay',

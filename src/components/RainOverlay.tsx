@@ -5,45 +5,33 @@ import { SEA_LEVEL } from '../constants/world';
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { windUniforms } from '../utils/windSway';
 
-const STREAK_COUNT = 700;
+const STREAK_COUNT = 380;
 const STREAK_RADIUS = 55;
 const STREAK_HEIGHT = 50;
-const STREAK_SPEED = 34;
-const STREAK_SLANT = 0.06;
-const STREAK_WIDTH = 0.09;
-const STREAK_LENGTH = 1.8;
+const STREAK_SPEED = 22;
+const STREAK_SLANT = 0.05;
+const STREAK_LENGTH = 3.8;
 
-const RIPPLE_COUNT = 160;
-const RIPPLE_RADIUS = 30;
-const RIPPLE_LIFETIME = 1.2;
-const RIPPLE_SIZE = 0.9;
+const RIPPLE_COUNT = 220;
+const RIPPLE_RADIUS = 34;
+const RIPPLE_LIFETIME = 1.35;
+const RIPPLE_SIZE = 1.25;
 const RIPPLE_HEIGHT_OFFSET = 0.25;
 
-function buildStreakGeometry(): THREE.InstancedBufferGeometry {
-  const base = new THREE.PlaneGeometry(STREAK_WIDTH, STREAK_LENGTH);
-  const geom = new THREE.InstancedBufferGeometry();
-  geom.index = base.index;
-  for (const key of Object.keys(base.attributes)) {
-    geom.setAttribute(key, base.attributes[key as keyof typeof base.attributes]);
-  }
+function buildStreakGeometry(): THREE.BufferGeometry {
+  const geom = new THREE.BufferGeometry();
+  const positions = new Float32Array(STREAK_COUNT * 2 * 3);
   const offsets = new Float32Array(STREAK_COUNT * 3);
   const seeds = new Float32Array(STREAK_COUNT);
-  // Per-instance scale jitter — breaks the "uniform curtain" look. Range chosen
-  // so most streaks read normal-length while a minority are short fast drops or
-  // longer trails, mimicking real rain depth-of-field.
-  const scales = new Float32Array(STREAK_COUNT);
   for (let i = 0; i < STREAK_COUNT; i++) {
     offsets[i * 3 + 0] = (Math.random() * 2 - 1) * STREAK_RADIUS;
     offsets[i * 3 + 1] = Math.random() * STREAK_HEIGHT;
     offsets[i * 3 + 2] = (Math.random() * 2 - 1) * STREAK_RADIUS;
     seeds[i] = Math.random();
-    scales[i] = 0.7 + Math.random() * 0.7; // 0.7..1.4
   }
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offsets, 3));
   geom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
-  geom.setAttribute('aScale', new THREE.InstancedBufferAttribute(scales, 1));
-  geom.instanceCount = STREAK_COUNT;
-  base.dispose();
   return geom;
 }
 
@@ -138,8 +126,8 @@ const STREAK_FRAGMENT = /* glsl */ `
     // Brighter at the leading (bottom) end, fades along the length so the
     // trail dissolves into the air rather than ending in a solid bar.
     float head = smoothstep(0.0, 0.55, vUv.y) * (0.55 + 0.45 * vUv.y);
-    float a = vAlpha * edge * head * 0.62 * uIntensity;
-    gl_FragColor = vec4(0.82, 0.90, 1.0, a);
+    float a = vAlpha * edge * head * 3.5 * uIntensity;
+    gl_FragColor = vec4(0.98, 1.0, 1.0, a);
   }
 `;
 
@@ -170,10 +158,10 @@ const RIPPLE_FRAGMENT = /* glsl */ `
     vec2 c = vUv - vec2(0.5);
     float d = length(c);
     float r = vPhase * 0.42;
-    float ring = smoothstep(r - 0.035, r - 0.010, d) * (1.0 - smoothstep(r - 0.010, r + 0.025, d));
-    float impact = smoothstep(0.04, 0.0, d) * smoothstep(0.12, 0.0, vPhase);
+    float ring = smoothstep(r - 0.045, r - 0.012, d) * (1.0 - smoothstep(r - 0.012, r + 0.035, d));
+    float impact = smoothstep(0.055, 0.0, d) * smoothstep(0.14, 0.0, vPhase);
     float fade = 1.0 - vPhase;
-    float a = (ring * fade + impact * 0.5) * 0.32 * uIntensity;
+    float a = (ring * fade + impact * 0.6) * 0.48 * uIntensity;
     gl_FragColor = vec4(0.92, 0.96, 1.0, a);
   }
 `;
@@ -184,34 +172,20 @@ interface RainOverlayProps {
 }
 
 export function RainOverlay({ intensity = 1 }: RainOverlayProps = {}) {
-  const streakRef = useRef<THREE.Mesh>(null);
+  const streakRef = useRef<THREE.LineSegments>(null);
   const rippleRef = useRef<THREE.Mesh>(null);
   const { camera } = useThree();
 
   const streakGeom = useMemo(() => buildStreakGeometry(), []);
   const rippleGeom = useMemo(() => buildRippleGeometry(), []);
 
-  const streakMat = useMemo(() => new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uHeight: { value: STREAK_HEIGHT },
-      uSpeed: { value: STREAK_SPEED },
-      uSlant: { value: STREAK_SLANT },
-      // Shared with vegetation/sway so streaks slant in the same direction the
-      // trees bend. Magnitude scales with windSpeed via a separate uniform path
-      // (kept here as a Vector2 ref to windUniforms.uWindDir).
-      uWindDir: windUniforms.uWindDir,
-      uCameraRight: { value: new THREE.Vector3(1, 0, 0) },
-      uCameraUp: { value: new THREE.Vector3(0, 1, 0) },
-      uIntensity: { value: intensity },
-    },
-    vertexShader: STREAK_VERTEX,
-    fragmentShader: STREAK_FRAGMENT,
+  const streakMat = useMemo(() => new THREE.LineBasicMaterial({
+    color: new THREE.Color(0.74, 0.88, 0.96),
     transparent: true,
+    opacity: 0.16,
     depthWrite: false,
     depthTest: false,
-    side: THREE.DoubleSide,
-  }), [intensity]);
+  }), []);
 
   const rippleMat = useMemo(() => new THREE.ShaderMaterial({
     uniforms: {
@@ -237,18 +211,35 @@ export function RainOverlay({ intensity = 1 }: RainOverlayProps = {}) {
 
   useFrame((_state, delta) => {
     const dt = Math.min(delta, 0.1);
-    streakMat.uniforms.uTime.value += dt;
     rippleMat.uniforms.uTime.value += dt;
-    // Live intensity so the parent can fade rain in/out without remounting.
-    streakMat.uniforms.uIntensity.value = intensity;
+    streakMat.opacity = Math.min(0.2, Math.max(0.04, intensity * 0.16));
     rippleMat.uniforms.uIntensity.value = intensity;
-    // Slant grows with wind speed — calm rain falls nearly vertical, gusts lash.
-    streakMat.uniforms.uSlant.value = STREAK_SLANT * (0.4 + windUniforms.uWindSpeed.value * 1.6);
-    const cameraMatrix = camera.matrixWorld.elements;
-    streakMat.uniforms.uCameraRight.value.set(cameraMatrix[0], cameraMatrix[1], cameraMatrix[2]);
-    streakMat.uniforms.uCameraUp.value.set(cameraMatrix[4], cameraMatrix[5], cameraMatrix[6]);
     if (streakRef.current) {
       streakRef.current.position.copy(camera.position);
+      streakRef.current.quaternion.copy(camera.quaternion);
+      const position = streakGeom.getAttribute('position') as THREE.BufferAttribute;
+      const offsets = streakGeom.getAttribute('aOffset') as THREE.BufferAttribute;
+      const seeds = streakGeom.getAttribute('aSeed') as THREE.BufferAttribute;
+      const arr = position.array as Float32Array;
+      const slant = STREAK_SLANT * (0.5 + windUniforms.uWindSpeed.value);
+      const elapsed = _state.clock.elapsedTime;
+      for (let i = 0; i < STREAK_COUNT; i++) {
+        const ox = offsets.getX(i);
+        const oy = offsets.getY(i);
+        const oz = offsets.getZ(i);
+        const seed = seeds.getX(i);
+        const y = ((oy - elapsed * STREAK_SPEED - seed * STREAK_HEIGHT) % STREAK_HEIGHT + STREAK_HEIGHT) % STREAK_HEIGHT - STREAK_HEIGHT * 0.5;
+        const len = STREAK_LENGTH * (0.8 + seed * 0.8);
+        const head = i * 6;
+        const leanX = len * slant;
+        arr[head + 0] = ox + leanX;
+        arr[head + 1] = y + len * 0.45;
+        arr[head + 2] = -Math.abs(oz) - 8;
+        arr[head + 3] = ox - leanX;
+        arr[head + 4] = y - len * 0.55;
+        arr[head + 5] = -Math.abs(oz) - 8;
+      }
+      position.needsUpdate = true;
     }
     if (rippleRef.current) {
       const player = getActivePlayerPos();
@@ -266,10 +257,10 @@ export function RainOverlay({ intensity = 1 }: RainOverlayProps = {}) {
 
   return (
     <>
-      <mesh ref={streakRef} frustumCulled={false} renderOrder={9}>
+      <lineSegments ref={streakRef} frustumCulled={false} renderOrder={9}>
         <primitive object={streakGeom} attach="geometry" />
         <primitive object={streakMat} attach="material" />
-      </mesh>
+      </lineSegments>
       <mesh ref={rippleRef} frustumCulled={false} renderOrder={8}>
         <primitive object={rippleGeom} attach="geometry" />
         <primitive object={rippleMat} attach="material" />

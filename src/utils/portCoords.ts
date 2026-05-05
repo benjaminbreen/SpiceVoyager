@@ -22,6 +22,7 @@ export const PORT_LATITUDES: Record<string, number> = {
   goa: 15.5,
   calicut: 11.3,
   masulipatnam: 16.2,
+  colombo: 6.9,
 
   // Indian Ocean — East Africa
   mombasa: -4.0,
@@ -41,6 +42,7 @@ export const PORT_LATITUDES: Record<string, number> = {
   // Atlantic — Americas
   havana: 23.1,
   cartagena: 10.4,
+  veracruz: 19.2,
   salvador: -13.0,
   jamestown: 37.2,
 
@@ -78,7 +80,7 @@ export const PORT_MUSIC_ZONES: Record<string, MusicZone> = {
   malacca: 'southeast-asia',
   // South Asia
   surat: 'south-asia', diu: 'south-asia', goa: 'south-asia',
-  calicut: 'south-asia', masulipatnam: 'south-asia',
+  calicut: 'south-asia', masulipatnam: 'south-asia', colombo: 'south-asia',
   // Arabia / Red Sea / Persian Gulf
   hormuz: 'arabia', muscat: 'arabia', aden: 'arabia',
   mocha: 'arabia', socotra: 'arabia',
@@ -91,7 +93,7 @@ export const PORT_MUSIC_ZONES: Record<string, MusicZone> = {
   elmina: 'west-africa', luanda: 'west-africa',
   // Americas
   havana: 'americas', cartagena: 'americas',
-  salvador: 'americas', jamestown: 'americas',
+  salvador: 'americas', jamestown: 'americas', veracruz: 'americas',
   // Cape
   cape: 'cape',
 };
@@ -111,7 +113,7 @@ export function nationalityToCulture(nationality: Nationality): Culture {
     case 'French': case 'Danish': case 'Venetian':
       return 'European';
     case 'Mughal': case 'Gujarati': case 'Persian': case 'Ottoman':
-    case 'Omani': case 'Swahili': case 'Malay': case 'Acehnese':
+    case 'Omani': case 'Swahili': case 'Khoikhoi': case 'Malay': case 'Acehnese':
     case 'Javanese': case 'Moluccan': case 'Siamese': case 'Japanese':
     case 'Chinese':
       return 'Indian Ocean';

@@ -1,4 +1,4 @@
-import { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold, BuildingInstitution } from '../store/gameStore';
+import type { BuildingType, Culture, Nationality, CulturalRegion, BuildingHousehold, BuildingInstitution } from '../store/gameStore';
 import { authorityForPort } from './portAuthorities';
 
 type EuropeanNationality = 'English' | 'Dutch' | 'Spanish' | 'Portuguese';

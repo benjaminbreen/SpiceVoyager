@@ -255,7 +255,7 @@ export function EventModalMobile({ onDismiss, worldReady }: { onDismiss: () => v
     >
       {/* Port painting background */}
       <motion.img
-        src={`/ports/${startPort?.id ?? 'bantam'}.png`}
+        src={`/ports/${startPort?.id ?? 'bantam'}.webp`}
         alt=""
         initial={{ scale: 1.1 }}
         animate={{ scale: 1.045 }}

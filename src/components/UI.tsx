@@ -8,13 +8,16 @@ import type { NPCShipIdentity } from '../utils/npcShipGenerator';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
   Coins, Anchor, Wind, Shield, Map as MapIcon, Users, Fish,
-  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond, Crosshair, Swords, X, AlertTriangle
+  Settings, Eye, Scroll, HelpCircle, BookOpen, Pause, Play, Compass, GraduationCap, ArrowRight, MoreHorizontal, Diamond, Crosshair, Swords, X, AlertTriangle,
+  Sun, Cloud, CloudRain
 } from 'lucide-react';
 import { useIsMobile } from '../utils/useIsMobile';
 import { audioManager } from '../audio/AudioManager';
 import { sfxClick, sfxHover, sfxOpen, sfxClose, sfxSail, sfxPortArrival, sfxShipHail, sfxBattleStations } from '../audio/SoundEffects';
 import { Minimap } from './Minimap';
 import { startTerrainPreRender } from '../utils/worldMapTerrainCache';
+import { preloadGeneratedWorldData } from '../utils/worldGenerationClient';
+import type { GenerateWorldDataArgs } from '../utils/worldGeneration';
 import { startIntroCinematic } from '../utils/cinematicIntroState';
 import { isArrivalCinematicActive } from '../utils/arrivalCinematicState';
 import { DepartureCurtain } from './ArrivalCurtain';
@@ -25,8 +28,6 @@ import { VitalityHeart } from './VitalityHeart';
 import { DevRestPreview } from './DevRestPreview';
 import { PORT_LATITUDES, getMusicZone } from '../utils/portCoords';
 import { HailPanel, type HailContext } from './HailPanel';
-import { Opening } from './Opening';
-import { ClaudeSplashGlobe } from './ClaudeSplashGlobe';
 import { AudioMuteButton } from './AudioMuteButton';
 import { EventModalMobile } from './EventModalMobile';
 import { ASCIIToast } from './ASCIIToast';
@@ -34,6 +35,13 @@ import { QuestsPanel } from './QuestsPanel';
 import { QuestToast } from './QuestToast';
 import { ValueFlash } from './ValueFlash';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
+import {
+  PORT_LABELS,
+  STARTUP_FACTIONS,
+  getStartupNationality,
+  portsForFaction,
+  type FactionKey,
+} from '../utils/startupOptions';
 import { activeBowWeapon, bowWeaponReload, broadsideReload, getCurrentElevationCharge, hostileFortThreat, landWeaponReload } from '../utils/combatState';
 import {
   getLiveShipTransform,
@@ -60,6 +68,8 @@ const JournalPanel = lazy(() => import('./Journal').then((module) => ({ default:
 const SettingsModalV2 = lazy(() => import('./SettingsModalV2').then((module) => ({ default: module.SettingsModalV2 })));
 const LocalMap = lazy(() => import('./LocalMap').then((module) => ({ default: module.LocalMap })));
 const WorldMapModal = lazy(() => import('./WorldMapModal').then((module) => ({ default: module.WorldMapModal })));
+const Opening = lazy(() => import('./Opening').then((module) => ({ default: module.Opening })));
+const ClaudeSplashGlobe = lazy(() => import('./ClaudeSplashGlobe').then((module) => ({ default: module.ClaudeSplashGlobe })));
 
 const PORT_RADIUS_SQ = 20 * 20;
 const WALKING_PORT_SEARCH_RADIUS_SQ = 120 * 120;
@@ -83,6 +93,10 @@ const LOADING_MESSAGES = [
   'Listening for monsoon shifts along the coast...',
   'Loading manifests, ledgers, and cannon stores...',
 ];
+
+type UIProps = {
+  startupSceneReady: boolean;
+};
 
 // Splash variant: Claude is the default. Pass ?splash=legacy in the URL to
 // fall back to the original Opening overlay for comparison/testing.
@@ -1188,7 +1202,7 @@ function QuestsBarButton({ active, onClick }: { active: boolean; onClick: () => 
   );
 }
 
-export function UI() {
+export function UI({ startupSceneReady }: UIProps) {
   const testMode = getTestModeConfig();
   const gold = useGameStore((state) => state.gold);
   const cargo = useGameStore((state) => state.cargo);
@@ -1220,10 +1234,15 @@ export function UI() {
   const poiBeaconsEnabled = useGameStore((state) => state.renderDebug.poiBeacons);
   const updateRenderDebug = useGameStore((state) => state.updateRenderDebug);
   const waterPaletteId = useGameStore((state) => resolveWaterPaletteId(state));
+  const waterPaletteSetting = useGameStore((state) => state.waterPaletteSetting);
+  const worldSeed = useGameStore((state) => state.worldSeed);
+  const worldSize = useGameStore((state) => state.worldSize);
+  const devSoloPort = useGameStore((state) => state.devSoloPort);
   const captainExpression = useGameStore((state) => state.captainExpression);
   const reputation = useGameStore((state) => state.reputation);
   const currentWorldPortId = useGameStore((state) => state.currentWorldPortId);
   const voyageBegun = useGameStore((state) => state.voyageBegun);
+  const startNewGame = useGameStore((state) => state.startNewGame);
   const combatHudTone = combatMode
     ? playerMode === 'ship'
       ? {
@@ -1336,9 +1355,28 @@ export function UI() {
   //   'out'  — black → cinematic (modal unmounted, camera is dollying)
   const [introFadePhase, setIntroFadePhase] = useState<'idle' | 'in' | 'out'>('idle');
   const setVoyageBegun = useGameStore(s => s.setVoyageBegun);
+  const [selectedFactionKey, setSelectedFactionKey] = useState<FactionKey>(() => {
+    const idx = Math.floor(Math.random() * STARTUP_FACTIONS.length);
+    return STARTUP_FACTIONS[idx]?.key ?? 'portuguese';
+  });
+  const selectedPortOptions = useMemo(() => portsForFaction(selectedFactionKey), [selectedFactionKey]);
+  const [selectedStartPortId, setSelectedStartPortId] = useState(() => portsForFaction('portuguese')[0] ?? 'goa');
+  useEffect(() => {
+    if (selectedPortOptions.includes(selectedStartPortId)) return;
+    setSelectedStartPortId(selectedPortOptions[0] ?? 'goa');
+  }, [selectedPortOptions, selectedStartPortId]);
+  const selectedStartPortLabel = PORT_LABELS[selectedStartPortId] ?? selectedStartPortId;
+  const selectedWaterPaletteId = useMemo(() => resolveWaterPaletteId({
+    worldSeed,
+    devSoloPort,
+    currentWorldPortId: selectedStartPortId,
+    waterPaletteSetting,
+  }), [devSoloPort, selectedStartPortId, waterPaletteSetting, worldSeed]);
   const [splashComplete, setSplashComplete] = useState(false);
   const [splashMinElapsed, setSplashMinElapsed] = useState(false);
-  const worldReady = portCount > 0;
+  const [startupWorldReady, setStartupWorldReady] = useState(false);
+  const [startupWorldError, setStartupWorldError] = useState(false);
+  const worldReady = startupSceneReady;
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1352,6 +1390,12 @@ export function UI() {
   const hullDamagePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduceMotion = useReducedMotion();
   const startupOverlayActive = showInstructions || showCommission || showVoyageCurtain;
+
+  useEffect(() => {
+    if (startupOverlayActive || introFadePhase !== 'idle') {
+      setPaused(true);
+    }
+  }, [introFadePhase, setPaused, startupOverlayActive]);
 
   const dismissNudge = useCallback((id: NudgeId) => {
     setSeenNudges((prev) => {
@@ -1504,14 +1548,30 @@ export function UI() {
   }, []);
 
   const captain = crew.find(c => c.role === 'Captain');
+  const cycleStartupFaction = useCallback(() => {
+    setSelectedFactionKey((current) => {
+      const idx = STARTUP_FACTIONS.findIndex((entry) => entry.key === current);
+      return STARTUP_FACTIONS[(idx + 1) % STARTUP_FACTIONS.length]?.key ?? 'portuguese';
+    });
+  }, []);
+  const cycleStartupPort = useCallback(() => {
+    setSelectedStartPortId((current) => {
+      const idx = selectedPortOptions.indexOf(current);
+      return selectedPortOptions[(idx + 1) % selectedPortOptions.length] ?? current;
+    });
+  }, [selectedPortOptions]);
   const closeOpeningOverlay = useCallback(() => {
     if (splashComplete) {
+      const selectedNationality = getStartupNationality(selectedFactionKey, selectedStartPortId);
+      if (!selectedNationality) return;
       sfxSail();
+      startNewGame({ faction: selectedNationality, portId: selectedStartPortId });
+      setPaused(true);
       setShowInstructions(false);
       setVoyageBegun();       // triggers GameScene mount in Game.tsx
       setShowVoyageCurtain(true);
     }
-  }, [splashComplete, setVoyageBegun]);
+  }, [selectedFactionKey, selectedStartPortId, setPaused, splashComplete, setVoyageBegun, startNewGame]);
 
   const closeCommission = useCallback(() => {
     // Begin fade to black with the commission still visible underneath.
@@ -1532,15 +1592,18 @@ export function UI() {
         // (the cinematic ends at whatever cameraZoom is now), start the
         // cinematic, then begin fading out.
         setShowCommission(false);
-        useGameStore.getState().setCameraZoom(42);
+        useGameStore.getState().setCameraZoom(62);
         audioManager.transitionToOverworld();
         startIntroCinematic();
         return 'out';
       }
-      if (phase === 'out') return 'idle';
+      if (phase === 'out') {
+        setPaused(false);
+        return 'idle';
+      }
       return phase;
     });
-  }, []);
+  }, [setPaused]);
 
   // Keep AudioManager's music zone synced to the player's current world
   // port so zone-restricted tracks (e.g. Monsoon Ledger in East Asian
@@ -1555,44 +1618,74 @@ export function UI() {
     };
   }, []);
 
-  // Splash loader — wait for the world to be ready, but enforce a minimum
-  // curtain so the opening screen never flashes away instantly.
+  // Splash loader — prepare the exact selected start port, then expose the
+  // launch CTA after a short minimum reveal.
   useEffect(() => {
     if (!showInstructions) return;
 
     const SPLASH_MIN_DURATION_MS = 1600;
     setSplashComplete(false);
     setSplashMinElapsed(false);
-    setLoadingMessage(LOADING_MESSAGES[0]);
+    setLoadingMessage(`Charting ${selectedStartPortLabel}...`);
     setLoadingProgress(10);
     const minTimer = setTimeout(() => setSplashMinElapsed(true), SPLASH_MIN_DURATION_MS);
+    void import('./GameScene');
 
     return () => {
       clearTimeout(minTimer);
     };
-  }, [showInstructions]);
+  }, [selectedStartPortLabel, showInstructions]);
 
   useEffect(() => {
     if (!showInstructions || splashComplete) return;
+    if (startupWorldError) {
+      setLoadingProgress(35);
+      setLoadingMessage(`Rechecking the charts for ${selectedStartPortLabel}...`);
+      return;
+    }
+    if (startupWorldReady && splashMinElapsed) {
+      setLoadingProgress(100);
+      setLoadingMessage('Voyage prepared.');
+      return;
+    }
+    if (startupWorldReady) {
+      setLoadingProgress(82);
+      setLoadingMessage('Voyage prepared.');
+      return;
+    }
+    setLoadingProgress(splashMinElapsed ? 68 : 38);
+    setLoadingMessage(`Charting ${selectedStartPortLabel}...`);
+  }, [selectedStartPortLabel, showInstructions, splashComplete, splashMinElapsed, startupWorldError, startupWorldReady]);
 
-    const MESSAGE_INTERVAL_MS = 380;
-    let i = 0;
-    const msgTimer = setInterval(() => {
-      i = (i + 1) % LOADING_MESSAGES.length;
-      setLoadingMessage(LOADING_MESSAGES[i]);
-    }, MESSAGE_INTERVAL_MS);
-
-    return () => clearInterval(msgTimer);
-  }, [showInstructions, splashComplete]);
-
-  // Splash is ready once the minimum timer elapses — no longer waiting for
-  // worldReady, since the canvas now mounts only after Set Sail is clicked.
   useEffect(() => {
-    if (!showInstructions || splashComplete || !splashMinElapsed) return;
-    setLoadingProgress(100);
-    setLoadingMessage('Harbors charted. Holds secured. The monsoon favors departure.');
+    if (!showInstructions || splashComplete || !splashMinElapsed || !startupWorldReady) return;
     setSplashComplete(true);
-  }, [showInstructions, splashComplete, splashMinElapsed]);
+  }, [showInstructions, splashComplete, splashMinElapsed, startupWorldReady]);
+
+  useEffect(() => {
+    if (!showInstructions) return;
+    const args: GenerateWorldDataArgs = {
+      worldSeed,
+      worldSize,
+      devSoloPort,
+      currentWorldPortId: selectedStartPortId,
+      waterPaletteId: selectedWaterPaletteId,
+    };
+    let cancelled = false;
+    setStartupWorldReady(false);
+    setStartupWorldError(false);
+    void preloadGeneratedWorldData(args)
+      .then(() => {
+        if (!cancelled) setStartupWorldReady(true);
+      })
+      .catch((err) => {
+        console.error('[startup] failed to preload selected world', err);
+        if (!cancelled) setStartupWorldError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [devSoloPort, selectedStartPortId, selectedWaterPaletteId, showInstructions, worldSeed, worldSize]);
 
   useEffect(() => {
     if (!showInstructions || !splashComplete) return;
@@ -1611,9 +1704,10 @@ export function UI() {
   // Dismiss the voyage curtain once the world finishes generating behind it.
   useEffect(() => {
     if (!showVoyageCurtain || !worldReady) return;
+    setPaused(true);
     setShowVoyageCurtain(false);
     setShowCommission(true);
-  }, [showVoyageCurtain, worldReady]);
+  }, [setPaused, showVoyageCurtain, worldReady]);
 
   // Check for nearby ports — auto-open on approach + keep open while in label range
   const PORT_LABEL_RADIUS_SQ = 80 * 80; // matches LABEL_SHOW in PortIndicators
@@ -1766,7 +1860,7 @@ export function UI() {
 
   useEffect(() => {
     const handleCollisionHail = (e: Event) => {
-      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
+      if (startupOverlayActive || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
       const npc = (e as CustomEvent).detail?.npc as NPCShipIdentity | undefined;
       if (!npc) return;
       const state = useGameStore.getState();
@@ -1779,11 +1873,11 @@ export function UI() {
     };
     window.addEventListener('npc-collision-hail', handleCollisionHail);
     return () => window.removeEventListener('npc-collision-hail', handleCollisionHail);
-  }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
+  }, [activePort, hailNpc, showDashboard, showLocalMap, showSettings, showWorldMap, startupOverlayActive]);
 
   useEffect(() => {
     const handleWarningHail = (e: Event) => {
-      if (showInstructions || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
+      if (startupOverlayActive || showSettings || showDashboard || showLocalMap || showWorldMap || activePort || hailNpc) return;
       const npc = (e as CustomEvent).detail?.npc as NPCShipIdentity | undefined;
       if (!npc) return;
       const state = useGameStore.getState();
@@ -1796,7 +1890,7 @@ export function UI() {
     };
     window.addEventListener('npc-warning-hail', handleWarningHail);
     return () => window.removeEventListener('npc-warning-hail', handleWarningHail);
-  }, [activePort, hailNpc, showDashboard, showInstructions, showLocalMap, showSettings, showWorldMap]);
+  }, [activePort, hailNpc, showDashboard, showLocalMap, showSettings, showWorldMap, startupOverlayActive]);
 
   useEffect(() => {
     if (activePort) {
@@ -1909,7 +2003,7 @@ export function UI() {
   useEffect(() => {
     const handleHotkey = (e: KeyboardEvent) => {
       // Don't fire hotkeys when a modal is open or typing in an input
-      if (showInstructions || showSettings || activePort || hailNpc) return;
+      if (startupOverlayActive || showSettings || activePort || hailNpc) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch (e.key) {
@@ -1944,7 +2038,7 @@ export function UI() {
     };
     window.addEventListener('keydown', handleHotkey);
     return () => window.removeEventListener('keydown', handleHotkey);
-  }, [showInstructions, showSettings, activePort, hailNpc, paused, setPaused, cycleViewMode, toggleWorldMap]);
+  }, [startupOverlayActive, showSettings, activePort, hailNpc, paused, setPaused, cycleViewMode, toggleWorldMap]);
 
   const activeLeadCount = leads.filter((lead) => lead.status === 'active').length;
   const knownCommodityCount = Object.values(knowledgeState).filter((level) => level > 0).length;
@@ -2172,7 +2266,7 @@ export function UI() {
                   style={{
                     width: isMobile ? 52 : 72,
                     height: isMobile ? 52 : 72,
-                    border: `3px solid ${ringColor}`,
+                    border: `2px solid ${ringColor}`,
                     boxShadow: `inset 0 2px 4px rgba(0,0,0,0.5), 0 0 ${idleGlowSize} ${glowColor}`,
                   }}
                   title={captain ? `${captain.name} — Ship Dashboard` : 'Ship Dashboard'}
@@ -2180,7 +2274,7 @@ export function UI() {
                   {captain ? (
                     <CrewPortraitSquare
                       member={captain}
-                      size={isMobile ? 46 : 64}
+                      size={isMobile ? 48 : 68}
                       expressionOverride={combatMode && playerMode === 'ship' ? 'Rage' : captainExpression}
                     />
                   ) : (
@@ -3067,7 +3161,11 @@ export function UI() {
             )}
             {/* Center — pause/play, bigger */}
             <button
-              onClick={() => { sfxClick(); setPaused(!paused); }}
+              onClick={() => {
+                if (startupOverlayActive) return;
+                sfxClick();
+                setPaused(!paused);
+              }}
               aria-pressed={paused}
               className={`group relative w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95
                 ${paused
@@ -3126,32 +3224,38 @@ export function UI() {
       {/* Instructions Overlay */}
       <AnimatePresence>
         {showInstructions && (
-          SPLASH_VARIANT !== 'legacy' ? (
-            <ClaudeSplashGlobe
-              ready={splashComplete}
-              loadingMessage={loadingMessage}
-              loadingProgress={loadingProgress}
-              shipName={ship.name}
-              captainName={captain?.name ?? 'Captain Blackwood'}
-              crewCount={crew.length}
-              portCount={portCount}
-              gold={gold}
-              onStart={closeOpeningOverlay}
-            />
-          ) : (
-            <Opening
-              ready={splashComplete}
-              loadingMessage={loadingMessage}
-              loadingProgress={loadingProgress}
-              shipName={ship.name}
-              captainName={captain?.name ?? 'Captain Blackwood'}
-              crewCount={crew.length}
-              portCount={portCount}
-              dayCount={dayCount}
-              gold={gold}
-              onStart={closeOpeningOverlay}
-            />
-          )
+          <Suspense fallback={null}>
+            {SPLASH_VARIANT !== 'legacy' ? (
+              <ClaudeSplashGlobe
+                ready={splashComplete}
+                loadingMessage={loadingMessage}
+                loadingProgress={loadingProgress}
+                shipName={ship.name}
+                captainName={captain?.name ?? 'Captain Blackwood'}
+                crewCount={crew.length}
+                portCount={portCount}
+                gold={gold}
+                selectedFactionKey={selectedFactionKey}
+                selectedStartPortId={selectedStartPortId}
+                onCycleFaction={cycleStartupFaction}
+                onCycleStartPort={cycleStartupPort}
+                onStart={closeOpeningOverlay}
+              />
+            ) : (
+              <Opening
+                ready={splashComplete}
+                loadingMessage={loadingMessage}
+                loadingProgress={loadingProgress}
+                shipName={ship.name}
+                captainName={captain?.name ?? 'Captain Blackwood'}
+                crewCount={crew.length}
+                portCount={portCount}
+                dayCount={dayCount}
+                gold={gold}
+                onStart={closeOpeningOverlay}
+              />
+            )}
+          </Suspense>
 
         )}
       </AnimatePresence>
@@ -3530,6 +3634,11 @@ function RenderTestPanel() {
           onToggle={() => updateRenderDebug({ reefCaustics: !renderDebug.reefCaustics })}
         />
         <RenderToggleRow
+          label="Shore Foam"
+          enabled={renderDebug.shoreFoam}
+          onToggle={() => updateRenderDebug({ shoreFoam: !renderDebug.shoreFoam })}
+        />
+        <RenderToggleRow
           label="Wildlife Motion"
           enabled={renderDebug.wildlifeMotion}
           onToggle={() => updateRenderDebug({ wildlifeMotion: !renderDebug.wildlifeMotion })}
@@ -3611,9 +3720,11 @@ function WeatherPanel() {
   const port = getWorldPortById(currentWorldPortId);
   const climate = port?.climate ?? 'temperate';
 
-  const setKind = (kind: 'clear' | 'rain') => {
+  const setKind = (kind: 'clear' | 'cloudy' | 'rain') => {
     if (kind === 'clear') {
       setWeather({ kind: 'clear', targetIntensity: 0 });
+    } else if (kind === 'cloudy') {
+      setWeather({ kind: 'cloudy', targetIntensity: 0 });
     } else {
       // Default to a moderate downpour when forcing rain on; user can dial in.
       const target = weather.targetIntensity > 0 ? weather.targetIntensity : 0.7;
@@ -3644,8 +3755,8 @@ function WeatherPanel() {
         </button>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-1.5">
-        {(['clear', 'rain'] as const).map((k) => (
+      <div className="mt-3 grid grid-cols-3 gap-1.5">
+        {(['clear', 'cloudy', 'rain'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setKind(k)}
@@ -3671,7 +3782,7 @@ function WeatherPanel() {
           onChange={(e) => {
             const v = Number(e.target.value);
             // Slider implicitly chooses kind: anything > 0 means rain.
-            setWeather({ kind: v > 0 ? 'rain' : 'clear', targetIntensity: v });
+            setWeather({ kind: v > 0 ? 'rain' : weather.kind === 'cloudy' ? 'cloudy' : 'clear', targetIntensity: v });
           }}
           className="flex-1 accent-amber-500"
         />
@@ -4739,6 +4850,7 @@ function WindQuickMeter() {
 function WindPanel() {
   const windDirection = useGameStore((state) => state.windDirection);
   const windSpeed = useGameStore((state) => state.windSpeed);
+  const weather = useGameStore((state) => state.weather);
   const playerRot = useGameStore((state) => state.playerRot);
   const playerVelocity = useGameStore((state) => state.playerVelocity);
   const windward = useGameStore((state) => state.stats.windward);
@@ -4774,6 +4886,7 @@ function WindPanel() {
   const trimHint = trimInfo.score > 0
     ? `Hold Shift: +${trimBonus}%`
     : 'Turn with wind';
+  const weatherInfo = getWeatherDisplayInfo(weather);
 
   return (
     <div className="space-y-3" style={{ fontFamily: '"DM Sans", sans-serif' }}>
@@ -4809,6 +4922,13 @@ function WindPanel() {
       <div className="flex items-center justify-between text-[10px]">
         <span className="text-slate-500">Speed</span>
         <span className="text-slate-300 font-bold">{shipSpeed} kn</span>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-[10px]">
+        <span className="text-slate-500">Weather</span>
+        <span className="flex items-center gap-1.5 font-bold" style={{ color: weatherInfo.color }}>
+          {weatherInfo.icon}
+          {weatherInfo.label}
+        </span>
       </div>
 
       <div className="rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-1.5">
@@ -4846,4 +4966,32 @@ function WindPanel() {
       </div>
     </div>
   );
+}
+
+function getWeatherDisplayInfo(weather: ReturnType<typeof useGameStore.getState>['weather']): {
+  label: string;
+  color: string;
+  icon: ReactNode;
+} {
+  if (weather.kind === 'rain') {
+    return {
+      label: weather.targetIntensity >= 0.65 ? 'Rainy' : 'Light rain',
+      color: '#60a5fa',
+      icon: <CloudRain size={12} />,
+    };
+  }
+
+  if (weather.kind === 'cloudy') {
+    return {
+      label: 'Cloudy',
+      color: '#cbd5e1',
+      icon: <Cloud size={12} />,
+    };
+  }
+
+  return {
+    label: 'Sunny',
+    color: '#fbbf24',
+    icon: <Sun size={12} />,
+  };
 }

@@ -10,7 +10,7 @@
  * of structure in the otherwise sparse countryside.
  */
 
-import { Building, PortScale, Road } from '../store/gameStore';
+import type { Building, PortScale, Road } from '../store/gameStore';
 import { getTerrainData, getTerrainHeight } from './terrain';
 import { SEA_LEVEL } from '../constants/world';
 

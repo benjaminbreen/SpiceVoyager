@@ -14,22 +14,22 @@ interface OverworldTrack {
 }
 
 const OVERWORLD_TRACKS: OverworldTrack[] = [
-  { src: '/music/persian-dawn.mp3',         gain: 0.2  },
-  { src: '/music/cobblestone-echoes.mp3',   gain: 0.35 },
-  { src: '/music/sea-of-tiny-worlds.mp3',   gain: 0.35 },
-  { src: '/music/chiptune-worldmap.mp3',    gain: 0.35 },
-  { src: '/music/ocean-ambient.mp3',        gain: 0.3  },
-  { src: '/music/shiraz-sunset.mp3',        gain: 0.35 },
-  { src: '/music/Inn%20Rest.mp3',           gain: 0.35 },
-  { src: '/music/After%20the%20Night.mp3',  gain: 0.35 },
-  { src: '/music/Pepper%20Caravan.mp3',     gain: 0.35 },
-  { src: '/music/Monsoon%20Ledger%20(Asia).mp3', gain: 0.35, zones: ['east-asia'] },
+  { src: '/music/persian-dawn.ogg',         gain: 0.2  },
+  { src: '/music/cobblestone-echoes.ogg',   gain: 0.35 },
+  { src: '/music/sea-of-tiny-worlds.ogg',   gain: 0.35 },
+  { src: '/music/chiptune-worldmap.ogg',    gain: 0.35 },
+  { src: '/music/ocean-ambient.ogg',        gain: 0.3  },
+  { src: '/music/shiraz-sunset.ogg',        gain: 0.35 },
+  { src: '/music/Inn%20Rest.ogg',           gain: 0.35 },
+  { src: '/music/After%20the%20Night.ogg',  gain: 0.35 },
+  { src: '/music/Pepper%20Caravan.ogg',     gain: 0.35 },
+  { src: '/music/Monsoon%20Ledger%20(Asia).ogg', gain: 0.35, zones: ['east-asia'] },
 ];
 
-const INN_REST_SRC = '/music/Inn%20Rest.mp3';
-const AFTER_NIGHT_SRC = '/music/After%20the%20Night.mp3';
+const INN_REST_SRC = '/music/Inn%20Rest.ogg';
+const AFTER_NIGHT_SRC = '/music/After%20the%20Night.ogg';
 
-// Splash intro track (world-map-other-sky.mp3) layers over the ambient-engine
+// Splash intro track layers over the ambient-engine
 // waves bed during the ClaudeSplashGlobe screen, so it gets a lower multiplier
 // than the previous Opening did.
 const DEFAULT_MUSIC_VOLUME = 0.04;
@@ -56,7 +56,7 @@ class AudioManager {
   playSplash() {
     if (this.splashPlaying) return;
     if (!this.splashTrack) {
-      this.splashTrack = new Audio('/music/world-map-other-sky.mp3');
+      this.splashTrack = new Audio('/music/world-map-other-sky.ogg');
       this.splashTrack.loop = true;
       this.splashTrack.volume = 0;
     }
@@ -213,7 +213,7 @@ class AudioManager {
 
     // Start fight track
     if (!this.fightTrack) {
-      this.fightTrack = new Audio('/music/fight-mode.mp3');
+      this.fightTrack = new Audio('/music/fight-mode.ogg');
       this.fightTrack.loop = true;
     }
     this.fightTrack.volume = 0;
@@ -248,7 +248,7 @@ class AudioManager {
   }
 
   /** Crossfade to the inn / rest-for-the-night track. Ducks port music
-   *  underneath. Track file: Inn Rest.mp3. */
+   *  underneath. Track file: Inn Rest.ogg. */
   startInnMusic() {
     // Duck port track if playing
     if (this.portTrack) {

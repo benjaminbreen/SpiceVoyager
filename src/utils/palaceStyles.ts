@@ -59,6 +59,8 @@ export const PORT_PALACE_STYLE: Record<string, PalaceStyle> = {
   luanda:    'iberian-colonial',  // Palácio do Governador
   salvador:  'iberian-colonial',  // Palácio do Governador-Geral
   havana:    'iberian-colonial',  // Casa de Gobierno
+  veracruz:  'iberian-colonial',  // Spanish royal officials and treasury
+  colombo:   'iberian-colonial',  // Portuguese captaincy / cinnamon authority
   lisbon:    'iberian-colonial',  // Paço da Ribeira (Tagus-side royal palace)
   seville:   'iberian-colonial',  // Reales Alcázares
   manila:    'iberian-colonial',  // Palacio del Gobernador

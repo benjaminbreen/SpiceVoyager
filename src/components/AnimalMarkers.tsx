@@ -4,10 +4,14 @@ import { Html } from '@react-three/drei';
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 import { useGameStore } from '../store/gameStore';
 import { SEA_LEVEL } from '../constants/world';
-import type { GrazerEntry, GrazerKind, SpeciesInfo } from './Grazers';
-import type { PrimateEntry } from './Primates';
-import type { ReptileEntry } from './Reptiles';
-import type { WadingBirdEntry } from './WadingBirds';
+import type {
+  GrazerEntry,
+  GrazerKind,
+  PrimateEntry,
+  ReptileEntry,
+  SpeciesInfo,
+  WadingBirdEntry,
+} from '../utils/animalTypes';
 
 // Cluster nearby animals into a single marker so a herd doesn't paint a wall of icons.
 const CLUSTER_RADIUS = 18;

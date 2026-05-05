@@ -5,7 +5,7 @@
 
 import type { TreeImpactKind } from '../utils/impactShakeState';
 import type { FishShoalEntry } from '../store/gameStore';
-import type { SpeciesInfo } from '../components/Grazers';
+import type { SpeciesInfo } from '../utils/animalTypes';
 
 export type { FishShoalEntry };
 

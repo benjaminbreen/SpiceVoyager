@@ -34,7 +34,7 @@ function stubPOI(kind: POIKind): POIDefinition {
 describe('poi medallions', () => {
   it('has a real PNG for every declared medallion key', () => {
     for (const key of POI_MEDALLION_KEYS) {
-      expect(existsSync(`public/poi-medallions/${key}.png`), key).toBe(true);
+      expect(existsSync(`public/poi-medallions/${key}.webp`), key).toBe(true);
     }
   });
 
@@ -54,4 +54,3 @@ describe('poi medallions', () => {
     }
   });
 });
-
