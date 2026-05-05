@@ -17,6 +17,7 @@ export const DEFAULT_RENDER_DEBUG: RenderDebugSettings = {
   lutMode: 'auto',
   advancedWater: true,
   shipWake: true,
+  shipAnimationQuality: 'balanced',
   rain: false,
   algae: true,
   coralReefs: false,

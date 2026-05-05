@@ -3,6 +3,7 @@ import { EffectComposer, Bloom, Vignette, BrightnessContrast, HueSaturation, N8A
 import { buildLUT, lutParamsKey, lerpLUTParams, LUT_PRESETS, LUT_NEUTRAL, LUT_DEFAULT_BASE, computeMoodDelta, addLUTParams, lutDiffersFromNeutral } from '../utils/proceduralLUT';
 import { Ship } from './Ship';
 import { Ocean } from './Ocean';
+import { CelestialBodies } from './CelestialBodies';
 import { RainOverlay } from './RainOverlay';
 import { World } from './World';
 import { getTreeImpactTargets } from '../state/worldRegistries';
@@ -80,6 +81,7 @@ import { sampleIntroCinematic, skipIntroCinematic, isIntroCinematicActive } from
 import { sampleArrivalCinematic } from '../utils/arrivalCinematicState';
 import { pointHitsPedestrian, markKillPedestrian } from '../utils/livePedestrians';
 import { setAutoWalkTarget } from '../utils/autoWalkState';
+import { touchShipInput } from '../utils/touchInput';
 
 // ── Landfall descriptions keyed to biome + terrain data ──────────────────────
 const DEFAULT_CAMERA_ZOOM = 50;
@@ -1415,6 +1417,21 @@ function CameraController() {
           raycaster.current.setFromCamera(mouseNDC.current, camera);
           if (intersectTerrainAlongRay(raycaster.current.ray, clickToWalkHit.current)) {
             setAutoWalkTarget(clickToWalkHit.current.x, clickToWalkHit.current.z);
+          }
+        } else if (
+          wasClick &&
+          state.playerMode === 'ship' &&
+          !state.combatMode &&
+          !state.activePort &&
+          !state.activePOI
+        ) {
+          raycaster.current.setFromCamera(mouseNDC.current, camera);
+          if (raycaster.current.ray.intersectPlane(waterPlane.current, clickToWalkHit.current)) {
+            const [px, , pz] = state.playerPos;
+            touchShipInput.targetPoint = { x: clickToWalkHit.current.x, z: clickToWalkHit.current.z };
+            touchShipInput.targetHeading = Math.atan2(clickToWalkHit.current.x - px, clickToWalkHit.current.z - pz);
+            if (!state.touchSailRaised) state.setTouchSailRaised(true);
+            if (state.anchored) state.setAnchored(false);
           }
         }
       }
@@ -3420,6 +3437,12 @@ function PerformanceSampler() {
     const atmosphereAvgMs = drained.atmosphereRecomputes > 0
       ? drained.atmosphereMsSum / drained.atmosphereRecomputes
       : 0;
+    const shipFrameAvgMs = drained.shipFrameFrames > 0
+      ? drained.shipFrameMsSum / drained.shipFrameFrames
+      : 0;
+    const shipSailAvgMs = drained.shipSailSamples > 0
+      ? drained.shipSailMsSum / drained.shipSailSamples
+      : 0;
 
     const state = useGameStore.getState();
     const info = gl.info;
@@ -3434,6 +3457,11 @@ function PerformanceSampler() {
       collisionChecksPerSec: drained.collisionChecks / sample.elapsed,
       atmosphereRecomputesPerSec: drained.atmosphereRecomputes / sample.elapsed,
       atmosphereAvgMs,
+      shipFrameAvgMs,
+      shipFrameMaxMs: drained.shipFrameMaxMs,
+      shipSailAvgMs,
+      shipSailMaxMs: drained.shipSailMaxMs,
+      shipStoreSyncsPerSec: drained.shipStoreSyncs / sample.elapsed,
       drawCalls: info.render.calls,
       triangles: info.render.triangles,
       lines: info.render.lines,
@@ -3495,6 +3523,7 @@ export function GameScene({ dprCap, onWorldReady }: { dprCap: number; onWorldRea
             <fog attach="fog" args={['#87CEEB', 200, 600]} />
 
             <World key={`${worldSeed}:${worldSize}:${currentWorldPortId ?? 'world'}:${devSoloPort ?? 'all'}`} onReady={onWorldReady} />
+            <CelestialBodies />
             <Ocean />
             <Ship />
             <Player />

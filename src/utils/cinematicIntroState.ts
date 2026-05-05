@@ -12,6 +12,7 @@ const SWEEP_RAD = 0.08;     // ~5° azimuth orbit toward gameplay pose
 const HEIGHT_BOOST = 46;    // start this much higher (world units)
 const DIST_BOOST = 120;     // start this much further out, then settle into gameplay pose
 const FOV_BOOST = 0.6;      // start this many degrees wider; eases back to gameplay FOV
+const MAX_FRAME_STEP = 1 / 30; // shader/texture hitches should not skip the camera forward
 
 const state = {
   active: false,
@@ -52,7 +53,7 @@ export function sampleIntroCinematic(delta: number): IntroSample {
   if (!state.active) {
     return { active: false, eased: 1, sweepAngle: 0, heightBoost: 0, distBoost: 0, fovBoost: 0 };
   }
-  state.elapsed += delta;
+  state.elapsed += Math.min(delta, MAX_FRAME_STEP);
   const linear = Math.min(1, state.elapsed / DURATION);
   const eased = ease(linear);
   if (linear >= 1) state.active = false;

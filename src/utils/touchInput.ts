@@ -13,6 +13,7 @@
 export const touchShipInput = {
   // tap-to-steer
   targetHeading: null as number | null,  // world-space yaw (radians), or null
+  targetPoint: null as { x: number; z: number } | null,
 
   // joystick
   turnInput: 0,                          // -1..1 (left/right)
@@ -26,6 +27,7 @@ export const touchWalkInput = {
 
 export function resetTouchInput() {
   touchShipInput.targetHeading = null;
+  touchShipInput.targetPoint = null;
   touchShipInput.turnInput = 0;
   touchShipInput.throttleInput = 0;
   touchWalkInput.x = 0;

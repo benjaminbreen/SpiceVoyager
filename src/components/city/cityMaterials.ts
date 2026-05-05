@@ -365,8 +365,9 @@ export function addBuildingMaterialLighting(
     : kind === 'woodRoof' ? `
         float shingleCourse = 1.0 - smoothstep(0.016, 0.050, abs(fract((vBuildingLocalPos.y + 0.5) * 6.2) - 0.5));
         float shingleBreak = 1.0 - smoothstep(0.012, 0.040, abs(fract((vBuildingLocalPos.x + 0.5) * 4.8) - 0.5));
-        diffuseColor.rgb *= 1.0 - shingleCourse * 0.016 - shingleBreak * 0.008;
-        diffuseColor.rgb = min(diffuseColor.rgb + vec3(0.020, 0.016, 0.012) * (shingleCourse + shingleBreak * 0.35), vec3(1.0));
+        float shingleStain = buildingNoise(vBuildingWorldPos.xz * 1.1 + vBuildingLocalPos.xy * 8.0);
+        diffuseColor.rgb *= 1.0 - shingleCourse * 0.034 - shingleBreak * 0.020 - shingleStain * 0.075;
+        diffuseColor.rgb = min(diffuseColor.rgb + vec3(0.016, 0.020, 0.022) * (shingleCourse + shingleBreak * 0.35), vec3(1.0));
       `
     : '';
   mat.onBeforeCompile = (shader) => {

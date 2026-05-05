@@ -503,6 +503,7 @@ export function TouchSteerRaycaster() {
       const [px, , pz] = store.playerPos;
       const angle = Math.atan2(hit.x - px, hit.z - pz);
       touchShipInput.targetHeading = angle;
+      touchShipInput.targetPoint = { x: hit.x, z: hit.z };
       if (!store.touchSailRaised) store.setTouchSailRaised(true);
     };
 

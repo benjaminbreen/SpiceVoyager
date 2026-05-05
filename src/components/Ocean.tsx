@@ -8,6 +8,7 @@ import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
 import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
 import { getLiveShipTransform } from '../utils/livePlayerTransform';
+import { getClockSunDirection } from '../utils/celestial';
 import { ShipWaterInteraction } from './ShipWaterInteraction';
 import { WaterOverlayCameraLayer, useWaterOverlayLayer } from '../utils/waterOverlayLayer';
 
@@ -23,6 +24,7 @@ const ALGAE_SURFACE_OFFSET = 0.035;
 const CAUSTIC_SURFACE_OFFSET = 0.005;
 const WATER_SURFACE_ALPHA = 0.75;
 const WATER_NORMALS_PATH = '/textures/waternormals.jpg';
+const _clockSunDir = new THREE.Vector3();
 
 type ReflectionTuning = {
   reflectanceBase: number;
@@ -124,11 +126,15 @@ function ShallowWaterTint() {
       const terrain = getTerrainData(x, worldZ);
       const isMediterranean = waterPalette.id === 'mediterranean';
       const isMonsoon = waterPalette.id === 'monsoon';
-      const shallowBand = isMediterranean
+      const aboveWater = terrain.height >= SEA_LEVEL;
+      const depthBelowSea = SEA_LEVEL - terrain.height;
+      const monsoonDepthShallow = aboveWater ? 0 : 1 - smoothstep(0.8, 8.5, depthBelowSea);
+      const shallowBandBase = isMediterranean
         ? smoothstep(0.38, 0.92, terrain.shallowFactor)
         : isMonsoon
         ? smoothstep(0.28, 0.88, terrain.shallowFactor)
         : terrain.shallowFactor;
+      const shallowBand = isMonsoon ? Math.max(shallowBandBase, monsoonDepthShallow * 0.86) : shallowBandBase;
       const surfBand = isMediterranean
         ? smoothstep(0.24, 0.86, terrain.surfFactor)
         : isMonsoon
@@ -141,26 +147,24 @@ function ShallowWaterTint() {
       );
 
       // Only tint below sea level — above-water terrain is handled by land geometry
-      const aboveWater = terrain.height >= SEA_LEVEL;
-      const depthBelowSea = SEA_LEVEL - terrain.height;
       const depthFade = aboveWater ? 0 : 1 - smoothstep(0.5, 6.2, depthBelowSea);
       // River plume forces overlay alpha visibility independent of shoreline
       // factors — silt extends out into deeper water around the mouth, where
       // tintStrength would otherwise be ~0 and the reflective sky would win.
-      const plumeAlpha = aboveWater ? 0 : terrain.plumeFactor * (isMediterranean ? 0.14 : isMonsoon ? 0.34 : 0.55);
+      const plumeAlpha = aboveWater ? 0 : terrain.plumeFactor * (isMediterranean ? 0.14 : isMonsoon ? 0.46 : 0.55);
       const alpha = Math.min(
         1,
-        tintStrength * (isMediterranean ? 0.46 : isMonsoon ? 0.50 : 0.55) * (1 - terrain.coastSteepness * 0.20) * depthFade
+        tintStrength * (isMediterranean ? 0.46 : isMonsoon ? 0.78 : 0.55) * (1 - terrain.coastSteepness * 0.20) * depthFade
           + plumeAlpha,
       );
       turquoise.copy(_turquoiseBase);
-      turquoise.lerp(_outerShallow, shallowBand * (isMediterranean ? 0.92 : isMonsoon ? 0.82 : 0.68));
-      turquoise.lerp(_paleSurf, surfBand * (isMediterranean ? 0.82 : isMonsoon ? 0.70 : 0.58));
+      turquoise.lerp(_outerShallow, shallowBand * (isMediterranean ? 0.92 : isMonsoon ? 0.96 : 0.68));
+      turquoise.lerp(_paleSurf, surfBand * (isMediterranean ? 0.82 : isMonsoon ? 0.82 : 0.58));
       // Silty river-plume tint — sediment carried by the outflow turns the
       // water brown-green near deltas. Mixes hard so it reads against the
       // sky reflection on the Water plane above.
       if (terrain.plumeFactor > 0.01) {
-        turquoise.lerp(_siltColor, Math.min(1, terrain.plumeFactor * (isMediterranean ? 0.22 : isMonsoon ? 0.62 : 0.95)));
+        turquoise.lerp(_siltColor, Math.min(1, terrain.plumeFactor * (isMediterranean ? 0.22 : isMonsoon ? 0.82 : 0.95)));
       }
 
       colors[i * 3] = turquoise.r;
@@ -903,15 +907,13 @@ export function Ocean() {
     if (!waterRef.current) return;
     const storeState = useGameStore.getState();
     const timeOfDay = storeState.timeOfDay;
-    const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(sunAngle);
+    getClockSunDirection(timeOfDay, _clockSunDir);
+    const sunH = _clockSunDir.y;
     const mat = waterRef.current.material as THREE.ShaderMaterial;
     mat.uniforms.time.value += delta * 0.5;
 
     // Sun direction and color (only runs when advanced water is mounted, i.e. daytime)
-    mat.uniforms.sunDirection.value
-      .set(Math.cos(sunAngle), Math.sin(sunAngle), Math.sin(sunAngle) * 0.5)
-      .normalize();
+    mat.uniforms.sunDirection.value.copy(_clockSunDir);
 
     const rain = getEffectiveRainIntensity(storeState.weather, storeState.renderDebug.rain);
     const clearSky = storeState.weather.kind === 'clear' ? 1 : storeState.weather.kind === 'cloudy' ? 0.35 : 0;

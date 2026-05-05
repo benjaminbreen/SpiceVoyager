@@ -217,6 +217,9 @@ function PerformanceOverlay({ stats }: { stats: PerformanceStats | null }) {
           <Metric label="Collision avg/max" value={`${fmt(stats.collisionAvgMs, 2)} / ${fmt(stats.collisionMaxMs, 2)} ms`} />
           <Metric label="Collision/s" value={fmt(stats.collisionChecksPerSec, 0)} />
           <Metric label="Atmosphere rcmp/s" value={`${fmt(stats.atmosphereRecomputesPerSec, 1)} @ ${fmt(stats.atmosphereAvgMs, 2)}ms`} />
+          <Metric label="Ship frame avg/max" value={`${fmt(stats.shipFrameAvgMs, 2)} / ${fmt(stats.shipFrameMaxMs, 2)} ms`} />
+          <Metric label="Ship sails avg/max" value={`${fmt(stats.shipSailAvgMs, 2)} / ${fmt(stats.shipSailMaxMs, 2)} ms`} />
+          <Metric label="Ship store sync/s" value={fmt(stats.shipStoreSyncsPerSec, 1)} />
           <Metric label="Draw calls" value={compact(stats.drawCalls)} />
           <Metric label="Triangles" value={compact(stats.triangles)} />
           <Metric label="Lines / points" value={`${compact(stats.lines)} / ${compact(stats.points)}`} />

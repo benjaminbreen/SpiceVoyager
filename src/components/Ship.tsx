@@ -17,7 +17,13 @@ import { getWindTrimInfo, getWindTrimMultiplier } from '../utils/wind';
 import { useIsMobile } from '../utils/useIsMobile';
 import { getShipProfile, type SailConfig } from '../utils/shipProfiles';
 import { calculateCargoWeight } from '../utils/cargoWeight';
-import { perfSignals, reportCollisionMs } from '../utils/performanceStats';
+import {
+  perfSignals,
+  reportCollisionMs,
+  reportShipFrameMs,
+  reportShipSailMs,
+  reportShipStoreSync,
+} from '../utils/performanceStats';
 import { getEffectiveRainIntensity } from '../store/weather';
 import { BaghlaHull } from './ship/BaghlaHull';
 import { BaghlaRigging } from './ship/BaghlaRigging';
@@ -50,6 +56,7 @@ const SHORE_PROBE_POINTS: [number, number][] = [
   [1.5, 0],
 ];
 const SHORE_NORMAL_SAMPLE_INTERVAL = 0.08;
+const CLICK_SAIL_STOP_RADIUS = 6;
 
 function hideInstancedMesh(mesh: THREE.InstancedMesh | null, count: number) {
   if (!mesh) return;
@@ -65,6 +72,8 @@ function hideInstancedMesh(mesh: THREE.InstancedMesh | null, count: number) {
 const STORE_ROT_EPSILON = 0.0001;
 const STORE_VEL_EPSILON = 0.0001;
 const WET_WOOD_TINT = new THREE.Color(0x5f7380);
+const BALANCED_CLOTH_STEP = 1 / 12;
+const BALANCED_NORMAL_STEP = 0.5;
 
 function angleDelta(a: number, b: number) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -182,6 +191,7 @@ export function Ship() {
   const addNotification = useGameStore((state) => state.addNotification);
   const paused = useGameStore((state) => state.paused);
   const shipType = useGameStore((state) => state.ship.type);
+  const shipAnimationQuality = useGameStore((state) => state.renderDebug.shipAnimationQuality);
   const profile = useMemo(() => getShipProfile(shipType), [shipType]);
   const wetMaterialScratch = useRef(new THREE.Color());
   // Cargo-based draft: heavier loads make the ship sit deeper in the water.
@@ -242,6 +252,12 @@ export function Ship() {
   const speedBoostVisible = useRef(false);
   const speedBoostRef = useRef<THREE.Group>(null);
   const storeSyncAccum = useRef(0);
+  const clothUpdateAccum = useRef(0);
+  const normalUpdateAccum = useRef(0);
+  const particleDummy = useRef(new THREE.Object3D());
+  const anchorSplashDummy = useRef(new THREE.Object3D());
+  const sprayDummy = useRef(new THREE.Object3D());
+  const muzzleDummy = useRef(new THREE.Object3D());
   const lastSyncedStoreTransform = useRef({
     pos: [0, 0, 0] as [number, number, number],
     rot: 0,
@@ -936,6 +952,10 @@ export function Ship() {
       const key = movementKeyFor(e);
       if (key) {
         keys.current[key] = true;
+        if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
+          touchShipInput.targetHeading = null;
+          touchShipInput.targetPoint = null;
+        }
         if (key === 'w' || key === 'a' || key === 's' || key === 'd') e.preventDefault();
       }
       // Auto-weigh anchor when pressing movement keys
@@ -976,6 +996,7 @@ export function Ship() {
   }, [playerMode, paused]);
 
   useFrame((state, delta) => {
+    const shipFrameT0 = perfSignals.enabled ? performance.now() : 0;
     if (!group.current) return;
     const store = useGameStore.getState();
 
@@ -1005,31 +1026,53 @@ export function Ship() {
       initialized.current = true;
     }
 
-    // Effective input: touch overlays keyboard (keyboard wins when held).
-    // In 'tap' mode, a target heading synthesises A/D. In 'joystick' mode,
-    // the joystick's x/y axes map directly onto A/D/W/S.
+    if (playerMode === 'ship' && (store.combatMode || store.activePort || store.anchored)) {
+      touchShipInput.targetHeading = null;
+      touchShipInput.targetPoint = null;
+    }
+
+    if (touchShipInput.targetPoint) {
+      const dx = touchShipInput.targetPoint.x - group.current.position.x;
+      const dz = touchShipInput.targetPoint.z - group.current.position.z;
+      if (dx * dx + dz * dz <= CLICK_SAIL_STOP_RADIUS * CLICK_SAIL_STOP_RADIUS) {
+        touchShipInput.targetHeading = null;
+        touchShipInput.targetPoint = null;
+        if (store.touchSailRaised) store.setTouchSailRaised(false);
+      } else {
+        touchShipInput.targetHeading = Math.atan2(dx, dz);
+      }
+    }
+
+    // Effective input: touch/click overlays keyboard (keyboard wins when held).
+    // Target heading synthesises A/D. In tap mode, sail raised provides throttle;
+    // in joystick mode, joystick x/y axes map directly onto A/D/W/S.
     const steerMode = store.shipSteeringMode;
     let touchW = false, touchS = false, touchA = false, touchD = false;
-    if (steerMode === 'tap') {
-      touchW = store.touchSailRaised;
-      if (touchShipInput.targetHeading !== null) {
-        const diff = Math.atan2(
-          Math.sin(touchShipInput.targetHeading - rotation.current),
-          Math.cos(touchShipInput.targetHeading - rotation.current),
-        );
-        if (diff > 0.03) touchA = true;
-        else if (diff < -0.03) touchD = true;
-        else {
-          // Heading matched — clear the target so the ship stops micro-correcting.
-          touchShipInput.targetHeading = null;
-        }
+    if (touchShipInput.targetHeading !== null) {
+      const diff = Math.atan2(
+        Math.sin(touchShipInput.targetHeading - rotation.current),
+        Math.cos(touchShipInput.targetHeading - rotation.current),
+      );
+      if (diff > 0.03) touchA = true;
+      else if (diff < -0.03) touchD = true;
+      else if (!touchShipInput.targetPoint) {
+        // Heading-only orders clear once matched; point orders keep updating
+        // their bearing until the ship reaches the target radius.
+        touchShipInput.targetHeading = null;
       }
+    }
+    if (steerMode === 'tap' || touchShipInput.targetPoint) {
+      touchW = store.touchSailRaised;
     } else {
       const JOY_DEAD = 0.2;
       if (touchShipInput.throttleInput > JOY_DEAD) touchW = true;
       else if (touchShipInput.throttleInput < -JOY_DEAD) touchS = true;
       if (touchShipInput.turnInput < -JOY_DEAD) touchA = true;
       else if (touchShipInput.turnInput > JOY_DEAD) touchD = true;
+      if (touchW || touchS || touchA || touchD) {
+        touchShipInput.targetHeading = null;
+        touchShipInput.targetPoint = null;
+      }
     }
     const inW = keys.current.w || touchW;
     const inS = keys.current.s || touchS;
@@ -1228,6 +1271,8 @@ export function Ship() {
 
         // Heel kick for visual impact
         heelVelocity.current += (Math.sign(normalizedDiff) || 1) * Math.min(impactSpeed * 0.06, 0.4);
+        touchShipInput.targetHeading = null;
+        touchShipInput.targetPoint = null;
       }
       
       // ── Map-edge boundary ──
@@ -1283,6 +1328,7 @@ export function Ship() {
           rot: rotation.current,
           vel: velocity.current,
         });
+        reportShipStoreSync();
         storeSyncAccum.current = 0;
       }
 
@@ -1502,38 +1548,54 @@ export function Ship() {
     // Live wind-heading score — well-trimmed sails visibly puff harder.
     const sailTrimScore = getWindTrimInfo(store.windDirection, rotation.current, stats.windward).score;
 
-    const recomputeNormals = (++normalFrame.current % 4) === 0;
-    // Apparent-wind X sign: +1 when wind crosses from port (xNorm<0 is luff),
-    // -1 when from starboard (xNorm>0 is luff). Asymmetric camber & leech
-    // flutter flip with it so the belly always leans downwind.
-    const windSide = normalizedWindX >= 0 ? 1 : -1;
-    const elapsed = state.clock.elapsedTime;
+    let updateCloth = shipAnimationQuality === 'full';
+    let recomputeNormals = false;
+    if (shipAnimationQuality === 'full') {
+      recomputeNormals = (++normalFrame.current % 4) === 0;
+    } else if (shipAnimationQuality === 'balanced') {
+      clothUpdateAccum.current += delta;
+      normalUpdateAccum.current += delta;
+      updateCloth = clothUpdateAccum.current >= BALANCED_CLOTH_STEP;
+      recomputeNormals = normalUpdateAccum.current >= BALANCED_NORMAL_STEP;
+      if (updateCloth) clothUpdateAccum.current = 0;
+      if (recomputeNormals) normalUpdateAccum.current = 0;
+    } else {
+      clothUpdateAccum.current = 0;
+      normalUpdateAccum.current = 0;
+    }
+    const sailT0 = perfSignals.enabled ? performance.now() : 0;
+    if (updateCloth) {
+      // Apparent-wind X sign: +1 when wind crosses from port (xNorm<0 is luff),
+      // -1 when from starboard (xNorm>0 is luff). Asymmetric camber & leech
+      // flutter flip with it so the belly always leans downwind.
+      const windSide = normalizedWindX >= 0 ? 1 : -1;
+      const elapsed = state.clock.elapsedTime;
 
-    const updateSailShape = (
-      mesh: THREE.Mesh | null,
-      geometry: THREE.PlaneGeometry,
-      basePositions: Float32Array,
-      sail: SailConfig,
-      baseY: number,
-      trim: number,
-    ) => {
-      if (!mesh) return;
+      const updateSailShape = (
+        mesh: THREE.Mesh | null,
+        geometry: THREE.PlaneGeometry,
+        basePositions: Float32Array,
+        sail: SailConfig,
+        baseY: number,
+        trim: number,
+      ) => {
+        if (!mesh) return;
 
-      mesh.rotation.y = trim;
-      mesh.position.y = baseY - (1 - visualSailSet.current) * sail.lowerAmount;
-      mesh.scale.y = 0.72 + visualSailSet.current * 0.28;
+        mesh.rotation.y = trim;
+        mesh.position.y = baseY - (1 - visualSailSet.current) * sail.lowerAmount;
+        mesh.scale.y = 0.72 + visualSailSet.current * 0.28;
 
-      const position = geometry.attributes.position as THREE.BufferAttribute;
-      const array = position.array as Float32Array;
-      const halfWidth = sail.width * 0.5;
-      const halfHeight = sail.height * 0.5;
-      const setScale = 0.72 + visualSailSet.current * 0.28;
-      const camberDepth =
-        (0.12 + fill * 0.5 + speedRatio * 0.08 + sailTrimScore * 0.22) *
-        sail.fullnessScale *
-        setScale;
-      const flutterAmount = (0.01 + speedRatio * 0.005) * luff;
-      const flutterFreq = 1.8 + speedRatio * 1.2;
+        const position = geometry.attributes.position as THREE.BufferAttribute;
+        const array = position.array as Float32Array;
+        const halfWidth = sail.width * 0.5;
+        const halfHeight = sail.height * 0.5;
+        const setScale = 0.72 + visualSailSet.current * 0.28;
+        const camberDepth =
+          (0.12 + fill * 0.5 + speedRatio * 0.08 + sailTrimScore * 0.22) *
+          sail.fullnessScale *
+          setScale;
+        const flutterAmount = (0.01 + speedRatio * 0.005) * luff;
+        const flutterFreq = 1.8 + speedRatio * 1.2;
 
       const plan = sail.plan;
       const numPanels = sail.numPanels ?? 1;
@@ -1629,26 +1691,26 @@ export function Ship() {
       }
 
       position.needsUpdate = true;
-      if (recomputeNormals) {
-        geometry.computeVertexNormals();
-        geometry.attributes.normal.needsUpdate = true;
+        if (recomputeNormals) {
+          geometry.computeVertexNormals();
+          geometry.attributes.normal.needsUpdate = true;
+        }
+      };
+
+      for (let i = 0; i < profile.sails.length; i++) {
+        const sail = profile.sails[i];
+        // Lateen sails render as rigid slabs, no vertex deformation.
+        if (sail.plan === 'lateen') continue;
+        const mesh = sailRefs.current[i];
+        const geom = sailGeometries[i];
+        const base = sailBases[i];
+        if (!geom || !base) continue;
+        const trim = sail.trimsWithMain ? sailTrim.current.main : sailTrim.current.fore;
+        updateSailShape(mesh ?? null, geom, base, sail, sail.position[1], trim);
       }
-    };
 
-    for (let i = 0; i < profile.sails.length; i++) {
-      const sail = profile.sails[i];
-      // Lateen sails render as rigid slabs, no vertex deformation.
-      if (sail.plan === 'lateen') continue;
-      const mesh = sailRefs.current[i];
-      const geom = sailGeometries[i];
-      const base = sailBases[i];
-      if (!geom || !base) continue;
-      const trim = sail.trimsWithMain ? sailTrim.current.main : sailTrim.current.fore;
-      updateSailShape(mesh ?? null, geom, base, sail, sail.position[1], trim);
-    }
-
-    // ── Mast flag cloth sim ──
-    if (flagMeshRef.current && flagPivotRef.current) {
+      // ── Mast flag cloth sim ──
+      if (flagMeshRef.current && flagPivotRef.current) {
       // Apparent wind in ship-local space: real wind minus ship motion
       // When moving forward with no wind, apparent wind blows from the bow (negative forward)
       const apparentX = localWindX;
@@ -1692,13 +1754,13 @@ export function Ship() {
       if (recomputeNormals) {
         flagGeometry.computeVertexNormals();
       }
-    }
+      }
 
-    // ── Mast-top pennants ──
-    // Trail on the same apparent-wind heading as the main flag, with a small
-    // lag so the shorter streamers read as lighter / more responsive. Each
-    // pennant gets its own travelling wave (phase offset by mastIdx).
-    if (pennants.length > 0) {
+      // ── Mast-top pennants ──
+      // Trail on the same apparent-wind heading as the main flag, with a small
+      // lag so the shorter streamers read as lighter / more responsive. Each
+      // pennant gets its own travelling wave (phase offset by mastIdx).
+      if (pennants.length > 0) {
       const windStr = Math.min(
         apparentSpeed * 0.18 + Math.abs(velocity.current) * 0.09,
         1,
@@ -1728,6 +1790,8 @@ export function Ship() {
         pen.geometry.attributes.position.needsUpdate = true;
         if (recomputeNormals) pen.geometry.computeVertexNormals();
       }
+      }
+      if (perfSignals.enabled) reportShipSailMs(performance.now() - sailT0);
     }
 
     // Visual Effects Updates
@@ -1767,7 +1831,7 @@ export function Ship() {
 
     // Update Particles
     if (particlesRef.current) {
-      const dummy = new THREE.Object3D();
+      const dummy = particleDummy.current;
       let needsUpdate = false;
       for (let i = 0; i < particleCount; i++) {
         const p = particleData.current[i];
@@ -1935,7 +1999,7 @@ export function Ship() {
 
     // ── Anchor splash particles ──
     if (anchorSplashRef.current) {
-      const dummy = new THREE.Object3D();
+      const dummy = anchorSplashDummy.current;
       let needsUpdate = false;
       for (let i = 0; i < ANCHOR_SPLASH_COUNT; i++) {
         const p = anchorSplashData.current[i];
@@ -1965,7 +2029,7 @@ export function Ship() {
 
     // ── Hard-turn spray particles ──
     if (spraySideRef.current) {
-      const dummy = new THREE.Object3D();
+      const dummy = sprayDummy.current;
       let needsUpdate = false;
       for (let i = 0; i < SPRAY_COUNT; i++) {
         const p = sprayData.current[i];
@@ -2018,7 +2082,7 @@ export function Ship() {
 
     // ── Muzzle flash particles ──
     if (muzzleFlashRef.current) {
-      const dummy = new THREE.Object3D();
+      const dummy = muzzleDummy.current;
       let needsUpdate = false;
       for (let i = 0; i < MUZZLE_PARTICLE_COUNT; i++) {
         const p = muzzleParticles.current[i];
@@ -2236,6 +2300,7 @@ export function Ship() {
       torchMeshRef.current.emissiveIntensity = torchIntensity * 3;
       torchMeshRef.current.visible = torchIntensity > 0.01;
     }
+    if (perfSignals.enabled) reportShipFrameMs(performance.now() - shipFrameT0);
   }, -2);
 
   const viewMode = useGameStore((state) => state.viewMode);

@@ -78,8 +78,8 @@ export const WATER_PALETTES: Record<WaterPaletteId, WaterPalette> = {
     },
     oceanOverlay: {
       base: [0.01, 0.32, 0.34],
-      outerShallow: [0.08, 0.56, 0.48],
-      paleSurf: [0.50, 0.78, 0.58],
+      outerShallow: [0.18, 0.76, 0.62],
+      paleSurf: [0.72, 0.92, 0.68],
     },
     surface: {
       day: [0.00, 0.25, 0.34],

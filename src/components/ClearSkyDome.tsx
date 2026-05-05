@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import { resolveWaterPaletteId } from '../utils/waterPalettes';
 import { computeDayMood, MOOD_OVERCAST_WARM_HEX } from '../utils/dayMood';
+import { getClockSunDirection } from '../utils/celestial';
 
 const SKY_DOME_VS = `
   varying vec3 vDir;
@@ -29,6 +30,7 @@ const SKY_DOME_FS = `
 
 // Allocation-free lerp helpers — write into `target`, reuse `_lerpB` scratch.
 const _lerpB = new THREE.Color();
+const _sunDir = new THREE.Vector3();
 
 function lerpColorHexInto(a: string, b: string, t: number, target: THREE.Color): void {
   target.set(a).lerp(_lerpB.set(b), THREE.MathUtils.clamp(t, 0, 1));
@@ -63,8 +65,7 @@ export function ClearSkyDome() {
     const state = useGameStore.getState();
     const waterPaletteId = resolveWaterPaletteId(state);
     const mood = computeDayMood(state.timeOfDay, state.worldSeed);
-    const angle = ((state.timeOfDay - 6) / 24) * Math.PI * 2;
-    const sunH = Math.sin(angle);
+    const sunH = getClockSunDirection(state.timeOfDay, _sunDir).y;
 
     const { zenith, horizon, lower, warm } = scratch;
     // Mood-adjusted warm band: blend the saturated sunset orange toward an

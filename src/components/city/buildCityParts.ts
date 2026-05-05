@@ -979,31 +979,84 @@ export function buildCityParts(ports: PortsProp) {
           }
 
           else if (style === 'mughal') {
-            // Red sandstone cube with a dominant central pishtaq (recessed
-            // arch entrance), four small chhatri pavilions on the corners
-            // of the roof, small dome over the central pishtaq.
-            const sand = varyColor([0.74, 0.42, 0.32], rng, 0.04);
-            const cream = varyColor([0.90, 0.82, 0.70], rng, 0.03);
-            const marble: [number, number, number] = [0.92, 0.90, 0.84];
-            // Main cube
-            addPart('box', 'mud', 0, 2.6, 0, 10, 5.2, 10, sand);
-            // Recessed pishtaq — taller than the main block, lighter sandstone
-            addPart('box', 'mud', 0, 3.4, 4.6, 4.2, 6.8, 0.6, cream);
-            addPart('box', 'dark', 0, 2.4, 5.0, 2.2, 4.0, 0.15);
-            // Small dome over pishtaq
-            addPart('dome', 'white', 0, 7.0, 4.6, 1.2, 1.2, 0.8, marble);
-            // Corner chhatri pavilions (small domed kiosks on roof)
-            for (const [cx, cz] of [[4, 4], [-4, 4], [4, -4], [-4, -4]] as [number, number][]) {
-              addPart('cylinder', 'wood', cx, 5.5, cz, 0.10, 0.9, 0.10, cream);
-              addPart('cylinder', 'wood', cx + 0.6, 5.5, cz, 0.10, 0.9, 0.10, cream);
-              addPart('cylinder', 'wood', cx, 5.5, cz + 0.6, 0.10, 0.9, 0.10, cream);
-              addPart('cylinder', 'wood', cx + 0.6, 5.5, cz + 0.6, 0.10, 0.9, 0.10, cream);
-              addPart('dome', 'white', cx + 0.3, 6.6, cz + 0.3, 0.55, 0.55, 0.55, cream);
+            // Mughal / Gujarati customs compound: red-sandstone public office
+            // with a recessed pishtaq, arcaded front, flat roof, merlon
+            // parapet, and roof chhatris. Kept compact so it reads clearly
+            // from the overhead gameplay camera without stray roof beams.
+            const sand = varyColor([0.67, 0.36, 0.27], rng, 0.035);
+            const warmSand = varyColor([0.78, 0.50, 0.36], rng, 0.03);
+            const cream = varyColor([0.88, 0.79, 0.64], rng, 0.025);
+            const marble = varyColor([0.90, 0.88, 0.80], rng, 0.018);
+            const shadow: [number, number, number] = [0.075, 0.055, 0.042];
+            const indigoCloth = varyColor([0.13, 0.20, 0.34], rng, 0.04);
+            const ledgerWood = varyColor([0.29, 0.18, 0.11], rng, 0.035);
+            const brass: [number, number, number] = [0.78, 0.63, 0.30];
+
+            // Stone platform and shaded court approach.
+            addPart('box', 'stone', 0, 0.14, 0, 11.3, 0.28, 10.4, varyColor([0.50, 0.40, 0.30], rng, 0.03), true);
+            addPart('box', 'stone', 0, 0.08, 5.35, 6.8, 0.16, 2.6, varyColor([0.58, 0.49, 0.36], rng, 0.035), true);
+
+            // Main mass and slightly raised rear record room.
+            addPart('box', 'mud', 0, 2.25, -0.35, 9.6, 4.5, 8.6, sand);
+            addPart('box', 'mud', 0, 4.76, -0.35, 9.3, 0.30, 8.25, cream);
+            addPart('box', 'mud', 0, 5.06, -1.2, 5.4, 0.26, 4.3, warmSand);
+
+            // Front arcade: dark recesses cut between cream pier/arch bands.
+            addPart('box', 'mud', 0, 2.25, 4.06, 9.9, 4.5, 0.44, warmSand);
+            for (const ax of [-3.45, -1.72, 0, 1.72, 3.45]) {
+              addPart('box', 'dark', ax, 1.75, 4.31, 0.96, 2.45, 0.12, shadow);
+              addPart('box', 'mud', ax, 3.05, 4.36, 1.18, 0.26, 0.20, cream);
+              addPart('box', 'mud', ax - 0.53, 1.60, 4.34, 0.12, 2.45, 0.18, cream);
+              addPart('box', 'mud', ax + 0.53, 1.60, 4.34, 0.12, 2.45, 0.18, cream);
             }
-            // Perimeter crenellation (low parapet with merlons suggested by small boxes)
-            for (const [mx, mz] of [[0, 5.0], [0, -5.0], [5.0, 0], [-5.0, 0]] as [number, number][]) {
-              addPart('box', 'mud', mx, 5.4, mz, mz === 0 ? 0.4 : 8, 0.5, mx === 0 ? 0.4 : 8, sand);
+
+            // Central pishtaq, deeper and taller than the arcade, with a
+            // dark iwan and a ledger-table threshold.
+            addPart('box', 'mud', 0, 3.35, 4.62, 3.7, 6.7, 0.72, cream);
+            addPart('box', 'dark', 0, 2.55, 5.02, 2.2, 4.35, 0.16, shadow);
+            addPart('box', 'mud', 0, 4.88, 5.08, 2.65, 0.28, 0.22, marble);
+            addPart('box', 'wood', -0.62, 0.78, 5.42, 0.78, 0.18, 0.55, ledgerWood);
+            addPart('box', 'wood',  0.62, 0.78, 5.42, 0.78, 0.18, 0.55, ledgerWood);
+            addPart('box', 'straw', -0.62, 1.22, 5.52, 0.70, 0.48, 0.06, varyColor([0.76, 0.62, 0.38], rng, 0.05));
+            addPart('box', 'straw',  0.62, 1.22, 5.52, 0.70, 0.48, 0.06, indigoCloth);
+
+            // Roof dome and finial over the central customs iwan.
+            addPart('dome', 'white', 0, 6.92, 4.52, 1.22, 0.92, 1.22, marble);
+            addPart('cylinder', 'wood', 0, 7.65, 4.52, 0.055, 0.58, 0.055, brass);
+            addPart('sphere', 'wood', 0, 7.98, 4.52, 0.14, 0.14, 0.14, brass);
+
+            // Roof edge detail stays inside the main footprint. Avoid long
+            // rails: from the gameplay camera they read as stray crossbeams.
+            for (const mx of [-3.6, -2.0, -0.4, 1.2, 2.8]) {
+              addPart('box', 'mud', mx, 5.46, 3.86, 0.46, 0.42, 0.30, warmSand);
+              addPart('box', 'mud', mx, 5.46, -4.22, 0.46, 0.42, 0.30, warmSand);
             }
+            for (const mz of [-3.05, -1.45, 0.15, 1.75, 3.35]) {
+              addPart('box', 'mud', 4.28, 5.46, mz, 0.30, 0.42, 0.46, warmSand);
+              addPart('box', 'mud', -4.28, 5.46, mz, 0.30, 0.42, 0.46, warmSand);
+            }
+
+            // Four roof chhatris, centered well inside the roof corners and
+            // aligned to their column bases.
+            for (const [cx, cz] of [[3.05, 2.85], [-3.05, 2.85], [3.05, -3.35], [-3.05, -3.35]] as [number, number][]) {
+              addPart('cylinder', 'stone', cx, 5.72, cz, 0.72, 0.20, 0.72, marble);
+              for (const [px, pz] of [[-0.48, -0.48], [0.48, -0.48], [-0.48, 0.48], [0.48, 0.48]] as [number, number][]) {
+                addPart('cylinder', 'white', cx + px, 6.45, cz + pz, 0.085, 0.95, 0.085, cream);
+              }
+              addPart('dome', 'white', cx, 7.03, cz, 0.68, 0.50, 0.68, marble);
+              addPart('cylinder', 'wood', cx, 7.43, cz, 0.045, 0.32, 0.045, brass);
+            }
+
+            // Side jharokha windows and warm ledger lamps make the building
+            // read as an occupied office rather than a blank cube.
+            for (const sx of [-1, 1]) {
+              addPart('box', 'litWindow', sx * 4.98, 2.95, 1.8, 0.10, 0.48, 0.72, [0.96, 0.72, 0.34]);
+              addPart('box', 'mud', sx * 5.02, 2.95, 1.8, 0.16, 0.72, 1.05, cream);
+              addPart('box', 'litWindow', sx * 4.98, 2.95, -2.15, 0.10, 0.48, 0.72, [0.96, 0.72, 0.34]);
+              addPart('box', 'mud', sx * 5.02, 2.95, -2.15, 0.16, 0.72, 1.05, cream);
+            }
+            addTorch(-2.25, 2.4, 5.18);
+            addTorch(2.25, 2.4, 5.18);
           }
 
           else if (style === 'malay-istana') {
@@ -1377,19 +1430,35 @@ export function buildCityParts(ports: PortsProp) {
           }
         }
         else if (b.type === 'market') {
+          const gulfSouq =
+            port.buildingStyle === 'arab-cubic' ||
+            port.buildingStyle === 'persian-gulf';
           const yardColor = c === 'West African'
             ? varyColor([0.58, 0.44, 0.28], rng, 0.05)
+            : gulfSouq
+            ? varyColor([0.58, 0.48, 0.34], rng, 0.05)
             : c === 'Indian Ocean'
             ? varyColor([0.70, 0.58, 0.40], rng, 0.045)
             : varyColor([0.64, 0.58, 0.48], rng, 0.04);
           addGroundSkirt(w + 1.4, d + 1.4, yardColor, c === 'European' || c === 'Atlantic' ? 'stone' : 'mud', 0.13);
-          addPart('box', 'wood', 0, 0.2, 0, w, 0.4, d);
+          addPart('box', gulfSouq ? 'mud' : 'wood', 0, 0.2, 0, w, 0.4, d, gulfSouq ? varyColor([0.50, 0.40, 0.28], rng, 0.05) : undefined);
           addPart('cylinder', 'wood', w/2-0.5, h/2, d/2-0.5, 0.3, h, 0.3);
           addPart('cylinder', 'wood', -w/2+0.5, h/2, d/2-0.5, 0.3, h, 0.3);
           addPart('cylinder', 'wood', w/2-0.5, h/2, -d/2+0.5, 0.3, h, 0.3);
           addPart('cylinder', 'wood', -w/2+0.5, h/2, -d/2+0.5, 0.3, h, 0.3);
 
-          if (c === 'Indian Ocean') {
+          if (gulfSouq) {
+            const reed = varyColor([0.62, 0.52, 0.34], rng, 0.08);
+            const lime = varyColor([0.82, 0.76, 0.62], rng, 0.04);
+            addPart('box', 'straw', 0, h + 0.10, 0, w * 0.96, 0.16, d * 0.96, reed);
+            addPart('box', 'stone', 0, h + 0.30, d * 0.46, w * 0.92, 0.24, 0.16, lime);
+            addPart('box', 'stone', 0, h + 0.30, -d * 0.46, w * 0.92, 0.24, 0.16, lime);
+            addPart('box', 'stone', w * 0.46, h + 0.30, 0, 0.16, 0.24, d * 0.92, lime);
+            addPart('box', 'stone', -w * 0.46, h + 0.30, 0, 0.16, 0.24, d * 0.92, lime);
+            for (const sx of [-0.28, 0.28]) {
+              addPart('box', 'straw', sx * w, h * 0.68, 0, w * 0.24, 0.10, d * 0.76, varyColor([0.70, 0.58, 0.34], rng, 0.08));
+            }
+          } else if (c === 'Indian Ocean') {
             addPart('dome', 'mud', 0, h, 0, w/2, w/2, d/2);
           } else if (c === 'European') {
             addPart('cone', 'terracotta', 0, h+1, 0, w/1.5, 2, d/1.5);
@@ -1400,7 +1469,9 @@ export function buildCityParts(ports: PortsProp) {
             addPart('cone', 'wood', 0, h+1, 0, w/1.5, 2, d/1.5);
           }
           // Awnings — each side picks from culture-specific dyed fabric colors
-          const awningPalette = AWNING_COLORS[c] ?? AWNING_COLORS['Indian Ocean'];
+          const awningPalette = gulfSouq
+            ? [[0.24, 0.32, 0.42], [0.66, 0.52, 0.28], [0.55, 0.28, 0.20], [0.78, 0.70, 0.52]] as [number, number, number][]
+            : AWNING_COLORS[c] ?? AWNING_COLORS['Indian Ocean'];
           const awning1 = varyColor(awningPalette[Math.floor(rng() * awningPalette.length)], rng, 0.08);
           const awning2 = varyColor(awningPalette[Math.floor(rng() * awningPalette.length)], rng, 0.08);
           addPart('box', 'straw', w/2-0.5, h*0.55, 0, 1.2, 0.08, d*0.7, awning1);
@@ -1420,6 +1491,12 @@ export function buildCityParts(ports: PortsProp) {
           addPart('box', 'straw', 0.1, 1.2, -0.3, 0.2, 0.18, 0.2, varyColor([0.35, 0.55, 0.25], rng, 0.12));
           addCrateStack(w * 0.36, d * 0.34, 0.62);
           addCrateStack(-w * 0.38, -d * 0.30, 0.58);
+          if (gulfSouq) {
+            addRopeCoil(w * 0.08, -d * 0.36, 0.22);
+            addPart('cylinder', 'mud', -w * 0.18, 0.58, -d * 0.34, 0.20, 0.50, 0.20, varyColor([0.54, 0.38, 0.24], rng, 0.07));
+            addPart('cylinder', 'mud', -w * 0.02, 0.48, -d * 0.38, 0.16, 0.38, 0.16, varyColor([0.40, 0.30, 0.22], rng, 0.06));
+            addPart('box', 'straw', w * 0.12, 0.56, d * 0.34, w * 0.24, 0.08, d * 0.18, varyColor([0.50, 0.38, 0.20], rng, 0.08), false, 0.2);
+          }
           if ((c === 'West African' || c === 'Indian Ocean') && PORT_CULTURAL_REGION[port.id] !== 'Swahili') {
             addWorkRack(0, -d * 0.55, 1.6);
           }
@@ -2126,7 +2203,7 @@ export function buildCityParts(ports: PortsProp) {
 
             if (port.buildingStyle === 'mughal-gujarati' && (b.type === 'house' || b.type === 'estate')) {
               const frontZ = sd / 2 + 0.075;
-              const trim = varyColor([0.74, 0.68, 0.54], rng, 0.04);
+              const trim = varyColor([0.58, 0.48, 0.34], rng, 0.045);
               const plaster = varyColor(wallBase, rng, 0.035);
               const bayCount = b.type === 'estate' ? 3 : Math.max(2, Math.min(3, Math.floor(sw / 1.55)));
               const bayW = (sw * 0.88) / bayCount;
@@ -2206,18 +2283,23 @@ export function buildCityParts(ports: PortsProp) {
                   }
                 }
 
-                if (rng() < 0.34) {
-                  const patchCount = rng() < 0.25 ? 2 : 1;
+                if (port.buildingStyle !== 'mughal-gujarati' && rng() < 0.62) {
+                  const patchCount = rng() < 0.40 ? 2 : 1;
                   for (let pi = 0; pi < patchCount; pi++) {
-                    const patchX = (rng() - 0.5) * roofW * 0.42;
-                    const patchZ = (rng() - 0.5) * roofD * 0.42;
+                    const patchX = (rng() - 0.5) * roofW * 0.56;
+                    const patchZ = (rng() - 0.5) * roofD * 0.56;
                     const patchY = roofBase + roofYOffset + roofHeight * (0.48 + rng() * 0.18);
+                    const stain = roofMat === 'woodRoof'
+                      ? [0.045, 0.055, 0.070] as [number, number, number]
+                      : roofMat === 'tileRoof'
+                      ? [0.22, 0.12, 0.08] as [number, number, number]
+                      : [0.24, 0.18, 0.08] as [number, number, number];
                     const patchColor = varyColor([
-                      roofColor[0] * (0.72 + rng() * 0.20),
-                      roofColor[1] * (0.72 + rng() * 0.20),
-                      roofColor[2] * (0.72 + rng() * 0.20),
-                    ], rng, 0.03);
-                    addPart('box', roofMat, patchX, patchY, patchZ, roofW * (0.16 + rng() * 0.10), 0.035, roofD * (0.12 + rng() * 0.08), patchColor, false, rng() * Math.PI);
+                      roofColor[0] * (0.52 + rng() * 0.24) + stain[0] * 0.35,
+                      roofColor[1] * (0.52 + rng() * 0.24) + stain[1] * 0.35,
+                      roofColor[2] * (0.52 + rng() * 0.24) + stain[2] * 0.35,
+                    ], rng, 0.025);
+                    addPart('box', roofMat, patchX, patchY, patchZ, roofW * (0.20 + rng() * 0.16), 0.04, roofD * (0.14 + rng() * 0.12), patchColor, false, rng() * Math.PI);
                   }
                 }
               }
@@ -2229,6 +2311,50 @@ export function buildCityParts(ports: PortsProp) {
               addPart('box', wallMat, sw/4, roofBase + roofH + 0.7, -sd/4, 0.6, 1.2, 0.6, wcColor);
               // Small open slit on top face (dark) implied by a dark thin box
               addPart('box', 'dark', sw/4, roofBase + roofH + 1.25, -sd/4, 0.5, 0.1, 0.5);
+            }
+
+            if (
+              (port.buildingStyle === 'arab-cubic' || port.buildingStyle === 'persian-gulf') &&
+              (b.type === 'house' || b.type === 'farmhouse' || b.type === 'estate')
+            ) {
+              const limeTrim = varyColor([0.78, 0.72, 0.58], rng, 0.045);
+              const shadeWood = varyColor([0.26, 0.18, 0.12], rng, 0.045);
+              const reedColor = varyColor([0.58, 0.48, 0.30], rng, 0.08);
+              const sootColor = varyColor([0.22, 0.19, 0.16], rng, 0.035);
+              const roofTop = roofBase + roofYOffset + roofHeight + 0.08;
+              const lowWallY = stiltLift + sh * 0.30;
+              const upperWallY = stiltLift + sh * 0.66;
+
+              addPart('box', 'stone', 0, stiltLift + 0.12, frontZ + 0.02, sw + 0.18, 0.12, 0.10, sootColor);
+              addPart('box', 'stone', 0, stiltLift + sh * 0.96, frontZ + 0.02, sw + 0.12, 0.10, 0.10, limeTrim);
+
+              for (const sx of [-0.26, 0.26]) {
+                addPart('box', 'dark', sx * sw, upperWallY, frontZ + 0.065, 0.22, 0.34, 0.07);
+                addPart('box', 'stone', sx * sw, upperWallY - 0.22, frontZ + 0.075, 0.32, 0.055, 0.07, limeTrim);
+              }
+              if (sw > 3.2) {
+                addPart('box', 'dark', 0, lowWallY, frontZ + 0.06, 0.46, 0.72, 0.08);
+                addPart('box', 'wood', 0, lowWallY + 0.48, frontZ + 0.10, 0.62, 0.06, 0.08, shadeWood);
+              }
+
+              if (rng() < 0.72) {
+                const stairSide = rng() < 0.5 ? -1 : 1;
+                addPart('box', wallMat, stairSide * sw * 0.28, roofTop + 0.22, -sd * 0.26, 0.54, 0.44, 0.70, varyColor(wallBase, rng, 0.04));
+                addPart('box', 'dark', stairSide * sw * 0.28, roofTop + 0.24, -sd * 0.61, 0.24, 0.28, 0.05);
+              }
+              if (rng() < 0.78) {
+                addPart('box', 'straw', -sw * 0.22, roofTop + 0.10, sd * 0.10, sw * 0.28, 0.06, sd * 0.24, reedColor, false, rng() * 0.4 - 0.2);
+              }
+              if (rng() < 0.62) {
+                addPart('box', 'straw', 0, stiltLift + sh * 0.54, frontZ + 0.26, sw * 0.52, 0.08, 0.52, reedColor);
+                for (const sx of [-0.24, 0.24]) {
+                  addPart('cylinder', 'wood', sx * sw, stiltLift + sh * 0.30, frontZ + 0.32, 0.045, sh * 0.42, 0.045, shadeWood);
+                }
+              }
+              if (rng() < 0.70) {
+                addPart('cylinder', 'mud', sw * 0.28, roofTop + 0.18, sd * 0.18, 0.16, 0.36, 0.16, varyColor([0.52, 0.36, 0.22], rng, 0.06));
+                addPart('cylinder', 'mud', sw * 0.40, roofTop + 0.14, sd * 0.04, 0.12, 0.28, 0.12, varyColor([0.36, 0.28, 0.20], rng, 0.05));
+              }
             }
 
             if (b.type === 'warehouse') {
@@ -2304,7 +2430,7 @@ export function buildCityParts(ports: PortsProp) {
                 addPart('box', 'dark', 0, stiltLift + sh * 0.22, frontZ + 0.08, Math.min(1.25, sw * 0.30), sh * 0.32, 0.08);
                 addPart('box', 'wood', 0, stiltLift + sh * 0.42, frontZ + 0.09, Math.min(1.45, sw * 0.36), 0.08, 0.08, timber);
               } else if (port.buildingStyle === 'mughal-gujarati') {
-                const trimWarm = varyColor([0.76, 0.68, 0.50], rng, 0.04);
+                const trimWarm = varyColor([0.58, 0.48, 0.32], rng, 0.045);
                 if (port.id === 'masulipatnam') {
                   addPart('box', 'wood', -sw * 0.55, 0.90, frontZ + 1.0, 0.12, 1.8, 0.12, varyColor([0.30, 0.20, 0.12], rng, 0.04));
                   addPart('box', 'wood', sw * 0.55, 0.90, frontZ + 1.0, 0.12, 1.8, 0.12, varyColor([0.30, 0.20, 0.12], rng, 0.04));

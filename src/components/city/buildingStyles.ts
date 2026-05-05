@@ -219,15 +219,16 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
     // Pre-1666 London: steep roofs in clay tile, dark shingle/slate, and some
     // thatch on poorer/outlying houses. Sea-coal smoke dulls the whole range.
     roofPalette: [
-      { color: [0.74, 0.25, 0.14], geo: 'cone', h: 1.50 },               // fired red clay tile
-      { color: [0.74, 0.25, 0.14], geo: 'cone', h: 1.50 },
-      { color: [0.88, 0.38, 0.18], geo: 'cone', h: 1.44 },               // warmer terracotta tile
-      { color: [0.58, 0.18, 0.13], geo: 'cone', h: 1.52 },               // smoke-darkened red tile
-      { color: [0.30, 0.31, 0.32], geo: 'cone', h: 1.55, mat: 'wood' },  // blue-grey slate/shingle
-      { color: [0.16, 0.16, 0.16], geo: 'cone', h: 1.55, mat: 'wood' },  // soot-blackened shingle
-      { color: [0.30, 0.42, 0.28], geo: 'cone', h: 1.58, mat: 'wood' },  // moss-greened shingle
-      { color: [0.58, 0.43, 0.20], geo: 'cone', h: 1.82, mat: 'straw' }, // ochre weathered thatch
-      { color: [0.84, 0.63, 0.25], geo: 'cone', h: 1.78, mat: 'straw' }, // newer golden thatch
+      { color: [0.62, 0.20, 0.12], geo: 'cone', h: 1.50 },               // fired red clay tile
+      { color: [0.70, 0.28, 0.15], geo: 'cone', h: 1.44 },               // warmer terracotta tile
+      { color: [0.48, 0.14, 0.10], geo: 'cone', h: 1.52 },               // smoke-darkened red tile
+      { color: [0.34, 0.36, 0.37], geo: 'cone', h: 1.55, mat: 'wood' },  // light blue-grey slate
+      { color: [0.20, 0.23, 0.27], geo: 'cone', h: 1.55, mat: 'wood' },  // dark slate
+      { color: [0.09, 0.11, 0.16], geo: 'cone', h: 1.58, mat: 'wood' },  // midnight blue-black slate
+      { color: [0.09, 0.11, 0.16], geo: 'cone', h: 1.58, mat: 'wood' },
+      { color: [0.20, 0.31, 0.22], geo: 'cone', h: 1.58, mat: 'wood' },  // moss-darkened shingle
+      { color: [0.46, 0.34, 0.17], geo: 'cone', h: 1.82, mat: 'straw' }, // ochre weathered thatch
+      { color: [0.62, 0.48, 0.22], geo: 'cone', h: 1.78, mat: 'straw' }, // newer but muted thatch
     ],
     // Variety matters at Huge scale: cramped tall City rowhouses, standard
     // two-bay cottages, and squat outer-parish dwellings.
@@ -288,13 +289,15 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
   },
   'arab-cubic': {
     wallPalette: [
-      [0.92, 0.88, 0.78], [0.92, 0.88, 0.78],
-      [0.84, 0.74, 0.56],
-      [0.76, 0.63, 0.47],
+      [0.90, 0.86, 0.74], [0.90, 0.86, 0.74],
+      [0.78, 0.66, 0.48],
+      [0.63, 0.52, 0.38],
+      [0.48, 0.40, 0.30],
     ],
     roofPalette: [
-      { color: [0.80, 0.72, 0.58], geo: 'box', h: 0.32 },
-      { color: [0.70, 0.62, 0.48], geo: 'box', h: 0.36 },
+      { color: [0.78, 0.68, 0.50], geo: 'box', h: 0.32 },
+      { color: [0.58, 0.48, 0.34], geo: 'box', h: 0.36 },
+      { color: [0.38, 0.34, 0.28], geo: 'box', h: 0.34 },
     ],
     houseVariants: [
       { weight: 0.6, scaleMul: [0.8, 1.3, 0.8], roofScaleMul: [1.06, 1.0, 1.06], features: { flatRoofParapet: true } },
@@ -304,13 +307,15 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
   },
   'persian-gulf': {
     wallPalette: [
-      [0.76, 0.63, 0.47], [0.76, 0.63, 0.47],
-      [0.80, 0.68, 0.48],
-      [0.70, 0.55, 0.40],
+      [0.80, 0.70, 0.52], [0.80, 0.70, 0.52],
+      [0.70, 0.58, 0.40],
+      [0.56, 0.46, 0.34],
+      [0.42, 0.35, 0.27],
     ],
     roofPalette: [
-      { color: [0.72, 0.58, 0.40], geo: 'box', h: 0.34 },
-      { color: [0.60, 0.48, 0.34], geo: 'box', h: 0.36 },
+      { color: [0.70, 0.56, 0.38], geo: 'box', h: 0.34 },
+      { color: [0.52, 0.42, 0.30], geo: 'box', h: 0.36 },
+      { color: [0.34, 0.30, 0.25], geo: 'box', h: 0.34 },
     ],
     houseVariants: [
       { weight: 0.62, roofScaleMul: [1.04, 1.0, 1.04], features: { flatRoofParapet: true } },
@@ -340,14 +345,20 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
   },
   'mughal-gujarati': {
     wallPalette: [
-      [0.94, 0.86, 0.62], [0.94, 0.86, 0.62],
-      [0.88, 0.82, 0.68],
-      [0.90, 0.86, 0.78],
+      [0.88, 0.82, 0.66],   // warm lime plaster
+      [0.82, 0.72, 0.52],   // ochre limewash
+      [0.72, 0.56, 0.38],   // weathered earth plaster
+      [0.60, 0.38, 0.26],   // exposed brick / baked clay
+      [0.42, 0.30, 0.22],   // dark timber-and-plaster shopfront
+      [0.90, 0.86, 0.76],   // pale merchant house, occasional
     ],
     roofPalette: [
-      { color: [0.74, 0.28, 0.24], geo: 'cone', h: 1.1 },
-      { color: [0.86, 0.34, 0.30], geo: 'cone', h: 1.12 },
-      { color: [0.58, 0.28, 0.22], geo: 'cone', h: 1.06 },
+      { color: [0.52, 0.22, 0.16], geo: 'cone', h: 1.04 },              // older baked clay tile
+      { color: [0.66, 0.30, 0.18], geo: 'cone', h: 1.08 },              // muted terracotta
+      { color: [0.36, 0.26, 0.18], geo: 'cone', h: 1.02, mat: 'wood' }, // dark teak shingle
+      { color: [0.22, 0.22, 0.20], geo: 'cone', h: 1.00, mat: 'wood' }, // soot-darkened timber roof
+      { color: [0.42, 0.46, 0.36], geo: 'cone', h: 1.02, mat: 'wood' }, // monsoon-mossed shingle
+      { color: [0.58, 0.46, 0.24], geo: 'cone', h: 1.10, mat: 'straw' }, // reed/thatch outbuilding
     ],
     houseVariants: [
       { weight: 0.45, roofScaleMul: [1.06, 0.95, 1.06], features: { ridgeCap: true } },

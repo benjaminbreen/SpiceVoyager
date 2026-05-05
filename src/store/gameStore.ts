@@ -542,6 +542,7 @@ export interface RenderDebugSettings {
   lutMode: 'auto' | 'manual';
   advancedWater: boolean;
   shipWake: boolean;
+  shipAnimationQuality: 'full' | 'balanced' | 'cheap';
   rain: boolean;
   algae: boolean;
   coralReefs: boolean;

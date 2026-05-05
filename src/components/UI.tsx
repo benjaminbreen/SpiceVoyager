@@ -3563,6 +3563,7 @@ function RenderTestPanel() {
             vignette: false,
             advancedWater: false,
             shipWake: false,
+            shipAnimationQuality: 'cheap',
             rain: false,
             algae: false,
             wildlifeMotion: false,
@@ -3636,6 +3637,29 @@ function RenderTestPanel() {
           enabled={renderDebug.shipWake}
           onToggle={() => updateRenderDebug({ shipWake: !renderDebug.shipWake })}
         />
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[12px] text-slate-300">Ship Animation</span>
+            <span className="rounded-full bg-slate-700/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">
+              {renderDebug.shipAnimationQuality}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(['full', 'balanced', 'cheap'] as const).map((quality) => (
+              <button
+                key={quality}
+                onClick={() => updateRenderDebug({ shipAnimationQuality: quality })}
+                className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] transition-all ${
+                  renderDebug.shipAnimationQuality === quality
+                    ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
+                    : 'border-white/[0.07] bg-white/[0.03] text-slate-500 hover:bg-white/[0.06] hover:text-slate-300'
+                }`}
+              >
+                {quality}
+              </button>
+            ))}
+          </div>
+        </div>
         <RenderToggleRow
           label="Rain"
           enabled={renderDebug.rain}
