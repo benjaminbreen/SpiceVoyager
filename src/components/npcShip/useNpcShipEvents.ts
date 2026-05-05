@@ -39,12 +39,19 @@ export function useNpcShipEvents({
       const hullFraction = hullRef.current / identity.maxHull;
       const reputation = useGameStore.getState().getReputation(identity.flag);
       let posture: NpcCombatPosture;
-      if (detail.response === 'apologize' || detail.response === 'pay') {
+      if (detail.response === 'apologize' || detail.response === 'pay' || detail.response === 'helpRepairs' || detail.response === 'turnAway') {
         posture = identity.armed && hullFraction > 0.35 ? 'evade' : 'flee';
       } else if (detail.response === 'threaten') {
         markProvoked(reputation - 40, hullFraction);
         posture = chooseProvokedPosture(identity, {
           reputation: reputation - 40,
+          provoked: true,
+          hullFraction,
+        });
+      } else if (detail.response === 'loadGuns') {
+        markProvoked(reputation - 55, hullFraction);
+        posture = chooseProvokedPosture(identity, {
+          reputation: reputation - 55,
           provoked: true,
           hullFraction,
         });
@@ -54,7 +61,7 @@ export function useNpcShipEvents({
       }
       setCombatPosture(posture, now + alertDuration);
       useGameStore.getState().addNotification(
-        detail.response === 'apologize' || detail.response === 'pay'
+        detail.response === 'apologize' || detail.response === 'pay' || detail.response === 'helpRepairs' || detail.response === 'turnAway'
           ? `The ${identity.shipName} keeps clear, still cursing your helm.`
           : posture === 'flee'
           ? `The ${identity.shipName} breaks away, shouting curses.`
@@ -81,7 +88,7 @@ export function useNpcShipEvents({
       const hullFraction = hullRef.current / identity.maxHull;
       const reputation = useGameStore.getState().getReputation(identity.flag);
       let posture: NpcCombatPosture;
-      if (detail.response === 'alterCourse' || detail.response === 'payToll') {
+      if (detail.response === 'alterCourse' || detail.response === 'payToll' || detail.response === 'showPapers' || detail.response === 'submitInspection') {
         posture = 'evade';
       } else if (detail.response === 'threaten') {
         markProvoked(reputation - 35, hullFraction);

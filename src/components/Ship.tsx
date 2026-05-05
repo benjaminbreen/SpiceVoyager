@@ -8,7 +8,7 @@ import { FACTIONS } from '../constants/factions';
 import { sfxShoreCollision, sfxShipCollision, sfxCastNet, sfxHaulNet, sfxAnchorWeigh, sfxSailsCatch, sfxTreasureFind } from '../audio/SoundEffects';
 import { rollFishCatch, rollManualCast } from '../utils/fishTypes';
 import { playLootSfx } from '../utils/lootRoll';
-import { syncLiveShipTransform } from '../utils/livePlayerTransform';
+import { syncLiveShipMotion, syncLiveShipTransform } from '../utils/livePlayerTransform';
 import { addCameraImpulse, addCameraShake, addCameraFovPulse } from '../utils/cameraShakeState';
 import { swivelAimAngle, swivelAimPitch, broadsideReload, getCurrentElevationCharge } from '../utils/combatState';
 import { touchShipInput } from '../utils/touchInput';
@@ -21,12 +21,14 @@ import { perfSignals, reportCollisionMs } from '../utils/performanceStats';
 import { getEffectiveRainIntensity } from '../store/weather';
 import { BaghlaHull } from './ship/BaghlaHull';
 import { BaghlaRigging } from './ship/BaghlaRigging';
+import { CarrackHull } from './ship/CarrackHull';
 import { CaravelHull } from './ship/CaravelHull';
 import { CaravelRigging } from './ship/CaravelRigging';
 import { DhowHull } from './ship/DhowHull';
 import { DhowRigging } from './ship/DhowRigging';
 import { FluytHull } from './ship/FluytHull';
 import { FluytRigging } from './ship/FluytRigging';
+import { GalleonHull } from './ship/GalleonHull';
 import { JunkHull } from './ship/JunkHull';
 import { JunkRigging } from './ship/JunkRigging';
 import { PattamarHull } from './ship/PattamarHull';
@@ -619,6 +621,14 @@ export function Ship() {
       previousHeading.current = state.playerRot;
       velocity.current = state.playerVelocity;
       syncLiveShipTransform(state.playerPos, state.playerRot, state.playerVelocity);
+      syncLiveShipMotion({
+        angularVelocity: 0,
+        speedRatio: Math.min(Math.abs(state.playerVelocity) / Math.max(stats.speed, 1), 1),
+        heel: 0,
+        yawSlide: 0,
+        shipLength: profile.hull.length,
+        shipWidth: profile.hull.width,
+      });
       lastSyncedStoreTransform.current = {
         pos: state.playerPos,
         rot: state.playerRot,
@@ -1307,11 +1317,10 @@ export function Ship() {
         const baseX = group.current.position.x + fwdX * -0.5;
         const baseZ = group.current.position.z + fwdZ * -0.5;
 
-        // Mix arc spray (upward plume) with hull-hugging foam patches.
-        // Foam particles outnumber arc 2:1 — they're the waterline kick that
-        // reads as real hydrodynamic displacement; arc adds sparkle on top.
-        const maxSpawns = isDrifting ? 4 : 3;
-        const spawns = Math.random() < (0.3 + emitStrength * 0.6) ? maxSpawns : Math.max(1, maxSpawns - 1);
+        // The shader wake handles hull displacement; these particles are just
+        // occasional droplets at the crest of a hard bank.
+        const maxSpawns = isDrifting ? 2 : 1;
+        const spawns = Math.random() < (0.18 + emitStrength * 0.38) ? maxSpawns : 1;
         for (let s = 0; s < spawns; s++) {
           let slot = -1;
           for (let i = 0; i < SPRAY_COUNT; i++) {
@@ -1319,42 +1328,22 @@ export function Ship() {
           }
           if (slot < 0) break;
           const p = sprayData.current[slot];
-          const isFoam = s !== 0; // first spawn per frame is arc, rest are foam
           const alongScatter = (Math.random() - 0.5) * 3.5;
           const sideDist = 1.25 + Math.random() * 0.35;
-          if (isFoam) {
-            // Foam clings to the waterline and spreads outward along the hull.
-            p.pos.set(
-              baseX + fwdX * alongScatter + shipRightX * outerSide * sideDist,
-              0.04 + Math.random() * 0.05,
-              baseZ + fwdZ * alongScatter + shipRightZ * outerSide * sideDist,
-            );
-            const outward = 0.9 + emitStrength * 1.1 + Math.random() * 0.5;
-            // Slight along-hull drift (toward stern) so foam trails the turn
-            const trail = -0.5 - emitStrength * 0.6;
-            p.vel.set(
-              shipRightX * outerSide * outward + fwdX * trail,
-              0.15 + Math.random() * 0.2,
-              shipRightZ * outerSide * outward + fwdZ * trail,
-            );
-            p.maxLife = 0.9 + Math.random() * 0.5;
-            p.foam = true;
-          } else {
-            p.pos.set(
-              baseX + fwdX * alongScatter + shipRightX * outerSide * sideDist,
-              0.15 + Math.random() * 0.15,
-              baseZ + fwdZ * alongScatter + shipRightZ * outerSide * sideDist,
-            );
-            const outward = 2.2 + emitStrength * 2.0 + Math.random() * 1.5;
-            const upward = 2.3 + emitStrength * 1.7 + Math.random() * 1.4;
-            p.vel.set(
-              shipRightX * outerSide * outward + (Math.random() - 0.5) * 0.6,
-              upward,
-              shipRightZ * outerSide * outward + (Math.random() - 0.5) * 0.6,
-            );
-            p.maxLife = 0.55 + Math.random() * 0.25;
-            p.foam = false;
-          }
+          p.pos.set(
+            baseX + fwdX * alongScatter + shipRightX * outerSide * sideDist,
+            0.15 + Math.random() * 0.15,
+            baseZ + fwdZ * alongScatter + shipRightZ * outerSide * sideDist,
+          );
+          const outward = 2.2 + emitStrength * 2.0 + Math.random() * 1.5;
+          const upward = 2.3 + emitStrength * 1.7 + Math.random() * 1.4;
+          p.vel.set(
+            shipRightX * outerSide * outward + (Math.random() - 0.5) * 0.6,
+            upward,
+            shipRightZ * outerSide * outward + (Math.random() - 0.5) * 0.6,
+          );
+          p.maxLife = 0.55 + Math.random() * 0.25;
+          p.foam = false;
           p.life = p.maxLife;
         }
 
@@ -1470,6 +1459,15 @@ export function Ship() {
       visualGroup.current.rotation.x =
         pitchFromWave + planingPitch + throttlePitch + weightPitch;
     }
+
+    syncLiveShipMotion({
+      angularVelocity,
+      speedRatio,
+      heel: heel.current,
+      yawSlide: yawSlide.current,
+      shipLength: profile.hull.length,
+      shipWidth: profile.hull.width,
+    });
 
     if (speedBoostRef.current) {
       const pulse = 1 + Math.sin(state.clock.elapsedTime * 9) * 0.08;
@@ -2276,7 +2274,13 @@ export function Ship() {
             </Billboard>
           )}
 
-          {shipType === 'Pinnace' ? (
+          {shipType === 'Carrack' ? (
+            <CarrackHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Pinnace' ? (
             <PinnaceHull
               profile={profile}
               hullMaterialRef={hullMaterialRef}
@@ -2284,6 +2288,12 @@ export function Ship() {
             />
           ) : shipType === 'Fluyt' ? (
             <FluytHull
+              profile={profile}
+              hullMaterialRef={hullMaterialRef}
+              deckMaterialRef={deckMaterialRef}
+            />
+          ) : shipType === 'Galleon' ? (
+            <GalleonHull
               profile={profile}
               hullMaterialRef={hullMaterialRef}
               deckMaterialRef={deckMaterialRef}
@@ -2306,7 +2316,7 @@ export function Ship() {
               hullMaterialRef={hullMaterialRef}
               deckMaterialRef={deckMaterialRef}
             />
-          ) : shipType === 'Junk' ? (
+          ) : shipType === 'Junk' || shipType === 'Jong' ? (
             <JunkHull
               profile={profile}
               hullMaterialRef={hullMaterialRef}
@@ -2331,6 +2341,43 @@ export function Ship() {
                 <boxGeometry args={[profile.hull.width * 0.91, 0.1, profile.hull.length * 0.96]} />
                 <meshStandardMaterial ref={deckMaterialRef} color={profile.hull.deckColor} roughness={0.8} />
               </mesh>
+              {/* Carrack waist bulwarks. The pavesade shields sit above the
+                  deck; without these low side planks the shield row reads as
+                  floating and the player can see through the hull from side
+                  view. Kept as simple boxes for negligible geometry cost. */}
+              {profile.hull.pavesadeRow && (
+                <group>
+                  {[-1, 1].map((side) => (
+                    <mesh
+                      key={`waist-bulwark-${side}`}
+                      position={[side * profile.hull.width * 0.505, profile.hull.height + 0.16, 0]}
+                      castShadow
+                      receiveShadow
+                    >
+                      <boxGeometry args={[0.12, 0.34, profile.hull.length * 0.74]} />
+                      <meshStandardMaterial color={profile.hull.hullColor} roughness={0.92} />
+                    </mesh>
+                  ))}
+                  {[-1, 1].map((side) => (
+                    <mesh
+                      key={`waist-caprail-${side}`}
+                      position={[side * profile.hull.width * 0.51, profile.hull.height + 0.36, 0]}
+                      castShadow
+                    >
+                      <boxGeometry args={[0.16, 0.08, profile.hull.length * 0.78]} />
+                      <meshStandardMaterial color={profile.hull.trimColor} roughness={0.86} />
+                    </mesh>
+                  ))}
+                  <mesh position={[0, profile.hull.height + 0.34, profile.hull.length * 0.31]} castShadow receiveShadow>
+                    <boxGeometry args={[profile.hull.width * 0.88, 0.22, 0.1]} />
+                    <meshStandardMaterial color={profile.hull.hullColor} roughness={0.92} />
+                  </mesh>
+                  <mesh position={[0, profile.hull.height + 0.34, -profile.hull.length * 0.31]} castShadow receiveShadow>
+                    <boxGeometry args={[profile.hull.width * 0.9, 0.22, 0.1]} />
+                    <meshStandardMaterial color={profile.hull.hullColor} roughness={0.92} />
+                  </mesh>
+                </group>
+              )}
           {/* Bow — shape depends on bowStyle */}
           {profile.hull.bowStyle === 'angled' && (
             <>
@@ -2958,7 +3005,7 @@ export function Ship() {
           {shipType === 'Caravel' && <CaravelRigging profile={profile} />}
           {shipType === 'Dhow' && <DhowRigging profile={profile} />}
           {shipType === 'Baghla' && <BaghlaRigging profile={profile} />}
-          {shipType === 'Junk' && <JunkRigging profile={profile} />}
+          {(shipType === 'Junk' || shipType === 'Jong') && <JunkRigging profile={profile} />}
           {shipType === 'Pattamar' && <PattamarRigging profile={profile} />}
           {/* Round top — circular platform at ~78% up the main mast with a
               short perimeter rail. Iconic carrack / galleon masthead detail. */}

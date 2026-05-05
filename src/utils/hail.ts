@@ -17,10 +17,16 @@ export type HailAction =
   | 'collision_pay'
   | 'collision_ignore'
   | 'collision_threaten'
+  | 'collision_help_repairs'
+  | 'collision_break_off'
+  | 'collision_turn_away'
+  | 'collision_load_guns'
   | 'warning_alter_course'
   | 'warning_pay_toll'
   | 'warning_ignore'
-  | 'warning_threaten';
+  | 'warning_threaten'
+  | 'warning_show_papers'
+  | 'warning_submit_inspection';
 
 export const DEFAULT_BARTER_QTY = 3;
 export const BARTER_CANDIDATE_POOL = 3;

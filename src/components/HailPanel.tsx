@@ -11,7 +11,15 @@ import { sfxClick, sfxHover } from '../audio/SoundEffects';
 import { floatingPanelMotion } from '../utils/uiMotion';
 import { useIsMobile } from '../utils/useIsMobile';
 import { effectiveFactionReputation, sharesFactionLanguage } from '../utils/factionRelations';
-import { COLLISION_REPUTATION_TARGET, type CollisionResponse, type WarningResponse } from '../utils/npcCombat';
+import {
+  COLLISION_REPUTATION_TARGET,
+  collisionCompensationDemand,
+  resolveHailBranchOutcome,
+  type CollisionResponse,
+  type HailBranchOutcome,
+  type WarningResponse,
+} from '../utils/npcCombat';
+import { npcLivePositions } from '../utils/combatState';
 import {
   BARTER_CANDIDATE_POOL,
   DEFAULT_BARTER_QTY,
@@ -315,6 +323,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   const cargoCapacity = useGameStore((state) => state.stats.cargoCapacity);
   const gold = useGameStore((state) => state.gold);
   const playerFlag = useGameStore((state) => state.ship.flag);
+  const playerBroadsideCount = useGameStore((state) => state.stats.cannons);
   const timeOfDay = useGameStore((state) => state.timeOfDay);
   const { isMobile } = useIsMobile();
 
@@ -380,24 +389,41 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   const [used, setUsed] = useState<Record<string, boolean>>({});
   const [result, setResult] = useState<{ tone: 'good' | 'warn' | 'neutral'; text: string; impact?: string } | null>(null);
   const [barterMode, setBarterMode] = useState<{ yourGood: Commodity | null; yourQty: number } | null>(null);
+  const [followUpActions, setFollowUpActions] = useState<HailActionEntry[] | null>(null);
+  const collisionRecordedRef = useRef(false);
 
   const collisionAnswered = Boolean(
     used.collision_apologize ||
     used.collision_pay ||
     used.collision_ignore ||
-    used.collision_threaten,
+    used.collision_threaten ||
+    used.collision_help_repairs ||
+    used.collision_break_off ||
+    used.collision_turn_away ||
+    used.collision_load_guns,
   );
   const warningAnswered = Boolean(
     used.warning_alter_course ||
     used.warning_pay_toll ||
     used.warning_ignore ||
-    used.warning_threaten,
+    used.warning_threaten ||
+    used.warning_show_papers ||
+    used.warning_submit_inspection,
   );
 
   const setFactionReputation = useCallback((target: number) => {
     const state = useGameStore.getState();
     state.adjustReputation(npc.flag, target - state.getReputation(npc.flag));
   }, [npc.flag]);
+
+  const currentNpcHullFraction = useCallback(() => {
+    const live = npcLivePositions.get(npc.id);
+    const hull = live?.hull ?? npc.maxHull;
+    const maxHull = live?.maxHull ?? npc.maxHull;
+    return maxHull > 0 ? Math.max(0, Math.min(1, hull / maxHull)) : 1;
+  }, [npc.id, npc.maxHull]);
+
+  const collisionDemand = collisionCompensationDemand(npc, currentNpcHullFraction());
 
   const dispatchCollisionResponse = useCallback((response: CollisionResponse) => {
     window.dispatchEvent(new CustomEvent('npc-collision-response', {
@@ -473,21 +499,25 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
   const [portPicker, setPortPicker] = useState(false);
 
   const availableActions = useMemo<HailActionEntry[]>(() => {
+    if (followUpActions) return followUpActions;
     if (context === 'collision') {
-      return [
+      const collisionActions: HailActionEntry[] = [
         { id: 'collision_apologize', label: canUnderstand ? 'shout an apology' : 'make apology gestures', detail: canUnderstand ? 'claim accident' : 'hands open, head bowed' },
-        { id: 'collision_pay', label: 'offer compensation', detail: gold >= 25 ? '25 gold' : 'not enough gold' },
+        { id: 'collision_pay', label: 'offer compensation', detail: gold >= collisionDemand ? `${collisionDemand} gold` : `need ${collisionDemand} gold` },
         { id: 'collision_ignore', label: 'sail on without answering' },
         { id: 'collision_threaten', label: canUnderstand ? 'answer with threats' : 'gesture toward your guns' },
       ];
+      return collisionActions;
     }
     if (context === 'warning') {
-      return [
+      const warningActions: (HailActionEntry | null)[] = [
         { id: 'warning_alter_course', label: canUnderstand ? 'alter course and answer politely' : 'turn away with open hands' },
         { id: 'warning_pay_toll', label: npc.role === 'privateer' ? 'offer a toll' : 'offer coin anyway', detail: gold >= 30 ? '30 gold' : 'not enough gold' },
+        canUnderstand ? { id: 'warning_show_papers', label: 'name your flag and papers', detail: playerFlag === npc.flag ? 'same flag' : 'test standing' } : null,
         { id: 'warning_ignore', label: 'hold your course' },
         { id: 'warning_threaten', label: canUnderstand ? 'threaten them back' : 'gesture toward your guns' },
       ];
+      return warningActions.filter((entry): entry is HailActionEntry => entry !== null);
     }
     const entries: (HailActionEntry | null)[] = [
       canUnderstand && !used.news ? { id: 'news', label: 'ask what news he carries' } : null,
@@ -497,7 +527,40 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
         : null,
     ];
     return entries.filter((e): e is HailActionEntry => e !== null);
-  }, [canBarter, canUnderstand, used, barterDetail, context, gold, intelCandidates, npc.role]);
+  }, [canBarter, canUnderstand, used, barterDetail, context, gold, collisionDemand, intelCandidates, npc.role, npc.flag, playerFlag, followUpActions]);
+
+  const applyBranchOutcome = useCallback((action: HailAction, outcome: HailBranchOutcome) => {
+    const state = useGameStore.getState();
+    if (outcome.reputationTarget !== undefined) {
+      setFactionReputation(outcome.reputationTarget);
+    }
+    if (outcome.reputationDelta !== undefined) {
+      state.adjustReputation(npc.flag, outcome.reputationDelta);
+    }
+    if (outcome.goldDelta) {
+      useGameStore.setState((prev) => ({ gold: Math.max(0, prev.gold + outcome.goldDelta!) }));
+    }
+    if (outcome.collisionMood) {
+      setCollisionMood(outcome.collisionMood);
+    }
+    setResult({ tone: outcome.tone, text: outcome.text, impact: outcome.impact });
+    setFollowUpActions(outcome.nextActions ?? null);
+    setUsed((prev) => ({ ...prev, [action]: true }));
+
+    if (context === 'collision') {
+      if (!collisionRecordedRef.current) {
+        recordCollisionGrievance(npc.id, state.dayCount);
+        collisionRecordedRef.current = true;
+      }
+      state.addJournalEntry('encounter', `Hailed the ${npc.shipName} after collision: ${outcome.impact ?? outcome.text}`);
+      if (outcome.collisionResponse) dispatchCollisionResponse(outcome.collisionResponse);
+    } else {
+      state.addJournalEntry('encounter', `Answered the ${npc.shipName}'s warning: ${outcome.impact ?? outcome.text}`);
+      if (outcome.warningResponse) dispatchWarningResponse(outcome.warningResponse);
+    }
+
+    if (outcome.close) onClose();
+  }, [context, dispatchCollisionResponse, dispatchWarningResponse, npc.flag, npc.id, npc.shipName, onClose, setFactionReputation]);
 
   const resolveAction = useCallback((action: HailAction) => {
     sfxClick();
@@ -509,103 +572,39 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
     }
 
     if (context === 'collision') {
-      if (action === 'collision_apologize') {
-        recordCollisionGrievance(npc.id, state.dayCount);
-        setFactionReputation(COLLISION_REPUTATION_TARGET.apologize);
-        state.addJournalEntry('encounter', `After a collision with the ${npc.shipName}, we shouted apology across the water.`);
-        setResult({
-          tone: 'warn',
-          text: canUnderstand
-            ? `See that it was an accident. Keep clear, or we take it for an attack!!`
-            : getCollisionHail(npc, false),
-          impact: 'reputation: hostile',
+      if (action.startsWith('collision_')) {
+        const outcome = resolveHailBranchOutcome({
+          npc,
+          context: 'collision',
+          action: action as Parameters<typeof resolveHailBranchOutcome>[0]['action'],
+          canUnderstand,
+          hasTranslator: Boolean(translator),
+          playerGold: state.gold,
+          playerBroadsideCount,
+          playerFlag,
+          reputation: state.getReputation(npc.flag),
+          hullFraction: currentNpcHullFraction(),
         });
-        setCollisionMood('COLD');
-        setUsed((prev) => ({ ...prev, collision_apologize: true }));
-        dispatchCollisionResponse('apologize');
-        return;
-      }
-      if (action === 'collision_pay') {
-        if (state.gold < 25) {
-          setResult({ tone: 'warn', text: canUnderstand ? `You offer words, not coin. Keep away from us!!` : getCollisionHail(npc, false), impact: 'no gold' });
-          return;
-        }
-        recordCollisionGrievance(npc.id, state.dayCount);
-        useGameStore.setState((prev) => ({ gold: prev.gold - 25 }));
-        setFactionReputation(COLLISION_REPUTATION_TARGET.pay);
-        state.addJournalEntry('encounter', `Paid 25 gold compensation after ramming the ${npc.shipName}.`);
-        setResult({
-          tone: 'good',
-          text: canUnderstand
-            ? `Coin mends less than timber, but it will serve. Keep your cursed bowsprit away from us!!`
-            : getCollisionHail(npc, false),
-          impact: '-25 gold · reputation: cold',
-        });
-        setCollisionMood('COLD');
-        setUsed((prev) => ({ ...prev, collision_pay: true }));
-        dispatchCollisionResponse('pay');
-        return;
-      }
-      if (action === 'collision_ignore') {
-        recordCollisionGrievance(npc.id, state.dayCount);
-        setFactionReputation(COLLISION_REPUTATION_TARGET.ignore);
-        state.addJournalEntry('encounter', `Ignored the ${npc.shipName} after a damaging collision.`);
-        dispatchCollisionResponse('ignore');
-        onClose();
-        return;
-      }
-      if (action === 'collision_threaten') {
-        recordCollisionGrievance(npc.id, state.dayCount);
-        setFactionReputation(COLLISION_REPUTATION_TARGET.threaten);
-        state.addJournalEntry('encounter', `Threatened the ${npc.shipName} after ramming her.`);
-        dispatchCollisionResponse('threaten');
-        onClose();
+        applyBranchOutcome(action, outcome);
         return;
       }
     }
 
     if (context === 'warning') {
-      if (action === 'warning_alter_course') {
-        state.addJournalEntry('encounter', `Altered course after a warning from the ${npc.shipName}.`);
-        setUsed((prev) => ({ ...prev, warning_alter_course: true }));
-        dispatchWarningResponse('alterCourse');
-        onClose();
-        return;
-      }
-      if (action === 'warning_pay_toll') {
-        if (npc.role !== 'privateer') {
-          setResult({
-            tone: 'warn',
-            text: canUnderstand ? `We are no thief to be bought off. Stand clear and alter course!!` : getCollisionHail(npc, false),
-            impact: 'toll refused',
-          });
-          return;
-        }
-        if (state.gold < 30) {
-          setResult({ tone: 'warn', text: canUnderstand ? `You offer empty hands. Turn away now!!` : getCollisionHail(npc, false), impact: 'no gold' });
-          return;
-        }
-        useGameStore.setState((prev) => ({ gold: prev.gold - 30 }));
-        state.addJournalEntry('encounter', `Paid 30 gold to make the ${npc.shipName} break off.`);
-        setUsed((prev) => ({ ...prev, warning_pay_toll: true }));
-        dispatchWarningResponse('payToll');
-        onClose();
-        return;
-      }
-      if (action === 'warning_ignore') {
-        state.adjustReputation(npc.flag, -10);
-        state.addJournalEntry('encounter', `Ignored a warning from the ${npc.shipName}.`);
-        setUsed((prev) => ({ ...prev, warning_ignore: true }));
-        dispatchWarningResponse('ignore');
-        onClose();
-        return;
-      }
-      if (action === 'warning_threaten') {
-        state.adjustReputation(npc.flag, -15);
-        state.addJournalEntry('encounter', `Threatened the ${npc.shipName} after she warned us off.`);
-        setUsed((prev) => ({ ...prev, warning_threaten: true }));
-        dispatchWarningResponse('threaten');
-        onClose();
+      if (action.startsWith('warning_')) {
+        const outcome = resolveHailBranchOutcome({
+          npc,
+          context: 'warning',
+          action: action as Parameters<typeof resolveHailBranchOutcome>[0]['action'],
+          canUnderstand,
+          hasTranslator: Boolean(translator),
+          playerGold: state.gold,
+          playerBroadsideCount,
+          playerFlag,
+          reputation: state.getReputation(npc.flag),
+          hullFraction: currentNpcHullFraction(),
+        });
+        applyBranchOutcome(action, outcome);
         return;
       }
     }
@@ -623,6 +622,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       ], npc.id + state.dayCount + 'news');
       state.addJournalEntry('encounter', `Hailed the ${npc.shipName}: ${news}`);
       setUsed((prev) => ({ ...prev, news: true }));
+      setFollowUpActions(null);
       setResult({ tone: 'good', text: news, impact: '+ journal updated' });
       return;
     }
@@ -631,6 +631,7 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       // Open the inline port picker — actual resolution happens on port click.
       if (intelCandidates.length === 0) return;
       setPortPicker(true);
+      setFollowUpActions(null);
       setResult(null);
       return;
     }
@@ -643,9 +644,10 @@ export function HailPanel({ npc, onClose, context = 'normal' }: { npc: NPCShipId
       const firstGood = playerHeld[0]?.[0] ?? null;
       const firstQty = firstGood ? Math.min(playerHeld[0][1], DEFAULT_BARTER_QTY) : 0;
       setBarterMode({ yourGood: firstGood, yourQty: firstQty });
+      setFollowUpActions(null);
       setResult(null);
     }
-  }, [canBarter, canUnderstand, context, dispatchCollisionResponse, dispatchWarningResponse, intelCandidates.length, npc, onClose, playerHeld, setFactionReputation]);
+  }, [applyBranchOutcome, canBarter, canUnderstand, context, currentNpcHullFraction, intelCandidates.length, npc, playerBroadsideCount, playerFlag, playerHeld, translator]);
 
   const resolvePortIntel = useCallback((port: Port) => {
     sfxClick();

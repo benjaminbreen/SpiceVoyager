@@ -80,22 +80,22 @@ export const BUILDING_MATERIAL_TUNING: Record<BuildingMaterialKind, {
     sunLift: 0.22,
   },
   thatchRoof: {
-    grain: 0.065,
+    grain: 0.095,
     lowerShade: 0.018,
-    topLift: 0.050,
-    shadeLift: 0.02,
-    warmLift: [1.08, 1.04, 0.92],
-    roughnessVariation: 0.075,
-    sunLift: 0.085,
+    topLift: 0.100,
+    shadeLift: 0.012,
+    warmLift: [1.18, 1.08, 0.82],
+    roughnessVariation: 0.100,
+    sunLift: 0.14,
   },
   woodRoof: {
-    grain: 0.080,
+    grain: 0.105,
     lowerShade: 0.014,
-    topLift: 0.045,
-    shadeLift: 0.02,
-    warmLift: [1.06, 1.01, 0.94],
-    roughnessVariation: 0.075,
-    sunLift: 0.09,
+    topLift: 0.095,
+    shadeLift: 0.010,
+    warmLift: [1.10, 1.06, 0.96],
+    roughnessVariation: 0.105,
+    sunLift: 0.15,
   },
 };
 
@@ -114,30 +114,30 @@ function createTileRoofTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#b85a3d';
+  ctx.fillStyle = '#f2ede5';
   ctx.fillRect(0, 0, size, size);
   for (let y = 0; y < size; y += 18) {
     const rowShift = (y / 18) % 2 === 0 ? 0 : 13;
-    ctx.fillStyle = 'rgba(48, 13, 8, 0.72)';
+    ctx.fillStyle = 'rgba(58, 42, 34, 0.42)';
     ctx.fillRect(0, y, size, 3);
-    ctx.fillStyle = 'rgba(255, 196, 130, 0.30)';
+    ctx.fillStyle = 'rgba(255, 255, 245, 0.22)';
     ctx.fillRect(0, y + 3, size, 2);
     for (let x = -rowShift; x < size; x += 26) {
-      const warm = 135 + Math.floor(rng() * 70);
-      ctx.fillStyle = `rgba(${warm}, ${Math.floor(warm * 0.38)}, ${Math.floor(warm * 0.23)}, ${0.18 + rng() * 0.12})`;
+      const warm = 195 + Math.floor(rng() * 45);
+      ctx.fillStyle = `rgba(${warm}, ${Math.floor(warm * 0.96)}, ${Math.floor(warm * 0.90)}, ${0.11 + rng() * 0.08})`;
       ctx.fillRect(x + 2, y + 5, 22, 12);
-      ctx.fillStyle = 'rgba(38, 10, 7, 0.48)';
+      ctx.fillStyle = 'rgba(55, 38, 30, 0.32)';
       ctx.fillRect(x, y + 4, 3, 14);
-      ctx.fillStyle = 'rgba(255, 230, 170, 0.18)';
+      ctx.fillStyle = 'rgba(255, 255, 245, 0.18)';
       ctx.fillRect(x + 3, y + 5, 2, 11);
     }
   }
   for (let i = 0; i < 1900; i++) {
-    const hot = rng() < 0.44;
-    const v = hot ? 145 + Math.floor(rng() * 100) : 45 + Math.floor(rng() * 90);
-    ctx.fillStyle = hot
-      ? `rgba(${v}, ${Math.floor(v * 0.48)}, ${Math.floor(v * 0.28)}, ${0.08 + rng() * 0.12})`
-      : `rgba(${v}, ${Math.floor(v * 0.30)}, ${Math.floor(v * 0.20)}, ${0.09 + rng() * 0.13})`;
+    const light = rng() < 0.52;
+    const v = light ? 185 + Math.floor(rng() * 60) : 45 + Math.floor(rng() * 80);
+    ctx.fillStyle = light
+      ? `rgba(${v}, ${Math.floor(v * 0.98)}, ${Math.floor(v * 0.92)}, ${0.06 + rng() * 0.08})`
+      : `rgba(${v}, ${Math.floor(v * 0.92)}, ${Math.floor(v * 0.86)}, ${0.06 + rng() * 0.09})`;
     ctx.fillRect(rng() * size, rng() * size, rng() < 0.8 ? 1 : 2, 1);
   }
   const tex = new THREE.CanvasTexture(canvas);
@@ -272,20 +272,20 @@ function createThatchRoofTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#c7b882';
+  ctx.fillStyle = '#eee5c4';
   ctx.fillRect(0, 0, size, size);
   for (let y = 10; y < size; y += 24) {
-    ctx.fillStyle = 'rgba(56, 42, 20, 0.13)';
+    ctx.fillStyle = 'rgba(72, 54, 24, 0.24)';
     ctx.fillRect(0, y, size, 2);
-    ctx.fillStyle = 'rgba(255, 245, 190, 0.07)';
+    ctx.fillStyle = 'rgba(255, 252, 210, 0.16)';
     ctx.fillRect(0, y + 2, size, 1);
   }
   for (let i = 0; i < 900; i++) {
     const x = rng() * size;
     const y = rng() * size;
     const len = 14 + rng() * 34;
-    const shade = 64 + Math.floor(rng() * 110);
-    ctx.strokeStyle = `rgba(${shade}, ${Math.floor(shade * 0.86)}, ${Math.floor(shade * 0.50)}, ${0.10 + rng() * 0.14})`;
+    const shade = 90 + Math.floor(rng() * 145);
+    ctx.strokeStyle = `rgba(${shade}, ${Math.floor(shade * 0.88)}, ${Math.floor(shade * 0.58)}, ${0.11 + rng() * 0.16})`;
     ctx.lineWidth = 0.55 + rng() * 0.65;
     ctx.beginPath();
     ctx.moveTo(x, y);
@@ -293,8 +293,8 @@ function createThatchRoofTexture(): THREE.CanvasTexture {
     ctx.stroke();
   }
   for (let i = 0; i < 260; i++) {
-    const v = 95 + Math.floor(rng() * 130);
-    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.86)}, ${Math.floor(v * 0.52)}, 0.10)`;
+    const v = 120 + Math.floor(rng() * 125);
+    ctx.fillStyle = `rgba(${v}, ${Math.floor(v * 0.90)}, ${Math.floor(v * 0.58)}, 0.12)`;
     ctx.fillRect(rng() * size, rng() * size, 2, 1);
   }
   const tex = new THREE.CanvasTexture(canvas);
@@ -311,24 +311,27 @@ function createWoodRoofTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#aa8b70';
+  ctx.fillStyle = '#d9d6cf';
   ctx.fillRect(0, 0, size, size);
   for (let y = 0; y < size; y += 18) {
     const rowShift = ((y / 18) % 2) * 16;
-    ctx.fillStyle = 'rgba(22, 15, 10, 0.50)';
+    ctx.fillStyle = 'rgba(22, 22, 22, 0.46)';
     ctx.fillRect(0, y, size, 3);
-    ctx.fillStyle = 'rgba(235, 205, 165, 0.12)';
+    ctx.fillStyle = 'rgba(238, 246, 230, 0.18)';
     ctx.fillRect(0, y + 3, size, 2);
     for (let x = -rowShift; x < size; x += 32) {
-      ctx.fillStyle = 'rgba(18, 12, 8, 0.34)';
+      ctx.fillStyle = 'rgba(18, 18, 18, 0.34)';
       ctx.fillRect(x, y + 3, 3, 15);
-      ctx.fillStyle = 'rgba(240, 210, 170, 0.08)';
+      ctx.fillStyle = 'rgba(232, 246, 220, 0.14)';
       ctx.fillRect(x + 3, y + 4, 2, 12);
     }
   }
   for (let i = 0; i < 900; i++) {
-    const shade = 55 + Math.floor(rng() * 120);
-    ctx.fillStyle = `rgba(${shade}, ${Math.floor(shade * 0.78)}, ${Math.floor(shade * 0.58)}, 0.14)`;
+    const moss = rng() < 0.32;
+    const shade = 45 + Math.floor(rng() * 130);
+    ctx.fillStyle = moss
+      ? `rgba(${Math.floor(shade * 0.76)}, ${Math.floor(shade * 0.96)}, ${Math.floor(shade * 0.74)}, 0.13)`
+      : `rgba(${shade}, ${shade}, ${Math.floor(shade * 0.96)}, 0.12)`;
     ctx.fillRect(rng() * size, rng() * size, 1, 1);
   }
   const tex = new THREE.CanvasTexture(canvas);
@@ -600,8 +603,8 @@ export function createBuildingMaterials(darkMat: THREE.MeshStandardMaterial, lit
     stone: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: stoneTexture, roughness: 0.84, ...offset }), 'stone'),
     straw: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#d4c07b', roughness: 1.0, ...offset }), 'straw'),
     tileRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: tileTexture, roughness: 0.50, metalness: 0.0, ...offset }), 'tileRoof'),
-    thatchRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: thatchTexture, roughness: 1.0, ...offset }), 'thatchRoof'),
-    woodRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: woodRoofTexture, roughness: 0.96, ...offset }), 'woodRoof'),
+    thatchRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: thatchTexture, roughness: 0.94, ...offset }), 'thatchRoof'),
+    woodRoof: addBuildingMaterialLighting(new THREE.MeshStandardMaterial({ color: '#ffffff', map: woodRoofTexture, roughness: 0.84, ...offset }), 'woodRoof'),
     dark: darkMat,
     litWindow: litWindowMat,
   };

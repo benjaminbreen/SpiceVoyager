@@ -83,19 +83,14 @@ function formatTime(timeOfDay: number): string {
 
 const MONTH_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const LOADING_MESSAGES = [
-  'Charting the Indian Ocean sea lanes...',
-  'Briefing Captain Blackwood and officers...',
-  'Inspecting the carrack and trimming the rigging...',
-  'Surveying harbors from Goa to Malacca...',
-  'Weighing cargo against wind and draft...',
-  'Marking safe approaches, shoals, and reefs...',
-  'Listening for monsoon shifts along the coast...',
-  'Loading manifests, ledgers, and cannon stores...',
-];
 
 type UIProps = {
   startupSceneReady: boolean;
+};
+
+type StartupSelection = {
+  factionKey: FactionKey;
+  portId: string;
 };
 
 // Splash variant: Claude is the default. Pass ?splash=legacy in the URL to
@@ -1330,6 +1325,8 @@ export function UI({ startupSceneReady }: UIProps) {
   const [expandedStat, setExpandedStat] = useState<'hull' | 'morale' | 'cargo' | null>(null);
   const paused = useGameStore(s => s.paused);
   const setPaused = useGameStore(s => s.setPaused);
+  const timeScale = useGameStore(s => s.timeScale);
+  const setTimeScale = useGameStore(s => s.setTimeScale);
   const [showLearn, setShowLearn] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
@@ -1339,6 +1336,9 @@ export function UI({ startupSceneReady }: UIProps) {
   const [showWind, setShowWind] = useState(false);
   const [showOverlayMenu, setShowOverlayMenu] = useState(false);
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
+  const cycleTimeScale = useCallback(() => {
+    setTimeScale(timeScale === 1 ? 2 : timeScale === 2 ? 4 : 1);
+  }, [setTimeScale, timeScale]);
   const [hailNpc, setHailNpc] = useState<NPCShipIdentity | null>(null);
   const [hailContext, setHailContext] = useState<HailContext>('normal');
   const overlayMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1355,16 +1355,16 @@ export function UI({ startupSceneReady }: UIProps) {
   //   'out'  — black → cinematic (modal unmounted, camera is dollying)
   const [introFadePhase, setIntroFadePhase] = useState<'idle' | 'in' | 'out'>('idle');
   const setVoyageBegun = useGameStore(s => s.setVoyageBegun);
-  const [selectedFactionKey, setSelectedFactionKey] = useState<FactionKey>(() => {
+  const [startupSelection, setStartupSelection] = useState<StartupSelection>(() => {
     const idx = Math.floor(Math.random() * STARTUP_FACTIONS.length);
-    return STARTUP_FACTIONS[idx]?.key ?? 'portuguese';
+    const factionKey = STARTUP_FACTIONS[idx]?.key ?? 'portuguese';
+    return {
+      factionKey,
+      portId: portsForFaction(factionKey)[0] ?? 'goa',
+    };
   });
-  const selectedPortOptions = useMemo(() => portsForFaction(selectedFactionKey), [selectedFactionKey]);
-  const [selectedStartPortId, setSelectedStartPortId] = useState(() => portsForFaction('portuguese')[0] ?? 'goa');
-  useEffect(() => {
-    if (selectedPortOptions.includes(selectedStartPortId)) return;
-    setSelectedStartPortId(selectedPortOptions[0] ?? 'goa');
-  }, [selectedPortOptions, selectedStartPortId]);
+  const selectedFactionKey = startupSelection.factionKey;
+  const selectedStartPortId = startupSelection.portId;
   const selectedStartPortLabel = PORT_LABELS[selectedStartPortId] ?? selectedStartPortId;
   const selectedWaterPaletteId = useMemo(() => resolveWaterPaletteId({
     worldSeed,
@@ -1377,7 +1377,7 @@ export function UI({ startupSceneReady }: UIProps) {
   const [startupWorldReady, setStartupWorldReady] = useState(false);
   const [startupWorldError, setStartupWorldError] = useState(false);
   const worldReady = startupSceneReady;
-  const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
+  const [loadingMessage, setLoadingMessage] = useState('Preparing voyage...');
   const [loadingProgress, setLoadingProgress] = useState(10);
   const mapPreRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hailWasPausedRef = useRef(false);
@@ -1549,17 +1549,25 @@ export function UI({ startupSceneReady }: UIProps) {
 
   const captain = crew.find(c => c.role === 'Captain');
   const cycleStartupFaction = useCallback(() => {
-    setSelectedFactionKey((current) => {
-      const idx = STARTUP_FACTIONS.findIndex((entry) => entry.key === current);
-      return STARTUP_FACTIONS[(idx + 1) % STARTUP_FACTIONS.length]?.key ?? 'portuguese';
+    setStartupSelection((current) => {
+      const idx = STARTUP_FACTIONS.findIndex((entry) => entry.key === current.factionKey);
+      const factionKey = STARTUP_FACTIONS[(idx + 1) % STARTUP_FACTIONS.length]?.key ?? 'portuguese';
+      return {
+        factionKey,
+        portId: portsForFaction(factionKey)[0] ?? 'goa',
+      };
     });
   }, []);
   const cycleStartupPort = useCallback(() => {
-    setSelectedStartPortId((current) => {
-      const idx = selectedPortOptions.indexOf(current);
-      return selectedPortOptions[(idx + 1) % selectedPortOptions.length] ?? current;
+    setStartupSelection((current) => {
+      const options = portsForFaction(current.factionKey);
+      const idx = options.indexOf(current.portId);
+      return {
+        ...current,
+        portId: options[(idx + 1) % options.length] ?? current.portId,
+      };
     });
-  }, [selectedPortOptions]);
+  }, []);
   const closeOpeningOverlay = useCallback(() => {
     if (splashComplete) {
       const selectedNationality = getStartupNationality(selectedFactionKey, selectedStartPortId);
@@ -1579,11 +1587,7 @@ export function UI({ startupSceneReady }: UIProps) {
     // cinematic in handleIntroFadeEnd, then fade back out.
     setIntroFadePhase('in');
     if (mapPreRenderTimerRef.current) clearTimeout(mapPreRenderTimerRef.current);
-    mapPreRenderTimerRef.current = setTimeout(() => {
-      startTerrainPreRender(waterPaletteId);
-      mapPreRenderTimerRef.current = null;
-    }, 600);
-  }, [waterPaletteId]);
+  }, []);
 
   const handleIntroFadeEnd = useCallback(() => {
     setIntroFadePhase((phase) => {
@@ -1592,18 +1596,22 @@ export function UI({ startupSceneReady }: UIProps) {
         // (the cinematic ends at whatever cameraZoom is now), start the
         // cinematic, then begin fading out.
         setShowCommission(false);
-        useGameStore.getState().setCameraZoom(62);
+        useGameStore.getState().setCameraZoom(70);
         audioManager.transitionToOverworld();
         startIntroCinematic();
         return 'out';
       }
       if (phase === 'out') {
         setPaused(false);
+        mapPreRenderTimerRef.current = setTimeout(() => {
+          startTerrainPreRender(waterPaletteId);
+          mapPreRenderTimerRef.current = null;
+        }, 800);
         return 'idle';
       }
       return phase;
     });
-  }, [setPaused]);
+  }, [setPaused, waterPaletteId]);
 
   // Keep AudioManager's music zone synced to the player's current world
   // port so zone-restricted tracks (e.g. Monsoon Ledger in East Asian
@@ -3161,9 +3169,14 @@ export function UI({ startupSceneReady }: UIProps) {
             )}
             {/* Center — pause/play, bigger */}
             <button
-              onClick={() => {
+              onClick={(event) => {
                 if (startupOverlayActive) return;
                 sfxClick();
+                if (event.shiftKey) {
+                  cycleTimeScale();
+                  if (paused) setPaused(false);
+                  return;
+                }
                 setPaused(!paused);
               }}
               aria-pressed={paused}
@@ -3172,11 +3185,16 @@ export function UI({ startupSceneReady }: UIProps) {
                   ? 'bg-[#1a1e2e] border-2 border-amber-600/70 text-amber-400 shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.08),0_0_14px_rgba(217,169,56,0.3)] hover:border-amber-500/90 hover:shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.1),0_0_20px_rgba(217,169,56,0.45)]'
                   : 'bg-[#1a1e2e] border-2 border-[#5a5540]/70 text-[#9a9070] shadow-[inset_0_2px_5px_rgba(0,0,0,0.5),inset_0_-1px_2px_rgba(255,255,255,0.06),0_2px_8px_rgba(0,0,0,0.5)] hover:text-amber-300 hover:border-amber-700/60 hover:shadow-[inset_0_2px_5px_rgba(0,0,0,0.4),inset_0_-1px_3px_rgba(255,255,255,0.1),0_0_18px_rgba(217,169,56,0.35)]'
                 }`}
-              title={paused ? 'Resume [4]' : 'Pause [4]'}
+              title={paused ? 'Resume [4] · Shift-click: time speed' : 'Pause [4] · Shift-click: time speed'}
             >
               {paused ? <Play size={16} /> : <Pause size={16} />}
+              {timeScale > 1 && !paused && (
+                <span className="absolute -right-1 -top-1 min-w-5 h-4 px-1 rounded-full bg-amber-500 text-[9px] leading-4 font-bold text-slate-950 shadow-[0_0_10px_rgba(245,158,11,0.55)]">
+                  {timeScale}x
+                </span>
+              )}
               <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-[#0b1120] border border-slate-700/50 rounded text-[9px] tracking-[0.12em] uppercase text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                {paused ? 'Resume' : 'Pause'}<span className="ml-1 text-slate-500">[4]</span>
+                {paused ? 'Resume' : timeScale > 1 ? `${timeScale}x` : 'Pause'}<span className="ml-1 text-slate-500">[4]</span><span className="ml-1 text-amber-500">Shift</span>
               </span>
             </button>
             {!isMobile && (

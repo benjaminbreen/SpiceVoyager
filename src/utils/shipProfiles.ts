@@ -170,9 +170,9 @@ function carrackProfile(): ShipProfile {
   // raised forecastle (historically iconic for carracks).
   return {
     hull: {
-      width: 2.2,
-      height: 1.2,
-      length: 5.0,
+      width: 2.65,
+      height: 1.45,
+      length: 6.15,
       bowStyle: 'angled',
       sternStyle: 'castle',
       hasBowsprit: true,
@@ -185,41 +185,41 @@ function carrackProfile(): ShipProfile {
       ...EUROPEAN_COLORS,
     },
     masts: [
-      { position: [0, 3.5, 0.5], height: 6.0, radius: 0.15 },     // main
-      { position: [0, 2.5, 2.5], height: 4.0, radius: 0.1 },      // fore
+      { position: [0, 4.0, 0.55], height: 6.8, radius: 0.17 },     // main
+      { position: [0, 3.0, 2.95], height: 4.8, radius: 0.12 },     // fore
     ],
     sails: [
       {
-        position: [0, 4, 0.6],
-        width: 3.5,
-        height: 4,
+        position: [0, 4.52, 0.62],
+        width: 4.1,
+        height: 4.65,
         plan: 'square',
         fullnessScale: 1,
         flutterPhase: 0.3,
-        lowerAmount: 1.55,
+        lowerAmount: 1.75,
         segmentsX: 12,
         segmentsY: 14,
         trimsWithMain: true,
       },
       {
-        position: [0, 3, 2.6],
-        width: 2.5,
-        height: 3,
+        position: [0, 3.5, 3.02],
+        width: 3.0,
+        height: 3.45,
         plan: 'square',
         fullnessScale: 0.82,
         flutterPhase: 1.1,
-        lowerAmount: 1.05,
+        lowerAmount: 1.2,
         segmentsX: 10,
         segmentsY: 12,
         trimsWithMain: false,
       },
     ],
     equipment: {
-      swivel: [0, 1.5, 3.0],
-      torch: [0.6, 2.8, -1.5],
-      fishingNet: [1.1, 1.2, 0],
-      flagHoist: [0, 6.6, 0.5],
-      anchor: [1.2, 1.0, 2.5],
+      swivel: [0, 1.75, 3.55],
+      torch: [0.72, 3.1, -1.9],
+      fishingNet: [1.3, 1.38, 0],
+      flagHoist: [0, 7.25, 0.55],
+      anchor: [1.38, 1.22, 3.0],
     },
     hasPennants: true,
   };
@@ -228,66 +228,67 @@ function carrackProfile(): ShipProfile {
 function galleonProfile(): ShipProfile {
   return {
     hull: {
-      width: 2.35,
-      height: 1.35,
-      length: 6.0,
+      width: 2.85,
+      height: 1.55,
+      length: 7.35,
       bowStyle: 'tapered',
       sternStyle: 'castle',
       hasBowsprit: true,
       hasStempost: false,
       hasForecastle: true,
+      hasRoundTop: true,
       ...EUROPEAN_COLORS,
     },
     masts: [
-      { position: [0, 3.8, -0.4], height: 6.5, radius: 0.16 },   // main
-      { position: [0, 3.3, 2.6], height: 5.2, radius: 0.13 },    // fore
-      { position: [0, 2.9, -2.3], height: 4.2, radius: 0.11 },   // mizzen (lateen)
+      { position: [0, 4.25, -0.45], height: 7.2, radius: 0.18 },   // main
+      { position: [0, 3.65, 3.05], height: 5.85, radius: 0.145 },  // fore
+      { position: [0, 3.25, -2.82], height: 4.7, radius: 0.12 },   // mizzen (lateen)
     ],
     sails: [
       {
-        position: [0, 4.3, -0.3],
-        width: 3.8,
-        height: 4.5,
+        position: [0, 4.72, -0.35],
+        width: 4.45,
+        height: 5.05,
         plan: 'square',
         fullnessScale: 1.1,
         flutterPhase: 0.3,
-        lowerAmount: 1.7,
+        lowerAmount: 1.9,
         segmentsX: 12,
         segmentsY: 14,
         trimsWithMain: true,
       },
       {
-        position: [0, 3.7, 2.7],
-        width: 3.0,
-        height: 3.6,
+        position: [0, 4.08, 3.1],
+        width: 3.55,
+        height: 4.05,
         plan: 'square',
         fullnessScale: 0.9,
         flutterPhase: 1.1,
-        lowerAmount: 1.3,
+        lowerAmount: 1.45,
         segmentsX: 10,
         segmentsY: 12,
         trimsWithMain: false,
       },
       {
         // Group origin at yard/mast intersection — upper third of mizzen mast.
-        position: [0, 3.7, -2.3],
+        position: [0, 4.1, -2.82],
         // height = yard length, width = leech extent (clew sweep).
-        width: 2.4,
-        height: 2.0,
+        width: 2.8,
+        height: 2.35,
         plan: 'lateen',
         fullnessScale: 0.72,
         flutterPhase: 2.1,
-        lowerAmount: 0.9,
+        lowerAmount: 1.0,
         roll: -0.46,
         trimsWithMain: true,
       },
     ],
     equipment: {
-      swivel: [0, 1.7, 3.4],
-      torch: [0.7, 3.0, -1.8],
-      fishingNet: [1.2, 1.3, 0],
-      flagHoist: [0, 7.0, -0.3],
-      anchor: [1.3, 1.15, 2.9],
+      swivel: [0, 1.95, 4.05],
+      torch: [0.82, 3.45, -2.25],
+      fishingNet: [1.45, 1.48, 0],
+      flagHoist: [0, 7.75, -0.35],
+      anchor: [1.52, 1.32, 3.55],
     },
     hasPennants: true,
   };
@@ -637,9 +638,9 @@ function jongProfile(): ShipProfile {
   // Chinese captain who traded out of the East Indies.
   return {
     hull: {
-      width: 2.75,
-      height: 1.35,
-      length: 6.0,
+      width: 3.08,
+      height: 1.52,
+      length: 7.25,
       bowStyle: 'bluff',
       sternStyle: 'transom',
       hasBowsprit: false,
@@ -657,34 +658,34 @@ function jongProfile(): ShipProfile {
     },
     masts: [
       // Main (batten) — amidships, tallest.
-      { position: [0, 3.5, -0.4], height: 6.2, radius: 0.14 },
+      { position: [0, 4.0, -0.48], height: 7.0, radius: 0.16 },
       // Fore (batten) — forward of center.
-      { position: [0, 3.0, 2.05], height: 5.0, radius: 0.11 },
+      { position: [0, 3.45, 2.45], height: 5.7, radius: 0.13 },
       // Mizzen (lateen) — small, aft, slight forward rake.
-      { position: [0, 2.6, -2.55], height: 3.6, radius: 0.09, rake: 0.1 },
+      { position: [0, 3.0, -3.05], height: 4.2, radius: 0.1, rake: 0.1 },
     ],
     sails: [
       {
-        position: [0, 4.1, -0.4],
-        width: 3.7,
-        height: 4.3,
+        position: [0, 4.68, -0.48],
+        width: 4.35,
+        height: 4.95,
         plan: 'junk_batten',
         fullnessScale: 0.55,
         flutterPhase: 0.3,
-        lowerAmount: 1.45,
+        lowerAmount: 1.65,
         segmentsX: 10,
         segmentsY: 12,
         numPanels: 5,
         trimsWithMain: true,
       },
       {
-        position: [0, 3.45, 2.1],
-        width: 2.9,
-        height: 3.5,
+        position: [0, 4.0, 2.52],
+        width: 3.45,
+        height: 4.05,
         plan: 'junk_batten',
         fullnessScale: 0.5,
         flutterPhase: 1.1,
-        lowerAmount: 1.15,
+        lowerAmount: 1.35,
         segmentsX: 8,
         segmentsY: 10,
         numPanels: 4,
@@ -692,23 +693,23 @@ function jongProfile(): ShipProfile {
       },
       {
         // Mizzen lateen — mirrored clew so it sweeps opposite the main.
-        position: [0, 2.95, -2.4],
-        width: 1.8,
-        height: 2.8,
+        position: [0, 3.45, -2.9],
+        width: 2.2,
+        height: 3.25,
         plan: 'lateen',
         fullnessScale: 0.72,
         flutterPhase: 2.0,
-        lowerAmount: 0.85,
+        lowerAmount: 0.95,
         roll: 0.48,
         trimsWithMain: false,
       },
     ],
     equipment: {
-      swivel: [0, 1.6, 3.3],
-      torch: [0.75, 2.55, -2.35],
-      fishingNet: [1.3, 1.3, 0],
-      flagHoist: [0, 6.7, -0.4],
-      anchor: [1.4, 1.1, 2.7],
+      swivel: [0, 1.82, 4.0],
+      torch: [0.88, 2.95, -2.8],
+      fishingNet: [1.5, 1.48, 0],
+      flagHoist: [0, 7.55, -0.48],
+      anchor: [1.58, 1.24, 3.25],
     },
     hasPennants: true,
   };
@@ -852,9 +853,9 @@ function junkProfile(): ShipProfile {
   // Chinese junk: boxy hull, high flat transom, batten-rigged square sails.
   return {
     hull: {
-      width: 2.5,
-      height: 1.2,
-      length: 5.2,
+      width: 2.68,
+      height: 1.32,
+      length: 6.05,
       bowStyle: 'bluff',
       sternStyle: 'transom',
       hasBowsprit: false,
@@ -867,31 +868,31 @@ function junkProfile(): ShipProfile {
       ...JUNK_COLORS,
     },
     masts: [
-      { position: [0, 3.2, -0.8], height: 5.4, radius: 0.13 },    // main
-      { position: [0, 2.8, 1.5], height: 4.4, radius: 0.1 },      // fore
+      { position: [0, 3.55, -0.9], height: 6.0, radius: 0.14 },    // main
+      { position: [0, 3.1, 1.78], height: 5.0, radius: 0.11 },     // fore
     ],
     sails: [
       {
-        position: [0, 3.8, -0.75],
-        width: 3.3,
-        height: 3.8,
+        position: [0, 4.22, -0.85],
+        width: 3.85,
+        height: 4.32,
         plan: 'junk_batten',
         fullnessScale: 0.55, // stiff — panels don't billow much
         flutterPhase: 0.3,
-        lowerAmount: 1.3,
+        lowerAmount: 1.48,
         segmentsX: 10,
         segmentsY: 12,
         numPanels: 4,
         trimsWithMain: true,
       },
       {
-        position: [0, 3.25, 1.55],
-        width: 2.6,
-        height: 3.0,
+        position: [0, 3.65, 1.84],
+        width: 3.05,
+        height: 3.45,
         plan: 'junk_batten',
         fullnessScale: 0.5,
         flutterPhase: 1.1,
-        lowerAmount: 1.0,
+        lowerAmount: 1.15,
         segmentsX: 8,
         segmentsY: 10,
         numPanels: 4,
@@ -899,11 +900,11 @@ function junkProfile(): ShipProfile {
       },
     ],
     equipment: {
-      swivel: [0, 1.5, 2.9],
-      torch: [0.7, 2.4, -2.1],
-      fishingNet: [1.25, 1.2, 0],
-      flagHoist: [0, 5.95, -0.8],
-      anchor: [1.35, 1.0, 2.4],
+      swivel: [0, 1.68, 3.35],
+      torch: [0.78, 2.75, -2.45],
+      fishingNet: [1.38, 1.32, 0],
+      flagHoist: [0, 6.65, -0.9],
+      anchor: [1.46, 1.1, 2.82],
     },
     hasPennants: true,
   };

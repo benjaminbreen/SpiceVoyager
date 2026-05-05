@@ -3,6 +3,7 @@ import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Water } from 'three-stdlib';
 import { useGameStore } from '../store/gameStore';
+import { getEffectiveRainIntensity } from '../store/weather';
 import { SEA_LEVEL } from '../constants/world';
 import { getTerrainData } from '../utils/terrain';
 import { getWaterPalette, resolveWaterPaletteId, type WaterPaletteId } from '../utils/waterPalettes';
@@ -719,8 +720,7 @@ function WaterSurfaceShimmer() {
         float distFade = 1.0 - smoothstep(130.0, 280.0, dist);
         if (distFade < 0.01) discard;
 
-        // Broad surface shimmer: always present in daylight, with the reflected
-        // Water material still carrying the stronger camera/sun glint.
+        // Broad surface shimmer: subtle daylight texture, not sun-glitter.
         float t = uTime;
         vec2 swellA = vWorldXZ * 0.050 + vec2(t * 0.12, t * 0.08);
         vec2 swellB = vWorldXZ * 0.072 + vec2(-t * 0.09, t * 0.11);
@@ -732,7 +732,7 @@ function WaterSurfaceShimmer() {
         float ripple = noise(rippleA) * noise(rippleB);
         float sparkle = smoothstep(0.42, 0.62, ripple);
 
-        float shimmer = crest * 0.55 + sparkle * 0.35;
+        float shimmer = crest * 0.45 + sparkle * 0.24;
 
         // Subsurface dapple, kept softer than the surface crest term.
         vec2 uv1 = vWorldXZ * 0.06 + vec2(t * 0.20, t * 0.135);
@@ -749,14 +749,14 @@ function WaterSurfaceShimmer() {
         float detail = n3 * n4;
         detail = smoothstep(0.3, 0.52, detail);
 
-        float dapple = caustic * 0.42 + detail * 0.20;
+        float dapple = caustic * 0.28 + detail * 0.10;
         float combined = shimmer + dapple;
 
         vec3 skyHighlight = vec3(0.78, 0.90, 0.96);
         vec3 shimmerColor = mix(uCausticTint * 0.82, skyHighlight, 0.58);
-        shimmerColor *= 0.95 + combined * 0.22;
+        shimmerColor *= 0.95 + combined * 0.18;
 
-        float alpha = combined * 0.050 * uDaylight * distFade;
+        float alpha = combined * 0.032 * uDaylight * distFade;
         if (alpha < 0.002) discard;
 
         gl_FragColor = vec4(shimmerColor, alpha);
@@ -836,6 +836,7 @@ export function Ocean() {
     w.rotation.x = -Math.PI / 2;
     w.receiveShadow = false;
     const waterMaterial = w.material as THREE.ShaderMaterial;
+    waterMaterial.uniforms.uSunnyFactor = { value: 0 };
     waterMaterial.transparent = true;
     waterMaterial.depthWrite = false;
     waterMaterial.polygonOffset = true;
@@ -855,6 +856,11 @@ export function Ocean() {
     // 3. Fade reflection toward waterColor at distance to keep horizon/coastline
     //    reflections from forming a hard stripe in default camera view.
     waterMaterial.fragmentShader = waterMaterial.fragmentShader
+      .replace(
+        'uniform vec3 waterColor;',
+        `uniform vec3 waterColor;
+				uniform float uSunnyFactor;`
+      )
       .replace('float rf0 = 0.3;', 'float rf0 = 0.4;')
       .replace(
         'float reflectance = rf0 + ( 1.0 - rf0 ) * pow( ( 1.0 - theta ), 1.0 );',
@@ -876,6 +882,16 @@ export function Ocean() {
 				reflectionSample = mix(waterColor, reflectionSample, reflDistFade);
 				`
       )
+      .replace(
+        'vec3 outgoingLight = albedo;',
+        `vec3 outgoingLight = albedo;
+					vec3 sunnyReflection = normalize( reflect( -sunDirection, surfaceNormal ) );
+					float sunnyAlign = max( 0.0, dot( eyeDirection, sunnyReflection ) );
+					float sunnyBroad = pow( sunnyAlign, 5.0 ) * 0.055 + pow( sunnyAlign, 14.0 ) * 0.050;
+					float sunnyTexture = 0.72 + 0.28 * smoothstep( -0.08, 0.36, noise.y );
+					float sunnyDistance = 1.0 - smoothstep( 90.0, 420.0, distance );
+					outgoingLight += sunColor * sunnyBroad * sunnyTexture * sunnyDistance * uSunnyFactor;`
+      )
       ;
     waterMaterial.needsUpdate = true;
 
@@ -885,7 +901,8 @@ export function Ocean() {
 
   useFrame((_, delta) => {
     if (!waterRef.current) return;
-    const timeOfDay = useGameStore.getState().timeOfDay;
+    const storeState = useGameStore.getState();
+    const timeOfDay = storeState.timeOfDay;
     const sunAngle = ((timeOfDay - 6) / 24) * Math.PI * 2;
     const sunH = Math.sin(sunAngle);
     const mat = waterRef.current.material as THREE.ShaderMaterial;
@@ -896,8 +913,17 @@ export function Ocean() {
       .set(Math.cos(sunAngle), Math.sin(sunAngle), Math.sin(sunAngle) * 0.5)
       .normalize();
 
+    const rain = getEffectiveRainIntensity(storeState.weather, storeState.renderDebug.rain);
+    const clearSky = storeState.weather.kind === 'clear' ? 1 : storeState.weather.kind === 'cloudy' ? 0.35 : 0;
+    const sunnyFactor = smoothstep(0.18, 0.82, sunH) * clearSky * (1 - smoothstep(0.08, 0.72, rain));
+    mat.uniforms.uSunnyFactor.value = sunnyFactor;
+
     if (sunH > 0.2) {
-      mat.uniforms.sunColor.value.setRGB(0.9, 0.88, 0.8);
+      mat.uniforms.sunColor.value.setRGB(
+        0.9 + sunnyFactor * 0.18,
+        0.88 + sunnyFactor * 0.12,
+        0.8 + sunnyFactor * 0.04,
+      );
     } else if (sunH > 0) {
       const t = sunH / 0.2;
       mat.uniforms.sunColor.value.setRGB(0.95, 0.45 + t * 0.43, 0.15 + t * 0.65);

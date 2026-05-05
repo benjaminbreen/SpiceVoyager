@@ -3129,6 +3129,7 @@ function SwivelAimMarker() {
 function TimeController() {
   const advanceTime = useGameStore((state) => state.advanceTime);
   const paused = useGameStore((state) => state.paused);
+  const timeScale = useGameStore((state) => state.timeScale);
   const accumulatedDelta = useRef(0);
   const ambientAccum = useRef(0);
   const STORE_TIME_STEP = 0.1;
@@ -3139,7 +3140,7 @@ function TimeController() {
     if (accumulatedDelta.current < STORE_TIME_STEP) return;
 
     // 1 real second = 0.1 game hours → 4 real minutes per in-game day.
-    advanceTime(accumulatedDelta.current * 0.1);
+    advanceTime(accumulatedDelta.current * 0.1 * timeScale);
     accumulatedDelta.current = 0;
 
     // Update ambient soundscape at ~500ms intervals

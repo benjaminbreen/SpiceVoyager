@@ -219,13 +219,15 @@ export const BUILDING_STYLES: Partial<Record<BuildingStyle, BuildingStyleDef>> =
     // Pre-1666 London: steep roofs in clay tile, dark shingle/slate, and some
     // thatch on poorer/outlying houses. Sea-coal smoke dulls the whole range.
     roofPalette: [
-      { color: [0.58, 0.24, 0.16], geo: 'cone', h: 1.50 },               // dark red clay tile
-      { color: [0.72, 0.34, 0.19], geo: 'cone', h: 1.44 },               // warmer terracotta tile
-      { color: [0.42, 0.30, 0.22], geo: 'cone', h: 1.62, mat: 'wood' },  // dark wood shingle
-      { color: [0.22, 0.22, 0.21], geo: 'cone', h: 1.55, mat: 'wood' },  // soot-blackened shingle/slate
-      { color: [0.42, 0.46, 0.35], geo: 'cone', h: 1.58, mat: 'wood' },  // moss-greened shingle
-      { color: [0.54, 0.45, 0.27], geo: 'cone', h: 1.82, mat: 'straw' }, // weathered thatch
-      { color: [0.76, 0.62, 0.34], geo: 'cone', h: 1.78, mat: 'straw' }, // newer dry thatch
+      { color: [0.74, 0.25, 0.14], geo: 'cone', h: 1.50 },               // fired red clay tile
+      { color: [0.74, 0.25, 0.14], geo: 'cone', h: 1.50 },
+      { color: [0.88, 0.38, 0.18], geo: 'cone', h: 1.44 },               // warmer terracotta tile
+      { color: [0.58, 0.18, 0.13], geo: 'cone', h: 1.52 },               // smoke-darkened red tile
+      { color: [0.30, 0.31, 0.32], geo: 'cone', h: 1.55, mat: 'wood' },  // blue-grey slate/shingle
+      { color: [0.16, 0.16, 0.16], geo: 'cone', h: 1.55, mat: 'wood' },  // soot-blackened shingle
+      { color: [0.30, 0.42, 0.28], geo: 'cone', h: 1.58, mat: 'wood' },  // moss-greened shingle
+      { color: [0.58, 0.43, 0.20], geo: 'cone', h: 1.82, mat: 'straw' }, // ochre weathered thatch
+      { color: [0.84, 0.63, 0.25], geo: 'cone', h: 1.78, mat: 'straw' }, // newer golden thatch
     ],
     // Variety matters at Huge scale: cramped tall City rowhouses, standard
     // two-bay cottages, and squat outer-parish dwellings.

@@ -679,6 +679,7 @@ export interface GameState {
   setTouchSailRaised: (v: boolean) => void;
   renderDebug: RenderDebugSettings;
   paused: boolean;
+  timeScale: 1 | 2 | 4;
   anchored: boolean;
   combatMode: boolean;
 
@@ -775,6 +776,7 @@ export interface GameState {
   collectCrab: () => void;
   fastTravel: (portId: string, opts?: { force?: boolean; voyage?: VoyageResolution }) => void;
   setPaused: (paused: boolean) => void;
+  setTimeScale: (scale: 1 | 2 | 4) => void;
   setAnchored: (anchored: boolean) => void;
   setCombatMode: (combatMode: boolean) => void;
   shipUpgrades: ShipUpgradeType[];
@@ -829,11 +831,15 @@ const PLAYABLE_FACTION_STARTS: Array<{
 // EIC's Surat factory opens 1612; Spanish network anchored in the Caribbean).
 export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: string; weight: number }>>> = {
   Portuguese: [
-    { portId: 'lisbon',   weight: 53 },
+    { portId: 'lisbon',   weight: 43 },
     { portId: 'goa',      weight: 20 },
+    { portId: 'malacca',  weight: 8  },
     { portId: 'macau',    weight: 10 },
+    { portId: 'hormuz',   weight: 5  },
+    { portId: 'diu',      weight: 4  },
     { portId: 'salvador', weight: 5  },
     { portId: 'luanda',   weight: 4  },
+    { portId: 'colombo',  weight: 3  },
     { portId: 'mombasa',  weight: 3  },
     { portId: 'cape',     weight: 3  },
     // A handful of Portuguese New Christian / Sephardic merchant houses had
@@ -841,15 +847,20 @@ export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: 
     { portId: 'venice',   weight: 2  },
   ],
   Dutch: [
-    { portId: 'amsterdam', weight: 70 },
+    { portId: 'amsterdam', weight: 64 },
     { portId: 'bantam',    weight: 15 },
+    { portId: 'masulipatnam', weight: 8 },
     { portId: 'surat',     weight: 8  },
     { portId: 'cape',      weight: 4  },
     { portId: 'mocha',     weight: 3  },
+    // Nagasaki stands in for the Japan terminus; the Dutch factory proper was
+    // Hirado in 1612, so this stays rare.
+    { portId: 'nagasaki',  weight: 2  },
   ],
   English: [
-    { portId: 'london',    weight: 68 },
+    { portId: 'london',    weight: 60 },
     { portId: 'surat',     weight: 15 },
+    { portId: 'masulipatnam', weight: 8 },
     { portId: 'bantam',    weight: 8  },
     { portId: 'jamestown', weight: 4  },
     { portId: 'cape',      weight: 3  },
@@ -858,9 +869,10 @@ export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: 
     { portId: 'venice',    weight: 2  },
   ],
   Spanish: [
-    { portId: 'seville',   weight: 53 },
+    { portId: 'seville',   weight: 48 },
     { portId: 'havana',    weight: 16 },
     { portId: 'cartagena', weight: 15 },
+    { portId: 'veracruz',  weight: 7  },
     // Manila — Spanish capital of the Philippines and Asian end of the
     // Acapulco galleon. A meaningful share of Spanish merchant captains
     // in 1612 were Pacific-side rather than Atlantic-side.
@@ -894,10 +906,11 @@ export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: 
   // (Luso-Chinese hub) and the East Indies hubs with large Chinese
   // communities. Bantam and Malacca reflect overseas-Chinese trade routes.
   Chinese: [
-    { portId: 'macau',   weight: 45 },
+    { portId: 'macau',   weight: 40 },
     { portId: 'manila',  weight: 20 },  // Sangley Parián was huge — c. 20–30k Chinese in 1612
     { portId: 'bantam',  weight: 18 },
     { portId: 'malacca', weight: 12 },
+    { portId: 'nagasaki', weight: 8  },
     { portId: 'goa',     weight: 3  },
     { portId: 'calicut', weight: 2  },
   ],
@@ -908,10 +921,11 @@ export const FACTION_SPAWN_WEIGHTS: Partial<Record<Nationality, Array<{ portId: 
   // not their home. Calicut weight reflects shared Gujarati-Mappila dominance
   // of the Malabar coast.
   Gujarati: [
-    { portId: 'surat',    weight: 50 },
+    { portId: 'surat',    weight: 44 },
     { portId: 'calicut',  weight: 10 },
     { portId: 'mocha',    weight: 10 },
     { portId: 'hormuz',   weight: 8  },
+    { portId: 'masulipatnam', weight: 6 },
     { portId: 'aden',     weight: 5  },
     { portId: 'zanzibar', weight: 5  },
     { portId: 'mombasa',  weight: 4  },
@@ -1452,6 +1466,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   touchSailRaised: false,
   renderDebug: DEFAULT_RENDER_DEBUG,
   paused: false,
+  timeScale: 1,
   anchored: false,
   combatMode: false,
   landWeapons: ['musket', 'bow'],
@@ -3022,6 +3037,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     };
   },
   setPaused: (paused) => set({ paused }),
+  setTimeScale: (timeScale) => set({ timeScale }),
   setAnchored: (anchored) => set({ anchored }),
   setCombatMode: (combatMode) => set({ combatMode }),
   setActiveLandWeapon: (w) => {

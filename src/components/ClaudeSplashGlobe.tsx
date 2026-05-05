@@ -3900,6 +3900,11 @@ function BeginButton({
 }) {
   const [hover, setHover] = useState(false);
   const pct = Math.max(0, Math.min(1, loadingProgress > 1 ? loadingProgress / 100 : loadingProgress));
+  const readyLabel = compact ? 'Set Sail' : `Set Sail from ${startPortLabel}`;
+  const showKeyboardHint = ready && !compact && readyLabel.length <= 18;
+  const labelLetterSpacing = ready
+    ? compact ? '0.16em' : readyLabel.length > 18 ? '0.15em' : '0.2em'
+    : compact ? '0.14em' : '0.18em';
 
   // Pulsing dots for the loading message ("·" → "··" → "···")
   const [dot, setDot] = useState(0);
@@ -3940,11 +3945,11 @@ function BeginButton({
         position: 'relative',
         width: '100%',
         minHeight: compact ? 52 : 64,
-        padding: compact ? '12px 16px' : '16px 22px',
+        padding: compact ? '12px 16px' : '16px 24px',
         fontFamily: MONO,
-        fontSize: compact ? 12.5 : 14,
+        fontSize: compact ? 12.5 : ready ? 13.5 : 14,
         fontWeight: 700,
-        letterSpacing: '0.32em',
+        letterSpacing: labelLetterSpacing,
         textTransform: 'uppercase',
         color: ready ? (hover ? BTN_BRIGHT : BTN_WARM) : 'rgba(214,180,108,0.45)',
         background: ready ? 'rgba(16, 14, 22, 0.92)' : 'rgba(12, 10, 16, 0.7)',
@@ -3952,10 +3957,11 @@ function BeginButton({
         borderRadius: 14,
         cursor: ready ? 'pointer' : 'wait',
         overflow: 'hidden',
-        display: 'flex',
+        display: 'grid',
+        gridTemplateColumns: showKeyboardHint ? 'auto minmax(0, 1fr) auto' : 'auto minmax(0, 1fr)',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: compact ? 12 : 16,
+        columnGap: compact ? 10 : 14,
         transition: 'color 200ms ease, background 200ms ease',
       }}
     >
@@ -4005,6 +4011,7 @@ function BeginButton({
               fontSize: compact ? 13 : 15,
               lineHeight: 1,
               textShadow: `0 0 10px ${BTN_GOLD}aa`,
+              justifySelf: 'end',
             }}
           >
             ◆
@@ -4016,30 +4023,36 @@ function BeginButton({
               position: 'relative',
               zIndex: 1,
               paddingTop: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              justifySelf: 'center',
               textShadow: hover
                 ? `0 0 12px ${BTN_GOLD}66, 0 1px 2px rgba(0,0,0,0.72)`
                 : `0 0 7px ${BTN_GOLD}3d, 0 1px 2px rgba(0,0,0,0.7)`,
             }}
           >
-            {compact ? 'Set Sail' : `Set Sail from ${startPortLabel}`}
+            {readyLabel}
           </motion.span>
-          {!compact && (
+          {showKeyboardHint && (
             <motion.span
               animate={hover ? { opacity: 1 } : { opacity: [0.58, 0.82, 0.58] }}
               transition={hover ? { duration: 0.18, ease: 'easeOut' } : { duration: 2.4, ease: 'easeInOut', repeat: Infinity, delay: 0.18 }}
               style={{
-                position: 'absolute',
-                right: 18,
+                position: 'relative',
                 zIndex: 1,
                 fontFamily: MONO,
                 fontSize: 10,
                 fontWeight: 500,
-                letterSpacing: '0.28em',
+                letterSpacing: '0.18em',
                 color: hover ? `${BTN_BRIGHT}99` : `${BTN_DIM_GOLD}cc`,
                 transition: 'color 200ms ease',
+                justifySelf: 'end',
+                whiteSpace: 'nowrap',
               }}
             >
-              ↵ Enter
+              Enter
             </motion.span>
           )}
         </>
@@ -4051,11 +4064,19 @@ function BeginButton({
               fontSize: compact ? 13 : 15,
               lineHeight: 1,
               opacity: 0.6,
+              justifySelf: 'end',
             }}
           >
             ◆
           </span>
-          <span style={{ paddingTop: 1 }}>{loadingMessage || `Charting ${startPortLabel}`}{dots}</span>
+          <span style={{
+            paddingTop: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            justifySelf: 'center',
+          }}>{loadingMessage || `Charting ${startPortLabel}`}{dots}</span>
         </>
       )}
 

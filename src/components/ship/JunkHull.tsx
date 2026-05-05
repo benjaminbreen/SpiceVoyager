@@ -46,9 +46,10 @@ export function JunkHull({ profile, hullMaterialRef, deckMaterialRef, oculusText
   const trim = profile.hull.trimColor;
   const railY = h + 0.2;
   const sternZ = -l * 0.5;
+  const highStern = profile.hull.hasHighSternpost !== false;
   const sternPanelW = w * 0.72;
-  const sternPanelH = 1.55;
-  const sternPanelY = h + 1.18;
+  const sternPanelH = highStern ? 1.55 : 1.18;
+  const sternPanelY = h + (highStern ? 1.18 : 0.98);
   const sternFaceZ = sternZ - 0.085;
   const mainZ = profile.masts[0]?.position[2] ?? -0.8;
   const foreZ = profile.masts[1]?.position[2] ?? 1.5;
@@ -132,24 +133,28 @@ export function JunkHull({ profile, hullMaterialRef, deckMaterialRef, oculusText
         <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
       </mesh>
 
-      <mesh position={[0, h + 0.38, deckhouseZ]} castShadow receiveShadow>
-        <boxGeometry args={[w * 0.66, 0.68, l * 0.2]} />
-        <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
-      </mesh>
-      <mesh position={[0, h + 0.78, deckhouseZ]} castShadow>
-        <boxGeometry args={[w * 0.78, 0.12, l * 0.25]} />
-        <meshStandardMaterial color={trim} roughness={0.88} />
-      </mesh>
-      <mesh position={[0, h + 0.32, deckhouseZ + l * 0.105]} castShadow={false}>
-        <circleGeometry args={[0.15, 14]} />
-        <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
-      </mesh>
-      {[-w * 0.34, w * 0.34].map((x) => (
-        <mesh key={`junk-deckhouse-panel-${x}`} position={[x, h + 0.42, deckhouseZ]}>
-          <boxGeometry args={[0.025, 0.3, l * 0.17]} />
-          <meshStandardMaterial color={trim} roughness={0.9} />
-        </mesh>
-      ))}
+      {profile.hull.hasMidshipDeckhouse && (
+        <>
+          <mesh position={[0, h + 0.38, deckhouseZ]} castShadow receiveShadow>
+            <boxGeometry args={[w * 0.66, 0.68, l * 0.2]} />
+            <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
+          </mesh>
+          <mesh position={[0, h + 0.78, deckhouseZ]} castShadow>
+            <boxGeometry args={[w * 0.78, 0.12, l * 0.25]} />
+            <meshStandardMaterial color={trim} roughness={0.88} />
+          </mesh>
+          <mesh position={[0, h + 0.32, deckhouseZ + l * 0.105]} castShadow={false}>
+            <circleGeometry args={[0.15, 14]} />
+            <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
+          </mesh>
+          {[-w * 0.34, w * 0.34].map((x) => (
+            <mesh key={`junk-deckhouse-panel-${x}`} position={[x, h + 0.42, deckhouseZ]}>
+              <boxGeometry args={[0.025, 0.3, l * 0.17]} />
+              <meshStandardMaterial color={trim} roughness={0.9} />
+            </mesh>
+          ))}
+        </>
+      )}
 
       <mesh position={[0, sternPanelY, sternZ]} castShadow receiveShadow>
         <boxGeometry args={[sternPanelW, sternPanelH, 0.16]} />
@@ -168,17 +173,17 @@ export function JunkHull({ profile, hullMaterialRef, deckMaterialRef, oculusText
         <boxGeometry args={[sternPanelW * 1.16, 0.16, 0.24]} />
         <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.9} />
       </mesh>
-      {[-sternPanelW * 0.54, sternPanelW * 0.54].map((x, i) => (
-        <mesh
-          key={`junk-stern-horn-${i}`}
-          position={[x, sternPanelY + sternPanelH * 0.5 + 0.24, sternZ]}
-          rotation={[0, 0, (i === 0 ? -1 : 1) * 0.4]}
-          castShadow
-        >
-          <coneGeometry args={[0.08, 0.28, 5]} />
-          <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.85} />
-        </mesh>
-      ))}
+      {highStern && [-sternPanelW * 0.54, sternPanelW * 0.54].map((x, i) => (
+          <mesh
+            key={`junk-stern-horn-${i}`}
+            position={[x, sternPanelY + sternPanelH * 0.5 + 0.24, sternZ]}
+            rotation={[0, 0, (i === 0 ? -1 : 1) * 0.4]}
+            castShadow
+          >
+            <coneGeometry args={[0.08, 0.28, 5]} />
+            <meshStandardMaterial color={profile.hull.cabinColor} roughness={0.85} />
+          </mesh>
+        ))}
 
       {oculusTexture && (
         <group>
@@ -193,20 +198,24 @@ export function JunkHull({ profile, hullMaterialRef, deckMaterialRef, oculusText
         </group>
       )}
 
-      <mesh position={[0, rudderY, rudderZ]} castShadow receiveShadow>
-        <boxGeometry args={[0.13, rudderH, rudderL]} />
-        <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
-      </mesh>
-      {[-rudderH * 0.28, 0, rudderH * 0.28].map((dy, i) => (
-        <mesh key={`junk-rudder-hole-${i}`} position={[0.07, rudderY + dy, rudderZ]} rotation={[0, Math.PI / 2, 0]}>
-          <circleGeometry args={[0.08, 10]} />
-          <meshStandardMaterial color="#1a0f08" roughness={1} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-      <mesh position={[0, rudderY + rudderH * 0.5 + 0.08, rudderZ - rudderL * 0.16]} castShadow>
-        <boxGeometry args={[0.24, 0.16, rudderL * 0.36]} />
-        <meshStandardMaterial color={trim} roughness={0.9} />
-      </mesh>
+      {profile.hull.hasLargeRudder && (
+        <>
+          <mesh position={[0, rudderY, rudderZ]} castShadow receiveShadow>
+            <boxGeometry args={[0.13, rudderH, rudderL]} />
+            <meshStandardMaterial color={profile.hull.hullColor} roughness={0.95} />
+          </mesh>
+          {[-rudderH * 0.28, 0, rudderH * 0.28].map((dy, i) => (
+            <mesh key={`junk-rudder-hole-${i}`} position={[0.07, rudderY + dy, rudderZ]} rotation={[0, Math.PI / 2, 0]}>
+              <circleGeometry args={[0.08, 10]} />
+              <meshStandardMaterial color="#1a0f08" roughness={1} side={THREE.DoubleSide} />
+            </mesh>
+          ))}
+          <mesh position={[0, rudderY + rudderH * 0.5 + 0.08, rudderZ - rudderL * 0.16]} castShadow>
+            <boxGeometry args={[0.24, 0.16, rudderL * 0.36]} />
+            <meshStandardMaterial color={trim} roughness={0.9} />
+          </mesh>
+        </>
+      )}
     </group>
   );
 }

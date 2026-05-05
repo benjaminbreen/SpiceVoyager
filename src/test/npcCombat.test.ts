@@ -4,9 +4,11 @@ import {
   cargoTemptationScore,
   chooseInitiativePosture,
   chooseProvokedPosture,
+  collisionCompensationDemand,
   npcBowWeapon,
   npcBroadsideCount,
   npcBroadsideWeapon,
+  resolveHailBranchOutcome,
   shouldStayHostile,
   shouldBreakOff,
 } from '../utils/npcCombat';
@@ -151,7 +153,73 @@ describe('npcCombat', () => {
     expect(COLLISION_REPUTATION_TARGET.apologize).toBeGreaterThan(COLLISION_REPUTATION_TARGET.ram);
     expect(COLLISION_REPUTATION_TARGET.apologize).toBeLessThan(-25);
     expect(COLLISION_REPUTATION_TARGET.pay).toBe(-25);
+    expect(COLLISION_REPUTATION_TARGET.helpRepairs).toBeGreaterThan(COLLISION_REPUTATION_TARGET.pay);
     expect(COLLISION_REPUTATION_TARGET.threaten).toBe(-100);
+  });
+
+  it('scales collision compensation by damage and ship threat', () => {
+    const lightDemand = collisionCompensationDemand(ship({ shipType: 'Dhow', armed: false, role: 'coastal trader' }), 0.95);
+    const heavyDemand = collisionCompensationDemand(ship({ shipType: 'Galleon', armed: true, role: 'privateer' }), 0.6);
+
+    expect(lightDemand).toBeGreaterThanOrEqual(20);
+    expect(heavyDemand).toBeGreaterThan(lightDemand);
+  });
+
+  it('turns a translated civilian apology into repair follow-up choices', () => {
+    const outcome = resolveHailBranchOutcome({
+      npc: ship({ role: 'coastal trader', armed: false, morale: 40 }),
+      context: 'collision',
+      action: 'collision_apologize',
+      canUnderstand: true,
+      hasTranslator: true,
+      playerGold: 100,
+      playerBroadsideCount: 1,
+      playerFlag: 'Portuguese',
+      reputation: 0,
+      hullFraction: 0.8,
+    });
+
+    expect(outcome.nextActions?.map((a) => a.id)).toContain('collision_help_repairs');
+    expect(outcome.collisionResponse).toBeUndefined();
+    expect(outcome.reputationTarget).toBe(COLLISION_REPUTATION_TARGET.apologize);
+  });
+
+  it('lets repair money resolve a collision more cleanly than apology alone', () => {
+    const outcome = resolveHailBranchOutcome({
+      npc: ship({ role: 'coastal trader', armed: false }),
+      context: 'collision',
+      action: 'collision_help_repairs',
+      canUnderstand: true,
+      hasTranslator: true,
+      playerGold: 100,
+      playerBroadsideCount: 1,
+      playerFlag: 'Portuguese',
+      reputation: 0,
+      hullFraction: 0.9,
+    });
+
+    expect(outcome.goldDelta).toBeLessThan(0);
+    expect(outcome.reputationTarget).toBe(COLLISION_REPUTATION_TARGET.helpRepairs);
+    expect(outcome.collisionResponse).toBe('helpRepairs');
+  });
+
+  it('lets warning papers satisfy friendly patrol challenges', () => {
+    const outcome = resolveHailBranchOutcome({
+      npc: ship({ role: 'armed patrol', armed: true, flag: 'Portuguese' }),
+      context: 'warning',
+      action: 'warning_show_papers',
+      canUnderstand: true,
+      hasTranslator: false,
+      playerGold: 20,
+      playerBroadsideCount: 0,
+      playerFlag: 'Portuguese',
+      reputation: 0,
+      hullFraction: 1,
+    });
+
+    expect(outcome.warningResponse).toBe('showPapers');
+    expect(outcome.close).toBe(true);
+    expect(outcome.reputationDelta).toBe(1);
   });
 
   it('scores laden valuable cargo as tempting to privateers', () => {

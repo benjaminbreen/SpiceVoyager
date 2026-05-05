@@ -6,6 +6,15 @@ type ShipTransform = {
   vel: number;
 };
 
+type ShipMotion = {
+  angularVelocity: number;
+  speedRatio: number;
+  heel: number;
+  yawSlide: number;
+  shipLength: number;
+  shipWidth: number;
+};
+
 type WalkingTransform = {
   pos: LiveVec3;
   rot: number;
@@ -15,6 +24,15 @@ const liveShipTransform: ShipTransform = {
   pos: [0, 0, 0],
   rot: 0,
   vel: 0,
+};
+
+const liveShipMotion: ShipMotion = {
+  angularVelocity: 0,
+  speedRatio: 0,
+  heel: 0,
+  yawSlide: 0,
+  shipLength: 5,
+  shipWidth: 1.8,
 };
 
 const liveWalkingTransform: WalkingTransform = {
@@ -48,6 +66,15 @@ export function syncLiveShipTransform(
   liveShipTransform.vel = vel;
 }
 
+export function syncLiveShipMotion(motion: Partial<ShipMotion>) {
+  liveShipMotion.angularVelocity = motion.angularVelocity ?? liveShipMotion.angularVelocity;
+  liveShipMotion.speedRatio = motion.speedRatio ?? liveShipMotion.speedRatio;
+  liveShipMotion.heel = motion.heel ?? liveShipMotion.heel;
+  liveShipMotion.yawSlide = motion.yawSlide ?? liveShipMotion.yawSlide;
+  liveShipMotion.shipLength = motion.shipLength ?? liveShipMotion.shipLength;
+  liveShipMotion.shipWidth = motion.shipWidth ?? liveShipMotion.shipWidth;
+}
+
 export function syncLiveWalkingTransform(pos: readonly number[], rot: number) {
   writeVec3(liveWalkingTransform.pos, pos);
   liveWalkingTransform.rot = rot;
@@ -55,6 +82,10 @@ export function syncLiveWalkingTransform(pos: readonly number[], rot: number) {
 
 export function getLiveShipTransform() {
   return liveShipTransform;
+}
+
+export function getLiveShipMotion() {
+  return liveShipMotion;
 }
 
 export function getLiveWalkingTransform() {

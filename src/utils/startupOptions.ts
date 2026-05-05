@@ -90,6 +90,10 @@ export const PORT_LABELS: Record<string, string> = {
   bantam:    'Bantam',
   manila:    'Manila',
   macau:     'Macau',
+  nagasaki:  'Nagasaki',
+  masulipatnam: 'Masulipatnam',
+  colombo:   'Colombo',
+  veracruz:  'Veracruz',
 };
 
 export const PORT_DESCRIPTIONS: Record<string, string> = {
@@ -119,6 +123,10 @@ export const PORT_DESCRIPTIONS: Record<string, string> = {
   bantam:    'Pepper port on Java; VOC headquarters in Asia, 1610–1619.',
   manila:    'Spanish capital of the Philippines. The Acapulco galleon and ~30,000 Chinese in the Sangley Parián.',
   macau:     'Luso-Chinese trade hub on the South China coast — the Macau-Nagasaki silver run.',
+  nagasaki:  'Japanese silver port at the end of the Portuguese nao route, two years before the 1614 Christian expulsion.',
+  masulipatnam: 'Qutb Shahi Coromandel port with VOC and English factories by 1612.',
+  colombo:   'Portuguese-held Ceylon port tied to the cinnamon regime and local brokers.',
+  veracruz:  'Spanish Gulf port carrying New Spain silver and goods toward Havana and Seville.',
 };
 
 const PORT_ICON_AVAILABLE = new Set<string>([
@@ -126,6 +134,7 @@ const PORT_ICON_AVAILABLE = new Set<string>([
   'seville', 'havana', 'aden',
   'mocha', 'goa', 'macau',
   'surat',
+  'nagasaki', 'masulipatnam',
 ]);
 
 export function portIconUrl(id: string) {
