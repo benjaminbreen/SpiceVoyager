@@ -334,19 +334,19 @@ export function MarketTabLedger({
 
         <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]" style={{ fontFamily: '"DM Sans", sans-serif' }}>
           <div>
-            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Sell</div>
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Sell Value</div>
             <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">
               {sellQty > 0 ? `${sellQty} for ${formatPrice(sellTotal)}` : 'Unavailable'}
             </div>
             <div className="mt-0.5 font-mono text-slate-500">After sale {holdAfterSell}/{cargoCapacity}</div>
           </div>
           <div>
-            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Buy</div>
+            <div className="font-bold uppercase tracking-[0.12em] text-slate-600">Buy Cost</div>
             <div className="mt-0.5 font-mono text-[13px] font-bold text-slate-200">
               {buyQty > 0 ? `${buyQty} for ${formatPrice(buyTotal)}` : 'Unavailable'}
             </div>
             <div className={holdAfterBuy > cargoCapacity ? 'mt-0.5 font-mono text-red-400' : 'mt-0.5 font-mono text-slate-500'}>
-              After purchase {holdAfterBuy}/{cargoCapacity}
+              Hold {holdAfterBuy}/{cargoCapacity}
             </div>
           </div>
         </div>

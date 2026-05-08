@@ -21,6 +21,8 @@ const TRAIL_LIFETIME = 6.2;
 const SAMPLE_DIST = 0.45;
 const HULL_WAKE_COUNT = 112;
 const HULL_WAKE_SURFACE_OFFSET = WAKE_SURFACE_OFFSET + 0.01;
+const TURN_RIPPLE_COUNT = 36;
+const TURN_RIPPLE_SURFACE_OFFSET = WAKE_SURFACE_OFFSET + 0.018;
 const TURN_SIDE_SIGN = -1;
 
 interface TrailPoint {
@@ -652,6 +654,276 @@ function HullWakeField() {
   );
 }
 
+interface TurnRippleStamp {
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  angle: number;
+  scaleX: number;
+  scaleZ: number;
+  life: number;
+  maxLife: number;
+  alpha: number;
+  seed: number;
+}
+
+function TurnRippleField() {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  useWaterOverlayLayer(meshRef);
+
+  const stampsRef = useRef<TurnRippleStamp[]>(
+    Array.from({ length: TURN_RIPPLE_COUNT }, () => ({
+      x: 0,
+      z: 0,
+      vx: 0,
+      vz: 0,
+      angle: 0,
+      scaleX: 0,
+      scaleZ: 0,
+      life: 0,
+      maxLife: 1,
+      alpha: 0,
+      seed: 0,
+    })),
+  );
+  const cursorRef = useRef(0);
+  const emitRef = useRef(0);
+  const lastPosRef = useRef<[number, number]>([0, 0]);
+  const initializedRef = useRef(false);
+  const dummyRef = useRef(new THREE.Object3D());
+  const quatRef = useRef(new THREE.Quaternion());
+  const eulerRef = useRef(new THREE.Euler());
+  const scaleRef = useRef(new THREE.Vector3());
+  const posRef = useRef(new THREE.Vector3());
+
+  const { geometry, material } = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
+    geo.setAttribute('aLife', new THREE.InstancedBufferAttribute(new Float32Array(TURN_RIPPLE_COUNT), 1));
+    geo.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(TURN_RIPPLE_COUNT), 1));
+    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(new Float32Array(TURN_RIPPLE_COUNT), 1));
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uDaylight: { value: 1.0 } },
+      vertexShader: /* glsl */ `
+        attribute float aLife;
+        attribute float aAlpha;
+        attribute float aSeed;
+        varying vec2 vUv;
+        varying vec2 vWorldXZ;
+        varying float vLife;
+        varying float vAlpha;
+        varying float vSeed;
+
+        void main() {
+          vUv = uv;
+          vLife = aLife;
+          vAlpha = aAlpha;
+          vSeed = aSeed;
+          vec4 worldPosition = instanceMatrix * vec4(position, 1.0);
+          vWorldXZ = worldPosition.xz;
+          gl_Position = projectionMatrix * modelViewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform float uDaylight;
+        varying vec2 vUv;
+        varying vec2 vWorldXZ;
+        varying float vLife;
+        varying float vAlpha;
+        varying float vSeed;
+
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                     mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+        float ring(float r, float target, float width) {
+          return 1.0 - smoothstep(width * 0.45, width, abs(r - target));
+        }
+
+        void main() {
+          if (vAlpha < 0.01) discard;
+
+          vec2 p = vUv * 2.0 - 1.0;
+          float r = length(vec2(p.x * 0.78, p.y * 1.15));
+          float rearArc = smoothstep(-0.98, -0.18, p.y) * (1.0 - smoothstep(0.25, 1.02, abs(p.x)));
+          float outerArc = smoothstep(0.15, 0.95, r) * (1.0 - smoothstep(0.86, 1.12, r));
+          float bands =
+            ring(r, 0.28 + vLife * 0.18, 0.055) * 0.72 +
+            ring(r, 0.49 + vLife * 0.16, 0.050) * 0.92 +
+            ring(r, 0.70 + vLife * 0.13, 0.060) * 0.68;
+
+          float gaps = smoothstep(0.22, 0.72, noise(vec2(p.x * 8.0 + vSeed, p.y * 5.0 - uTime * 0.55)));
+          float shimmer = smoothstep(0.28, 0.82, noise(vWorldXZ * 1.25 + vec2(vSeed, -vSeed) + uTime * vec2(0.1, -0.16)));
+          float fade = pow(1.0 - vLife, 1.7);
+          float alpha = vAlpha * fade * rearArc * outerArc * bands * (0.45 + gaps * 0.45 + shimmer * 0.24);
+
+          if (alpha < 0.008) discard;
+
+          vec3 dayColor = mix(vec3(0.45, 0.72, 0.78), vec3(0.86, 0.96, 1.0), clamp(bands, 0.0, 1.0));
+          vec3 nightColor = mix(vec3(0.035, 0.07, 0.10), vec3(0.14, 0.19, 0.22), clamp(bands, 0.0, 1.0));
+          vec3 color = mix(nightColor, dayColor, uDaylight);
+          gl_FragColor = vec4(color, alpha * 0.34);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -4,
+      side: THREE.DoubleSide,
+    });
+
+    return { geometry: geo, material: mat };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+    };
+  }, [geometry, material]);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(0, -1000, 0);
+    dummy.scale.set(0, 0, 0);
+    dummy.updateMatrix();
+    for (let i = 0; i < TURN_RIPPLE_COUNT; i++) mesh.setMatrixAt(i, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+  }, []);
+
+  useFrame((state, delta) => {
+    const elapsed = state.clock.elapsedTime;
+    const ship = getLiveShipTransform();
+    const motion = getLiveShipMotion();
+    const [px, , pz] = ship.pos;
+    const rot = ship.rot;
+    const speedRatio = THREE.MathUtils.clamp(motion.speedRatio, 0, 1);
+    const speed = Math.abs(ship.vel);
+    const shipLength = THREE.MathUtils.clamp(motion.shipLength, 3.2, 8.2);
+    const shipWidth = THREE.MathUtils.clamp(motion.shipWidth, 1.1, 3.2);
+    const fwdX = Math.sin(rot);
+    const fwdZ = Math.cos(rot);
+    const rightX = Math.cos(rot);
+    const rightZ = -Math.sin(rot);
+
+    if (!initializedRef.current) {
+      lastPosRef.current = [px, pz];
+      initializedRef.current = true;
+    }
+
+    const dx = px - lastPosRef.current[0];
+    const dz = pz - lastPosRef.current[1];
+    const distMoved = Math.sqrt(dx * dx + dz * dz);
+    if (distMoved > 30) {
+      for (const stamp of stampsRef.current) stamp.life = 0;
+    }
+    lastPosRef.current = [px, pz];
+
+    const absTurn = Math.abs(motion.angularVelocity);
+    const wakeActive = speed > 0.1 && speedRatio > 0.035;
+    const turnStrength = wakeActive
+      ? THREE.MathUtils.clamp((absTurn - 0.28) * 0.72 * (0.28 + speedRatio * 1.15) + Math.abs(motion.heel) * 0.14, 0, 1)
+      : 0;
+
+    if (turnStrength > 0.08) {
+      emitRef.current += delta * turnStrength * (4.5 + speedRatio * 8.5);
+      while (emitRef.current >= 1) {
+        emitRef.current -= 1;
+        const side = Math.sign(motion.angularVelocity || motion.heel || 1) * TURN_SIDE_SIGN;
+        const along = -shipLength * (0.05 + Math.random() * 0.34);
+        const beam = side * shipWidth * (0.54 + Math.random() * 0.22);
+        const x = px + fwdX * along + rightX * beam;
+        const z = pz + fwdZ * along + rightZ * beam;
+        const outward = 0.22 + turnStrength * 0.58 + Math.random() * 0.14;
+        const aftDrift = 0.06 + speedRatio * 0.14 + turnStrength * 0.12;
+        const stamp = stampsRef.current[cursorRef.current];
+        cursorRef.current = (cursorRef.current + 1) % TURN_RIPPLE_COUNT;
+        stamp.x = x;
+        stamp.z = z;
+        stamp.vx = rightX * side * outward - fwdX * aftDrift;
+        stamp.vz = rightZ * side * outward - fwdZ * aftDrift;
+        stamp.angle = rot + side * (0.68 + Math.random() * 0.22);
+        stamp.scaleX = shipWidth * (1.05 + turnStrength * 1.65);
+        stamp.scaleZ = shipLength * (0.62 + speedRatio * 0.24 + turnStrength * 0.54);
+        stamp.life = 1.35 + turnStrength * 1.35 + Math.random() * 0.45;
+        stamp.maxLife = stamp.life;
+        stamp.alpha = 0.18 + turnStrength * 0.34;
+        stamp.seed = Math.random() * 30;
+      }
+    } else {
+      emitRef.current = 0;
+    }
+
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const dummy = dummyRef.current;
+    const quat = quatRef.current;
+    const euler = eulerRef.current;
+    const scale = scaleRef.current;
+    const pos = posRef.current;
+    const lifeAttr = geometry.attributes.aLife as THREE.InstancedBufferAttribute;
+    const alphaAttr = geometry.attributes.aAlpha as THREE.InstancedBufferAttribute;
+    const seedAttr = geometry.attributes.aSeed as THREE.InstancedBufferAttribute;
+    let visible = 0;
+
+    for (let i = 0; i < TURN_RIPPLE_COUNT; i++) {
+      const stamp = stampsRef.current[i];
+      if (stamp.life > 0) {
+        stamp.life -= delta;
+        const age = 1 - Math.max(0, stamp.life) / stamp.maxLife;
+        stamp.x += stamp.vx * delta;
+        stamp.z += stamp.vz * delta;
+        stamp.vx *= Math.exp(-delta * 0.34);
+        stamp.vz *= Math.exp(-delta * 0.34);
+        const spread = 1 + age * 0.9;
+
+        pos.set(stamp.x, SEA_LEVEL + TURN_RIPPLE_SURFACE_OFFSET + i * 0.000012, stamp.z);
+        euler.set(-Math.PI / 2, 0, stamp.angle);
+        quat.setFromEuler(euler);
+        scale.set(stamp.scaleX * spread, stamp.scaleZ * spread, 1);
+        dummy.matrix.compose(pos, quat, scale);
+        mesh.setMatrixAt(i, dummy.matrix);
+        lifeAttr.setX(i, age);
+        alphaAttr.setX(i, stamp.alpha);
+        seedAttr.setX(i, stamp.seed);
+        visible++;
+      } else {
+        dummy.position.set(0, -1000, 0);
+        dummy.scale.set(0, 0, 0);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        lifeAttr.setX(i, 1);
+        alphaAttr.setX(i, 0);
+      }
+    }
+
+    mesh.visible = visible > 0;
+    mesh.instanceMatrix.needsUpdate = true;
+    lifeAttr.needsUpdate = true;
+    alphaAttr.needsUpdate = true;
+    seedAttr.needsUpdate = true;
+    material.uniforms.uTime.value = elapsed;
+    material.uniforms.uDaylight.value = daylightFactor(useGameStore.getState().timeOfDay);
+  });
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, TURN_RIPPLE_COUNT]}
+      frustumCulled={false}
+      renderOrder={5}
+    />
+  );
+}
+
 export function ShipWaterInteraction() {
   const shipWakeEnabled = useGameStore((state) => state.renderDebug.shipWake);
 
@@ -661,6 +933,7 @@ export function ShipWaterInteraction() {
         <>
           <ShipWakeTrail />
           <HullWakeField />
+          <TurnRippleField />
         </>
       )}
     </>

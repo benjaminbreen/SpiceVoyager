@@ -30,6 +30,7 @@ import { SplashSystem } from './SplashSystem';
 import { FloatingLootSystem, spawnFloatingLoot } from './FloatingLoot';
 import { FloatingCombatTextSystem, spawnFloatingCombatText } from './FloatingCombatText';
 import { WreckSalvageSystem } from './WreckSalvage';
+import { getTestModeConfig } from '../test/testMode';
 import { spawnSplash, spawnSplinters, spawnImpactBurst, spawnRicochetBurst, spawnMuzzleBurst, spawnRocketTrail, spawnRocketFireBurst } from '../utils/splashState';
 import { spawnBuildingShake, spawnBuildingCollapse, spawnTreeShake, damagePalm, applyTreeDamage, applyBuildingDamage, isTreeFelled } from '../utils/impactShakeState';
 import {
@@ -3147,12 +3148,13 @@ function TimeController() {
   const advanceTime = useGameStore((state) => state.advanceTime);
   const paused = useGameStore((state) => state.paused);
   const timeScale = useGameStore((state) => state.timeScale);
+  const freezeTestClock = getTestModeConfig().enabled && getTestModeConfig().timeOfDay !== null;
   const accumulatedDelta = useRef(0);
   const ambientAccum = useRef(0);
   const STORE_TIME_STEP = 0.1;
 
   useFrame((_, delta) => {
-    if (paused) return;
+    if (paused || freezeTestClock) return;
     accumulatedDelta.current += delta;
     if (accumulatedDelta.current < STORE_TIME_STEP) return;
 

@@ -4,8 +4,20 @@
 import { getActivePlayerPos } from '../utils/livePlayerTransform';
 
 let ctx: AudioContext | null = null;
+let userHasInteracted = false;
 
-function getCtx(): AudioContext {
+function markAudioInteracted() {
+  userHasInteracted = true;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('click', markAudioInteracted, { capture: true, once: true });
+  window.addEventListener('keydown', markAudioInteracted, { capture: true, once: true });
+  window.addEventListener('pointerdown', markAudioInteracted, { capture: true, once: true });
+}
+
+function getCtx(): AudioContext | null {
+  if (!userHasInteracted) return null;
   if (!ctx) ctx = new AudioContext();
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -513,6 +525,7 @@ export function startTabAmbient(tab: string, portId?: string) {
   stopTabAmbient(0.3);
 
   const ac = getCtx();
+  if (!ac) return;
   const master = ac.createGain();
   const v = masterVolume * 0.25;
   master.gain.setValueAtTime(0, ac.currentTime);
@@ -565,6 +578,7 @@ export function getSfxVolume() {
 /** Soft stone/metal tap — main button click. */
 export function sfxClick() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   noise(ac, 0.06, v, 3200, 1.5);
   ping(ac, 1800, 0.04, v * 0.4);
@@ -574,6 +588,7 @@ export function sfxClick() {
 /** Barely-there hover whisper. */
 export function sfxHover() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.1;
   noise(ac, 0.03, v, 4000, 2);
 }
@@ -581,6 +596,7 @@ export function sfxHover() {
 /** Lighter click for tab switches. */
 export function sfxTab() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   noise(ac, 0.045, v, 3800, 2);
   ping(ac, 2200, 0.03, v * 0.3);
@@ -591,6 +607,7 @@ export function sfxTab() {
 /** Wet splash click — for fish, whales, aquatic collectibles. */
 export function sfxClickSplash() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
   // Quick water burst — lowpass noise with fast descending cutoff
@@ -618,6 +635,7 @@ export function sfxClickSplash() {
 /** Sandy scrunch click — for crabs, shells, beach collectibles. */
 export function sfxClickSand() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   // Gritty short burst — bandpass noise centered low-mid
   noise(ac, 0.045, v * 0.5, 1200, 1);
@@ -630,6 +648,7 @@ export function sfxClickSand() {
 /** Leafy rustle click — for plants, herbs, bark, jungle items. */
 export function sfxClickRustle() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.25;
   // Soft mid-high rustle
   noise(ac, 0.05, v * 0.4, 2200, 1.5);
@@ -641,6 +660,7 @@ export function sfxClickRustle() {
 /** Metallic coin clink for buy/sell — scales with gold amount. */
 export function sfxCoin(amount = 0) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -680,6 +700,7 @@ export function sfxCoin(amount = 0) {
 /** Low textured scrape — modal/panel opening. */
 export function sfxOpen() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.25;
   noise(ac, 0.12, v, 800, 0.8);
   ping(ac, 200, 0.1, v * 0.3);
@@ -689,6 +710,7 @@ export function sfxOpen() {
 /** Softer close — reverse energy of open. */
 export function sfxClose() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.2;
   noise(ac, 0.08, v, 1200, 1);
   ping(ac, 400, 0.06, v * 0.2);
@@ -701,6 +723,7 @@ export function sfxClose() {
 /** Standard item pickup — clean single chime. */
 export function sfxPickupNormal() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.25;
   // Single clear D5 ping with a soft octave shimmer
   ping(ac, 587, 0.12, v * 0.5);
@@ -711,6 +734,7 @@ export function sfxPickupNormal() {
 /** Rare item pickup — two-note ascending lift, richer than normal. */
 export function sfxPickupRare() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -747,6 +771,7 @@ export function sfxPickupRare() {
 /** Legendary item pickup — triumphant four-note fanfare with harmonic bloom. */
 export function sfxPickupLegendary() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.4;
   const t = ac.currentTime;
 
@@ -808,6 +833,7 @@ export function sfxPickupLegendary() {
 /** Quick chitinous skitter + comedic pop — crab collection. */
 export function sfxCrabCollect() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -840,6 +866,7 @@ export function sfxCrabCollect() {
 /** Treasure find — coins clinking and a chest creak. For gold/cargo from the sea. */
 export function sfxTreasureFind() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -907,6 +934,7 @@ export function sfxTreasureFind() {
 /** Ascending melodic chime — new port or item discovered. */
 export function sfxDiscovery() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -950,6 +978,7 @@ export function sfxDiscovery() {
 /** Reputation danger alert — low horn plus clipped alarm taps. */
 export function sfxReputationThreat(kind: 'ship' | 'fort' = 'ship') {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * (kind === 'fort' ? 0.34 : 0.28);
   const t = ac.currentTime;
   const hornFreq = kind === 'fort' ? 82 : 98;
@@ -983,6 +1012,7 @@ export function sfxReputationThreat(kind: 'ship' | 'fort' = 'ship') {
 /** Boots hitting sand/wood + rope creak — disembarking from ship. */
 export function sfxDisembark() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1032,6 +1062,7 @@ export function sfxDisembark() {
 /** Soft "denied" cue — shore is too steep to disembark. Low thud + descending nasal tone. */
 export function sfxDisembarkBlocked() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -1056,6 +1087,7 @@ export function sfxDisembarkBlocked() {
 /** Rope taut + wood creak + water lap — embarking back onto ship. */
 export function sfxEmbark() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1100,6 +1132,7 @@ export function sfxEmbark() {
 /** Biome-specific footstep — called in sync with walk cycle. */
 export function sfxFootstep(biome: string) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.12; // subtle — these fire frequently
 
   switch (biome) {
@@ -1158,6 +1191,7 @@ export function sfxFootstep(biome: string) {
 /** Walking player bumping a tree trunk or rock — short woody thud. */
 export function sfxThud() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1181,6 +1215,7 @@ export function sfxThud() {
 /** Ship grinding into shore — wood splintering on rock/sand. */
 export function sfxShoreCollision() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.45;
   const t = ac.currentTime;
 
@@ -1217,6 +1252,7 @@ export function sfxShoreCollision() {
 /** Ship-to-ship collision — wood-on-wood crack + rigging clatter. */
 export function sfxShipCollision() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.45;
   const t = ac.currentTime;
 
@@ -1261,6 +1297,7 @@ export function sfxShipCollision() {
 /** Rope whoosh + net spreading + splash — casting a fishing net. */
 export function sfxCastNet() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1322,6 +1359,7 @@ export function sfxCastNet() {
 /** Wet rope pull + dripping + thud on deck — hauling in the net. */
 export function sfxHaulNet() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1369,6 +1407,7 @@ export function sfxHaulNet() {
 /** Deeper, resonant confirmation — "Set Sail" and major actions. */
 export function sfxSail() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.4;
   // Low resonant boom
   ping(ac, 120, 0.25, v * 0.5, 'sine');
@@ -1383,6 +1422,7 @@ export function sfxSail() {
 /** Alert siren — descending two-tone alarm when entering fight mode. */
 export function sfxBattleStations() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1422,6 +1462,7 @@ export function sfxBattleStations() {
 /** Anchor splash — heavy chain rattle + water impact. */
 export function sfxAnchorDrop() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.4;
   const t = ac.currentTime;
 
@@ -1458,6 +1499,7 @@ export function sfxAnchorDrop() {
 /** Bow wave — gentle wash of water at speed. One-shot, use with cooldown. */
 export function sfxSailsCatch() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.12;
   const t = ac.currentTime;
 
@@ -1494,6 +1536,7 @@ export function sfxSailsCatch() {
 /** Turn wash — subtle water lapping as the hull turns. One-shot, use with cooldown. */
 export function sfxRiggingCreak() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.10;
   const t = ac.currentTime;
 
@@ -1586,6 +1629,7 @@ export function sfxShipGunFire(weaponType: string) {
   }
 
   const ac = getCtx();
+  if (!ac) return;
   const profile = shipSfxProfile(weaponType);
   const v = masterVolume * profile.volume;
   const t = ac.currentTime;
@@ -1630,6 +1674,7 @@ export function sfxShipGunFire(weaponType: string) {
 
 export function sfxShipGunImpact(surface: ProjectileImpactSurface, weaponType: string) {
   const ac = getCtx();
+  if (!ac) return;
   const profile = shipSfxProfile(weaponType);
   const heavy = Math.max(0.65, Math.min(1.9, profile.volume / 0.42));
   const v = masterVolume * 0.34 * heavy;
@@ -1711,6 +1756,7 @@ export function sfxCannonSplash(weaponType = 'saker') {
  *  pitch so the shot feels alive as it streaks out. */
 export function sfxRocketFire() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.5;
   const t = ac.currentTime;
 
@@ -1752,6 +1798,7 @@ export function sfxRocketFire() {
  *  brief delay so it doesn't overlap the launch boom. */
 export function sfxRocketWhistle(flightDuration = 1.8) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.28;
   const t = ac.currentTime;
   const start = t + 0.28; // let the launch boom settle first
@@ -1789,6 +1836,7 @@ export function sfxRocketWhistle(flightDuration = 1.8) {
 /** War rocket impact — deep concussive blast with crackle tail. */
 export function sfxRocketImpact() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.72;
   const t = ac.currentTime;
 
@@ -1824,6 +1872,7 @@ export function sfxRocketImpact() {
 /** Matchlock musket fire — sharper, drier, higher than the swivel boom. */
 export function sfxMusket() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -1850,6 +1899,7 @@ export function sfxMusket() {
 /** Hunting bow release — taut twang plus a soft arrow whoosh. */
 export function sfxBowRelease() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -1872,6 +1922,7 @@ export function sfxBowRelease() {
 /** Funeral bell — single solemn toll for crew death */
 export function sfxFuneralBell() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -1903,6 +1954,7 @@ export function sfxFuneralBell() {
 /** Ship sinking — deep groan + water rush + cracking timber */
 export function sfxShipSink() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.4;
   const t = ac.currentTime;
 
@@ -1945,6 +1997,7 @@ export function sfxShipSink() {
 
 export function sfxAnchorWeigh() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.3;
   const t = ac.currentTime;
 
@@ -1973,6 +2026,7 @@ export function sfxAnchorWeigh() {
 /** Warm harbor bell — plays when the player reaches a port. */
 export function sfxPortArrival() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.25;
   const t = ac.currentTime;
 
@@ -2005,6 +2059,7 @@ export function sfxPortArrival() {
 /** Very soft puff for dismissing toasts — lighter than a click. */
 export function sfxDismiss() {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.12;
   noise(ac, 0.04, v, 3000, 1.5);
 }
@@ -2045,6 +2100,7 @@ const BABBLE: Record<BabbleFamily, BabbleParams> = {
  *  Pass the NPC's hailLanguage (e.g. "Portuguese", "Arabic"). */
 export function sfxShipHail(language: string) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.35;
   const t = ac.currentTime;
 
@@ -2150,6 +2206,7 @@ export function sfxShipHail(language: string) {
 /** Herd hoofbeats — rapid soft thumps as grazers scatter. */
 export function sfxHoofbeats(x?: number, z?: number) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.32;
   const t = ac.currentTime;
   const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
@@ -2178,6 +2235,7 @@ export function sfxHoofbeats(x?: number, z?: number) {
 /** Flock takeoff — sweeping wing flap whoosh. */
 export function sfxBirdFlap(x?: number, z?: number) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.28;
   const t = ac.currentTime;
   const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
@@ -2209,6 +2267,7 @@ export function sfxBirdFlap(x?: number, z?: number) {
 /** Reptile scrabble — short scratchy noise as a lizard lurches away. */
 export function sfxReptileScrabble(x?: number, z?: number) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.25;
   const t = ac.currentTime;
   const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
@@ -2236,6 +2295,7 @@ export function sfxReptileScrabble(x?: number, z?: number) {
 /** Butchering a carcass — low thunk, wet squelch, then a soft loot chime. */
 export function sfxHarvest(x?: number, z?: number) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.38;
   const t = ac.currentTime;
   const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;
@@ -2310,6 +2370,7 @@ export function sfxHarvest(x?: number, z?: number) {
 
 export function sfxPrimateChatter(x?: number, z?: number) {
   const ac = getCtx();
+  if (!ac) return;
   const v = masterVolume * 0.22;
   const t = ac.currentTime;
   const dest: AudioNode = (x !== undefined && z !== undefined) ? spatialDest(ac, x, z) : ac.destination;

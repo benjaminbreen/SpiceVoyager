@@ -17,7 +17,7 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-const WATER_SURFACE_OFFSET = -0.5;
+const WATER_SURFACE_OFFSET = -0.06;
 const SHALLOW_TINT_OFFSET = 0.045;
 const SHORE_FOAM_SURFACE_OFFSET = 0.075;
 const ALGAE_SURFACE_OFFSET = 0.035;
@@ -192,6 +192,7 @@ function ShallowWaterTint() {
       } else {
         shoreEdges[i] = 0;
       }
+
     }
 
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -876,7 +877,7 @@ export function Ocean() {
       )
       .replace(
         'vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;',
-        'vec2 distortion = surfaceNormal.xz * ( 0.001 + 0.4 / distance ) * smoothstep(350.0, 80.0, distance) * distortionScale;'
+        'vec2 distortion = surfaceNormal.xz * ( 0.0025 + 0.9 / distance ) * smoothstep(420.0, 80.0, distance) * distortionScale;'
       )
       .replace(
         'vec3 reflectionSample = vec3( texture2D( mirrorSampler, mirrorCoord.xy / mirrorCoord.w + distortion ) );',
@@ -919,6 +920,8 @@ export function Ocean() {
     const clearSky = storeState.weather.kind === 'clear' ? 1 : storeState.weather.kind === 'cloudy' ? 0.35 : 0;
     const sunnyFactor = smoothstep(0.18, 0.82, sunH) * clearSky * (1 - smoothstep(0.08, 0.72, rain));
     mat.uniforms.uSunnyFactor.value = sunnyFactor;
+    mat.uniforms.size.value = 1 + rain * 0.42;
+    mat.uniforms.distortionScale.value = 1 + rain * 0.35;
 
     if (sunH > 0.2) {
       mat.uniforms.sunColor.value.setRGB(

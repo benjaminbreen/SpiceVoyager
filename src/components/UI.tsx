@@ -2840,9 +2840,9 @@ export function UI({ startupSceneReady }: UIProps) {
         </Suspense>
       )}
 
-      {/* POI Walk-up Toast — walking mode, hand-authored sites */}
+      {/* POI Walk-up Toast — walking mode sites and ship-accessible offshore sites */}
       <AnimatePresence>
-        {activePOIToast && playerMode === 'walking' && !activePort && !activePOI && (
+        {activePOIToast && !activePort && !activePOI && (
           <POIToast
             key={activePOIToast.poi.id}
             poi={activePOIToast.poi}
