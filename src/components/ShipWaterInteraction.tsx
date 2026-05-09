@@ -23,6 +23,8 @@ const HULL_WAKE_COUNT = 112;
 const HULL_WAKE_SURFACE_OFFSET = WAKE_SURFACE_OFFSET + 0.01;
 const TURN_RIPPLE_COUNT = 36;
 const TURN_RIPPLE_SURFACE_OFFSET = WAKE_SURFACE_OFFSET + 0.018;
+const WATERLINE_FOAM_COUNT = 4;
+const WATERLINE_FOAM_SURFACE_OFFSET = WAKE_SURFACE_OFFSET + 0.03;
 const TURN_SIDE_SIGN = -1;
 
 interface TrailPoint {
@@ -924,6 +926,179 @@ function TurnRippleField() {
   );
 }
 
+function WaterlineFoam() {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  useWaterOverlayLayer(meshRef);
+
+  const dummyRef = useRef(new THREE.Object3D());
+  const quatRef = useRef(new THREE.Quaternion());
+  const eulerRef = useRef(new THREE.Euler());
+  const scaleRef = useRef(new THREE.Vector3());
+  const posRef = useRef(new THREE.Vector3());
+
+  const { geometry, material } = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
+    geo.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(WATERLINE_FOAM_COUNT), 1));
+    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(new Float32Array(WATERLINE_FOAM_COUNT), 1));
+    geo.setAttribute('aKind', new THREE.InstancedBufferAttribute(new Float32Array(WATERLINE_FOAM_COUNT), 1));
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uDaylight: { value: 1.0 } },
+      vertexShader: /* glsl */ `
+        attribute float aAlpha;
+        attribute float aSeed;
+        attribute float aKind;
+        varying vec2 vUv;
+        varying vec2 vWorldXZ;
+        varying float vAlpha;
+        varying float vSeed;
+        varying float vKind;
+
+        void main() {
+          vUv = uv;
+          vAlpha = aAlpha;
+          vSeed = aSeed;
+          vKind = aKind;
+          vec4 worldPosition = instanceMatrix * vec4(position, 1.0);
+          vWorldXZ = worldPosition.xz;
+          gl_Position = projectionMatrix * modelViewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform float uDaylight;
+        varying vec2 vUv;
+        varying vec2 vWorldXZ;
+        varying float vAlpha;
+        varying float vSeed;
+        varying float vKind;
+
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                     mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+
+        void main() {
+          if (vAlpha < 0.01) discard;
+
+          vec2 p = vUv * 2.0 - 1.0;
+          float alongFade = 1.0 - smoothstep(0.72, 1.0, abs(p.x));
+          float acrossFade = 1.0 - smoothstep(0.10, 0.96, abs(p.y));
+          float bowBoost = mix(1.0, 1.28, step(1.5, vKind));
+          float ripple = noise(vec2(p.x * 9.0 + vSeed, p.y * 4.0 - uTime * 0.9));
+          float broken = smoothstep(0.42, 0.86, ripple);
+          float lace = smoothstep(0.55, 0.92, noise(vWorldXZ * 1.55 + vec2(vSeed, -vSeed) + uTime * vec2(0.16, -0.23)));
+          float edge = alongFade * acrossFade;
+          float alpha = vAlpha * edge * (0.22 + broken * 0.48 + lace * 0.22) * bowBoost;
+
+          if (alpha < 0.01) discard;
+
+          vec3 dayColor = mix(vec3(0.50, 0.74, 0.80), vec3(0.90, 0.98, 1.0), clamp(broken + lace * 0.45, 0.0, 1.0));
+          vec3 nightColor = mix(vec3(0.035, 0.07, 0.10), vec3(0.15, 0.19, 0.22), clamp(broken, 0.0, 1.0));
+          vec3 color = mix(nightColor, dayColor, uDaylight);
+          gl_FragColor = vec4(color, alpha * 0.42);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -5,
+      side: THREE.DoubleSide,
+    });
+
+    return { geometry: geo, material: mat };
+  }, []);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const dummy = dummyRef.current;
+    dummy.position.set(0, -1000, 0);
+    dummy.scale.set(0, 0, 0);
+    dummy.updateMatrix();
+    for (let i = 0; i < WATERLINE_FOAM_COUNT; i++) mesh.setMatrixAt(i, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    const seedAttr = geometry.attributes.aSeed as THREE.InstancedBufferAttribute;
+    const kindAttr = geometry.attributes.aKind as THREE.InstancedBufferAttribute;
+    for (let i = 0; i < WATERLINE_FOAM_COUNT; i++) {
+      seedAttr.setX(i, i * 3.17 + 0.9);
+      kindAttr.setX(i, i >= 2 ? 2 : 0);
+    }
+    seedAttr.needsUpdate = true;
+    kindAttr.needsUpdate = true;
+  }, [geometry]);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+    };
+  }, [geometry, material]);
+
+  useFrame((state) => {
+    const ship = getLiveShipTransform();
+    const motion = getLiveShipMotion();
+    const [px, , pz] = ship.pos;
+    const rot = ship.rot;
+    const speedRatio = THREE.MathUtils.clamp(motion.speedRatio, 0, 1);
+    const speed = Math.abs(ship.vel);
+    const shipLength = THREE.MathUtils.clamp(motion.shipLength, 3.2, 8.2);
+    const shipWidth = THREE.MathUtils.clamp(motion.shipWidth, 1.1, 3.2);
+    const fwdX = Math.sin(rot);
+    const fwdZ = Math.cos(rot);
+    const rightX = Math.cos(rot);
+    const rightZ = -Math.sin(rot);
+    const baseAlpha = 0.10 + speedRatio * 0.18 + THREE.MathUtils.clamp(Math.abs(motion.heel) * 0.22, 0, 0.08);
+    const moving = speed > 0.06 || speedRatio > 0.02;
+
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const dummy = dummyRef.current;
+    const quat = quatRef.current;
+    const euler = eulerRef.current;
+    const scale = scaleRef.current;
+    const pos = posRef.current;
+    const alphaAttr = geometry.attributes.aAlpha as THREE.InstancedBufferAttribute;
+    const segments = [
+      { cx: rightX * shipWidth * 0.55, cz: rightZ * shipWidth * 0.55, angle: rot, sx: shipLength * 0.78, sz: 0.22 + speedRatio * 0.12, alpha: baseAlpha },
+      { cx: -rightX * shipWidth * 0.55, cz: -rightZ * shipWidth * 0.55, angle: rot, sx: shipLength * 0.78, sz: 0.22 + speedRatio * 0.12, alpha: baseAlpha },
+      { cx: fwdX * shipLength * 0.43, cz: fwdZ * shipLength * 0.43, angle: rot + Math.PI / 2, sx: shipWidth * 0.92, sz: 0.26 + speedRatio * 0.16, alpha: baseAlpha * (1.05 + speedRatio * 0.5) },
+      { cx: -fwdX * shipLength * 0.45, cz: -fwdZ * shipLength * 0.45, angle: rot + Math.PI / 2, sx: shipWidth * 0.72, sz: 0.20 + speedRatio * 0.1, alpha: baseAlpha * 0.74 },
+    ];
+
+    for (let i = 0; i < WATERLINE_FOAM_COUNT; i++) {
+      const seg = segments[i];
+      pos.set(px + seg.cx, SEA_LEVEL + WATERLINE_FOAM_SURFACE_OFFSET + i * 0.00002, pz + seg.cz);
+      euler.set(-Math.PI / 2, 0, seg.angle);
+      quat.setFromEuler(euler);
+      scale.set(seg.sx, seg.sz, 1);
+      dummy.matrix.compose(pos, quat, scale);
+      mesh.setMatrixAt(i, dummy.matrix);
+      alphaAttr.setX(i, moving ? seg.alpha : seg.alpha * 0.45);
+    }
+
+    mesh.visible = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    alphaAttr.needsUpdate = true;
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+    material.uniforms.uDaylight.value = daylightFactor(useGameStore.getState().timeOfDay);
+  });
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, WATERLINE_FOAM_COUNT]}
+      frustumCulled={false}
+      renderOrder={6}
+    />
+  );
+}
+
 export function ShipWaterInteraction() {
   const shipWakeEnabled = useGameStore((state) => state.renderDebug.shipWake);
 
@@ -934,6 +1109,7 @@ export function ShipWaterInteraction() {
           <ShipWakeTrail />
           <HullWakeField />
           <TurnRippleField />
+          <WaterlineFoam />
         </>
       )}
     </>

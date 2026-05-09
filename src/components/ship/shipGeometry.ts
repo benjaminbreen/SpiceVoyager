@@ -66,14 +66,31 @@ export function createHardChineHullGeometry(
 export function createDeckGeometry(stations: Pick<HullStation, 'z' | 'deckWidth'>[], y: number) {
   const vertices: number[] = [];
   const indices: number[] = [];
+  const thickness = 0.045;
 
   for (const s of stations) {
-    vertices.push(-s.deckWidth * 0.5, y, s.z, s.deckWidth * 0.5, y, s.z);
+    const left = -s.deckWidth * 0.5;
+    const right = s.deckWidth * 0.5;
+    vertices.push(
+      left, y, s.z,
+      right, y, s.z,
+      left, y - thickness, s.z,
+      right, y - thickness, s.z,
+    );
   }
   for (let i = 0; i < stations.length - 1; i++) {
-    const a = i * 2;
-    const b = (i + 1) * 2;
-    addQuad(indices, a, b, b + 1, a + 1);
+    const a = i * 4;
+    const b = (i + 1) * 4;
+    addQuad(indices, a, b, b + 1, a + 1);         // top
+    addQuad(indices, a + 2, a + 3, b + 3, b + 2); // underside
+    addQuad(indices, a, a + 2, b + 2, b);         // port edge
+    addQuad(indices, a + 1, b + 1, b + 3, a + 3); // starboard edge
+  }
+
+  if (stations.length > 0) {
+    addQuad(indices, 0, 1, 3, 2);
+    const last = (stations.length - 1) * 4;
+    addQuad(indices, last, last + 2, last + 3, last + 1);
   }
 
   const geo = new THREE.BufferGeometry();

@@ -105,6 +105,23 @@ export function CommissionCard({ lead, currentDay, onAbandon, onOpenChart }: Com
             {lead.task}
           </div>
 
+          {lead.hint && (
+            <div className="mt-4 rounded border border-amber-500/20 bg-amber-500/[0.06] px-3.5 py-3">
+              <div
+                className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-300/85"
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
+              >
+                {lead.hint.title}
+              </div>
+              <div
+                className="mt-1.5 text-[13px] leading-[1.45] text-amber-50/90"
+                style={{ fontFamily: '"DM Sans", sans-serif' }}
+              >
+                {lead.hint.body}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 flex items-center gap-3 flex-wrap">
             <span
               className="text-[13px] font-medium text-amber-300/90"

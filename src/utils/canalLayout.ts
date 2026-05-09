@@ -14,6 +14,10 @@
 //     Grachtengordel was only being SURVEYED that year (Herengracht dug 1613)
 //     so the city was still the medieval wedge between Damrak/Rokin and the
 //     Singel moat. Concentric was historically wrong for this period.
+//
+//   - 'venetian': a broad, sinuous Grand Canal plus uneven minor rii. Suits
+//     Venice better than concentric rings: the real city is dense island fabric
+//     threaded by irregular water streets, not an Amsterdam-style canal fan.
 
 import { CardinalDir, resolveDirRadians } from './portArchetypes';
 
@@ -71,6 +75,23 @@ export type CanalLayoutDef =
       bridgesPerSideCanal?: number;
       /** Bridges along the moat. */
       bridgesOnMoat?: number;
+    }
+  | {
+      type: 'venetian';
+      /** Open direction of the lagoon/harbor side. */
+      openDirection: CardinalDir | number;
+      /** Width of the navigable Grand Canal water strip. */
+      grandCanalWidth: number;
+      /** Width of smaller rii before per-canal deterministic variation. */
+      minorCanalWidth: number;
+      /** Distance the Grand Canal reaches from lagoon mouth through the city. */
+      grandCanalLength: number;
+      /** Number of minor rii crossing or feeding into the Grand Canal. */
+      minorCanals: number;
+      /** Footbridges over the Grand Canal. */
+      bridgesOnGrandCanal?: number;
+      /** Footbridges over each minor rio. */
+      bridgesPerMinorCanal?: number;
     };
 
 export interface CanalSegment {
@@ -255,6 +276,11 @@ function harborDirection(openDirection: CardinalDir | number): [number, number] 
   return [Math.sin(dirRad), -Math.cos(dirRad)];
 }
 
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 /**
  * Wedge layout: medieval-Amsterdam topology.
  *   inlet (Damrak/Rokin) crosses the coastline along the inland axis;
@@ -395,6 +421,101 @@ function generateWedge(
   return { canals, bridges: cullClusteredBridges(bridges) };
 }
 
+function generateVenetian(
+  centerX: number, centerZ: number,
+  def: Extract<CanalLayoutDef, { type: 'venetian' }>,
+): CanalLayout {
+  const canals: CanalSegment[] = [];
+  const bridges: CanalBridge[] = [];
+
+  const [harborX, harborZ] = harborDirection(def.openDirection);
+  const inlandX = -harborX;
+  const inlandZ = -harborZ;
+  const latX = inlandZ;
+  const latZ = -inlandX;
+
+  const grandHalfW = def.grandCanalWidth / 2;
+  const minorHalfW = def.minorCanalWidth / 2;
+  const deckOverhang = (halfW: number) => halfW * 1.35 + Math.max(1.5, halfW * 0.25);
+
+  // Grand Canal: starts outside the lagoon-facing edge and bends through the
+  // city in a broad S. The lateral term is explicit rather than random so the
+  // waterway stays navigable and bridge placement remains stable.
+  const grandPoints: [number, number][] = [];
+  const samples = Math.max(18, Math.round(def.grandCanalLength / 6));
+  const startOffset = def.grandCanalWidth * 2.2;
+  const tailOffset = def.grandCanalLength - startOffset;
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    const along = -startOffset + t * (startOffset + tailOffset);
+    const sCurve =
+      Math.sin((t - 0.10) * Math.PI * 1.25) * 22 +
+      Math.sin(t * Math.PI * 2.75 + 0.45) * 6;
+    const mouthStraighten = smoothstep(0.0, 0.18, t);
+    const lateral = sCurve * mouthStraighten;
+    grandPoints.push([
+      centerX + harborX * -along + latX * lateral,
+      centerZ + harborZ * -along + latZ * lateral,
+    ]);
+  }
+  canals.push({ polyline: grandPoints, halfWidth: grandHalfW, primary: true });
+
+  const grandBridges = def.bridgesOnGrandCanal ?? 4;
+  for (let b = 0; b < grandBridges; b++) {
+    const t = 0.24 + ((b + 1) / (grandBridges + 1)) * 0.58;
+    const [bx, bz] = pointAtPolylineT(grandPoints, t);
+    const [nx, nz] = normalAtPolylineT(grandPoints, t);
+    bridges.push({
+      x: bx, z: bz,
+      dirX: nx, dirZ: nz,
+      halfLength: deckOverhang(grandHalfW),
+    });
+  }
+
+  // Minor rii: uneven short canals running across the island fabric. They
+  // intentionally vary in angle, width, and length so the water network stops
+  // reading as compass geometry.
+  const minorBridges = def.bridgesPerMinorCanal ?? 1;
+  for (let i = 0; i < def.minorCanals; i++) {
+    const u = (i + 1) / (def.minorCanals + 1);
+    const centerAlong = def.grandCanalLength * (0.18 + u * 0.66);
+    const side = i % 2 === 0 ? 1 : -1;
+    const angle = (side * (0.38 + (i % 3) * 0.13)) + Math.sin(i * 1.9) * 0.10;
+    const dirX = Math.cos(angle) * latX + Math.sin(angle) * inlandX;
+    const dirZ = Math.cos(angle) * latZ + Math.sin(angle) * inlandZ;
+    const length = 48 + (i % 4) * 10 + Math.sin(i * 2.17) * 6;
+    const cx = centerX + inlandX * centerAlong + latX * (Math.sin(i * 1.31) * 18);
+    const cz = centerZ + inlandZ * centerAlong + latZ * (Math.sin(i * 1.31) * 18);
+    const start: [number, number] = [cx - dirX * length * 0.5, cz - dirZ * length * 0.5];
+    const end: [number, number] = [cx + dirX * length * 0.5, cz + dirZ * length * 0.5];
+    const points = organicLinePoints(
+      start, end,
+      Math.max(7, Math.round(length / 7)),
+      def.minorCanalWidth * (0.22 + (i % 3) * 0.05),
+      1.1 + i * 0.61,
+    );
+    const widthMul = 0.78 + (i % 5) * 0.09;
+    canals.push({
+      polyline: points,
+      halfWidth: minorHalfW * widthMul,
+      primary: false,
+    });
+
+    for (let b = 0; b < minorBridges; b++) {
+      const t = (b + 1) / (minorBridges + 1);
+      const [bx, bz] = pointAtPolylineT(points, t);
+      const [nx, nz] = normalAtPolylineT(points, t);
+      bridges.push({
+        x: bx, z: bz,
+        dirX: nx, dirZ: nz,
+        halfLength: deckOverhang(minorHalfW * widthMul),
+      });
+    }
+  }
+
+  return { canals, bridges: cullClusteredBridges(bridges) };
+}
+
 export function generateCanalLayout(
   centerX: number,
   centerZ: number,
@@ -402,6 +523,9 @@ export function generateCanalLayout(
 ): CanalLayout {
   if (def.type === 'wedge') {
     return generateWedge(centerX, centerZ, def);
+  }
+  if (def.type === 'venetian') {
+    return generateVenetian(centerX, centerZ, def);
   }
   if (def.type !== 'concentric') {
     return { canals: [], bridges: [] };

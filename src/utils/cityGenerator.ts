@@ -581,7 +581,10 @@ export function generateCity(
   const counts: Record<BuildingType, number> = portId === 'venice'
     ? {
         ...baseCounts,
-        house: Math.max(baseCounts.house, 104),
+        warehouse: Math.max(baseCounts.warehouse, 6),
+        estate: Math.max(baseCounts.estate, 7),
+        market: Math.max(baseCounts.market, 4),
+        house: Math.max(baseCounts.house, 145),
         farmhouse: 0,
         shack: Math.min(baseCounts.shack, 2),
       }
@@ -630,8 +633,8 @@ export function generateCity(
           isLand = false;
           isBeach = false;
           carvedCanal = true;
-        } else if (signed < CANAL_BANK_BUFFER) {
-          // Strip of land within ~3u of the canal edge — the dredge band in
+        } else if (signed < (portId === 'venice' ? 1.5 : CANAL_BANK_BUFFER)) {
+          // Strip of land near the canal edge — the dredge band in
           // terrain.ts pulls these cells DOWN toward water level so building
           // footprints would clip the slope. Mark `occupied` so findSpot
           // skips them; the cells stay land for road routing.
@@ -2067,7 +2070,7 @@ export function generateCity(
     if (scale === 'Small' || scale === 'Medium' || scale === 'Large') return base;
     const radiusWorld = gridRadius * cellSize;
     const centrality = Math.max(0, Math.min(1, 1 - cellDistToCenter / (radiusWorld * 0.72)));
-    const maxGrowth = portId === 'venice' ? 0.22 : scale === 'Huge' ? 0.58 : 0.42;
+    const maxGrowth = portId === 'venice' ? 0.24 : scale === 'Huge' ? 0.58 : 0.42;
     const factor = 1 + centrality * maxGrowth;
     return [base[0] * factor, base[1], base[2] * factor];
   };
@@ -2089,7 +2092,7 @@ export function generateCity(
     // overlap — flush (zero padding) is the densest they can get.
     if (type === 'house' && denseCanalCity) {
       size = portId === 'venice'
-        ? [size[0] * 1.04, size[1] * 1.35, size[2] * 1.02]
+        ? [size[0] * 1.04, size[1] * 1.62, size[2] * 1.02]
         : [size[0] * 0.92, size[1] * 1.08, size[2] * 0.96];
     } else if (type === 'house' && anchor.tier === 'avenue') {
       size = [size[0] * 0.85, size[1] * 1.15, size[2] * 1.1];

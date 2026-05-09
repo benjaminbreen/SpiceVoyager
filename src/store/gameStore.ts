@@ -1409,7 +1409,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   ports: [],
   timeOfDay: 8, // Start at 8 AM
   notifications: [],
-  leads: [createStarterLead(1, _startingPortId, _startingFaction)],
+  leads: [createStarterLead(1, _startingPortId, _startingFaction, { cargo: _startingCargo })],
   questToasts: [],
   activePort: null,
   cameraZoom: 50,
@@ -2745,7 +2745,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       ship: start.ship,
       timeOfDay: 8,
       notifications: [],
-      leads: [createStarterLead(1, start.startingPortId, start.faction)],
+      leads: [createStarterLead(1, start.startingPortId, start.faction, { cargo: start.cargo })],
       questToasts: [],
       activePort: null,
       cameraZoom: 50,

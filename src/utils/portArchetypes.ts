@@ -828,31 +828,18 @@ export const CORE_PORTS: PortDefinition[] = [
     description: 'The Republic\'s shallow-water capital sits on a hundred islands in a brackish lagoon, the Lido shielding it from the Adriatic. Galleys from Alexandria and Aleppo unload sacks of pepper, cardamom, and indigo at the Rialto, where Greek, German, and Jewish merchants haggle in half a dozen tongues. Murano glass, mirrors, and theriac — the city\'s monopoly polypharmacy compound — flow outward in return. The Cape route has been gnawing at the spice trade for a century, but Levantine pepper still arrives in volume, and the Arsenale lays new galleys at a pace no other yard can match. The air smells of canal silt, wet brick, and woodsmoke from the glass furnaces.',
     openDirection: 'E',
     coastRuggedness: 0.55,           // low alluvial coast, gentle noise
-    // Canal layout: the Grand Canal as the broad central inlet curving in from
-    // the lagoon, plus an inner ring approximating the Cannaregio/Castello arc
-    // and four radial cuts for the rii (smaller canals) that thread the sestieri.
-    // Wider than Amsterdam's because Venice is more water than land — this is
-    // the closest fit the concentric pattern offers until a true lagoon-grid
-    // canal type is added.
+    // Canal layout: the Grand Canal as a broad S-shaped navigable waterway
+    // plus uneven rii (minor canals) cutting through dense island fabric.
+    // This is intentionally not Amsterdam-style concentric geometry.
     canalLayout: {
-      type: 'concentric',
+      type: 'venetian',
       openDirection: 'E',
-      innerRadius: 38,
-      rings: 2,
-      // Wider gap between rings: the previous 26u barely fit one row of
-      // houses (~12u including the bank buffer applied in cityGenerator),
-      // which made Venice read as a tangle of water with buildings squeezed
-      // onto threads of land. 52u leaves a proper sestiere of dense urban
-      // fabric between the inner and outer canal.
-      ringSpacing: 52,
-      radials: 4,
-      canalWidth: 8,
-      centralInlet: true,
-      inletDepth: 60,           // long Grand Canal sweep into the city
-      inletWidth: 12,           // the Grand Canal is broad
-      bridgesPerRing: 4,
-      bridgesPerRadial: 1,
-      bridgesOnInlet: 4,        // Rialto + three other crossings
+      grandCanalWidth: 16,      // broad enough for ship navigation in-game
+      minorCanalWidth: 6,
+      grandCanalLength: 118,
+      minorCanals: 6,
+      bridgesOnGrandCanal: 4,   // Rialto + three other crossings
+      bridgesPerMinorCanal: 1,
     },
     // Satellite dx/dz are UNROTATED world coords (the satellite loop does not
     // apply openDirection rotation). For openDirection='E', rotateToOpen maps

@@ -17,6 +17,14 @@ export interface LeadTarget {
   person?: string;
 }
 
+export interface LeadHint {
+  title: string;
+  body: string;
+  commodity?: string;
+  fromPort?: string;
+  toPort?: string;
+}
+
 export interface Lead {
   id: string;
   source: LeadSource;
@@ -30,6 +38,7 @@ export interface Lead {
   giverPort?: string;
 
   target: LeadTarget;
+  hint?: LeadHint;
 
   offeredOnDay: number;
   deadlineDay?: number;

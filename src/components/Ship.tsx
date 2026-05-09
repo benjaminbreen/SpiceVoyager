@@ -176,6 +176,41 @@ function buildPennantGeometry(length: number, height: number) {
   return geo;
 }
 
+function HullWaterlineBand({ profile }: { profile: ReturnType<typeof getShipProfile> }) {
+  const h = profile.hull.height;
+  const w = profile.hull.width;
+  const l = profile.hull.length;
+  const bandY = h * 0.13;
+  const bandH = Math.max(0.18, h * 0.18);
+  const sideZ = l * 0.82;
+  const capW = w * 0.72;
+  const capZ = 0.035;
+
+  return (
+    <group>
+      {[-1, 1].map((side) => (
+        <mesh
+          key={`hull-waterline-side-${side}`}
+          position={[side * w * 0.515, bandY, 0]}
+          castShadow={false}
+          receiveShadow={false}
+        >
+          <boxGeometry args={[0.035, bandH, sideZ]} />
+          <meshStandardMaterial color="#1f1712" roughness={0.96} transparent opacity={0.42} depthWrite={false} />
+        </mesh>
+      ))}
+      <mesh position={[0, bandY, l * 0.425]} castShadow={false} receiveShadow={false}>
+        <boxGeometry args={[capW, bandH * 0.8, capZ]} />
+        <meshStandardMaterial color="#1f1712" roughness={0.96} transparent opacity={0.30} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, bandY, -l * 0.425]} castShadow={false} receiveShadow={false}>
+        <boxGeometry args={[capW, bandH * 0.8, capZ]} />
+        <meshStandardMaterial color="#1f1712" roughness={0.96} transparent opacity={0.34} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 export function Ship() {
   const group = useRef<THREE.Group>(null);
   const visualGroup = useRef<THREE.Group>(null);
@@ -3052,6 +3087,7 @@ export function Ship() {
           })()}
             </>
           )}
+          <HullWaterlineBand profile={profile} />
           {/* Masts — slight taper (narrower at top) so they don't read as
               cardboard tubes. 60% masthead radius is a natural rigger's taper. */}
           {profile.masts.map((mast, idx) => (
